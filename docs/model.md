@@ -19,14 +19,12 @@
 | `integrations`  | Подключение внешнего аккаунта для конкретного бота. У Most Docs и будущего Most Calendar свои токены и свои разрешения (scope).                                                              | `unique (user_id, bot, provider)`                                                                                                                                  |
 | `documents`     | Документ, который пользователь прислал боту. Запись создаётся сразу при получении файла и проходит статусы (таблица ниже). Удаляется сразу, без мягкого удаления.                            | `unique (user_id, tg_file_unique_id)` — один файл сохраняется один раз<br>`index (user_id, category)` — каталог<br>`gin (title gin_trgm_ops)` — поиск с опечатками |
 | `drive_folders` | Кеш папок `Most Docs/<категория>` на Drive пользователя, чтобы не искать папку через Drive API при каждой загрузке. Если папку удалили на Drive — запись удаляется и папка создаётся заново. | `primary key (user_id, category)`                                                                                                                                  |
-| `events`        | Продуктовые события для метрик: активация, удержание, kill criterion.                                                                                                                        | `index (bot, name, created_at)`                                                                                                                                    |
 
 ```mermaid
 erDiagram
     users ||--o{ integrations : "подключает"
     users ||--o{ documents : "владеет"
     users ||--o{ drive_folders : "имеет"
-    users ||--o{ events : "генерирует"
 
     users {
         uuid id PK
@@ -55,12 +53,6 @@ erDiagram
         text category
         text drive_folder_id
     }
-    events {
-        uuid id PK
-        uuid user_id FK
-        text name
-        jsonb props
-    }
 ```
 
 ### Статусы documents
@@ -74,7 +66,7 @@ erDiagram
 
 ## v1
 
-> Заглушка. Сроки документов и напоминания: поле `documents.expires_at`, таблица `reminders`.
+> Заглушка. Продуктовые события `events` (`user_id`, `bot`, `name`, `props`, `created_at`) для метрик активации и удержания.
 
 ## v2+
 
@@ -82,7 +74,7 @@ erDiagram
 
 ## v3+
 
-> Заглушка. Подписки за Stars (`subscriptions`).
+> Заглушка. Подписки за Stars (`subscriptions`), сроки и напоминания (`documents.expires_at`, `reminders`).
 
 ## Открытые вопросы
 - `users` общая на серию, а `integrations` на каждого бота — подтвердить, что объединение аккаунтов не понадобится.
