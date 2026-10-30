@@ -1,0 +1,275 @@
+# Code conventions — Most
+
+Как устроен и как пишется Go-код серии ботов Most. Коротко: **домен в центре, всё внешнее — адаптеры, общее — в `platform`**.
+
+## 1. Архитектура
+
+Облегчённый гексагон (ports & adapters). Домен знает только себя и свои интерфейсы. Telegram, Postgres, Google Drive — адаптеры, которые эти интерфейсы реализуют.
+
+```mermaid
+flowchart LR
+    subgraph IN["Входящие адаптеры"]
+        TGH["docs/telegram<br/>хендлеры"]
+        JOB["docs/jobs<br/>воркеры"]
+    end
+    subgraph DOM["Домен docs"]
+        SVC["service.go<br/>юзкейсы"]
+        ENT["document.go<br/>сущности"]
+        PORTS["ports.go<br/>интерфейсы"]
+    end
+    subgraph OUT["Исходящие адаптеры"]
+        PG["docs/postgres<br/>Repo"]
+        GD["platform/gdrive<br/>Storage"]
+    end
+
+    TGH --> SVC
+    JOB --> SVC
+    SVC --> ENT
+    SVC --> PORTS
+    PG -. реализует .-> PORTS
+    GD -. реализует .-> PORTS
+```
+
+**Правила зависимостей**
+
+| Пакет | Может импортировать | Не может |
+| --- | --- | --- |
+| `internal/docs` (домен) | stdlib, `platform/clock` и т.п. утилиты без I/O | `docs/telegram`, `docs/postgres`, `platform/tg`, `platform/db`, `platform/gdrive`, внешние SDK |
+| `internal/docs/<adapter>` | домен `docs`, `platform/*`, SDK | другой бот (`internal/calendar`) |
+| `internal/platform/*` | stdlib, SDK, другие `platform/*` | любой бот |
+| `cmd/<bot>` | всё | — |
+
+Проверяется `depguard` в `golangci-lint`.
+
+## 2. Структура
+
+```text
+cmd/
+  docsbot/main.go          # сборка зависимостей и запуск
+internal/
+  docs/                    # домен Most Docs
+    document.go            # сущности и value objects
+    service.go             # юзкейсы (методы Service)
+    ports.go               # интерфейсы, нужные домену
+    errors.go              # доменные ошибки
+    reply.go               # ответы юзкейсов (смысл, не UI)
+    service_test.go        # unit-тесты с фейками
+    fakes_test.go          # фейки портов
+    telegram/              # входящий адаптер: апдейт → service → рендер
+    jobs/                  # входящий адаптер: задачи очереди → service
+    postgres/              # исходящий адаптер: Repo через sqlc
+  platform/                # общее ядро для всех ботов
+    config/  log/  db/  jobs/  tg/  oauth/  gdrive/  httpx/  billing/
+migrations/                # goose, *.sql
+tests/e2e/                 # e2e против dev-стенда
+docs/                      # дизайн-доки
+```
+
+- Новый бот = `cmd/<bot>/` + `internal/<bot>/` той же формы.
+- Новое хранилище = новый пакет в `platform/` + 3 строки в `main.go`. Домен не меняется.
+- Новый канал = новый входящий адаптер `internal/docs/<channel>/`.
+
+## 3. Домен
+
+**Сущности** — обычные struct'ы с конструктором, который валидирует (как Pydantic-модель).
+
+```go
+type Document struct {
+    ID       DocumentID
+    UserID   UserID
+    Title    string
+    Category Category
+    DriveID  string
+}
+
+func NewDocument(user UserID, title string, cat Category) (Document, error) {
+    if !cat.Valid() {
+        return Document{}, ErrUnknownCategory
+    }
+    ...
+}
+```
+
+**Порты** объявляет домен — ровно те методы, что ему нужны.
+
+```go
+// ports.go
+type Storage interface {
+    Upload(ctx context.Context, f File, folder string) (StoredFile, error)
+}
+
+type Repo interface {
+    Save(ctx context.Context, d Document) error
+    ByFileUniqueID(ctx context.Context, u UserID, id string) (Document, error)
+}
+```
+
+**Юзкейсы** — методы одного `Service`. Возвращают смысл ответа, а не кнопки Telegram.
+
+```go
+type Service struct {
+    repo    Repo
+    storage Storage
+}
+
+func (s *Service) Receive(ctx context.Context, in IncomingFile) (Reply, error)
+```
+
+```go
+// reply.go — адаптер канала сам решает, как это нарисовать
+type NeedCategory struct{ Options []Category }
+type Saved struct{ Doc Document; URL string }
+type AlreadySaved struct{ Doc Document }
+```
+
+## 4. Поток запроса
+
+```mermaid
+sequenceDiagram
+    participant TG as Telegram
+    participant H as docs/telegram
+    participant S as docs.Service
+    participant R as Repo (postgres)
+    participant Q as platform/jobs
+
+    TG->>H: update (файл)
+    H->>S: Receive(ctx, IncomingFile)
+    S->>R: ByFileUniqueID
+    R-->>S: ErrNotFound
+    S-->>H: NeedCategory{Options}
+    H->>TG: сообщение + inline-кнопки
+    TG->>H: callback (категория)
+    H->>S: ChooseCategory(ctx, ...)
+    S->>Q: Enqueue(upload)
+    S-->>H: Processing{}
+    H->>TG: «Сохраняю…»
+```
+
+## 5. Сборка зависимостей
+
+Без DI-фреймворков. Всё собирается руками в `main.go` через конструкторы `New…` — аналог `Depends` + lifespan в FastAPI.
+
+```go
+func main() {
+    ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+    defer stop()
+
+    cfg := config.MustLoad()
+    log := logx.New(cfg.LogLevel)
+    pool := db.MustConnect(ctx, cfg.DatabaseURL)
+
+    repo := postgres.NewRepo(pool)
+    drive := gdrive.New(oauth.New(cfg.Google, pool))
+    svc := docs.NewService(repo, drive)
+
+    bot := telegram.NewHandler(svc, log)
+    run(ctx, bot, jobs.NewWorker(svc, pool))
+}
+```
+
+## 6. Именование
+
+| Что | Как | Пример |
+| --- | --- | --- |
+| Пакеты | коротко, единственное число, без `_` | `docs`, `gdrive`, `oauth` |
+| Не называем | `utils`, `common`, `helpers`, `models`, `base` | — |
+| Файлы | `snake_case.go`, по сущности или теме | `document.go`, `upload_job.go` |
+| Конструкторы | `New` / `NewXxx` | `docs.NewService`, `gdrive.New` |
+| Интерфейсы | по роли, без префикса `I` | `Storage`, `Repo`, `Clock` |
+| Ошибки | `ErrXxx` для sentinel, `XxxError` для типов | `ErrNotFound` |
+| Без повторов | имя пакета — часть имени | `docs.Service`, не `docs.DocsService` |
+| Сокращения | заглавными целиком | `UserID`, `HTTPClient`, `URL` |
+| Получатель метода | 1–2 буквы, одинаково везде | `func (s *Service)` |
+
+## 7. Ошибки
+
+- Возвращаем `error`, не паникуем. `panic` — только для ошибок программиста при старте (`MustLoad`).
+- Оборачиваем с контекстом: `fmt.Errorf("upload to drive: %w", err)`.
+- Проверяем через `errors.Is` / `errors.As`.
+- Доменные ошибки — в `errors.go` домена. Адаптеры переводят свои ошибки в доменные (`pgx.ErrNoRows` → `docs.ErrNotFound`).
+- Что показать юзеру, решает адаптер канала по доменной ошибке. Текст ошибок Go юзеру не показываем.
+- Логируем ошибку **один раз** — на верхнем уровне (хендлер, воркер), не на каждом слое.
+
+## 8. context и таймауты
+
+- `ctx context.Context` — первый аргумент любой функции с I/O.
+- Не храним `ctx` в struct'ах.
+- Таймауты ставят адаптеры на внешние вызовы: `ctx, cancel := context.WithTimeout(ctx, 10*time.Second)`.
+- Остановка: `signal.NotifyContext` в `main`, воркеры выходят по `ctx.Done()`.
+- Горутина без способа её остановить — баг.
+
+## 9. Конфиг и логи
+
+- Конфиг только из env в `platform/config` → типизированный struct (аналог Pydantic Settings). Пакеты получают нужные поля через конструктор, не читают env сами.
+- Логи: `log/slog`, JSON, ключ-значение: `log.Info("doc saved", "user_id", u, "doc_id", d)`.
+- Никогда не логируем токены, содержимое документов, подписи к файлам.
+
+## 10. БД
+
+- Запросы — в `.sql` файлах, код генерирует `sqlc`. Сгенерированный код живёт только в адаптере `postgres/`.
+- Миграции — `goose`, файлы `migrations/NNNN_name.sql`, только вперёд в проде.
+- Транзакция нужна юзкейсу → порт `Tx(ctx, func(Repo) error) error`, SQL наружу не течёт.
+
+## 11. Тесты
+
+```mermaid
+flowchart BT
+    U["<b>unit</b><br/>домен + фейки портов<br/>go test ./..."]
+    I["<b>integration</b><br/>адаптеры + Postgres (testcontainers)<br/>go test -tags=integration ./..."]
+    E["<b>e2e</b><br/>dev-бот + dev-стенд<br/>go test -tags=e2e ./tests/e2e"]
+    U --> I --> E
+```
+
+| pytest                             | Go                                                                                                  |
+|------------------------------------|-----------------------------------------------------------------------------------------------------|
+| `tests/test_*.py` отдельной папкой | `*_test.go` в той же папке, что и код (`service.go` → `service_test.go`)                            |
+| —                                  | `package docs` — тест видит приватное; `package docs_test` — только публичный API (предпочтительно) |
+| `@pytest.mark.parametrize`         | table-driven тесты + `t.Run`                                                                        |
+| фикстуры                           | хелперы с `t.Helper()` и `t.Cleanup()`                                                              |
+| маркеры                            | build tags `//go:build integration`                                                                 |
+| `unittest.mock`                    | ручные фейки в `fakes_test.go`                                                                      |
+| `assert`                           | `testify/require`                                                                                   |
+
+```go
+func TestService_Receive(t *testing.T) {
+tests := []struct {
+name string
+repo *fakeRepo
+want docs.Reply
+}{
+{"новый файл", newFakeRepo(), docs.NeedCategory{Options: docs.AllCategories}},
+{"дубль", repoWith(existingDoc), docs.AlreadySaved{Doc: existingDoc}},
+}
+for _, tt := range tests {
+t.Run(tt.name, func(t *testing.T) {
+svc := docs.NewService(tt.repo, &fakeStorage{})
+got, err := svc.Receive(context.Background(), incoming)
+require.NoError(t, err)
+require.Equal(t, tt.want, got)
+})
+}
+}
+```
+
+## 12. Чего не делаем
+
+- Интерфейс «на всякий случай». Вводим, когда есть второй адаптер или нужен фейк для теста.
+- Глобальные переменные и `init()` с логикой.
+- Пакеты `utils` / `common`.
+- Генерики там, где хватает конкретного типа.
+- ORM. Только `sqlc`.
+- Зависимость домена от SDK (`telegram`, `drive`, `pgx`).
+
+## 13. Python → Go
+
+| Python              | Go                                |
+|---------------------|-----------------------------------|
+| FastAPI router      | входящий адаптер `docs/telegram`  |
+| `Depends`, lifespan | ручная сборка в `main.go`         |
+| Pydantic-модель     | struct + конструктор с валидацией |
+| Pydantic Settings   | `platform/config`                 |
+| `async`/`await`     | горутины + `context.Context`      |
+| исключения          | `error` как значение + `%w`       |
+| SQLAlchemy          | `sqlc` + `pgx`                    |
+| Alembic             | `goose`                           |
+| `ruff` / `mypy`     | `golangci-lint` / компилятор      |
