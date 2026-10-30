@@ -220,33 +220,34 @@ flowchart BT
     U --> I --> E
 ```
 
-| pytest | Go |
-| --- | --- |
-| `test_*.py` рядом с кодом | `*_test.go` рядом с кодом |
-| `@pytest.mark.parametrize` | table-driven тесты + `t.Run` |
-| фикстуры | хелперы с `t.Helper()` и `t.Cleanup()` |
-| маркеры | build tags `//go:build integration` |
-| `unittest.mock` | ручные фейки в `fakes_test.go` |
-| `assert` | `testify/require` |
+| pytest                             | Go                                                                                                  |
+|------------------------------------|-----------------------------------------------------------------------------------------------------|
+| `tests/test_*.py` отдельной папкой | `*_test.go` в той же папке, что и код (`service.go` → `service_test.go`)                            |
+| —                                  | `package docs` — тест видит приватное; `package docs_test` — только публичный API (предпочтительно) |
+| `@pytest.mark.parametrize`         | table-driven тесты + `t.Run`                                                                        |
+| фикстуры                           | хелперы с `t.Helper()` и `t.Cleanup()`                                                              |
+| маркеры                            | build tags `//go:build integration`                                                                 |
+| `unittest.mock`                    | ручные фейки в `fakes_test.go`                                                                      |
+| `assert`                           | `testify/require`                                                                                   |
 
 ```go
 func TestService_Receive(t *testing.T) {
-    tests := []struct {
-        name string
-        repo *fakeRepo
-        want docs.Reply
-    }{
-        {"новый файл", newFakeRepo(), docs.NeedCategory{Options: docs.AllCategories}},
-        {"дубль", repoWith(existingDoc), docs.AlreadySaved{Doc: existingDoc}},
-    }
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            svc := docs.NewService(tt.repo, &fakeStorage{})
-            got, err := svc.Receive(context.Background(), incoming)
-            require.NoError(t, err)
-            require.Equal(t, tt.want, got)
-        })
-    }
+tests := []struct {
+name string
+repo *fakeRepo
+want docs.Reply
+}{
+{"новый файл", newFakeRepo(), docs.NeedCategory{Options: docs.AllCategories}},
+{"дубль", repoWith(existingDoc), docs.AlreadySaved{Doc: existingDoc}},
+}
+for _, tt := range tests {
+t.Run(tt.name, func(t *testing.T) {
+svc := docs.NewService(tt.repo, &fakeStorage{})
+got, err := svc.Receive(context.Background(), incoming)
+require.NoError(t, err)
+require.Equal(t, tt.want, got)
+})
+}
 }
 ```
 
@@ -259,16 +260,16 @@ func TestService_Receive(t *testing.T) {
 - ORM. Только `sqlc`.
 - Зависимость домена от SDK (`telegram`, `drive`, `pgx`).
 
-## 13. Python → Go шпаргалка
+## 13. Python → Go
 
-| Python | Go |
-| --- | --- |
-| FastAPI router | входящий адаптер `docs/telegram` |
-| `Depends`, lifespan | ручная сборка в `main.go` |
-| Pydantic-модель | struct + конструктор с валидацией |
-| Pydantic Settings | `platform/config` |
-| `async`/`await` | горутины + `context.Context` |
-| исключения | `error` как значение + `%w` |
-| SQLAlchemy | `sqlc` + `pgx` |
-| Alembic | `goose` |
-| `ruff` / `mypy` | `golangci-lint` / компилятор |
+| Python              | Go                                |
+|---------------------|-----------------------------------|
+| FastAPI router      | входящий адаптер `docs/telegram`  |
+| `Depends`, lifespan | ручная сборка в `main.go`         |
+| Pydantic-модель     | struct + конструктор с валидацией |
+| Pydantic Settings   | `platform/config`                 |
+| `async`/`await`     | горутины + `context.Context`      |
+| исключения          | `error` как значение + `%w`       |
+| SQLAlchemy          | `sqlc` + `pgx`                    |
+| Alembic             | `goose`                           |
+| `ruff` / `mypy`     | `golangci-lint` / компилятор      |
