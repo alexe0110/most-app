@@ -1,3 +1,4 @@
+// Package config loads application settings from environment variables.
 package config
 
 import (
@@ -5,12 +6,14 @@ import (
 	"os"
 )
 
+// Config holds all application settings.
 type Config struct {
 	Env      string // dev | prod
 	LogLevel string // debug | info | warn | error
 	HTTPAddr string // listen address, e.g. ":8080"
 }
 
+// Load reads settings from env, applies defaults and validates them.
 func Load() (Config, error) {
 	cfg := Config{
 		Env:      getenv("APP_ENV", "dev"),

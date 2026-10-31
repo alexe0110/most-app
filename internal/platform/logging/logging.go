@@ -1,3 +1,4 @@
+// Package logging builds the application logger.
 package logging
 
 import (

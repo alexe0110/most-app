@@ -1,3 +1,4 @@
+// Main package
 package main
 
 import (
@@ -16,7 +17,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		os.Stderr.WriteString(err.Error() + "\n")
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
@@ -38,7 +39,7 @@ func run() error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	})
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}
 
