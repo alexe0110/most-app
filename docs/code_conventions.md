@@ -32,12 +32,12 @@ flowchart LR
 
 **Правила зависимостей**
 
-| Пакет | Может импортировать | Не может |
-| --- | --- | --- |
-| `internal/docs` (домен) | stdlib, `platform/clock` и т.п. утилиты без I/O | `docs/telegram`, `docs/postgres`, `platform/tg`, `platform/db`, `platform/gdrive`, внешние SDK |
-| `internal/docs/<adapter>` | домен `docs`, `platform/*`, SDK | другой бот (`internal/calendar`) |
-| `internal/platform/*` | stdlib, SDK, другие `platform/*` | любой бот |
-| `cmd/<bot>` | всё | — |
+| Пакет                     | Может импортировать                             | Не может                                                                                       |
+|---------------------------|-------------------------------------------------|------------------------------------------------------------------------------------------------|
+| `internal/docs` (домен)   | stdlib, `platform/clock` и т.п. утилиты без I/O | `docs/telegram`, `docs/postgres`, `platform/tg`, `platform/db`, `platform/gdrive`, внешние SDK |
+| `internal/docs/<adapter>` | домен `docs`, `platform/*`, SDK                 | другой бот (`internal/calendar`)                                                               |
+| `internal/platform/*`     | stdlib, SDK, другие `platform/*`                | любой бот                                                                                      |
+| `cmd/<bot>`               | всё                                             | —                                                                                              |
 
 Проверяется `depguard` в `golangci-lint`.
 
