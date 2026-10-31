@@ -1,0 +1,44 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - depguard
+    - errorlint
+    - gocritic
+    - misspell
+    - revive
+    - bodyclose
+    - noctx
+  settings:
+    depguard:
+      rules:
+        domain:
+          list-mode: lax
+          files:
+            - "**/internal/docsbot/*.go"
+          deny:
+            - pkg: github.com/alexe0110/most-app/internal/docsbot/
+              desc: "domain must not import its adapters"
+            - pkg: github.com/alexe0110/most-app/internal/platform/tg
+              desc: "domain must not depend on Telegram"
+            - pkg: github.com/alexe0110/most-app/internal/platform/db
+              desc: "domain must not depend on the database"
+            - pkg: github.com/alexe0110/most-app/internal/platform/gdrive
+              desc: "domain must not depend on Google Drive"
+        platform:
+          list-mode: lax
+          files:
+            - "**/internal/platform/**"
+          deny:
+            - pkg: github.com/alexe0110/most-app/internal/docsbot
+              desc: "platform must not import bots"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/alexe0110/most-app
