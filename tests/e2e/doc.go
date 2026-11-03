@@ -1,0 +1,3 @@
+// Package e2e holds end-to-end tests that drive the whole app from the outside
+// against a dev stand. Run them with: go test -tags=e2e ./tests/e2e/...
+package e2e
