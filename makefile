@@ -1,4 +1,4 @@
-.PHONY: run test test-int test-e2e lint db-up db-down migrate sqlc
+.PHONY: help run test test-int test-e2e lint db-up migrate sqlc
 
 
 help:  ## список команд
