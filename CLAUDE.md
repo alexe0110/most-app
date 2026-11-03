@@ -43,7 +43,7 @@ make run          # local run, long polling, dev bot
 make test         # unit tests
 make test-int     # integration tests (needs Docker)
 make lint         # golangci-lint, including depguard
-make migrate      # goose up
+make migrate      # goose up (reads $DATABASE_URL from the env)
 make sqlc         # regenerate queries
 ```
 
