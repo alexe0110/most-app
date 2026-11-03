@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
+
+	"github.com/alexe0110/most-app/internal/platform/db"
 )
 
 // New starts a disposable Postgres (postgres:17), connects a pool and returns
@@ -38,7 +40,8 @@ func New(t *testing.T) *pgxpool.Pool {
 
 	require.NoError(t, pool.Ping(ctx))
 
-	// TODO(#5): apply goose migrations from migrations/ once platform/db lands.
+	// Bring the schema up to date so tests run against the real tables.
+	require.NoError(t, db.Migrate(ctx, dsn))
 
 	return pool
 }

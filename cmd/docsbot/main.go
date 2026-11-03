@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/alexe0110/most-app/internal/platform/config"
+	"github.com/alexe0110/most-app/internal/platform/db"
 	"github.com/alexe0110/most-app/internal/platform/logging"
 )
 
@@ -36,6 +37,17 @@ func run() error {
 		return err
 	}
 	log := logging.New(cfg.LogLevel)
+
+	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	if err := db.Migrate(ctx, cfg.DatabaseURL); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	log.Info("migrations applied")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
