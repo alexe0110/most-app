@@ -1,4 +1,4 @@
-.PHONY: run test lint db-up db-down migrate sqlc
+.PHONY: run test test-int test-e2e lint db-up db-down migrate sqlc
 
 
 help:  ## список команд
@@ -7,8 +7,14 @@ help:  ## список команд
 run:    ## Запуск сервиса
 	go run ./cmd/docsbot
 
-test:   ## Запуск тестов
+test:       ## unit-тесты (без Docker)
 	go test ./...
+
+test-int:   ## integration-тесты (нужен Docker)
+	go test -tags=integration -count=1 ./...
+
+test-e2e:   ## e2e-тесты (заглушка)
+	go test -tags=e2e -count=1 ./tests/e2e/...
 
 lint:   ## Линтеры
 	golangci-lint run

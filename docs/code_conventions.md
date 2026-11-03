@@ -9,16 +9,16 @@
 ```mermaid
 flowchart LR
     subgraph IN["Входящие адаптеры"]
-        TGH["docs/telegram<br/>хендлеры"]
-        JOB["docs/jobs<br/>воркеры"]
+        TGH["docsbot/telegram<br/>хендлеры"]
+        JOB["docsbot/jobs<br/>воркеры"]
     end
-    subgraph DOM["Домен docs"]
+    subgraph DOM["Домен docsbot"]
         SVC["service.go<br/>юзкейсы"]
         ENT["document.go<br/>сущности"]
         PORTS["ports.go<br/>интерфейсы"]
     end
     subgraph OUT["Исходящие адаптеры"]
-        PG["docs/postgres<br/>Repo"]
+        PG["docsbot/postgres<br/>Repo"]
         GD["platform/gdrive<br/>Storage"]
     end
 
@@ -34,8 +34,8 @@ flowchart LR
 
 | Пакет                     | Может импортировать                             | Не может                                                                                       |
 |---------------------------|-------------------------------------------------|------------------------------------------------------------------------------------------------|
-| `internal/docs` (домен)   | stdlib, `platform/clock` и т.п. утилиты без I/O | `docs/telegram`, `docs/postgres`, `platform/tg`, `platform/db`, `platform/gdrive`, внешние SDK |
-| `internal/docs/<adapter>` | домен `docs`, `platform/*`, SDK                 | другой бот (`internal/calendar`)                                                               |
+| `internal/docsbot` (домен)   | stdlib, `platform/clock` и т.п. утилиты без I/O | `docsbot/telegram`, `docsbot/postgres`, `platform/tg`, `platform/db`, `platform/gdrive`, внешние SDK |
+| `internal/docsbot/<adapter>` | домен `docsbot`, `platform/*`, SDK              | другой бот (`internal/calendar`)                                                               |
 | `internal/platform/*`     | stdlib, SDK, другие `platform/*`                | любой бот                                                                                      |
 | `cmd/<bot>`               | всё                                             | —                                                                                              |
 
@@ -47,7 +47,7 @@ flowchart LR
 cmd/
   docsbot/main.go          # сборка зависимостей и запуск
 internal/
-  docs/                    # домен Most Docs
+  docsbot/                 # домен Most Docs
     document.go            # сущности и value objects
     service.go             # юзкейсы (методы Service)
     ports.go               # интерфейсы, нужные домену
@@ -67,7 +67,7 @@ docs/                      # дизайн-доки
 
 - Новый бот = `cmd/<bot>/` + `internal/<bot>/` той же формы.
 - Новое хранилище = новый пакет в `platform/` + 3 строки в `main.go`. Домен не меняется.
-- Новый канал = новый входящий адаптер `internal/docs/<channel>/`.
+- Новый канал = новый входящий адаптер `internal/docsbot/<channel>/`.
 
 ## 3. Домен
 
@@ -127,8 +127,8 @@ type AlreadySaved struct{ Doc Document }
 ```mermaid
 sequenceDiagram
     participant TG as Telegram
-    participant H as docs/telegram
-    participant S as docs.Service
+    participant H as docsbot/telegram
+    participant S as docsbot.Service
     participant R as Repo (postgres)
     participant Q as platform/jobs
 
@@ -155,12 +155,12 @@ func main() {
     defer stop()
 
     cfg := config.MustLoad()
-    log := logx.New(cfg.LogLevel)
+    log := logging.New(cfg.LogLevel)
     pool := db.MustConnect(ctx, cfg.DatabaseURL)
 
     repo := postgres.NewRepo(pool)
     drive := gdrive.New(oauth.New(cfg.Google, pool))
-    svc := docs.NewService(repo, drive)
+    svc := docsbot.NewService(repo, drive)
 
     bot := telegram.NewHandler(svc, log)
     run(ctx, bot, jobs.NewWorker(svc, pool))
@@ -171,13 +171,13 @@ func main() {
 
 | Что | Как | Пример |
 | --- | --- | --- |
-| Пакеты | коротко, единственное число, без `_` | `docs`, `gdrive`, `oauth` |
+| Пакеты | коротко, единственное число, без `_` | `docsbot`, `gdrive`, `oauth` |
 | Не называем | `utils`, `common`, `helpers`, `models`, `base` | — |
 | Файлы | `snake_case.go`, по сущности или теме | `document.go`, `upload_job.go` |
-| Конструкторы | `New` / `NewXxx` | `docs.NewService`, `gdrive.New` |
+| Конструкторы | `New` / `NewXxx` | `docsbot.NewService`, `gdrive.New` |
 | Интерфейсы | по роли, без префикса `I` | `Storage`, `Repo`, `Clock` |
 | Ошибки | `ErrXxx` для sentinel, `XxxError` для типов | `ErrNotFound` |
-| Без повторов | имя пакета — часть имени | `docs.Service`, не `docs.DocsService` |
+| Без повторов | имя пакета — часть имени | `docsbot.Service`, не `docsbot.DocsService` |
 | Сокращения | заглавными целиком | `UserID`, `HTTPClient`, `URL` |
 | Получатель метода | 1–2 буквы, одинаково везде | `func (s *Service)` |
 
@@ -186,7 +186,7 @@ func main() {
 - Возвращаем `error`, не паникуем. `panic` — только для ошибок программиста при старте (`MustLoad`).
 - Оборачиваем с контекстом: `fmt.Errorf("upload to drive: %w", err)`.
 - Проверяем через `errors.Is` / `errors.As`.
-- Доменные ошибки — в `errors.go` домена. Адаптеры переводят свои ошибки в доменные (`pgx.ErrNoRows` → `docs.ErrNotFound`).
+- Доменные ошибки — в `errors.go` домена. Адаптеры переводят свои ошибки в доменные (`pgx.ErrNoRows` → `docsbot.ErrNotFound`).
 - Что показать юзеру, решает адаптер канала по доменной ошибке. Текст ошибок Go юзеру не показываем.
 - Логируем ошибку **один раз** — на верхнем уровне (хендлер, воркер), не на каждом слое.
 
@@ -223,7 +223,7 @@ flowchart BT
 | pytest                             | Go                                                                                                  |
 |------------------------------------|-----------------------------------------------------------------------------------------------------|
 | `tests/test_*.py` отдельной папкой | `*_test.go` в той же папке, что и код (`service.go` → `service_test.go`)                            |
-| —                                  | `package docs` — тест видит приватное; `package docs_test` — только публичный API (предпочтительно) |
+| —                                  | `package docsbot` — тест видит приватное; `package docsbot_test` — только публичный API (предпочтительно) |
 | `@pytest.mark.parametrize`         | table-driven тесты + `t.Run`                                                                        |
 | фикстуры                           | хелперы с `t.Helper()` и `t.Cleanup()`                                                              |
 | маркеры                            | build tags `//go:build integration`                                                                 |
@@ -232,24 +232,32 @@ flowchart BT
 
 ```go
 func TestService_Receive(t *testing.T) {
-tests := []struct {
-name string
-repo *fakeRepo
-want docs.Reply
-}{
-{"новый файл", newFakeRepo(), docs.NeedCategory{Options: docs.AllCategories}},
-{"дубль", repoWith(existingDoc), docs.AlreadySaved{Doc: existingDoc}},
-}
-for _, tt := range tests {
-t.Run(tt.name, func(t *testing.T) {
-svc := docs.NewService(tt.repo, &fakeStorage{})
-got, err := svc.Receive(context.Background(), incoming)
-require.NoError(t, err)
-require.Equal(t, tt.want, got)
-})
-}
+	tests := []struct {
+		name string
+		repo *fakeRepo
+		want docsbot.Reply
+	}{
+		{"новый файл", newFakeRepo(), docsbot.NeedCategory{Options: docsbot.AllCategories}},
+		{"дубль", repoWith(existingDoc), docsbot.AlreadySaved{Doc: existingDoc}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := docsbot.NewService(tt.repo, &fakeStorage{})
+			got, err := svc.Receive(context.Background(), incoming)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
 }
 ```
+
+**Уровни и команды**
+
+- **unit** — `make test` (`go test ./...`), без Docker и сети. Домен с ручными фейками (`fakes_test.go`), `platform/*` с лёгкими зависимостями. Образец table-driven теста — `internal/platform/config/config_test.go`.
+- **integration** — `make test-int` (`go test -tags=integration -count=1 ./...`), файлы с `//go:build integration`. Реальный Postgres поднимает `internal/platform/db/dbtest`: `dbtest.New(t)` стартует контейнер (модуль `postgres` из `testcontainers-go`), отдаёт `*pgxpool.Pool` и сам всё убирает через `t.Cleanup`. Образец — `internal/platform/db/dbtest/dbtest_integration_test.go`.
+- **e2e** — `make test-e2e` (`go test -tags=e2e -count=1 ./tests/e2e/...`), файлы с `//go:build e2e`. Гоняет приложение целиком против dev-стенда.
+
+`testify/require` — единственная библиотека ассертов. Фикстуры — функции-хелперы с `t.Helper()` (и `t.Cleanup()` для ресурсов: контейнеры, временные файлы). Если в директории **все** `.go`-файлы под build-тегом, добавь нетеггированный `doc.go` с объявлением пакета — иначе `go test ./...` упадёт с «build constraints exclude all Go files».
 
 ## 12. Чего не делаем
 
@@ -264,7 +272,7 @@ require.Equal(t, tt.want, got)
 
 | Python              | Go                                |
 |---------------------|-----------------------------------|
-| FastAPI router      | входящий адаптер `docs/telegram`  |
+| FastAPI router      | входящий адаптер `docsbot/telegram`  |
 | `Depends`, lifespan | ручная сборка в `main.go`         |
 | Pydantic-модель     | struct + конструктор с валидацией |
 | Pydantic Settings   | `platform/config`                 |

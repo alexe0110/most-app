@@ -10,11 +10,11 @@ Before touching code, read `docs/code_conventions.md`. Product: `docs/product.md
 - `internal/<bot>/<adapter>/` — bot adapters: `telegram/` (inbound), `jobs/` (inbound), `postgres/` (outbound).
 - `internal/platform/` — shared core for all bots: config, log, db, jobs, tg, oauth, gdrive, httpx, billing.
 - `cmd/<bot>/main.go` — manual dependency wiring, no DI frameworks.
-- Use cases return the meaning of a reply (`docs.Reply`); the channel adapter renders buttons and texts.
+- Use cases return the meaning of a reply (`docsbot.Reply`); the channel adapter renders buttons and texts.
 
 ## Hard rules
 
-1. The domain (`internal/docs`) **must not import** adapters, `platform/tg`, `platform/db`, `platform/gdrive` or external SDKs. Enforced by depguard.
+1. The domain (`internal/docsbot`) **must not import** adapters, `platform/tg`, `platform/db`, `platform/gdrive` or external SDKs. Enforced by depguard.
 2. Bots never import each other. `platform` never imports a bot.
 3. Interfaces are declared by the consumer. Add an interface only when there is a second implementation or a test needs a fake.
 4. `ctx context.Context` is the first argument of every function that does I/O. Never store it in a struct.
@@ -33,7 +33,7 @@ Before touching code, read `docs/code_conventions.md`. Product: `docs/product.md
 5. Rendering of the `Reply` in the inbound adapter (`telegram/`).
 6. Wiring in `cmd/<bot>/main.go`, if a new dependency appeared.
 
-Reference feature: document intake — `docs.Service.Receive` and `docs/telegram/receive.go`. Build new features the same way.
+Reference feature: document intake — `docsbot.Service.Receive` and `docsbot/telegram/receive.go`. Build new features the same way.
 
 ## Commands
 
