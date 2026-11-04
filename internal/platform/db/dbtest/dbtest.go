@@ -11,6 +11,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/alexe0110/most-app/internal/platform/db"
+	"github.com/alexe0110/most-app/internal/platform/jobs"
 )
 
 // New starts a disposable Postgres (postgres:17), connects a pool and returns
@@ -40,8 +41,10 @@ func New(t *testing.T) *pgxpool.Pool {
 
 	require.NoError(t, pool.Ping(ctx))
 
-	// Bring the schema up to date so tests run against the real tables.
+	// Bring the schema up to date so tests run against the real tables,
+	// including the River queue tables integration tests rely on.
 	require.NoError(t, db.Migrate(ctx, dsn))
+	require.NoError(t, jobs.Migrate(ctx, pool))
 
 	return pool
 }
