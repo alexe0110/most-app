@@ -28,7 +28,12 @@ func main() {
 
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	defer func() {
+		fmt.Println("стопаю сервис")
+		fmt.Println("пу пу пу")
+		time.Sleep(2 * time.Second)
+		stop()
+	}()
 
 	cfg, err := config.Load()
 	if err != nil {
