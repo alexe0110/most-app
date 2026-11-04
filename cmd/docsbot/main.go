@@ -11,8 +11,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/riverqueue/river"
+
 	"github.com/alexe0110/most-app/internal/platform/config"
 	"github.com/alexe0110/most-app/internal/platform/db"
+	"github.com/alexe0110/most-app/internal/platform/jobs"
 	"github.com/alexe0110/most-app/internal/platform/logging"
 )
 
@@ -25,12 +28,7 @@ func main() {
 
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer func() {
-		fmt.Println("стопаю сервис")
-		fmt.Println("пу пу пу")
-		time.Sleep(2 * time.Second)
-		stop()
-	}()
+	defer stop()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -47,7 +45,21 @@ func run() error {
 	if err := db.Migrate(ctx, cfg.DatabaseURL); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+	if err := jobs.Migrate(ctx, pool); err != nil {
+		return fmt.Errorf("migrate river: %w", err)
+	}
 	log.Info("migrations applied")
+
+	workers := river.NewWorkers()
+	purge := jobs.RegisterPurgeUsers(workers, pool, log)
+	queue, err := jobs.New(pool, log, workers, purge)
+	if err != nil {
+		return err
+	}
+	if err := queue.Start(ctx); err != nil {
+		return fmt.Errorf("start queue: %w", err)
+	}
+	log.Info("job queue started")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -68,5 +80,9 @@ func run() error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return srv.Shutdown(shutdownCtx)
+
+	// Stop intake first, then drain the workers, both within the same budget.
+	srvErr := srv.Shutdown(shutdownCtx)
+	queueErr := queue.Stop(shutdownCtx)
+	return errors.Join(srvErr, queueErr)
 }
