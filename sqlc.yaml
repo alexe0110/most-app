@@ -1,0 +1,12 @@
+version: "2"
+sql:
+  - engine: postgresql
+    # Schema is read from the goose migrations — one source of truth.
+    schema: migrations
+    queries: internal/docsbot/postgres/queries
+    gen:
+      go:
+        package: postgres
+        out: internal/docsbot/postgres
+        sql_package: pgx/v5
+        emit_empty_slices: true

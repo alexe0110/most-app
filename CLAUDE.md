@@ -14,6 +14,7 @@ Before touching code, read `docs/code_conventions.md`. Product: `docs/product.md
 
 ## Hard rules
 
+0. Follow the idioms and patterns established in software development in general, and for the Go language in particular; the code should be clear and tidy!!!
 1. The domain (`internal/docsbot`) **must not import** adapters, `platform/tg`, `platform/db`, `platform/gdrive` or external SDKs. Enforced by depguard.
 2. Bots never import each other. `platform` never imports a bot.
 3. Interfaces are declared by the consumer. Add an interface only when there is a second implementation or a test needs a fake.
@@ -42,7 +43,7 @@ make run          # local run, long polling, dev bot
 make test         # unit tests
 make test-int     # integration tests (needs Docker)
 make lint         # golangci-lint, including depguard
-make migrate      # goose up
+make migrate      # goose up (reads $DATABASE_URL from the env)
 make sqlc         # regenerate queries
 ```
 

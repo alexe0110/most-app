@@ -22,8 +22,9 @@ lint:   ## Линтеры
 db-up:  ## Поднять postgres
 	docker compose up -d postgres
 
-migrate:
-	@echo "TODO: goose (#5)"
+migrate:  ## Применить миграции goose (нужен goose CLI и $DATABASE_URL)
+	@test -n "$(DATABASE_URL)" || { echo "DATABASE_URL не задан — выполни: set -a; source .env; set +a"; exit 1; }
+	goose -dir migrations postgres "$(DATABASE_URL)" up
 
-sqlc:
-	@echo "TODO: sqlc (#5)"
+sqlc:  ## Сгенерировать код из SQL (нужен sqlc CLI)
+	sqlc generate

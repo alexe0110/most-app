@@ -8,17 +8,19 @@ import (
 
 // Config holds all application settings.
 type Config struct {
-	Env      string // dev | prod
-	LogLevel string // debug | info | warn | error
-	HTTPAddr string // listen address, e.g. ":8080"
+	Env         string // dev | prod
+	LogLevel    string // debug | info | warn | error
+	HTTPAddr    string // listen address, e.g. ":8080"
+	DatabaseURL string // Postgres DSN
 }
 
 // Load reads settings from env, applies defaults and validates them.
 func Load() (Config, error) {
 	cfg := Config{
-		Env:      getenv("APP_ENV", "dev"),
-		LogLevel: getenv("LOG_LEVEL", "info"),
-		HTTPAddr: ":" + getenv("PORT", "8080"),
+		Env:         getenv("APP_ENV", "dev"),
+		LogLevel:    getenv("LOG_LEVEL", "info"),
+		HTTPAddr:    ":" + getenv("PORT", "8080"),
+		DatabaseURL: getenv("DATABASE_URL", "postgres://most:most@localhost:5432/most?sslmode=disable"),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -38,6 +40,10 @@ func (c Config) validate() error {
 	case "debug", "info", "warn", "error":
 	default:
 		return fmt.Errorf("LOG_LEVEL: unknown value %q", c.LogLevel)
+	}
+
+	if c.DatabaseURL == "" {
+		return fmt.Errorf("DATABASE_URL: must not be empty")
 	}
 
 	return nil
