@@ -35,6 +35,34 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	return i, err
 }
 
+const ensureUser = `-- name: EnsureUser :one
+insert into users (tg_user_id, lang)
+values ($1, $2)
+on conflict (tg_user_id) do update
+    set deleted_at = null
+returning id, tg_user_id, lang, created_at, deleted_at
+`
+
+type EnsureUserParams struct {
+	TgUserID int64
+	Lang     string
+}
+
+// Upsert on the shared tg_user_id. A returning user (even a previously
+// soft-deleted one) is revived; the stored lang is kept.
+func (q *Queries) EnsureUser(ctx context.Context, arg EnsureUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, ensureUser, arg.TgUserID, arg.Lang)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.TgUserID,
+		&i.Lang,
+		&i.CreatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const getUserByTgID = `-- name: GetUserByTgID :one
 select id, tg_user_id, lang, created_at, deleted_at
 from users

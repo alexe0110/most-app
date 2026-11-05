@@ -11,12 +11,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-telegram/bot"
 	"github.com/riverqueue/river"
 
+	"github.com/alexe0110/most-app/internal/docsbot/postgres"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/config"
 	"github.com/alexe0110/most-app/internal/platform/db"
 	"github.com/alexe0110/most-app/internal/platform/jobs"
 	"github.com/alexe0110/most-app/internal/platform/logging"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 func main() {
@@ -66,10 +70,22 @@ func run() error {
 	}
 	log.Info("job queue started")
 
+	repo := postgres.NewRepo(pool)
+	tgbot, err := tg.New(tg.Config{
+		Token:         cfg.TelegramToken,
+		Mode:          tg.Mode(cfg.TelegramMode),
+		PublicURL:     cfg.PublicURL,
+		WebhookSecret: cfg.TelegramWebhookSecret,
+	}, repo, log, func(b *bot.Bot) { telegram.Register(b, log) })
+	if err != nil {
+		return err
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
+	tgbot.RegisterRoutes(mux) // webhook route; no-op in polling mode
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}
 
 	go func() {
@@ -80,6 +96,16 @@ func run() error {
 		}
 	}()
 
+	botDone := make(chan struct{})
+	go func() {
+		defer close(botDone)
+		if err := tgbot.Run(ctx); err != nil {
+			log.Error("telegram bot failed", "err", err)
+			stop()
+		}
+	}()
+	log.Info("telegram bot started", "mode", cfg.TelegramMode)
+
 	<-ctx.Done()
 	log.Info("shutting down")
 
@@ -89,5 +115,10 @@ func run() error {
 	// Stop intake first, then drain the workers, both within the same budget.
 	srvErr := srv.Shutdown(shutdownCtx)
 	queueErr := queue.Stop(shutdownCtx)
+	// The bot loop exits once ctx is cancelled; wait for it within the budget.
+	select {
+	case <-botDone:
+	case <-shutdownCtx.Done():
+	}
 	return errors.Join(srvErr, queueErr)
 }
