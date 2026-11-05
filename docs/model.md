@@ -17,6 +17,7 @@
 |-----------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `users`         | Пользователь Most. Создаётся при первом `/start` в любом боте серии. Один Telegram-аккаунт = один пользователь. Мягкое удаление через `deleted_at`.                                          | `unique (tg_user_id)`                                                                                                                                              |
 | `integrations`  | Подключение внешнего аккаунта для конкретного бота. У Most Docs и будущего Most Calendar свои токены и свои разрешения (scope).                                                              | `unique (user_id, bot, provider)`                                                                                                                                  |
+| `oauth_states`  | Одноразовый `state` + PKCE verifier OAuth-флоу, привязан к `user_id` и боту. Создаётся при выдаче auth-ссылки, удаляется в callback. TTL 10 минут через `expires_at`.                        | `primary key (state)`<br>`index (expires_at)` — чистка протухших                                                                                                   |
 | `documents`     | Документ, который пользователь прислал боту. Запись создаётся сразу при получении файла и проходит статусы (таблица ниже). Удаляется сразу, без мягкого удаления.                            | `unique (user_id, tg_file_unique_id)` — один файл сохраняется один раз<br>`index (user_id, category)` — каталог<br>`gin (title gin_trgm_ops)` — поиск с опечатками |
 | `drive_folders` | Кеш папок `Most Docs/<категория>` на Drive пользователя, чтобы не искать папку через Drive API при каждой загрузке. Если папку удалили на Drive — запись удаляется и папка создаётся заново. | `primary key (user_id, category)`                                                                                                                                  |
 
@@ -25,6 +26,7 @@ erDiagram
     users ||--o{ integrations : "подключает"
     users ||--o{ documents : "владеет"
     users ||--o{ drive_folders : "имеет"
+    users ||--o{ oauth_states : "начинает флоу"
 
     users {
         uuid id PK
@@ -39,6 +41,13 @@ erDiagram
         text provider
         bytea refresh_token_enc
         text status
+    }
+    oauth_states {
+        text state PK
+        uuid user_id FK
+        text bot
+        text verifier
+        timestamptz expires_at
     }
     documents {
         uuid id PK

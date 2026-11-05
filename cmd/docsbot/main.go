@@ -20,6 +20,7 @@ import (
 	"github.com/alexe0110/most-app/internal/platform/db"
 	"github.com/alexe0110/most-app/internal/platform/jobs"
 	"github.com/alexe0110/most-app/internal/platform/logging"
+	"github.com/alexe0110/most-app/internal/platform/oauth"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -81,10 +82,22 @@ func run() error {
 		return err
 	}
 
+	oauthSvc, err := oauth.New(oauth.Config{
+		ClientID:     cfg.GoogleClientID,
+		ClientSecret: cfg.GoogleClientSecret,
+		TokenEncKey:  cfg.TokenEncKey,
+		PublicURL:    cfg.PublicURL,
+		BotURL:       botURL(cfg.TelegramBotUsername),
+	}, repo, telegram.NotifyConnected(tgbot, repo), log)
+	if err != nil {
+		return fmt.Errorf("new oauth service: %w", err)
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
+	mux.HandleFunc("GET "+oauth.CallbackPath, oauthSvc.Callback())
 	tgbot.RegisterRoutes(mux) // webhook route; no-op in polling mode
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}
 
@@ -121,4 +134,12 @@ func run() error {
 	case <-shutdownCtx.Done():
 	}
 	return errors.Join(srvErr, queueErr)
+}
+
+// botURL builds the t.me deep link the user is redirected to after OAuth.
+func botURL(username string) string {
+	if username == "" {
+		return "https://t.me"
+	}
+	return "https://t.me/" + username
 }

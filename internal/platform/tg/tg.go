@@ -94,6 +94,15 @@ func (b *Bot) Run(ctx context.Context) error {
 	return nil
 }
 
+// Send delivers a plain-text message to a chat. It is for notifications that
+// originate outside an update handler, such as the OAuth callback.
+func (b *Bot) Send(ctx context.Context, chatID int64, text string) error {
+	if _, err := b.api.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text}); err != nil {
+		return fmt.Errorf("send message: %w", err)
+	}
+	return nil
+}
+
 // webhookHandler guards the SDK webhook handler with the secret-token check.
 // The SDK's own handler only logs a bad secret and still returns 200, so we
 // enforce 401 ourselves before delegating. A missing secret config means the

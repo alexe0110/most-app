@@ -83,6 +83,20 @@ func (q *Queries) GetUserByTgID(ctx context.Context, tgUserID int64) (User, erro
 	return i, err
 }
 
+const getUserTgID = `-- name: GetUserTgID :one
+select tg_user_id
+from users
+where id = $1
+  and deleted_at is null
+`
+
+func (q *Queries) GetUserTgID(ctx context.Context, id pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, getUserTgID, id)
+	var tg_user_id int64
+	err := row.Scan(&tg_user_id)
+	return tg_user_id, err
+}
+
 const softDeleteUser = `-- name: SoftDeleteUser :exec
 update users
 set deleted_at = now()
