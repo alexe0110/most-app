@@ -18,6 +18,12 @@ from users
 where tg_user_id = $1
   and deleted_at is null;
 
+-- name: GetUserTgID :one
+select tg_user_id
+from users
+where id = $1
+  and deleted_at is null;
+
 -- name: SoftDeleteUser :exec
 update users
 set deleted_at = now()

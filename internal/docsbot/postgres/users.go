@@ -21,3 +21,17 @@ func (r *Repo) Ensure(ctx context.Context, tgUserID int64, lang string) (string,
 	}
 	return u.ID.String(), nil
 }
+
+// TgUserID resolves an internal user id (UUID) to its Telegram id, for sending
+// the user a message outside an update handler.
+func (r *Repo) TgUserID(ctx context.Context, userID string) (int64, error) {
+	id, err := parseUUID(userID)
+	if err != nil {
+		return 0, err
+	}
+	tgID, err := r.GetUserTgID(ctx, id)
+	if err != nil {
+		return 0, fmt.Errorf("get tg user id: %w", err)
+	}
+	return tgID, nil
+}

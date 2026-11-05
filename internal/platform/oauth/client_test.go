@@ -1,0 +1,68 @@
+package oauth
+
+import (
+	"context"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// seedIntegration stores an active integration with an encrypted refresh token.
+func seedIntegration(t *testing.T, svc *Service, store *fakeStore, status string) {
+	t.Helper()
+	enc, err := svc.enc.encrypt([]byte("refresh-abc"))
+	require.NoError(t, err)
+	store.integrations[igKey("user-1", "docs", provider)] = Integration{RefreshTokenEnc: enc, Status: status}
+}
+
+func TestClient_success(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestService(t, store, nil, &fakeGoogle{})
+	seedIntegration(t, svc, store, statusActive)
+
+	client, err := svc.Client(context.Background(), "user-1", "docs")
+	require.NoError(t, err)
+	require.NotNil(t, client)
+}
+
+func TestClient_invalidGrantRevokes(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestService(t, store, nil, &fakeGoogle{invalidGrant: true})
+	seedIntegration(t, svc, store, statusActive)
+
+	_, err := svc.Client(context.Background(), "user-1", "docs")
+	require.ErrorIs(t, err, ErrAccessRevoked)
+
+	ig, err := store.Integration(context.Background(), "user-1", "docs", provider)
+	require.NoError(t, err)
+	require.Equal(t, statusRevoked, ig.Status, "a rejected grant marks the integration revoked")
+}
+
+func TestClient_alreadyRevoked(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestService(t, store, nil, &fakeGoogle{})
+	seedIntegration(t, svc, store, statusRevoked)
+
+	_, err := svc.Client(context.Background(), "user-1", "docs")
+	require.ErrorIs(t, err, ErrAccessRevoked, "a revoked integration short-circuits without hitting Google")
+}
+
+func TestClient_noIntegration(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestService(t, store, nil, &fakeGoogle{})
+
+	_, err := svc.Client(context.Background(), "user-1", "docs")
+	require.ErrorIs(t, err, ErrNoIntegration)
+}
+
+func TestRevoke(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestService(t, store, nil, &fakeGoogle{})
+	seedIntegration(t, svc, store, statusActive)
+
+	require.NoError(t, svc.Revoke(context.Background(), "user-1", "docs"))
+
+	ig, err := store.Integration(context.Background(), "user-1", "docs", provider)
+	require.NoError(t, err)
+	require.Equal(t, statusRevoked, ig.Status)
+}

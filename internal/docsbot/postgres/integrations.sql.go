@@ -41,6 +41,32 @@ func (q *Queries) GetIntegration(ctx context.Context, arg GetIntegrationParams) 
 	return i, err
 }
 
+const setIntegrationStatus = `-- name: SetIntegrationStatus :exec
+update integrations
+set status     = $4,
+    updated_at = now()
+where user_id = $1
+  and bot = $2
+  and provider = $3
+`
+
+type SetIntegrationStatusParams struct {
+	UserID   pgtype.UUID
+	Bot      string
+	Provider string
+	Status   string
+}
+
+func (q *Queries) SetIntegrationStatus(ctx context.Context, arg SetIntegrationStatusParams) error {
+	_, err := q.db.Exec(ctx, setIntegrationStatus,
+		arg.UserID,
+		arg.Bot,
+		arg.Provider,
+		arg.Status,
+	)
+	return err
+}
+
 const upsertIntegration = `-- name: UpsertIntegration :one
 insert into integrations (user_id, bot, provider, refresh_token_enc, status)
 values ($1, $2, $3, $4, $5)

@@ -13,3 +13,11 @@ from integrations
 where user_id = $1
   and bot = $2
   and provider = $3;
+
+-- name: SetIntegrationStatus :exec
+update integrations
+set status     = $4,
+    updated_at = now()
+where user_id = $1
+  and bot = $2
+  and provider = $3;

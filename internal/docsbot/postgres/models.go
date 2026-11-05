@@ -39,6 +39,15 @@ type Integration struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+type OauthState struct {
+	State     string
+	UserID    pgtype.UUID
+	Bot       string
+	Verifier  string
+	ExpiresAt pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+}
+
 type User struct {
 	ID        pgtype.UUID
 	TgUserID  int64
