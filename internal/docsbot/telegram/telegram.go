@@ -12,10 +12,19 @@ import (
 	"github.com/go-telegram/bot/models"
 )
 
-// Register wires the docsbot handlers onto b. The /start command is matched
-// first; a catch-all text handler, registered last, replies to anything else.
+// Register wires the docsbot handlers onto b. Order matters: handlers are tried
+// in registration order and the first match wins. Commands come first so /start,
+// /convert and /cancel always work; then the converter claims the updates of a
+// user mid-conversion; a catch-all text handler, registered last, replies to
+// anything else.
 func Register(b *bot.Bot, log *slog.Logger) {
+	conv := newConverter(log)
+
 	b.RegisterHandler(bot.HandlerTypeMessageText, "start", bot.MatchTypeCommand, startHandler(log))
+	b.RegisterHandler(bot.HandlerTypeMessageText, "convert", bot.MatchTypeCommand, conv.start)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "cancel", bot.MatchTypeCommand, conv.cancel)
+	b.RegisterHandlerMatchFunc(conv.ownsCallback, conv.callback)
+	b.RegisterHandlerMatchFunc(conv.ownsMessage, conv.message)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "", bot.MatchTypePrefix, unknownHandler(log))
 }
 
