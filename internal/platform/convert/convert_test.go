@@ -14,9 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// noiseImage builds a w×h image of deterministic pseudo-random pixels. Noise
-// does not compress well, so JPEG/PNG of it is large enough to exercise the
-// quality search and downscaling instead of collapsing to a few bytes.
+// noiseImage builds a w×h image of random pixels. Noise doesn't compress well,
+// so the encoded size is big enough to trigger the quality search and downscaling.
 func noiseImage(w, h int) image.Image {
 	rng := rand.New(rand.NewSource(1))
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
@@ -42,9 +41,8 @@ func mustPNG(t *testing.T, img image.Image) []byte {
 	return buf.Bytes()
 }
 
-// pngHeader returns just the signature and IHDR of a truecolor PNG claiming the
-// given dimensions. It is enough for image.DecodeConfig to report the size,
-// which is all the pixel-bomb guard inspects.
+// pngHeader returns only the signature and IHDR of a PNG claiming the given
+// size — enough for DecodeConfig, which is all the bomb guard reads.
 func pngHeader(w, h int) []byte {
 	var buf bytes.Buffer
 	buf.Write([]byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A})

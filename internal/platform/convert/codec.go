@@ -9,26 +9,21 @@ import (
 
 	"golang.org/x/image/draw"
 
-	// Register the decoders we support. Anything else (HEIC, GIF, TIFF, …)
-	// fails image.Decode and is reported as ErrUnsupportedFormat.
+	// JPEG and PNG decoders; other formats (HEIC, GIF, …) fail to decode.
 	_ "image/jpeg"
 	_ "image/png"
 )
 
-// JPEG quality search bounds and the scaling used when quality alone can't make
-// an image fit.
 const (
 	minQuality    = 10
 	maxQuality    = 95
-	scaleFactor   = 0.8 // each downscale step keeps 80% of the dimensions
+	scaleFactor   = 0.8 // each step keeps 80% of the size
 	maxScaleSteps = 12
-	minDimension  = 32 // stop scaling down before the image becomes unusable
+	minDimension  = 32 // don't shrink below this
 )
 
-// decodeUpright decodes image bytes, rejects decompression bombs via the pixel
-// limit, and applies EXIF orientation so the returned image is visually upright.
-// Any decode failure (including unsupported formats like HEIC) maps to
-// ErrUnsupportedFormat.
+// decodeUpright decodes bytes, checks the pixel limit, and applies EXIF
+// rotation. A decode failure (e.g. HEIC) maps to ErrUnsupportedFormat.
 func decodeUpright(data []byte) (image.Image, error) {
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
@@ -50,9 +45,8 @@ func decodeUpright(data []byte) (image.Image, error) {
 	return applyOrientation(img, orientation), nil
 }
 
-// compressJPEG finds the highest JPEG quality whose output fits maxBytes. If
-// even the lowest quality overflows, it scales the image down in steps and
-// retries, returning the smallest encoding it managed.
+// compressJPEG picks the best quality that fits; if the lowest still overflows,
+// it scales down step by step and returns the smallest it managed.
 func compressJPEG(img image.Image, maxBytes int) ([]byte, error) {
 	best, err := fitJPEGQuality(img, maxBytes)
 	if err != nil {
@@ -77,9 +71,8 @@ func compressJPEG(img image.Image, maxBytes int) ([]byte, error) {
 	return best, nil
 }
 
-// fitJPEGQuality binary-searches the JPEG quality for the largest value whose
-// encoding fits maxBytes. If even minQuality overflows it returns that
-// minimum-quality encoding (the smallest this resolution can produce).
+// fitJPEGQuality binary-searches for the highest quality that fits maxBytes.
+// If even minQuality overflows, it returns that (smallest at this size).
 func fitJPEGQuality(img image.Image, maxBytes int) ([]byte, error) {
 	floor, err := encodeJPEG(img, minQuality)
 	if err != nil {
@@ -107,8 +100,8 @@ func fitJPEGQuality(img image.Image, maxBytes int) ([]byte, error) {
 	return fit, nil
 }
 
-// compressPNG shrinks a PNG by scaling the image down until it fits maxBytes or
-// hits the size floor. PNG is lossless, so dimensions are the only lever.
+// compressPNG scales the image down until it fits maxBytes. PNG is lossless, so
+// size is the only lever.
 func compressPNG(img image.Image, maxBytes int) ([]byte, error) {
 	best, err := encodePNG(img)
 	if err != nil {
@@ -150,7 +143,7 @@ func encodePNG(img image.Image) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// scaleDown returns img resized by factor using a high-quality kernel.
+// scaleDown resizes img by factor with a high-quality kernel.
 func scaleDown(img image.Image, factor float64) image.Image {
 	b := img.Bounds()
 	w := max(int(float64(b.Dx())*factor), 1)
@@ -160,7 +153,7 @@ func scaleDown(img image.Image, factor float64) image.Image {
 	return dst
 }
 
-// tooSmall reports whether img has shrunk past the point worth compressing.
+// tooSmall reports that img is too small to shrink further.
 func tooSmall(img image.Image) bool {
 	b := img.Bounds()
 	return b.Dx() <= minDimension || b.Dy() <= minDimension

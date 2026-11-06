@@ -18,8 +18,7 @@ import (
 	"github.com/alexe0110/most-app/internal/platform/convert"
 )
 
-// callbackPrefix namespaces every inline button this feature owns, so the
-// converter's callback handler can claim its updates and leave others alone.
+// callbackPrefix tags every inline button this feature owns.
 const callbackPrefix = "conv:"
 
 // Callback data for the inline buttons.
@@ -36,16 +35,14 @@ const (
 	cbFmtPNG      = callbackPrefix + "fmtpng"
 )
 
-// Limits for incoming and typed sizes.
 const (
-	maxFileBytes = 20 << 20   // Telegram's download ceiling for bots
-	maxLimitKB   = 20 * 1_024 // largest custom target we accept, in KB
+	maxFileBytes = 20 << 20   // Telegram download limit for bots
+	maxLimitKB   = 20 * 1_024 // largest custom target, in KB
 	downloadWait = 30 * time.Second
 )
 
-// converter implements the /convert feature: a stateful dialogue that turns
-// photos into a PDF or compresses a single image. State lives in sessions; the
-// pure image work is delegated to platform/convert.
+// converter runs the /convert dialogue. State lives in sessions; the image work
+// is done by platform/convert.
 type converter struct {
 	log      *slog.Logger
 	sessions *sessionStore
@@ -62,19 +59,18 @@ func newConverter(log *slog.Logger) *converter {
 	}
 }
 
-// ownsCallback matches the inline buttons this feature sent.
+// ownsCallback matches this feature's inline buttons.
 func (c *converter) ownsCallback(update *models.Update) bool {
 	return update.CallbackQuery != nil && strings.HasPrefix(update.CallbackQuery.Data, callbackPrefix)
 }
 
-// ownsMessage matches any message from a user who is mid-conversion, so the
-// converter — not the catch-all or the main scenario — handles it.
+// ownsMessage matches any message from a user with a live session.
 func (c *converter) ownsMessage(update *models.Update) bool {
 	user, ok := messageUser(update)
 	return ok && c.sessions.has(user)
 }
 
-// start begins a session and offers the two actions.
+// start opens a session and offers the two actions.
 func (c *converter) start(ctx context.Context, b *bot.Bot, update *models.Update) {
 	user, ok := messageUser(update)
 	if !ok {
@@ -84,7 +80,7 @@ func (c *converter) start(ctx context.Context, b *bot.Bot, update *models.Update
 	sendMarkup(ctx, b, c.log, update.Message.Chat.ID, textConvertStart, actionKeyboard())
 }
 
-// cancel leaves converter mode; the user's files go back to the main scenario.
+// cancel leaves converter mode.
 func (c *converter) cancel(ctx context.Context, b *bot.Bot, update *models.Update) {
 	user, ok := messageUser(update)
 	if !ok {
@@ -97,7 +93,7 @@ func (c *converter) cancel(ctx context.Context, b *bot.Bot, update *models.Updat
 	reply(ctx, b, c.log, update.Message.Chat.ID, text)
 }
 
-// message routes an in-session message by its content and the current step.
+// message routes an in-session message by content and step.
 func (c *converter) message(ctx context.Context, b *bot.Bot, update *models.Update) {
 	user, ok := messageUser(update)
 	if !ok {
@@ -121,7 +117,7 @@ func (c *converter) message(ctx context.Context, b *bot.Bot, update *models.Upda
 	}
 }
 
-// onDocument accepts image documents and rejects anything else (HEIC, PDF, …).
+// onDocument accepts image documents and rejects the rest (HEIC, PDF, …).
 func (c *converter) onDocument(ctx context.Context, b *bot.Bot, update *models.Update) {
 	doc := update.Message.Document
 	if !supportedImageMIME(doc.MimeType) {
@@ -131,7 +127,7 @@ func (c *converter) onDocument(ctx context.Context, b *bot.Bot, update *models.U
 	c.onImage(ctx, b, update, doc.FileID)
 }
 
-// onImage downloads an image and feeds it into the current step.
+// onImage downloads an image and adds it to the current step.
 func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Update, fileID string) {
 	user, _ := messageUser(update)
 	chatID := update.Message.Chat.ID
@@ -166,10 +162,10 @@ func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Upda
 	if toCompress {
 		sendMarkup(ctx, b, c.log, chatID, textConvertChooseLimit, limitKeyboard())
 	}
-	// In PDF mode we collect silently; the [Готово] button drives the result.
+	// PDF mode collects silently; [Готово] builds the result.
 }
 
-// onText handles a typed custom size; any other text is a nudge to tap a button.
+// onText reads a typed custom size; other text just nudges to tap a button.
 func (c *converter) onText(ctx context.Context, b *bot.Bot, update *models.Update, step step) {
 	chatID := update.Message.Chat.ID
 	if step != stepCustomLimit {
@@ -190,7 +186,7 @@ func (c *converter) onText(ctx context.Context, b *bot.Bot, update *models.Updat
 	sendMarkup(ctx, b, c.log, chatID, textConvertChooseFormat, formatKeyboard())
 }
 
-// callback handles every inline button press for the converter.
+// callback handles a button press.
 func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Update) {
 	c.answer(ctx, b, update.CallbackQuery.ID)
 
@@ -232,7 +228,7 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 	}
 }
 
-// finishPDF renders the collected photos into a PDF document.
+// finishPDF renders the collected photos into a PDF.
 func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, user, chatID int64) {
 	sess, ok := c.sessions.live(user)
 	if !ok || sess.step != stepCollectPDF {
@@ -256,7 +252,7 @@ func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, user, chatID int6
 	sendDocument(ctx, b, c.log, chatID, name, pdf)
 }
 
-// finishCompress compresses the single stored image to the chosen format.
+// finishCompress compresses the stored image to the chosen format.
 func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, user, chatID int64, format convert.Format) {
 	sess, ok := c.sessions.live(user)
 	if !ok || sess.step != stepChooseFormat || len(sess.images) == 0 {
@@ -280,7 +276,7 @@ func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, user, chatID
 	sendDocument(ctx, b, c.log, chatID, name, out)
 }
 
-// download fetches a Telegram file's bytes, bounded by the bot download limit.
+// download fetches a Telegram file's bytes, capped at maxFileBytes.
 func (c *converter) download(ctx context.Context, b *bot.Bot, fileID string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, downloadWait)
 	defer cancel()
@@ -313,14 +309,14 @@ func (c *converter) download(ctx context.Context, b *bot.Bot, fileID string) ([]
 	return data, nil
 }
 
-// answer dismisses the loading indicator on a tapped button.
+// answer stops the button's loading spinner.
 func (c *converter) answer(ctx context.Context, b *bot.Bot, callbackID string) {
 	if _, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: callbackID}); err != nil {
 		c.log.Error("answer callback", "err", err)
 	}
 }
 
-// convertErrorText maps a convert error to a user-facing message.
+// convertErrorText maps a convert error to a user message.
 func convertErrorText(err error) string {
 	switch {
 	case errors.Is(err, convert.ErrImageTooLarge):
@@ -332,7 +328,7 @@ func convertErrorText(err error) string {
 	}
 }
 
-// parseLimitKB reads a positive size in KB from user text, within our cap.
+// parseLimitKB reads a positive size in KB, up to maxLimitKB.
 func parseLimitKB(text string) (int, bool) {
 	kb, err := strconv.Atoi(strings.TrimSpace(text))
 	if err != nil || kb <= 0 || kb > maxLimitKB {
@@ -341,7 +337,7 @@ func parseLimitKB(text string) (int, bool) {
 	return kb, true
 }
 
-// limitBytes maps a preset limit button to its size in bytes.
+// limitBytes maps a preset limit button to bytes.
 func limitBytes(data string) int {
 	switch data {
 	case cbLimit1:
@@ -362,7 +358,7 @@ func formatExt(f convert.Format) string {
 	return "jpg"
 }
 
-// supportedImageMIME reports whether a document's MIME type is one we decode.
+// supportedImageMIME reports whether we can decode this MIME type.
 func supportedImageMIME(mime string) bool {
 	switch mime {
 	case "image/jpeg", "image/jpg", "image/png":
@@ -372,7 +368,7 @@ func supportedImageMIME(mime string) bool {
 	}
 }
 
-// largestPhoto returns the highest-resolution size Telegram offers for a photo.
+// largestPhoto returns the highest-resolution size (Telegram sorts ascending).
 func largestPhoto(sizes []models.PhotoSize) models.PhotoSize {
 	return sizes[len(sizes)-1]
 }
@@ -391,14 +387,14 @@ func callbackChat(update *models.Update) (int64, bool) {
 	return update.CallbackQuery.Message.Message.Chat.ID, true
 }
 
-// sendMarkup sends text with an inline keyboard, logging a failure once.
+// sendMarkup sends text with an inline keyboard.
 func sendMarkup(ctx context.Context, b *bot.Bot, log *slog.Logger, chatID int64, text string, markup models.ReplyMarkup) {
 	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ReplyMarkup: markup}); err != nil {
 		log.Error("send telegram message", "err", err, "chat_id", chatID)
 	}
 }
 
-// sendDocument uploads data as a file, logging a failure once.
+// sendDocument uploads data as a file.
 func sendDocument(ctx context.Context, b *bot.Bot, log *slog.Logger, chatID int64, filename string, data []byte) {
 	_, err := b.SendDocument(ctx, &bot.SendDocumentParams{
 		ChatID:   chatID,

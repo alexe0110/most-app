@@ -37,8 +37,7 @@ const (
 	textConvertCancelled = "Режим конвертера выключен."
 	textConvertNothing   = "Сейчас нечего отменять."
 
-	// textConvertBestEffort reports the smallest size reached when the target
-	// was out of reach; the argument is the achieved size in kilobytes.
+	// textConvertBestEffort takes the reached size in KB (target was out of reach).
 	textConvertBestEffort = "Меньше не вышло — сжал до %d КБ."
 )
 

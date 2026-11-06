@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// exifSegment builds a minimal APP1 (Exif/TIFF, big-endian) segment carrying
-// only the orientation tag, ready to splice into a JPEG right after its SOI.
+// exifSegment builds a minimal APP1 Exif segment (big-endian) with just the
+// orientation tag.
 func exifSegment(o int) []byte {
 	return []byte{
 		0xFF, 0xE1, 0x00, 0x22, // APP1 marker + segment length (34)
@@ -79,8 +79,8 @@ func TestApplyOrientation_dimensions(t *testing.T) {
 }
 
 func TestApplyOrientation_rotate90(t *testing.T) {
-	// A 2×1 image: left pixel red, right pixel blue. Orientation 6 rotates it
-	// 90° clockwise, so the left (red) pixel moves to the top.
+	// 2×1 image: left red, right blue. Orientation 6 rotates 90° CW, so red
+	// moves to the top.
 	src := image.NewRGBA(image.Rect(0, 0, 2, 1))
 	red := color.RGBA{255, 0, 0, 255}
 	blue := color.RGBA{0, 0, 255, 255}

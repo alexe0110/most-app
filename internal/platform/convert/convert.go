@@ -1,8 +1,5 @@
-// Package convert turns image bytes into other image bytes: it lays photos out
-// as a PDF and shrinks images under a size budget. It is pure and does no I/O —
-// bytes in, bytes out — so it is cheap to unit test and knows nothing about
-// Telegram. HEIC decoding and PDF re-compression are intentionally left out
-// (they need native libraries); see issue #39.
+// Package convert makes a PDF from images and shrinks images under a size
+// limit. Pure: bytes in, bytes out, no I/O.
 package convert
 
 import (
@@ -19,19 +16,17 @@ import (
 // Format is the output encoding Compress produces.
 type Format string
 
-// Supported output formats for Compress.
+// Output formats for Compress.
 const (
 	JPEG Format = "jpeg"
 	PNG  Format = "png"
 )
 
-// maxPixels caps an image's decoded area to guard against decompression bombs:
-// a tiny file that claims enormous dimensions. 50 Mpx is well above any phone
-// camera yet small enough to decode safely.
+// maxPixels guards against decompression bombs (a tiny file claiming huge
+// dimensions). 50 Mpx is above any phone camera.
 const maxPixels = 50_000_000
 
-// Errors returned by the package. They are sentinels so callers can map them to
-// user-facing messages with errors.Is.
+// Sentinel errors; callers map them to user messages with errors.Is.
 var (
 	ErrNoImages          = errors.New("convert: no images")
 	ErrUnsupportedFormat = errors.New("convert: unsupported image format")
@@ -40,22 +35,17 @@ var (
 	ErrInvalidTarget     = errors.New("convert: target size must be positive")
 )
 
-// A4 page geometry in millimetres, with a uniform margin around the image.
+// A4 page and margin, in millimetres.
 const (
 	a4WidthMM  = 210.0
 	a4HeightMM = 297.0
 	marginMM   = 10.0
 
-	// pdfJPEGQuality re-encodes each page's image; 85 keeps photos crisp while
-	// keeping the PDF small.
 	pdfJPEGQuality = 85
 )
 
-// ImagesToPDF lays each image on its own A4 page, centred and scaled to fit the
-// page margins while preserving aspect ratio. EXIF orientation is applied so
-// photos come out upright, and page order matches the input order. Every image
-// is re-encoded as JPEG, which bakes in the orientation and keeps the file
-// small — fine for the "photos to PDF" use case.
+// ImagesToPDF puts each image on its own A4 page: centred, scaled to the
+// margins, aspect kept, EXIF rotation applied. Page order follows the input.
 func ImagesToPDF(images [][]byte) ([]byte, error) {
 	if len(images) == 0 {
 		return nil, ErrNoImages
@@ -89,19 +79,15 @@ func ImagesToPDF(images [][]byte) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// fitWithin returns the millimetre size of a wPx×hPx image scaled to fit inside
-// availW×availH while keeping its aspect ratio.
+// fitWithin scales a wPx×hPx image to fit availW×availH (mm), keeping aspect.
 func fitWithin(wPx, hPx int, availW, availH float64) (w, h float64) {
 	scale := math.Min(availW/float64(wPx), availH/float64(hPx))
 	return float64(wPx) * scale, float64(hPx) * scale
 }
 
-// Compress re-encodes img so the result does not exceed maxBytes, in the given
-// format. For JPEG it binary-searches the quality, then scales the image down if
-// even the lowest quality overflows. For PNG (lossless) it scales down directly.
-// It returns the best result it could produce: when the target is unreachable it
-// returns the smallest encoding it managed, so the caller can compare the size
-// against maxBytes and tell the user how far it got.
+// Compress re-encodes img to fit maxBytes in the given format. If the target is
+// out of reach it returns the smallest it could make, so the caller can check
+// the size and tell the user how far it got.
 func Compress(img []byte, maxBytes int, format Format) ([]byte, error) {
 	if maxBytes <= 0 {
 		return nil, ErrInvalidTarget

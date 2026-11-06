@@ -20,15 +20,14 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 )
 
-// sentDocument records a document the bot uploaded to the fake Bot API.
+// sentDocument is a document the bot uploaded.
 type sentDocument struct {
 	filename string
 	data     []byte
 }
 
-// convHarness is a fake Telegram Bot API wired to a docsbot client. It serves
-// getFile + file downloads so the converter can fetch image bytes, and records
-// the messages and documents the bot sends back.
+// convHarness is a fake Bot API wired to a docsbot client. It serves file
+// downloads and records what the bot sends back.
 type convHarness struct {
 	bot     *bot.Bot
 	mu      sync.Mutex
