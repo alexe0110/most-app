@@ -1,8 +1,7 @@
-// Package oauth implements the Google OAuth flow for the series: it builds the
-// consent URL with a one-time state and PKCE, handles the redirect callback,
-// stores an encrypted refresh token and hands out authenticated HTTP clients.
-// It is Google-specific but storage-agnostic: the Store port is implemented by
-// a bot's postgres adapter, so platform never imports a bot.
+// Package oauth runs the Google OAuth flow: build the consent URL (one-time
+// state + PKCE), handle the callback, store an encrypted refresh token, and
+// hand out authenticated HTTP clients. Storage is via the Store port, which a
+// bot's postgres adapter implements, so platform never imports a bot.
 package oauth
 
 import (
@@ -103,9 +102,8 @@ func (s *Service) config() *oauth2.Config {
 	}
 }
 
-// AuthURL creates a one-time state with PKCE, stores it, and returns the Google
-// consent URL. access_type=offline together with prompt=consent make Google
-// return a refresh token on every consent, not only the first.
+// AuthURL stores a one-time state with PKCE and returns the Google consent URL.
+// offline + consent make Google return a refresh token on every consent.
 func (s *Service) AuthURL(ctx context.Context, userID, bot string) (string, error) {
 	state, err := randomToken(stateBytes)
 	if err != nil {

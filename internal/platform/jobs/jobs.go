@@ -1,6 +1,6 @@
-// Package jobs wraps the River job queue (Postgres-backed) shared by every bot
-// in the series. Jobs survive restarts and can be enqueued in the same
-// transaction as the data change that triggers them.
+// Package jobs wraps the Postgres-backed River job queue shared by every bot.
+// Jobs survive restarts and can be enqueued in the same transaction as the
+// change that triggers them.
 package jobs
 
 import (
@@ -17,25 +17,21 @@ import (
 	"github.com/riverqueue/river/rivertype"
 )
 
-// Queue defaults. One queue, a handful of workers, a bounded number of
-// attempts and a per-job timeout; retries use River's standard exponential
-// backoff (RetryPolicy left unset).
+// Queue defaults; retries use River's default backoff.
 const (
 	maxWorkers  = 5
 	maxAttempts = 5
 	jobTimeout  = 5 * time.Minute
 )
 
-// Client is the inbound/outbound façade over a River client: it starts and
-// stops the workers and enqueues jobs. River itself is never exposed, except
-// for the job-args and options types callers must speak.
+// Client is a thin façade over a River client: start/stop the workers and
+// enqueue jobs. River is not exposed beyond its job-args and option types.
 type Client struct {
 	river *river.Client[pgx.Tx]
 }
 
-// New builds a River client bound to pool. workers is the registry the caller
-// has populated (River refuses to start without at least one worker); periodic
-// lists jobs that run on a schedule. Migrate must have run first.
+// New builds a River client bound to pool. workers must have at least one
+// worker registered; periodic lists scheduled jobs. Migrate must run first.
 func New(pool *pgxpool.Pool, log *slog.Logger, workers *river.Workers, periodic ...*river.PeriodicJob) (*Client, error) {
 	rc, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues:       map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: maxWorkers}},
@@ -51,8 +47,7 @@ func New(pool *pgxpool.Pool, log *slog.Logger, workers *river.Workers, periodic 
 	return &Client{river: rc}, nil
 }
 
-// Start begins fetching and working jobs. It returns once the client is
-// running; cancelling ctx later triggers a graceful shutdown.
+// Start begins working jobs. Cancel ctx later for a graceful shutdown.
 func (c *Client) Start(ctx context.Context) error {
 	if err := c.river.Start(ctx); err != nil {
 		return fmt.Errorf("start river: %w", err)
@@ -60,8 +55,7 @@ func (c *Client) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop drains in-flight jobs and shuts the workers down, giving up when ctx is
-// done. Pass the same timeout used for the HTTP server.
+// Stop drains in-flight jobs, giving up when ctx is done.
 func (c *Client) Stop(ctx context.Context) error {
 	if err := c.river.Stop(ctx); err != nil {
 		return fmt.Errorf("stop river: %w", err)
@@ -78,9 +72,8 @@ func (c *Client) Insert(ctx context.Context, args river.JobArgs, opts *river.Ins
 	return res, nil
 }
 
-// InsertTx enqueues a job inside tx, so the job and the caller's data change
-// commit or roll back together. This is the API the domain's enqueue port
-// builds on.
+// InsertTx enqueues a job inside tx, so the job and the data change commit or
+// roll back together.
 func (c *Client) InsertTx(ctx context.Context, tx pgx.Tx, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error) {
 	res, err := c.river.InsertTx(ctx, tx, args, opts)
 	if err != nil {
@@ -89,8 +82,7 @@ func (c *Client) InsertTx(ctx context.Context, tx pgx.Tx, args river.JobArgs, op
 	return res, nil
 }
 
-// Migrate brings the River queue tables up to date. Run it after the goose
-// migrations and before creating a Client.
+// Migrate brings the River queue tables up to date. Run it before New.
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	migrator, err := rivermigrate.New(riverpgxv5.New(pool), nil)
 	if err != nil {

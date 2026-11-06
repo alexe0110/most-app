@@ -1,7 +1,5 @@
-// Package postgres is the outbound adapter that persists docsbot entities.
-//
-// It combines sqlc-generated query code (db.go, models.go, *.sql.go — do not
-// edit by hand, run `make sqlc`) with a hand-written Repo that adds a
-// transaction helper. In #10 this is where pgx errors get translated into
-// domain errors (pgx.ErrNoRows -> docsbot.ErrNotFound).
+// Package postgres is the outbound adapter that persists docsbot entities. It
+// combines sqlc-generated query code (*.sql.go — do not edit, run `make sqlc`)
+// with a hand-written Repo that adds a transaction helper and translates pgx
+// errors into domain errors.
 package postgres

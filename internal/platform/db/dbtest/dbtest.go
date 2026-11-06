@@ -14,9 +14,8 @@ import (
 	"github.com/alexe0110/most-app/internal/platform/jobs"
 )
 
-// New starts a disposable Postgres (postgres:17), connects a pool and returns
-// it. The pool is closed and the container terminated via t.Cleanup, so the
-// caller owns nothing. Any setup error fails the test.
+// New starts a disposable Postgres (postgres:17) and returns a connected pool.
+// The pool and container are cleaned up via t.Cleanup.
 func New(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	ctx := t.Context()
@@ -41,8 +40,7 @@ func New(t *testing.T) *pgxpool.Pool {
 
 	require.NoError(t, pool.Ping(ctx))
 
-	// Bring the schema up to date so tests run against the real tables,
-	// including the River queue tables integration tests rely on.
+	// Bring the schema (and River queue tables) up to date.
 	require.NoError(t, db.Migrate(ctx, dsn))
 	require.NoError(t, jobs.Migrate(ctx, pool))
 

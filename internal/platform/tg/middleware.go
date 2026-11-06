@@ -26,9 +26,8 @@ func UserIDFromContext(ctx context.Context) (string, bool) {
 	return id, ok
 }
 
-// recoverPanic turns a panic in any handler into a logged error instead of
-// crashing the process. Handlers run in their own goroutine, so the recover
-// has to live inside the handler chain.
+// recoverPanic turns a handler panic into a logged error. Handlers run in their
+// own goroutine, so the recover must live inside the chain.
 func recoverPanic(log *slog.Logger) bot.Middleware {
 	return func(next bot.HandlerFunc) bot.HandlerFunc {
 		return func(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -57,10 +56,8 @@ func logUpdate(log *slog.Logger) bot.Middleware {
 	}
 }
 
-// ensureUser upserts the sender into the users table and stashes the internal
-// user id in ctx for downstream handlers. Updates without a sender (channel
-// posts and the like) pass through untouched; a storage error is logged and the
-// update is dropped rather than surfaced to the user as a stack trace.
+// ensureUser upserts the sender and stashes the internal user id in ctx.
+// Senderless updates pass through; a storage error drops the update.
 func ensureUser(users Users, log *slog.Logger) bot.Middleware {
 	return func(next bot.HandlerFunc) bot.HandlerFunc {
 		return func(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -79,8 +76,7 @@ func ensureUser(users Users, log *slog.Logger) bot.Middleware {
 	}
 }
 
-// sender extracts the human behind an update, whether it arrived as a message
-// or a callback query. Returns nil for updates without a user.
+// sender returns the user behind a message or callback, or nil if there's none.
 func sender(update *models.Update) *models.User {
 	switch {
 	case update.Message != nil:
@@ -92,8 +88,7 @@ func sender(update *models.Update) *models.User {
 	}
 }
 
-// updateKind is a coarse label for logs — enough to tell message from callback
-// without recording any content.
+// updateKind is a coarse label for logs, with no message content.
 func updateKind(update *models.Update) string {
 	switch {
 	case update.Message != nil:

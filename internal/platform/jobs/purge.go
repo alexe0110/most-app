@@ -13,26 +13,23 @@ import (
 // purgeInterval is how often soft-deleted users are hard-deleted.
 const purgeInterval = 24 * time.Hour
 
-// PurgeUsersArgs is the periodic job that hard-deletes users marked for
-// deletion. It carries no payload — the job always purges every soft-deleted
-// user.
+// PurgeUsersArgs is the periodic job that hard-deletes soft-deleted users. It
+// carries no payload.
 type PurgeUsersArgs struct{}
 
 // Kind implements river.JobArgs.
 func (PurgeUsersArgs) Kind() string { return "purge_users" }
 
-// purgeUsersWorker removes soft-deleted users. Their bot data — documents,
-// integrations, drive folders — goes with them through the ON DELETE CASCADE
-// foreign keys, so a single statement cleans everything up.
+// purgeUsersWorker removes soft-deleted users. Their bot data goes with them
+// via the ON DELETE CASCADE foreign keys.
 type purgeUsersWorker struct {
 	river.WorkerDefaults[PurgeUsersArgs]
 	pool *pgxpool.Pool
 	log  *slog.Logger
 }
 
-// Work runs the purge. The statement is plain SQL rather than a sqlc query:
-// users is a platform-wide table and platform code must not import a bot's
-// postgres adapter (enforced by depguard).
+// Work runs the purge. Plain SQL, not a sqlc query: users is a platform table
+// and platform must not import a bot's adapter (depguard).
 func (w *purgeUsersWorker) Work(ctx context.Context, _ *river.Job[PurgeUsersArgs]) error {
 	tag, err := w.pool.Exec(ctx, `delete from users where deleted_at is not null`)
 	if err != nil {
@@ -42,8 +39,8 @@ func (w *purgeUsersWorker) Work(ctx context.Context, _ *river.Job[PurgeUsersArgs
 	return nil
 }
 
-// RegisterPurgeUsers registers the purge_users worker on workers and returns a
-// periodic job that runs it once a day. Call it before passing workers to New.
+// RegisterPurgeUsers adds the purge_users worker and returns a daily periodic
+// job. Call it before passing workers to New.
 func RegisterPurgeUsers(workers *river.Workers, pool *pgxpool.Pool, log *slog.Logger) *river.PeriodicJob {
 	river.AddWorker(workers, &purgeUsersWorker{pool: pool, log: log})
 	return river.NewPeriodicJob(

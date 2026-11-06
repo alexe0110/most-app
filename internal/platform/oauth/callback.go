@@ -7,10 +7,9 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Callback handles GET /oauth/google/callback. Whatever happens, the user is
-// redirected back to the bot; failures are logged with a reason but never with
-// tokens, code or state. This is the single place errors in this flow are
-// logged.
+// Callback handles GET /oauth/google/callback. The user is always redirected
+// back to the bot; failures are logged with a reason, never with tokens, code
+// or state. This is the one place this flow logs errors.
 func (s *Service) Callback() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
