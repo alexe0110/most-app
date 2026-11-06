@@ -1,6 +1,6 @@
 # CLAUDE.md — Most
 
-Most is a series of Telegram bots built on a shared Go core. The first bot, Most Docs, saves a user's documents to their own Google Drive.
+Most is a series of Telegram bots built on a shared Go core. The first bot, Most Docs, saves a user's documents in Telegram and, optionally, backs them up to their own Google Drive.
 
 Before touching code, read `docs/code_conventions.md`. Product: `docs/product.md`. System: `docs/architecture.md`. Data: `docs/model.md`. Tasks: GitHub Issues (milestone MVP).
 
