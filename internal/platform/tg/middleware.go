@@ -51,7 +51,7 @@ func logUpdate(log *slog.Logger) bot.Middleware {
 			if from := sender(update); from != nil {
 				attrs = append(attrs, "tg_user_id", from.ID)
 			}
-			log.Info("telegram update", attrs...)
+			log.Info("message from telegram", attrs...)
 			next(ctx, b, update)
 		}
 	}
