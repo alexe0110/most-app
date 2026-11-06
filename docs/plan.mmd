@@ -1,0 +1,79 @@
+flowchart LR
+    subgraph PREP["⚙️ Подготовка (руками)"]
+        T2["✅ #2 BotFather"]
+        T1["✅ #1 Google Cloud"]
+        T3["✅ #3 Railway"]
+    end
+
+    subgraph CORE["🧱 Инфра и ядро"]
+        T4["✅ #4 Каркас"]
+        T25["✅ #25 Тест-инфра"]
+        T26["✅ #26 CI"]
+        T5["✅ #5 БД"]
+        T6["✅ #6 Telegram"]
+        T7["✅ #7 River"]
+        T8["✅ #8 OAuth"]
+        T27["#27 CD"]
+    end
+
+    subgraph DOCS["📄 Most Docs"]
+        T39["✅ #39 Конвертер"]
+        T44["🔄 #44 Хранение в TG"]
+        T9["👉 #9 Онбординг"]
+        T10["#10 Приём документа"]
+        T12["#12 Карточка"]
+        T13["#13 Каталог"]
+        T14["#14 Поиск"]
+        T20["#20 Пограничные случаи"]
+    end
+
+    subgraph DRV["☁️ Google Drive — цель (параллельно)"]
+        T11["#11 Подключение Drive и перенос"]
+        T15["#15 /settings"]
+        T36["#36 Прод redirect URI"]
+    end
+
+    subgraph LAUNCH["🚀 Запуск"]
+        T16["#16 Политика +<br/>верификация"]
+        T18["#18 Прод-запуск"]
+    end
+
+    T4 --> T25 --> T26
+    T4 --> T5
+    T25 --> T5
+    T5 --> T6 & T7 & T8
+    T2 --> T6
+    T1 --> T8
+    T26 & T3 --> T27
+
+    T6 --> T39
+    T6 --> T9
+    T44 --> T9 --> T10
+    T10 --> T12 & T13 & T14 & T20
+
+    T8 & T7 & T10 --> T11 --> T15
+    T1 & T3 --> T36
+
+    T12 & T13 & T14 & T20 --> T18
+    T15 & T36 & T27 --> T18
+    T8 -.-> T16 -. не блокирует .-> T18
+
+    classDef done fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef wip fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:2px
+    classDef next fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,stroke-width:3px
+    classDef todo fill:#ffffff,stroke:#94a3b8,color:#334155
+    classDef opt fill:#ffffff,stroke:#94a3b8,color:#475569,stroke-dasharray:4 3
+    classDef launch fill:#fce7f3,stroke:#db2777,color:#831843,stroke-width:2px
+
+    class T1,T2,T3,T4,T25,T26,T5,T6,T7,T8,T39 done
+    class T44 wip
+    class T9 next
+    class T10,T12,T13,T14,T20,T27 todo
+    class T11,T15,T36,T16 opt
+    class T18 launch
+
+    style PREP fill:#f8fafc,stroke:#cbd5e1,color:#334155
+    style CORE fill:#f8fafc,stroke:#cbd5e1,color:#334155
+    style DOCS fill:#f8fafc,stroke:#cbd5e1,color:#334155
+    style DRV fill:#f0f9ff,stroke:#7dd3fc,color:#0c4a6e
+    style LAUNCH fill:#fdf2f8,stroke:#f9a8d4,color:#831843
