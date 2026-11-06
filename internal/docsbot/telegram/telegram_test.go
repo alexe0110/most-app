@@ -54,6 +54,7 @@ func commandUpdate(chatID int64, cmd string) *models.Update {
 	text := "/" + cmd
 	return &models.Update{
 		Message: &models.Message{
+			From: &models.User{ID: chatID},
 			Chat: models.Chat{ID: chatID, Type: models.ChatTypePrivate},
 			Text: text,
 			Entities: []models.MessageEntity{
@@ -66,6 +67,7 @@ func commandUpdate(chatID int64, cmd string) *models.Update {
 func textUpdate(chatID int64, text string) *models.Update {
 	return &models.Update{
 		Message: &models.Message{
+			From: &models.User{ID: chatID},
 			Chat: models.Chat{ID: chatID, Type: models.ChatTypePrivate},
 			Text: text,
 		},
