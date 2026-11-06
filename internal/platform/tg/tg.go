@@ -1,6 +1,5 @@
-// Package tg is the shared Telegram entry point for every bot in the series:
-// it builds the underlying client, wires the common middleware, serves the
-// webhook and runs either long polling or webhook mode driven by ctx.
+// Package tg is the shared Telegram entry point for every bot: it builds the
+// client, wires the common middleware, and runs polling or webhook mode.
 package tg
 
 import (
@@ -35,22 +34,19 @@ type Config struct {
 	WebhookSecret string // shared secret proving a request came from Telegram
 }
 
-// Bot wraps the go-telegram client with the series' lifecycle. The SDK client
-// is created here with the common middleware; the inbound adapter registers its
-// handlers through the register callback and never sees the client otherwise.
+// Bot wraps the go-telegram client. The inbound adapter adds its handlers
+// through the register callback and never sees the client otherwise.
 type Bot struct {
 	api *bot.Bot
 	cfg Config
 }
 
 // New builds the bot, installs the common middleware (panic recovery, update
-// logging and user upsert) and lets the inbound adapter add its handlers via
-// register.
+// logging, user upsert) and lets the adapter add handlers via register.
 func New(cfg Config, users Users, log *slog.Logger, register func(*bot.Bot)) (*Bot, error) {
 	opts := []bot.Option{
 		bot.WithMiddlewares(recoverPanic(log), logUpdate(log), ensureUser(users, log)),
-		// Updates that no handler matched are already logged by the middleware,
-		// so the default handler stays silent instead of writing to stdlib log.
+		// Unmatched updates are already logged by the middleware; stay silent.
 		bot.WithDefaultHandler(func(context.Context, *bot.Bot, *models.Update) {}),
 	}
 	if cfg.Mode == ModeWebhook {
@@ -75,9 +71,8 @@ func (b *Bot) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+webhookPath, webhookHandler(b.cfg.WebhookSecret, b.api.WebhookHandler()))
 }
 
-// Run starts receiving updates and blocks until ctx is cancelled. In webhook
-// mode it registers the webhook with Telegram first; a failure there is
-// returned before anything starts.
+// Run starts receiving updates until ctx is cancelled. In webhook mode it
+// registers the webhook with Telegram first.
 func (b *Bot) Run(ctx context.Context) error {
 	if b.cfg.Mode == ModeWebhook {
 		if _, err := b.api.SetWebhook(ctx, &bot.SetWebhookParams{
@@ -94,8 +89,8 @@ func (b *Bot) Run(ctx context.Context) error {
 	return nil
 }
 
-// Send delivers a plain-text message to a chat. It is for notifications that
-// originate outside an update handler, such as the OAuth callback.
+// Send delivers a plain-text message, for notifications sent outside an update
+// handler (e.g. the OAuth callback).
 func (b *Bot) Send(ctx context.Context, chatID int64, text string) error {
 	if _, err := b.api.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text}); err != nil {
 		return fmt.Errorf("send message: %w", err)
@@ -103,11 +98,9 @@ func (b *Bot) Send(ctx context.Context, chatID int64, text string) error {
 	return nil
 }
 
-// webhookHandler guards the SDK webhook handler with the secret-token check.
-// The SDK's own handler only logs a bad secret and still returns 200, so we
-// enforce 401 ourselves before delegating. A missing secret config means the
-// header must also be empty — but the bot is never run in webhook mode without
-// a secret (config enforces it).
+// webhookHandler adds the secret-token check: the SDK only logs a bad secret
+// and still returns 200, so we enforce 401 before delegating. Config guarantees
+// the secret is non-empty in webhook mode.
 func webhookHandler(secret string, inner http.HandlerFunc) http.HandlerFunc {
 	want := []byte(secret)
 	return func(w http.ResponseWriter, r *http.Request) {

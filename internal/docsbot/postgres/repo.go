@@ -7,9 +7,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Repo is the outbound adapter that persists docsbot entities in Postgres.
-// It embeds the sqlc-generated *Queries, so every generated query is available
-// on the Repo directly, and adds Tx for use cases that need atomicity.
+// Repo persists docsbot entities in Postgres. It embeds the sqlc-generated
+// *Queries, so every query is available on Repo, and adds Tx for atomicity.
 type Repo struct {
 	pool *pgxpool.Pool
 	*Queries
@@ -20,9 +19,8 @@ func NewRepo(pool *pgxpool.Pool) *Repo {
 	return &Repo{pool: pool, Queries: New(pool)}
 }
 
-// Tx runs fn inside a single transaction. fn gets a *Queries bound to that
-// transaction; returning an error rolls everything back, a nil error commits.
-// SQL never leaks out — callers only ever see domain-level values and errors.
+// Tx runs fn in one transaction: fn gets a *Queries bound to it, an error rolls
+// back, nil commits.
 func (r *Repo) Tx(ctx context.Context, fn func(q *Queries) error) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {

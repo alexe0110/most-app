@@ -36,9 +36,9 @@ func MustConnect(ctx context.Context, dsn string) *pgxpool.Pool {
 	return pool
 }
 
-// Migrate applies all pending migrations to dsn. goose needs a *sql.DB, so it
-// opens a short-lived database/sql connection (via the pgx stdlib driver) and
-// closes it afterwards; the pgxpool is left untouched.
+// Migrate applies pending migrations. goose needs a *sql.DB, so it opens a
+// short-lived connection via the pgx stdlib driver and closes it; the pool is
+// untouched.
 func Migrate(ctx context.Context, dsn string) error {
 	sqlDB, err := sql.Open("pgx", dsn)
 	if err != nil {

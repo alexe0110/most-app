@@ -21,10 +21,8 @@ type capture struct {
 	text   string
 }
 
-// newBot stands up a fake Telegram Bot API, wires the docsbot handlers on a
-// client pointed at it and returns the client plus the capture. Handlers run
-// synchronously (WithNotAsyncHandlers) so a test can assert right after
-// ProcessUpdate returns.
+// newBot stands up a fake Bot API and a docsbot client pointed at it. Handlers
+// run synchronously, so a test can assert right after ProcessUpdate.
 func newBot(t *testing.T) (*bot.Bot, *capture) {
 	t.Helper()
 	sent := &capture{}

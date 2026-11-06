@@ -1,7 +1,5 @@
 // Package telegram is the docsbot inbound adapter: it registers the bot's
-// handlers on the shared Telegram client and renders replies. For now it only
-// greets on /start and falls back on anything else; the real use cases arrive
-// with the domain Service in #9/#10.
+// handlers on the shared Telegram client and renders replies.
 package telegram
 
 import (
@@ -38,8 +36,7 @@ func unknownHandler(log *slog.Logger) bot.HandlerFunc {
 	}
 }
 
-// reply sends text to chat and logs a send failure once; a handler has nothing
-// better to do with the error.
+// reply sends text and logs a send failure; a handler can do nothing more.
 func reply(ctx context.Context, b *bot.Bot, log *slog.Logger, chatID int64, text string) {
 	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text}); err != nil {
 		log.Error("send telegram message", "err", err, "chat_id", chatID)

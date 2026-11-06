@@ -13,8 +13,7 @@ import (
 
 func discardLog() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
-// fakeUsers records the last Ensure call. It is the only implementation of the
-// Users port in tests, which is why the interface exists (hard rule #3).
+// fakeUsers records the last Ensure call.
 type fakeUsers struct {
 	id      string
 	err     error

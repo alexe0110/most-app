@@ -15,8 +15,7 @@ import (
 
 func discardLog() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
-// fakeStore is an in-memory Store. It is the only implementation used by unit
-// tests, which is why the Store interface exists (hard rule #3).
+// fakeStore is an in-memory Store for unit tests.
 type fakeStore struct {
 	states       map[string]State
 	integrations map[string]Integration // keyed by userID|bot|provider

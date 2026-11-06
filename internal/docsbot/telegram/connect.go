@@ -14,9 +14,8 @@ type userLookup interface {
 	TgUserID(ctx context.Context, userID string) (int64, error)
 }
 
-// NotifyConnected builds the OnConnected callback the OAuth service runs after a
-// successful Drive connection: it tells the user, in Telegram, that Drive is
-// linked. The bot owns this message, so the callback lives in the adapter.
+// NotifyConnected builds the OnConnected callback: after Drive is linked, it
+// tells the user in Telegram. The bot owns this message, so it lives here.
 func NotifyConnected(b *tg.Bot, users userLookup) oauth.OnConnected {
 	return func(ctx context.Context, userID string) error {
 		chatID, err := users.TgUserID(ctx, userID)
