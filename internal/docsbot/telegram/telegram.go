@@ -29,6 +29,7 @@ func Register(b *bot.Bot, log *slog.Logger, svc *docsbot.Service, auth Authorize
 
 	b.RegisterHandler(bot.HandlerTypeMessageText, "start", bot.MatchTypeCommand, d.start)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "help", bot.MatchTypeCommand, d.help)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "settings", bot.MatchTypeCommand, d.settings)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "list", bot.MatchTypeCommand, d.list)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "convert", bot.MatchTypeCommand, conv.start)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "cancel", bot.MatchTypeCommand, conv.cancel)
@@ -43,9 +44,10 @@ func Register(b *bot.Bot, log *slog.Logger, svc *docsbot.Service, auth Authorize
 // (same for dev and prod, so BotFather is never edited by hand).
 func Commands() []models.BotCommand {
 	return []models.BotCommand{
-		{Command: "start", Description: "Начать и подключить Google Drive"},
+		{Command: "start", Description: "Начать работу"},
 		{Command: "list", Description: "Мои документы по категориям"},
 		{Command: "convert", Description: "Фото → PDF или сжать изображение"},
+		{Command: "settings", Description: "Подключить Google Drive"},
 		{Command: "help", Description: "Что умеет бот"},
 	}
 }

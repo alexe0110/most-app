@@ -110,6 +110,15 @@ func (b *Bot) Send(ctx context.Context, chatID int64, text string) error {
 	return nil
 }
 
+// SendMarkup delivers a message with a reply markup (e.g. an inline keyboard),
+// for notifications sent outside an update handler.
+func (b *Bot) SendMarkup(ctx context.Context, chatID int64, text string, markup models.ReplyMarkup) error {
+	if _, err := b.api.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ReplyMarkup: markup}); err != nil {
+		return fmt.Errorf("send message: %w", err)
+	}
+	return nil
+}
+
 // SetCommands publishes the bot's command menu (setMyCommands). Called once at
 // startup so the menu is defined in code, the same for dev and prod.
 func (b *Bot) SetCommands(ctx context.Context, commands []models.BotCommand) error {

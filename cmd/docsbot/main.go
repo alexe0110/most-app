@@ -78,7 +78,10 @@ func run() error {
 	// oauth.Service and the bot each need the other (the bot shows the consent
 	// link; oauth notifies the bot when Drive connects). tgbot is filled just
 	// below, and both closures run only after startup, so the cycle is safe.
-	var tgbot *tg.Bot
+	var (
+		tgbot *tg.Bot
+		svc   *docsbot.Service
+	)
 	oauthSvc, err := oauth.New(oauth.Config{
 		ClientID:     cfg.GoogleClientID,
 		ClientSecret: cfg.GoogleClientSecret,
@@ -86,7 +89,7 @@ func run() error {
 		PublicURL:    cfg.PublicURL,
 		BotURL:       botURL(cfg.TelegramBotUsername),
 	}, repo, func(ctx context.Context, userID string) error {
-		return telegram.NotifyConnected(tgbot, repo)(ctx, userID)
+		return telegram.NotifyConnected(tgbot, repo, svc)(ctx, userID)
 	}, log)
 	if err != nil {
 		return fmt.Errorf("new oauth service: %w", err)
@@ -94,7 +97,7 @@ func run() error {
 
 	gdriveSvc := gdrive.New(gdriveClients{oauth: oauthSvc}, repo)
 	driveAdapter := driveBridge{oauth: oauthSvc, gd: gdriveSvc}
-	svc := docsbot.NewService(repo, driveAdapter, files, enq)
+	svc = docsbot.NewService(repo, driveAdapter, files, enq)
 
 	tgbot, err = tg.New(tg.Config{
 		Token:         cfg.TelegramToken,
@@ -106,7 +109,8 @@ func run() error {
 		return err
 	}
 	files.bot = tgbot
-	bindUpload(svc, noopNotifier{})
+	notifier := telegram.NewNotifier(tgbot, repo, oauthSvc, log)
+	bindUpload(svc, notifier)
 	if err := tgbot.SetCommands(ctx, telegram.Commands()); err != nil {
 		log.Error("set bot commands", "err", err) // not fatal
 	}
@@ -187,7 +191,7 @@ func (d driveBridge) Connected(ctx context.Context, user docsbot.UserID) (bool, 
 func (d driveBridge) Upload(ctx context.Context, user docsbot.UserID, in docsbot.DriveUpload) (docsbot.DriveFile, error) {
 	f, err := d.gd.Upload(ctx, string(user), gdrive.Upload{
 		CacheKey:   string(in.Category),
-		FolderName: string(in.Category), // TODO(#11 subtask C): use telegram.CategoryLabel for a Russian folder name
+		FolderName: telegram.CategoryLabel(in.Category),
 		Name:       in.Name,
 		MIME:       in.MIME,
 		Data:       in.Data,
@@ -215,10 +219,3 @@ func (f *tgFiles) Download(ctx context.Context, fileID string) ([]byte, string, 
 	}
 	return data, mime, nil
 }
-
-// noopNotifier is a placeholder until telegram.NewNotifier is wired.
-type noopNotifier struct{}
-
-func (noopNotifier) BackedUp(context.Context, docsbot.UserID, docsbot.Document) error     { return nil }
-func (noopNotifier) BackupFailed(context.Context, docsbot.UserID, docsbot.Document) error { return nil }
-func (noopNotifier) Reconnect(context.Context, docsbot.UserID) error                      { return nil }

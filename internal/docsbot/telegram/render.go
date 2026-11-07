@@ -27,6 +27,9 @@ const (
 	actListCat     = "lc"  // open a category page: d:lc:<slug>:<page>
 	actListBack    = "lb"  // back to the category list
 	actTransfer    = "tr"  // transfer saved documents to Drive (#11)
+	actTransferYes = "try" // confirm the transfer offer
+	actTransferNo  = "trn" // decline the transfer offer
+	actRetry       = "rt"  // retry a failed backup: d:rt:<docID>
 	actNoop        = "noop"
 )
 
@@ -48,6 +51,9 @@ func categoryLabel(c docsbot.Category) string {
 	}
 	return string(c)
 }
+
+// CategoryLabel is the Russian display name for a category.
+func CategoryLabel(c docsbot.Category) string { return categoryLabel(c) }
 
 // cb builds "d:<action>:<docID>".
 func cb(action string, id docsbot.DocumentID) string {
@@ -78,6 +84,31 @@ func categoryKeyboard(action string, id docsbot.DocumentID) *models.InlineKeyboa
 func connectKeyboard(url string) *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
 		{Text: btnConnectDrive, URL: url},
+	}}}
+}
+
+func transferOfferKeyboard() *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: btnTransferYes, CallbackData: cbPrefix + actTransferYes},
+		{Text: btnTransferNo, CallbackData: cbPrefix + actTransferNo},
+	}}}
+}
+
+func retryKeyboard(id docsbot.DocumentID) *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: btnRetryBackup, CallbackData: cb(actRetry, id)},
+	}}}
+}
+
+func openDriveKeyboard(doc docsbot.Document) *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: btnOpenDrive, URL: driveURL(doc.DriveFileID)},
+	}}}
+}
+
+func reconnectKeyboard(url string) *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: btnReconnect, URL: url},
 	}}}
 }
 
@@ -142,8 +173,12 @@ func renderCategoryPage(p docsbot.CategoryPage) (string, *models.InlineKeyboardM
 	var rows [][]models.InlineKeyboardButton
 	for _, doc := range p.Docs {
 		badge := ""
-		if p.DriveConnected && !doc.InDrive() {
-			badge = "📥 "
+		if p.DriveConnected {
+			if doc.InDrive() {
+				badge = "☁️ "
+			} else {
+				badge = "📥 "
+			}
 		}
 		fmt.Fprintf(b, "\n\n%s%s · %s", badge, doc.Title, formatDate(doc.CreatedAt))
 		rows = append(rows, []models.InlineKeyboardButton{{
