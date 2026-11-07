@@ -89,3 +89,18 @@ where user_id = @user_id
   and (title ilike '%' || @query || '%' or similarity(title, @query) > 0.3)
 order by similarity(title, @query) desc, created_at desc
 limit @lim;
+
+-- name: MarkDocumentBackedUp :exec
+update documents
+set backup_status = 'backed_up',
+    drive_file_id = @drive_file_id,
+    updated_at    = now()
+where id = @id;
+
+-- name: ListNotBackedUpDocumentIDs :many
+select id
+from documents
+where user_id = @user_id
+  and status = 'saved'
+  and backup_status <> 'backed_up'
+order by created_at;

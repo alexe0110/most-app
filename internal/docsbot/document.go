@@ -64,6 +64,8 @@ const (
 	BackupUploading BackupStatus = "uploading"
 	BackupBackedUp  BackupStatus = "backed_up"
 	BackupFailed    BackupStatus = "failed"
+	// BackupTooLarge marks a file above the Telegram download limit; it stays in Telegram.
+	BackupTooLarge BackupStatus = "too_large"
 )
 
 // Kind records how the file was sent, so it can be resent with the right method.
