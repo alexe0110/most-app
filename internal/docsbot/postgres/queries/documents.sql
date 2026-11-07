@@ -62,7 +62,7 @@ select count(*)
 from documents
 where user_id = @user_id
   and status = 'saved'
-  and backup_status <> 'backed_up';
+  and backup_status not in ('backed_up', 'too_large');
 
 -- name: DocumentCategoryCounts :many
 select category, count(*) as n
@@ -102,5 +102,5 @@ select id
 from documents
 where user_id = @user_id
   and status = 'saved'
-  and backup_status <> 'backed_up'
+  and backup_status not in ('backed_up', 'too_large')
 order by created_at;

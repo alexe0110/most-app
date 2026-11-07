@@ -54,13 +54,17 @@ func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentAr
 	res, err := w.svc.Backup(ctx, user, id)
 	switch {
 	case errors.Is(err, docsbot.ErrDriveRevoked):
-		_ = w.svc.MarkBackupFailed(ctx, user, id)
+		if err := w.svc.MarkBackupFailed(ctx, user, id); err != nil {
+			w.log.Error("mark backup failed", "err", err, "user_id", user)
+		}
 		_ = w.notify.Reconnect(ctx, user)
 		w.log.Warn("drive upload: access revoked", "user_id", user)
 		return nil
 	case err != nil:
 		if job.Attempt >= job.MaxAttempts {
-			_ = w.svc.MarkBackupFailed(ctx, user, id)
+			if markErr := w.svc.MarkBackupFailed(ctx, user, id); markErr != nil {
+				w.log.Error("mark backup failed", "err", markErr, "user_id", user)
+			}
 			_ = w.notify.BackupFailed(ctx, user, docsbot.Document{ID: id, UserID: user})
 			w.log.Error("drive upload failed permanently", "err", err, "user_id", user)
 		}

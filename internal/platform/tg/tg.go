@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -139,7 +140,13 @@ func (b *Bot) Download(ctx context.Context, fileID string) (data []byte, mime st
 
 	file, err := b.api.GetFile(ctx, &bot.GetFileParams{FileID: fileID})
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "too big") {
+			return nil, "", ErrFileTooLarge
+		}
 		return nil, "", fmt.Errorf("get file: %w", err)
+	}
+	if file.FileSize > maxFileBytes {
+		return nil, "", ErrFileTooLarge
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.api.FileDownloadLink(file), nil)
@@ -148,6 +155,11 @@ func (b *Bot) Download(ctx context.Context, fileID string) (data []byte, mime st
 	}
 	resp, err := b.http.Do(req)
 	if err != nil {
+		// The download URL embeds the bot token; redact it before it can be logged.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			ue.URL = strings.ReplaceAll(ue.URL, b.cfg.Token, "***")
+		}
 		return nil, "", fmt.Errorf("download file: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()

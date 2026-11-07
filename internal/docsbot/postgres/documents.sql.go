@@ -16,7 +16,7 @@ select count(*)
 from documents
 where user_id = $1
   and status = 'saved'
-  and backup_status <> 'backed_up'
+  and backup_status not in ('backed_up', 'too_large')
 `
 
 func (q *Queries) CountDocumentsNotBackedUp(ctx context.Context, userID pgtype.UUID) (int64, error) {
@@ -261,7 +261,7 @@ select id
 from documents
 where user_id = $1
   and status = 'saved'
-  and backup_status <> 'backed_up'
+  and backup_status not in ('backed_up', 'too_large')
 order by created_at
 `
 

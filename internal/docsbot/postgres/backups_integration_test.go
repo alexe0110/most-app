@@ -47,6 +47,24 @@ func TestBackups_markAndList(t *testing.T) {
 	require.Equal(t, []docsbot.DocumentID{b.ID}, ids)
 }
 
+func TestBackups_excludesTooLarge(t *testing.T) {
+	repo, user := domainRepo(t)
+	ctx := t.Context()
+
+	large := savedDoc(t, repo, user, "large")
+	failed := savedDoc(t, repo, user, "failed")
+	require.NoError(t, repo.SetBackupStatus(ctx, large.ID, docsbot.BackupTooLarge))
+	require.NoError(t, repo.SetBackupStatus(ctx, failed.ID, docsbot.BackupFailed))
+
+	ids, err := repo.NotBackedUpIDs(ctx, user)
+	require.NoError(t, err)
+	require.Equal(t, []docsbot.DocumentID{failed.ID}, ids)
+
+	n, err := repo.CountNotBackedUp(ctx, user)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+}
+
 func TestBackups_folderCache(t *testing.T) {
 	repo, user := domainRepo(t)
 	ctx := t.Context()
