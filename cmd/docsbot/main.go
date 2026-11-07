@@ -205,6 +205,11 @@ func (d driveBridge) Upload(ctx context.Context, user docsbot.UserID, in docsbot
 	return docsbot.DriveFile{ID: f.ID, Link: f.Link}, nil
 }
 
+// Revoke best-effort revokes the user's Drive access. #15 wires this to oauth.
+func (d driveBridge) Revoke(ctx context.Context, user docsbot.UserID) error {
+	return nil
+}
+
 // tgFiles implements docsbot.FileSource over the Telegram bot. bot is set after
 // the bot is built (before the queue starts), breaking the svc-bot cycle.
 type tgFiles struct{ bot *tg.Bot }

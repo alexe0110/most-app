@@ -12,6 +12,8 @@ const (
 	pageSize = 10
 	// searchLimit caps search results (#14).
 	searchLimit = 10
+	// exportLimit caps how many documents one "send all" request resends (#15).
+	exportLimit = 50
 )
 
 // Service holds the Most Docs use cases. It depends only on ports, never on
@@ -187,6 +189,32 @@ func (s *Service) RetryBackup(ctx context.Context, user UserID, id DocumentID) e
 		return fmt.Errorf("enqueue upload: %w", err)
 	}
 	return nil
+}
+
+// Settings reports the Drive connection and the user's document counts for /settings.
+func (s *Service) Settings(ctx context.Context, user UserID) (SettingsView, error) {
+	return SettingsView{}, nil
+}
+
+// Disconnect revokes Drive access (best-effort) and cancels the user's pending uploads.
+func (s *Service) Disconnect(ctx context.Context, user UserID) error {
+	return nil
+}
+
+// DeleteAllData revokes Drive access, cancels pending uploads and deletes all of the
+// user's data, then soft-deletes the user.
+func (s *Service) DeleteAllData(ctx context.Context, user UserID) error {
+	return nil
+}
+
+// RetryFailed re-enqueues a Drive upload for every failed document, returning the count.
+func (s *Service) RetryFailed(ctx context.Context, user UserID) (int, error) {
+	return 0, nil
+}
+
+// ExportAll returns the user's saved documents (capped at exportLimit) to resend.
+func (s *Service) ExportAll(ctx context.Context, user UserID) (Export, error) {
+	return Export{}, nil
 }
 
 // Card returns one document's detail, scoped to the user.
