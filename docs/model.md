@@ -1,6 +1,6 @@
 # Модель данных
 
-В Postgres храним только метаданные; сами файлы лежат на Google Drive пользователя.
+В Postgres храним только метаданные (включая Telegram `file_id`). Сами файлы остаются в Telegram; при подключённом Drive копия лежит на Диске пользователя.
 
 **Общие решения**
 - ID — UUID v7 (сортируется по времени, не раскрывает число записей).
@@ -18,7 +18,7 @@
 | `users`         | Пользователь Most. Создаётся при первом `/start` в любом боте серии. Один Telegram-аккаунт = один пользователь. Мягкое удаление через `deleted_at`.                                          | `unique (tg_user_id)`                                                                                                                                              |
 | `integrations`  | Подключение внешнего аккаунта для конкретного бота. У Most Docs и будущего Most Calendar свои токены и свои разрешения (scope).                                                              | `unique (user_id, bot, provider)`                                                                                                                                  |
 | `oauth_states`  | Одноразовый `state` + PKCE verifier OAuth-флоу, привязан к `user_id` и боту. Создаётся при выдаче auth-ссылки, удаляется в callback. TTL 10 минут через `expires_at`.                        | `primary key (state)`<br>`index (expires_at)` — чистка протухших                                                                                                   |
-| `documents`     | Документ, который пользователь прислал боту. Запись создаётся сразу при получении файла и проходит статусы (таблица ниже). Удаляется сразу, без мягкого удаления.                            | `unique (user_id, tg_file_unique_id)` — один файл сохраняется один раз<br>`index (user_id, category)` — каталог<br>`gin (title gin_trgm_ops)` — поиск с опечатками |
+| `documents`     | Документ, присланный боту. Создаётся при получении, сохраняется сразу после выбора категории (в Telegram по `tg_file_id`). Drive-поля (`drive_file_id`, `backup_status`) заполняются только при выгрузке на Drive. Удаляется сразу, без мягкого удаления.                            | `unique (user_id, tg_file_unique_id)` — один файл сохраняется один раз<br>`index (user_id, category)` — каталог<br>`gin (title gin_trgm_ops)` — поиск с опечатками |
 | `drive_folders` | Кеш папок `Most Docs/<категория>` на Drive пользователя, чтобы не искать папку через Drive API при каждой загрузке. Если папку удалили на Drive — запись удаляется и папка создаётся заново. | `primary key (user_id, category)`                                                                                                                                  |
 
 ```mermaid
@@ -55,7 +55,9 @@ erDiagram
         text status
         text category
         text title
-        text drive_file_id
+        text tg_file_id
+        text drive_file_id "nullable"
+        text backup_status
     }
     drive_folders {
         uuid user_id FK
@@ -66,12 +68,26 @@ erDiagram
 
 ### Статусы documents
 
-| Статус      | Когда                                        | Следующий              |
-|-------------|----------------------------------------------|------------------------|
-| `pending`   | Файл получен, ждём выбора категории          | `uploading`            |
-| `uploading` | Категория выбрана, задача загрузки в очереди | `saved` / `failed`     |
-| `saved`     | Файл загружен на Drive                       | —                      |
-| `failed`    | Загрузка не удалась после всех ретраев       | `uploading` (повтор)   |
+Документ сохраняется сразу после выбора категории — это `status`:
+
+| Статус    | Когда                                                         | Следующий |
+|-----------|---------------------------------------------------------------|-----------|
+| `pending` | Файл получен, ждём выбора категории                           | `saved`   |
+| `saved`   | Категория выбрана, документ хранится в Telegram (`tg_file_id`) | —         |
+
+Выгрузка на Drive — отдельный `backup_status`, задействован только при подключённом Drive:
+
+| `backup_status` | Когда                                      | Следующий              |
+|-----------------|--------------------------------------------|------------------------|
+| `none`          | Drive не подключён / выгрузка не нужна       | `pending`              |
+| `pending`       | Поставлен в очередь на выгрузку             | `uploading`            |
+| `uploading`     | Задача выгрузки выполняется                 | `backed_up` / `failed` |
+| `backed_up`     | Файл скопирован на Drive (`drive_file_id`)  | —                      |
+| `failed`        | Выгрузка не удалась после ретраев           | `uploading` (повтор)   |
+
+В каталоге и поиске 📥 показывается, пока `backup_status` ≠ `backed_up`.
+
+> Миграция (код в этом PR не трогаем). Текущая `documents` уже хранит `tg_file_id` и допускает `drive_file_id = null`. Нужно: добавить `backup_status text not null default 'none'` с check `('none','pending','uploading','backed_up','failed')` и заменить старое ограничение `status` на `('pending','saved')`. Отдельная миграция в задаче #11.
 
 ## v1
 
