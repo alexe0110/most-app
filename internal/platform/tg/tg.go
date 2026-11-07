@@ -98,6 +98,18 @@ func (b *Bot) Send(ctx context.Context, chatID int64, text string) error {
 	return nil
 }
 
+// SetCommands publishes the bot's command menu (setMyCommands). Called once at
+// startup so the menu is defined in code, the same for dev and prod.
+func (b *Bot) SetCommands(ctx context.Context, commands []models.BotCommand) error {
+	if len(commands) == 0 {
+		return nil
+	}
+	if _, err := b.api.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: commands}); err != nil {
+		return fmt.Errorf("set my commands: %w", err)
+	}
+	return nil
+}
+
 // webhookHandler adds the secret-token check: the SDK only logs a bad secret
 // and still returns 200, so we enforce 401 before delegating. Config guarantees
 // the secret is non-empty in webhook mode.

@@ -75,7 +75,8 @@ func newConvHarness(t *testing.T) *convHarness {
 
 	b, err := bot.New("123:ABC", bot.WithServerURL(ts.URL), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
 	require.NoError(t, err)
-	telegram.Register(b, slog.New(slog.DiscardHandler))
+	svc, auth, _ := fakeDeps()
+	telegram.Register(b, slog.New(slog.DiscardHandler), svc, auth)
 
 	h.bot = b
 	return h
@@ -247,7 +248,8 @@ func TestConvert_cancelReturnsToMainScenario(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:cancel"))
 
-	// With the session gone, a plain message falls through to the catch-all.
-	h.bot.ProcessUpdate(ctx, convText("привет"))
+	// With the session gone, an unknown command falls through to the catch-all
+	// (plain text is now a search, which needs a stored user).
+	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "foobar"))
 	require.Contains(t, h.lastText(), "Не понимаю")
 }
