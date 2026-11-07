@@ -2,56 +2,58 @@
 
 Most is a series of Telegram bots built on a shared Go core. The first bot, Most Docs, saves documents to the user's own Google Drive; until Drive is connected, documents are kept in Telegram.
 
-Before touching code, read `docs/code_conventions.md`. Product: `docs/product.md`. System: `docs/architecture.md`. Data: `docs/model.md`. Tasks: GitHub Issues (milestone MVP).
+Docs (read only what the task needs, not everything): `docs/code_conventions.md` (read before writing code; skim the relevant sections), `docs/product.md`, `docs/architecture.md`, `docs/model.md`. Tasks: GitHub Issues (milestone MVP).
 
-## Architecture in 5 lines
+## Architecture
 
-- `internal/<bot>/` — domain: entities, `Service` with use cases, port interfaces in `ports.go`.
-- `internal/<bot>/<adapter>/` — bot adapters: `telegram/` (inbound), `jobs/` (inbound), `postgres/` (outbound).
-- `internal/platform/` — shared core for all bots: config, log, db, jobs, tg, oauth, gdrive, httpx, billing.
+- `internal/<bot>/` — domain: entities, `Service` with use cases, ports in `ports.go`.
+- `internal/<bot>/<adapter>/` — adapters: `telegram/`, `jobs/` (inbound), `postgres/` (outbound).
+- `internal/platform/` — shared core for all bots (config, log, db, jobs, tg, oauth, gdrive, httpx, billing).
 - `cmd/<bot>/main.go` — manual dependency wiring, no DI frameworks.
 - Use cases return the meaning of a reply (`docsbot.Reply`); the channel adapter renders buttons and texts.
 
 ## Hard rules
 
-0. Follow the idioms and patterns established in software development in general, and for the Go language in particular; the code should be clear and tidy!!!
-1. The domain (`internal/docsbot`) **must not import** adapters, `platform/tg`, `platform/db`, `platform/gdrive` or external SDKs. Enforced by depguard.
+0. Idiomatic, clear, tidy Go.
+1. The domain (`internal/docsbot`) must not import adapters, `platform/tg`, `platform/db`, `platform/gdrive` or external SDKs (depguard).
 2. Bots never import each other. `platform` never imports a bot.
-3. Interfaces are declared by the consumer. Add an interface only when there is a second implementation or a test needs a fake.
+3. Interfaces are declared by the consumer; add one only for a second implementation or a test fake.
 4. `ctx context.Context` is the first argument of every function that does I/O. Never store it in a struct.
-5. Errors: wrap with `fmt.Errorf("...: %w", err)`; adapters translate their errors into domain errors; log once, at the top (handler or worker).
-6. SQL lives only in `.sql` files for `sqlc`, inside the `postgres/` adapter. Migrations: `goose`, in `migrations/`.
+5. Wrap errors: `fmt.Errorf("...: %w", err)`. Adapters translate their errors into domain errors. Log once, at the top (handler or worker).
+6. SQL only in `.sql` files for `sqlc`, inside `postgres/`. Migrations: `goose`, in `migrations/`.
 7. Never log tokens, document contents, file captions, IIN or document numbers.
 8. No `utils`, `common`, `helpers` or `models` packages.
-9. Do not add dependencies to `go.mod` unless explicitly asked.
+9. No new dependencies in `go.mod` unless explicitly asked.
 
 ## Adding a feature
 
-1. Entities / errors / `Reply` types in the domain, if needed.
-2. A `Service` method + a unit test (table-driven, fakes in `fakes_test.go`).
-3. A port in `ports.go`, if the domain needs a new external action.
-4. The port implementation in an adapter + an integration test (`//go:build integration`).
-5. Rendering of the `Reply` in the inbound adapter (`telegram/`).
-6. Wiring in `cmd/<bot>/main.go`, if a new dependency appeared.
+1. Domain: entities / errors / `Reply` types, if needed.
+2. `Service` method + table-driven unit test (fakes in `fakes_test.go`).
+3. Port in `ports.go`, if a new external action is needed.
+4. Port implementation in an adapter + integration test (`//go:build integration`).
+5. Render the `Reply` in `telegram/`.
+6. Wire in `cmd/<bot>/main.go`, if a new dependency appeared.
 
-Reference feature: document intake — `docsbot.Service.Receive` and `docsbot/telegram/receive.go`. Build new features the same way.
+Reference: `docsbot.Service.Receive` and `internal/docsbot/telegram/docs.go`. Follow the same shape.
 
 ## Commands
 
 ```bash
-make run          # local run, long polling, dev bot
 make test         # unit tests
 make test-int     # integration tests (needs Docker)
-make lint         # golangci-lint, including depguard
-make migrate      # goose up (reads $DATABASE_URL from the env)
+make lint         # golangci-lint + depguard
+make migrate      # goose up ($DATABASE_URL)
 make sqlc         # regenerate queries
+make run          # local run, long polling, dev bot
 ```
 
-Before saying "done": `make lint && make test` must pass.
+Before "done": `make lint && make test` pass. Add `make test-int` if an adapter or SQL changed.
 
 ## Working style
 
-- Small changes: one task, one PR linking the issue (`Closes #N`).
-- Do not touch code outside the task. If you spot a problem, describe it in the PR instead of silently fixing it.
-- Unsure where code belongs — ask; do not invent a new layer.
+- One task = one PR (`Closes #N`).
+- Stay inside the task. Spotted a problem elsewhere — mention it in the PR, don't fix it.
+- Unsure where code belongs — ask; don't invent a layer.
+- Read only the files you need; use Grep/Glob instead of reading whole directories.
+- Keep command output short: `go test ./path/...` for the touched package first, then `make test`.
 - Code comments in English. User-facing texts in Russian, in `internal/<bot>/telegram/texts.go`.
