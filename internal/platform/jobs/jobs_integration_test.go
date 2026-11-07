@@ -206,8 +206,8 @@ func insertUser(t *testing.T, pool *pgxpool.Pool, tgID int64, deleted bool) stri
 func insertDocument(t *testing.T, pool *pgxpool.Pool, userID, uniq string) {
 	t.Helper()
 	_, err := pool.Exec(t.Context(),
-		`insert into documents (user_id, status, category, title, tg_file_id, tg_file_unique_id)
-		 values ($1::uuid, 'pending', 'misc', 'title', 'file', $2)`,
+		`insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id)
+		 values ($1::uuid, 'pending', 'document', 'misc', 'title', 'file', $2)`,
 		userID, uniq)
 	require.NoError(t, err)
 }

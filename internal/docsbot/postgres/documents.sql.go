@@ -11,32 +11,100 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createDocument = `-- name: CreateDocument :one
-insert into documents (user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id)
-values ($1, $2, $3, $4, $5, $6, $7)
-returning id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at
+const countDocumentsNotBackedUp = `-- name: CountDocumentsNotBackedUp :one
+select count(*)
+from documents
+where user_id = $1
+  and status = 'saved'
+  and backup_status <> 'backed_up'
 `
 
-type CreateDocumentParams struct {
-	UserID         pgtype.UUID
-	Status         string
-	Category       string
-	Title          string
-	TgFileID       string
-	TgFileUniqueID string
-	DriveFileID    pgtype.Text
+func (q *Queries) CountDocumentsNotBackedUp(ctx context.Context, userID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countDocumentsNotBackedUp, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
-func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) (Document, error) {
-	row := q.db.QueryRow(ctx, createDocument,
-		arg.UserID,
-		arg.Status,
-		arg.Category,
-		arg.Title,
-		arg.TgFileID,
-		arg.TgFileUniqueID,
-		arg.DriveFileID,
-	)
+const countSavedDocuments = `-- name: CountSavedDocuments :one
+select count(*)
+from documents
+where user_id = $1
+  and status = 'saved'
+`
+
+func (q *Queries) CountSavedDocuments(ctx context.Context, userID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countSavedDocuments, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const deleteDocumentByID = `-- name: DeleteDocumentByID :exec
+delete
+from documents
+where id = $1
+  and user_id = $2
+`
+
+type DeleteDocumentByIDParams struct {
+	ID     pgtype.UUID
+	UserID pgtype.UUID
+}
+
+func (q *Queries) DeleteDocumentByID(ctx context.Context, arg DeleteDocumentByIDParams) error {
+	_, err := q.db.Exec(ctx, deleteDocumentByID, arg.ID, arg.UserID)
+	return err
+}
+
+const documentCategoryCounts = `-- name: DocumentCategoryCounts :many
+select category, count(*) as n
+from documents
+where user_id = $1
+  and status = 'saved'
+group by category
+order by category
+`
+
+type DocumentCategoryCountsRow struct {
+	Category string
+	N        int64
+}
+
+func (q *Queries) DocumentCategoryCounts(ctx context.Context, userID pgtype.UUID) ([]DocumentCategoryCountsRow, error) {
+	rows, err := q.db.Query(ctx, documentCategoryCounts, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DocumentCategoryCountsRow{}
+	for rows.Next() {
+		var i DocumentCategoryCountsRow
+		if err := rows.Scan(&i.Category, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getDocumentByID = `-- name: GetDocumentByID :one
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status
+from documents
+where id = $1
+  and user_id = $2
+`
+
+type GetDocumentByIDParams struct {
+	ID     pgtype.UUID
+	UserID pgtype.UUID
+}
+
+func (q *Queries) GetDocumentByID(ctx context.Context, arg GetDocumentByIDParams) (Document, error) {
+	row := q.db.QueryRow(ctx, getDocumentByID, arg.ID, arg.UserID)
 	var i Document
 	err := row.Scan(
 		&i.ID,
@@ -49,24 +117,26 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		&i.DriveFileID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
+		&i.BackupStatus,
 	)
 	return i, err
 }
 
-const getDocumentByFileUniqueID = `-- name: GetDocumentByFileUniqueID :one
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at
+const getDocumentByUniqueID = `-- name: GetDocumentByUniqueID :one
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status
 from documents
 where user_id = $1
   and tg_file_unique_id = $2
 `
 
-type GetDocumentByFileUniqueIDParams struct {
+type GetDocumentByUniqueIDParams struct {
 	UserID         pgtype.UUID
 	TgFileUniqueID string
 }
 
-func (q *Queries) GetDocumentByFileUniqueID(ctx context.Context, arg GetDocumentByFileUniqueIDParams) (Document, error) {
-	row := q.db.QueryRow(ctx, getDocumentByFileUniqueID, arg.UserID, arg.TgFileUniqueID)
+func (q *Queries) GetDocumentByUniqueID(ctx context.Context, arg GetDocumentByUniqueIDParams) (Document, error) {
+	row := q.db.QueryRow(ctx, getDocumentByUniqueID, arg.UserID, arg.TgFileUniqueID)
 	var i Document
 	err := row.Scan(
 		&i.ID,
@@ -79,25 +149,82 @@ func (q *Queries) GetDocumentByFileUniqueID(ctx context.Context, arg GetDocument
 		&i.DriveFileID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
+		&i.BackupStatus,
+	)
+	return i, err
+}
+
+const insertDocument = `-- name: InsertDocument :one
+insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id)
+values ($1, $2, $3, $4, $5, $6, $7)
+returning id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status
+`
+
+type InsertDocumentParams struct {
+	UserID         pgtype.UUID
+	Status         string
+	Kind           string
+	Category       string
+	Title          string
+	TgFileID       string
+	TgFileUniqueID string
+}
+
+// A received file starts as pending with no category; the category and 'saved'
+// status are set once the user picks one (SaveDocumentCategory).
+func (q *Queries) InsertDocument(ctx context.Context, arg InsertDocumentParams) (Document, error) {
+	row := q.db.QueryRow(ctx, insertDocument,
+		arg.UserID,
+		arg.Status,
+		arg.Kind,
+		arg.Category,
+		arg.Title,
+		arg.TgFileID,
+		arg.TgFileUniqueID,
+	)
+	var i Document
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Status,
+		&i.Category,
+		&i.Title,
+		&i.TgFileID,
+		&i.TgFileUniqueID,
+		&i.DriveFileID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Kind,
+		&i.BackupStatus,
 	)
 	return i, err
 }
 
 const listDocumentsByCategory = `-- name: ListDocumentsByCategory :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status
 from documents
 where user_id = $1
   and category = $2
+  and status = 'saved'
 order by created_at desc
+limit $4 offset $3
 `
 
 type ListDocumentsByCategoryParams struct {
 	UserID   pgtype.UUID
 	Category string
+	Off      int32
+	Lim      int32
 }
 
 func (q *Queries) ListDocumentsByCategory(ctx context.Context, arg ListDocumentsByCategoryParams) ([]Document, error) {
-	rows, err := q.db.Query(ctx, listDocumentsByCategory, arg.UserID, arg.Category)
+	rows, err := q.db.Query(ctx, listDocumentsByCategory,
+		arg.UserID,
+		arg.Category,
+		arg.Off,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +243,8 @@ func (q *Queries) ListDocumentsByCategory(ctx context.Context, arg ListDocuments
 			&i.DriveFileID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Kind,
+			&i.BackupStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -127,23 +256,44 @@ func (q *Queries) ListDocumentsByCategory(ctx context.Context, arg ListDocuments
 	return items, nil
 }
 
-const searchDocumentsByTitle = `-- name: SearchDocumentsByTitle :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at
+const saveDocumentCategory = `-- name: SaveDocumentCategory :exec
+update documents
+set category   = $1,
+    status     = 'saved',
+    updated_at = now()
+where id = $2
+  and user_id = $3
+`
+
+type SaveDocumentCategoryParams struct {
+	Category string
+	ID       pgtype.UUID
+	UserID   pgtype.UUID
+}
+
+func (q *Queries) SaveDocumentCategory(ctx context.Context, arg SaveDocumentCategoryParams) error {
+	_, err := q.db.Exec(ctx, saveDocumentCategory, arg.Category, arg.ID, arg.UserID)
+	return err
+}
+
+const searchDocuments = `-- name: SearchDocuments :many
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status
 from documents
 where user_id = $1
-  and title ilike '%' || $2 || '%'
-order by created_at desc
+  and status = 'saved'
+  and (title ilike '%' || $2 || '%' or similarity(title, $2) > 0.3)
+order by similarity(title, $2) desc, created_at desc
 limit $3
 `
 
-type SearchDocumentsByTitleParams struct {
-	UserID  pgtype.UUID
-	Column2 pgtype.Text
-	Limit   int32
+type SearchDocumentsParams struct {
+	UserID pgtype.UUID
+	Query  pgtype.Text
+	Lim    int32
 }
 
-func (q *Queries) SearchDocumentsByTitle(ctx context.Context, arg SearchDocumentsByTitleParams) ([]Document, error) {
-	rows, err := q.db.Query(ctx, searchDocumentsByTitle, arg.UserID, arg.Column2, arg.Limit)
+func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams) ([]Document, error) {
+	rows, err := q.db.Query(ctx, searchDocuments, arg.UserID, arg.Query, arg.Lim)
 	if err != nil {
 		return nil, err
 	}
@@ -162,6 +312,8 @@ func (q *Queries) SearchDocumentsByTitle(ctx context.Context, arg SearchDocument
 			&i.DriveFileID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Kind,
+			&i.BackupStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -173,19 +325,57 @@ func (q *Queries) SearchDocumentsByTitle(ctx context.Context, arg SearchDocument
 	return items, nil
 }
 
-const setDocumentStatus = `-- name: SetDocumentStatus :exec
+const updateDocumentBackupStatus = `-- name: UpdateDocumentBackupStatus :exec
 update documents
-set status     = $2,
-    updated_at = now()
-where id = $1
+set backup_status = $1,
+    updated_at    = now()
+where id = $2
 `
 
-type SetDocumentStatusParams struct {
-	ID     pgtype.UUID
-	Status string
+type UpdateDocumentBackupStatusParams struct {
+	BackupStatus string
+	ID           pgtype.UUID
 }
 
-func (q *Queries) SetDocumentStatus(ctx context.Context, arg SetDocumentStatusParams) error {
-	_, err := q.db.Exec(ctx, setDocumentStatus, arg.ID, arg.Status)
+func (q *Queries) UpdateDocumentBackupStatus(ctx context.Context, arg UpdateDocumentBackupStatusParams) error {
+	_, err := q.db.Exec(ctx, updateDocumentBackupStatus, arg.BackupStatus, arg.ID)
+	return err
+}
+
+const updateDocumentCategory = `-- name: UpdateDocumentCategory :exec
+update documents
+set category   = $1,
+    updated_at = now()
+where id = $2
+  and user_id = $3
+`
+
+type UpdateDocumentCategoryParams struct {
+	Category string
+	ID       pgtype.UUID
+	UserID   pgtype.UUID
+}
+
+func (q *Queries) UpdateDocumentCategory(ctx context.Context, arg UpdateDocumentCategoryParams) error {
+	_, err := q.db.Exec(ctx, updateDocumentCategory, arg.Category, arg.ID, arg.UserID)
+	return err
+}
+
+const updateDocumentTitle = `-- name: UpdateDocumentTitle :exec
+update documents
+set title      = $1,
+    updated_at = now()
+where id = $2
+  and user_id = $3
+`
+
+type UpdateDocumentTitleParams struct {
+	Title  string
+	ID     pgtype.UUID
+	UserID pgtype.UUID
+}
+
+func (q *Queries) UpdateDocumentTitle(ctx context.Context, arg UpdateDocumentTitleParams) error {
+	_, err := q.db.Exec(ctx, updateDocumentTitle, arg.Title, arg.ID, arg.UserID)
 	return err
 }

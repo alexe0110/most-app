@@ -19,6 +19,8 @@ type Document struct {
 	DriveFileID    pgtype.Text
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+	Kind           string
+	BackupStatus   string
 }
 
 type DriveFolder struct {

@@ -55,6 +55,7 @@ erDiagram
         text status
         text category
         text title
+        text kind
         text tg_file_id
         text drive_file_id "nullable"
         text backup_status
@@ -87,7 +88,7 @@ erDiagram
 
 В каталоге и поиске 📥 показывается, пока `backup_status` ≠ `backed_up`.
 
-> Миграция (код в этом PR не трогаем). Текущая `documents` уже хранит `tg_file_id` и допускает `drive_file_id = null`. Нужно: добавить `backup_status text not null default 'none'` с check `('none','pending','uploading','backed_up','failed')` и заменить старое ограничение `status` на `('pending','saved')`. Отдельная миграция в задаче #11.
+> Миграция `0003_documents_backup` (в этом PR): добавляет `backup_status text not null default 'none'` с check `('none','pending','uploading','backed_up','failed')`, заменяет ограничение `status` на `('pending','saved')` и добавляет `kind text not null check ('photo','document')` — чтобы вернуть оригинал тем же методом (`sendPhoto`/`sendDocument`).
 
 ## v1
 

@@ -1,0 +1,532 @@
+package telegram
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
+
+	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/platform/tg"
+)
+
+// botName identifies this bot in the shared integrations/oauth tables.
+const botName = "docs"
+
+// docs is the inbound adapter for the core document flow: it turns updates into
+// Service calls and renders the replies. State is the domain's; the only local
+// state is which document a user is renaming (force-reply).
+type docs struct {
+	svc     *docsbot.Service
+	auth    Authorizer
+	log     *slog.Logger
+	renames *renameStore
+}
+
+func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger) *docs {
+	return &docs{svc: svc, auth: auth, log: log, renames: newRenameStore(time.Now)}
+}
+
+// ownsCallback matches this feature's inline buttons.
+func (d *docs) ownsCallback(u *models.Update) bool {
+	return u.CallbackQuery != nil && strings.HasPrefix(u.CallbackQuery.Data, cbPrefix)
+}
+
+// ownsFile matches a message carrying a photo or a document.
+func (d *docs) ownsFile(u *models.Update) bool {
+	return u.Message != nil && (len(u.Message.Photo) > 0 || u.Message.Document != nil)
+}
+
+// start greets the user and offers to connect Drive. The OAuth redirect sends
+// the user back with ?start=connected, which just confirms the connection.
+func (d *docs) start(ctx context.Context, b *bot.Bot, u *models.Update) {
+	chatID := u.Message.Chat.ID
+	if deepLinkConnected(u.Message.Text) {
+		reply(ctx, b, d.log, chatID, textDriveConnected)
+		return
+	}
+	user, _ := userID(ctx)
+	if url, ok := d.connectURL(ctx, user); ok {
+		d.send(ctx, b, chatID, textStart, connectKeyboard(url))
+		return
+	}
+	reply(ctx, b, d.log, chatID, textStart)
+}
+
+func (d *docs) help(ctx context.Context, b *bot.Bot, u *models.Update) {
+	reply(ctx, b, d.log, u.Message.Chat.ID, textHelp)
+}
+
+// list shows the catalog of categories.
+func (d *docs) list(ctx context.Context, b *bot.Bot, u *models.Update) {
+	user, ok := userID(ctx)
+	if !ok {
+		return
+	}
+	cat, err := d.svc.Catalog(ctx, user)
+	if err != nil {
+		d.fail(ctx, b, u.Message.Chat.ID, "catalog", err)
+		return
+	}
+	text, kb := renderCatalog(cat)
+	d.send(ctx, b, u.Message.Chat.ID, text, kb)
+}
+
+// receive stores an incoming file and asks for a category (or reports a dup).
+func (d *docs) receive(ctx context.Context, b *bot.Bot, u *models.Update) {
+	user, ok := userID(ctx)
+	if !ok {
+		return
+	}
+	in, ok := incomingFile(u.Message, user)
+	if !ok {
+		return
+	}
+	chatID := u.Message.Chat.ID
+	rep, err := d.svc.Receive(ctx, in)
+	if err != nil {
+		d.fail(ctx, b, chatID, "receive document", err)
+		return
+	}
+	switch r := rep.(type) {
+	case docsbot.NeedCategory:
+		d.send(ctx, b, chatID, textChooseCategory, categoryKeyboard(actCategory, r.Doc.ID))
+	case docsbot.AlreadySaved:
+		d.sendCard(ctx, b, chatID, r.Doc, textAlreadySaved)
+	}
+}
+
+// onText handles any non-command text: a pending rename, otherwise a search.
+func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
+	if u.Message == nil || u.Message.From == nil {
+		return
+	}
+	chatID := u.Message.Chat.ID
+	if strings.HasPrefix(u.Message.Text, "/") {
+		reply(ctx, b, d.log, chatID, textUnknown)
+		return
+	}
+	user, ok := userID(ctx)
+	if !ok {
+		return
+	}
+	if id, ok := d.renames.take(u.Message.From.ID); ok {
+		d.applyRename(ctx, b, chatID, user, id, u.Message.Text)
+		return
+	}
+	d.runSearch(ctx, b, chatID, user, u.Message.Text)
+}
+
+func (d *docs) runSearch(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, query string) {
+	found, err := d.svc.Search(ctx, user, query)
+	if err != nil {
+		d.fail(ctx, b, chatID, "search", err)
+		return
+	}
+	text, kb := renderFound(found)
+	d.send(ctx, b, chatID, text, kb)
+}
+
+// callback dispatches an inline-button press by its action.
+func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
+	d.answer(ctx, b, u.CallbackQuery.ID)
+	user, ok := userID(ctx)
+	if !ok {
+		return
+	}
+	parts := strings.Split(u.CallbackQuery.Data, ":") // d:<action>[:docID[:arg]]
+	if len(parts) < 2 {
+		return
+	}
+	switch parts[1] {
+	case actCategory:
+		d.onCategory(ctx, b, u, user, parts)
+	case actSetCategory:
+		d.onSetCategory(ctx, b, u, user, parts)
+	case actChangeCat:
+		d.onChangeCat(ctx, b, u, parts)
+	case actSend:
+		d.onSend(ctx, b, u, user, parts)
+	case actRename:
+		d.onRenamePrompt(ctx, b, u, parts)
+	case actDeleteAsk:
+		d.onDeleteAsk(ctx, b, u, parts)
+	case actDeleteYes:
+		d.onDeleteYes(ctx, b, u, user, parts)
+	case actDeleteNo:
+		d.onDeleteNo(ctx, b, u)
+	case actListCat:
+		d.onListCat(ctx, b, u, user, parts)
+	case actListBack:
+		d.onListBack(ctx, b, u, user)
+	case actTransfer:
+		if chatID, ok := callbackChat(u); ok {
+			reply(ctx, b, d.log, chatID, textTransferSoon)
+		}
+	case actNoop:
+	}
+}
+
+// onCategory saves a new document under the chosen category, retires the picker
+// buttons (replacing them with a ✅), and shows the card.
+func (d *docs) onCategory(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	id, cat, ok := docCategory(parts)
+	if !ok {
+		return
+	}
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	saved, err := d.svc.ChooseCategory(ctx, user, id, cat)
+	if err != nil {
+		d.fail(ctx, b, chatID, "choose category", err)
+		return
+	}
+	d.editText(ctx, b, chatID, msgID, "✅ "+categoryLabel(cat))
+	d.sendCard(ctx, b, chatID, saved.Doc, textSaved)
+	if saved.OfferDrive {
+		d.offerDrive(ctx, b, chatID, user)
+	}
+}
+
+// onSetCategory changes an existing document's category.
+func (d *docs) onSetCategory(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	id, cat, ok := docCategory(parts)
+	if !ok {
+		return
+	}
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	card, err := d.svc.Recategorize(ctx, user, id, cat)
+	if err != nil {
+		d.fail(ctx, b, chatID, "recategorize", err)
+		return
+	}
+	d.editText(ctx, b, chatID, msgID, "✅ "+categoryLabel(cat))
+	d.sendCard(ctx, b, chatID, card.Doc, textRecategorized)
+}
+
+// onChangeCat swaps a card's buttons for the category picker.
+func (d *docs) onChangeCat(ctx context.Context, b *bot.Bot, u *models.Update, parts []string) {
+	id, ok := docID(parts)
+	if !ok {
+		return
+	}
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	d.editMarkup(ctx, b, chatID, msgID, categoryKeyboard(actSetCategory, id))
+}
+
+// onSend resends the original file from Telegram by its file_id.
+func (d *docs) onSend(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	id, ok := docID(parts)
+	if !ok {
+		return
+	}
+	chatID, ok := callbackChat(u)
+	if !ok {
+		return
+	}
+	card, err := d.svc.Card(ctx, user, id)
+	if err != nil {
+		d.fail(ctx, b, chatID, "load card", err)
+		return
+	}
+	d.sendFile(ctx, b, chatID, card.Doc)
+}
+
+// onRenamePrompt arms the rename and asks for the new name via force reply.
+func (d *docs) onRenamePrompt(ctx context.Context, b *bot.Bot, u *models.Update, parts []string) {
+	id, ok := docID(parts)
+	if !ok {
+		return
+	}
+	chatID, ok := callbackChat(u)
+	if !ok {
+		return
+	}
+	d.renames.set(u.CallbackQuery.From.ID, id)
+	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:      chatID,
+		Text:        textRenamePrompt,
+		ReplyMarkup: &models.ForceReply{ForceReply: true, InputFieldPlaceholder: "Новое имя"},
+	}); err != nil {
+		d.log.Error("send rename prompt", "err", err, "chat_id", chatID)
+	}
+}
+
+func (d *docs) applyRename(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID, title string) {
+	card, err := d.svc.Rename(ctx, user, id, title)
+	switch {
+	case errors.Is(err, docsbot.ErrEmptyTitle):
+		reply(ctx, b, d.log, chatID, textRenameEmpty)
+	case err != nil:
+		d.fail(ctx, b, chatID, "rename", err)
+	default:
+		d.sendCard(ctx, b, chatID, card.Doc, textRenamed)
+	}
+}
+
+// onDeleteAsk asks to confirm before deleting.
+func (d *docs) onDeleteAsk(ctx context.Context, b *bot.Bot, u *models.Update, parts []string) {
+	id, ok := docID(parts)
+	if !ok {
+		return
+	}
+	chatID, ok := callbackChat(u)
+	if !ok {
+		return
+	}
+	kb := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: btnDeleteYes, CallbackData: cb(actDeleteYes, id)},
+		{Text: btnDeleteNo, CallbackData: cb(actDeleteNo, id)},
+	}}}
+	d.send(ctx, b, chatID, textDeleteConfirm, kb)
+}
+
+func (d *docs) onDeleteYes(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	id, ok := docID(parts)
+	if !ok {
+		return
+	}
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	if err := d.svc.Delete(ctx, user, id); err != nil {
+		d.fail(ctx, b, chatID, "delete", err)
+		return
+	}
+	d.editText(ctx, b, chatID, msgID, textDeleted)
+}
+
+func (d *docs) onDeleteNo(ctx context.Context, b *bot.Bot, u *models.Update) {
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	d.editText(ctx, b, chatID, msgID, textDeleteCancelled)
+}
+
+// onListCat opens (or pages) a category, editing the list message in place.
+func (d *docs) onListCat(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	if len(parts) < 4 {
+		return
+	}
+	cat, ok := docsbot.ParseCategory(parts[2])
+	if !ok {
+		return
+	}
+	page, _ := strconv.Atoi(parts[3])
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	p, err := d.svc.CategoryPage(ctx, user, cat, page)
+	if err != nil {
+		d.fail(ctx, b, chatID, "category page", err)
+		return
+	}
+	text, kb := renderCategoryPage(p)
+	d.editMessage(ctx, b, chatID, msgID, text, kb)
+}
+
+func (d *docs) onListBack(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	cat, err := d.svc.Catalog(ctx, user)
+	if err != nil {
+		d.fail(ctx, b, chatID, "catalog", err)
+		return
+	}
+	text, kb := renderCatalog(cat)
+	d.editMessage(ctx, b, chatID, msgID, text, kb)
+}
+
+// offerDrive nudges the user to connect Drive, with a consent-link button.
+func (d *docs) offerDrive(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID) {
+	url, ok := d.connectURL(ctx, user)
+	if !ok {
+		return
+	}
+	d.send(ctx, b, chatID, textOfferDrive, connectKeyboard(url))
+}
+
+// connectURL builds the Google consent URL for the user, false if unavailable.
+func (d *docs) connectURL(ctx context.Context, user docsbot.UserID) (string, bool) {
+	if d.auth == nil || user == "" {
+		return "", false
+	}
+	url, err := d.auth.AuthURL(ctx, string(user), botName)
+	if err != nil {
+		d.log.Error("build auth url", "err", err)
+		return "", false
+	}
+	return url, true
+}
+
+// sendFile resends a stored file with the method matching how it arrived.
+func (d *docs) sendFile(ctx context.Context, b *bot.Bot, chatID int64, doc docsbot.Document) {
+	var err error
+	switch doc.Kind {
+	case docsbot.KindPhoto:
+		_, err = b.SendPhoto(ctx, &bot.SendPhotoParams{ChatID: chatID, Photo: &models.InputFileString{Data: doc.TgFileID}})
+	default:
+		_, err = b.SendDocument(ctx, &bot.SendDocumentParams{ChatID: chatID, Document: &models.InputFileString{Data: doc.TgFileID}})
+	}
+	if err != nil {
+		d.log.Error("send file", "err", err, "chat_id", chatID)
+		reply(ctx, b, d.log, chatID, textSendFailed)
+	}
+}
+
+func (d *docs) sendCard(ctx context.Context, b *bot.Bot, chatID int64, doc docsbot.Document, header string) {
+	text := cardText(doc)
+	if header != "" {
+		text = header + "\n\n" + text
+	}
+	d.send(ctx, b, chatID, text, cardKeyboard(doc))
+}
+
+// send posts a message, with an inline keyboard when kb is non-nil.
+func (d *docs) send(ctx context.Context, b *bot.Bot, chatID int64, text string, kb *models.InlineKeyboardMarkup) {
+	params := &bot.SendMessageParams{ChatID: chatID, Text: text}
+	if kb != nil {
+		params.ReplyMarkup = kb
+	}
+	if _, err := b.SendMessage(ctx, params); err != nil {
+		d.log.Error("send telegram message", "err", err, "chat_id", chatID)
+	}
+}
+
+// editMessage rewrites a message's text and keyboard in place (used for paging).
+func (d *docs) editMessage(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup) {
+	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text}
+	if kb != nil {
+		params.ReplyMarkup = kb
+	}
+	if _, err := b.EditMessageText(ctx, params); err != nil {
+		d.log.Error("edit telegram message", "err", err, "chat_id", chatID)
+	}
+}
+
+// editText rewrites a message's text and drops its keyboard (retiring buttons).
+func (d *docs) editText(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string) {
+	d.editMessage(ctx, b, chatID, msgID, text, nil)
+}
+
+// editMarkup replaces a message's inline keyboard, keeping its text.
+func (d *docs) editMarkup(ctx context.Context, b *bot.Bot, chatID int64, msgID int, kb *models.InlineKeyboardMarkup) {
+	if _, err := b.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
+		ChatID: chatID, MessageID: msgID, ReplyMarkup: kb,
+	}); err != nil {
+		d.log.Error("edit telegram markup", "err", err, "chat_id", chatID)
+	}
+}
+
+// answer stops the button's loading spinner.
+func (d *docs) answer(ctx context.Context, b *bot.Bot, callbackID string) {
+	if _, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: callbackID}); err != nil {
+		d.log.Error("answer callback", "err", err)
+	}
+}
+
+// fail logs the real error once and shows the user a generic message.
+func (d *docs) fail(ctx context.Context, b *bot.Bot, chatID int64, what string, err error) {
+	d.log.Error(what, "err", err, "chat_id", chatID)
+	reply(ctx, b, d.log, chatID, textError)
+}
+
+// userID reads the internal user id the ensureUser middleware put in ctx.
+func userID(ctx context.Context) (docsbot.UserID, bool) {
+	id, ok := tg.UserIDFromContext(ctx)
+	return docsbot.UserID(id), ok
+}
+
+// docID reads the document id from callback parts "d:<action>:<docID>".
+func docID(parts []string) (docsbot.DocumentID, bool) {
+	if len(parts) < 3 || parts[2] == "" {
+		return "", false
+	}
+	return docsbot.DocumentID(parts[2]), true
+}
+
+// docCategory reads id and category from "d:<action>:<docID>:<slug>".
+func docCategory(parts []string) (docsbot.DocumentID, docsbot.Category, bool) {
+	if len(parts) < 4 {
+		return "", "", false
+	}
+	cat, ok := docsbot.ParseCategory(parts[3])
+	if !ok {
+		return "", "", false
+	}
+	return docsbot.DocumentID(parts[2]), cat, true
+}
+
+// callbackMessage returns the chat and message id behind a callback button.
+func callbackMessage(u *models.Update) (chatID int64, msgID int, ok bool) {
+	m := u.CallbackQuery.Message.Message
+	if m == nil {
+		return 0, 0, false
+	}
+	return m.Chat.ID, m.ID, true
+}
+
+// deepLinkConnected reports whether /start carried the ?start=connected payload.
+func deepLinkConnected(text string) bool {
+	_, arg, _ := strings.Cut(text, " ")
+	return strings.TrimSpace(arg) == "connected"
+}
+
+// renameStore remembers which document a user is renaming. In memory only: a
+// restart drops it, and a stale arm (older than the TTL) is ignored.
+type renameStore struct {
+	mu  sync.Mutex
+	m   map[int64]renameEntry
+	now func() time.Time
+}
+
+type renameEntry struct {
+	id docsbot.DocumentID
+	at time.Time
+}
+
+const renameTTL = 5 * time.Minute
+
+func newRenameStore(now func() time.Time) *renameStore {
+	return &renameStore{m: map[int64]renameEntry{}, now: now}
+}
+
+func (s *renameStore) set(user int64, id docsbot.DocumentID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m[user] = renameEntry{id: id, at: s.now()}
+}
+
+// take removes and returns the armed document, if any and not expired.
+func (s *renameStore) take(user int64) (docsbot.DocumentID, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.m[user]
+	if !ok {
+		return "", false
+	}
+	delete(s.m, user)
+	if s.now().Sub(e.at) > renameTTL {
+		return "", false
+	}
+	return e.id, true
+}

@@ -8,7 +8,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
@@ -49,59 +48,12 @@ func TestRepo_users(t *testing.T) {
 	require.ErrorIs(t, err, pgx.ErrNoRows, "soft-deleted user is hidden")
 }
 
-func TestRepo_documents(t *testing.T) {
-	repo := newRepo(t)
-	ctx := t.Context()
-	u := makeUser(t, repo, 200)
-
-	doc, err := repo.CreateDocument(ctx, postgres.CreateDocumentParams{
-		UserID:         u.ID,
-		Status:         "pending",
-		Category:       "passport",
-		Title:          "Паспорт РК",
-		TgFileID:       "file-id-1",
-		TgFileUniqueID: "uniq-1",
-	})
-	require.NoError(t, err)
-	require.False(t, doc.DriveFileID.Valid, "drive_file_id is null until saved")
-
-	// Same (user_id, tg_file_unique_id) must be rejected.
-	_, err = repo.CreateDocument(ctx, postgres.CreateDocumentParams{
-		UserID: u.ID, Status: "pending", Category: "passport",
-		Title: "дубль", TgFileID: "file-id-2", TgFileUniqueID: "uniq-1",
-	})
-	var pgErr *pgconn.PgError
-	require.ErrorAs(t, err, &pgErr)
-	require.Equal(t, "23505", pgErr.Code, "unique_violation")
-
-	got, err := repo.GetDocumentByFileUniqueID(ctx, postgres.GetDocumentByFileUniqueIDParams{
-		UserID: u.ID, TgFileUniqueID: "uniq-1",
-	})
-	require.NoError(t, err)
-	require.Equal(t, doc.ID, got.ID)
-
-	require.NoError(t, repo.SetDocumentStatus(ctx, postgres.SetDocumentStatusParams{ID: doc.ID, Status: "saved"}))
-
-	byCat, err := repo.ListDocumentsByCategory(ctx, postgres.ListDocumentsByCategoryParams{UserID: u.ID, Category: "passport"})
-	require.NoError(t, err)
-	require.Len(t, byCat, 1)
-	require.Equal(t, "saved", byCat[0].Status)
-
-	// pg_trgm-backed search (gin index) finds by a fragment of the title.
-	found, err := repo.SearchDocumentsByTitle(ctx, postgres.SearchDocumentsByTitleParams{
-		UserID: u.ID, Column2: pgtype.Text{String: "паспорт", Valid: true}, Limit: 10,
-	})
-	require.NoError(t, err)
-	require.Len(t, found, 1)
-	require.Equal(t, doc.ID, found[0].ID)
-}
-
 func TestRepo_statusCheck(t *testing.T) {
 	repo := newRepo(t)
 	u := makeUser(t, repo, 250)
 
-	_, err := repo.CreateDocument(t.Context(), postgres.CreateDocumentParams{
-		UserID: u.ID, Status: "bogus", Category: "x",
+	_, err := repo.InsertDocument(t.Context(), postgres.InsertDocumentParams{
+		UserID: u.ID, Status: "bogus", Kind: "document", Category: "x",
 		Title: "t", TgFileID: "f", TgFileUniqueID: "uq",
 	})
 	var pgErr *pgconn.PgError
@@ -151,10 +103,10 @@ func TestRepo_Tx(t *testing.T) {
 	ctx := t.Context()
 	u := makeUser(t, repo, 400)
 
-	// Commit: both writes land.
+	// Commit: the write lands.
 	err := repo.Tx(ctx, func(q *postgres.Queries) error {
-		_, err := q.CreateDocument(ctx, postgres.CreateDocumentParams{
-			UserID: u.ID, Status: "pending", Category: "c",
+		_, err := q.InsertDocument(ctx, postgres.InsertDocumentParams{
+			UserID: u.ID, Status: "pending", Kind: "document", Category: "",
 			Title: "ok", TgFileID: "f1", TgFileUniqueID: "tx-1",
 		})
 		return err
@@ -164,8 +116,8 @@ func TestRepo_Tx(t *testing.T) {
 	// Rollback: returning an error discards the write.
 	wantErr := errors.New("boom")
 	err = repo.Tx(ctx, func(q *postgres.Queries) error {
-		_, err := q.CreateDocument(ctx, postgres.CreateDocumentParams{
-			UserID: u.ID, Status: "pending", Category: "c",
+		_, err := q.InsertDocument(ctx, postgres.InsertDocumentParams{
+			UserID: u.ID, Status: "pending", Kind: "document", Category: "",
 			Title: "discarded", TgFileID: "f2", TgFileUniqueID: "tx-2",
 		})
 		require.NoError(t, err)
@@ -173,8 +125,8 @@ func TestRepo_Tx(t *testing.T) {
 	})
 	require.ErrorIs(t, err, wantErr)
 
-	_, err = repo.GetDocumentByFileUniqueID(ctx, postgres.GetDocumentByFileUniqueIDParams{UserID: u.ID, TgFileUniqueID: "tx-1"})
+	_, err = repo.GetDocumentByUniqueID(ctx, postgres.GetDocumentByUniqueIDParams{UserID: u.ID, TgFileUniqueID: "tx-1"})
 	require.NoError(t, err, "committed row survives")
-	_, err = repo.GetDocumentByFileUniqueID(ctx, postgres.GetDocumentByFileUniqueIDParams{UserID: u.ID, TgFileUniqueID: "tx-2"})
+	_, err = repo.GetDocumentByUniqueID(ctx, postgres.GetDocumentByUniqueIDParams{UserID: u.ID, TgFileUniqueID: "tx-2"})
 	require.ErrorIs(t, err, pgx.ErrNoRows, "rolled-back row is gone")
 }

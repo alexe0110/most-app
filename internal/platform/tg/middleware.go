@@ -26,6 +26,13 @@ func UserIDFromContext(ctx context.Context) (string, bool) {
 	return id, ok
 }
 
+// ContextWithUserID stores the internal user id in ctx, as the ensureUser
+// middleware does. Exposed so an inbound adapter's tests can inject it without
+// the middleware.
+func ContextWithUserID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, userIDKey, id)
+}
+
 // recoverPanic turns a handler panic into a logged error. Handlers run in their
 // own goroutine, so the recover must live inside the chain.
 func recoverPanic(log *slog.Logger) bot.Middleware {

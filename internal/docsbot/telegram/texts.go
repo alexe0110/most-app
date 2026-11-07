@@ -1,13 +1,63 @@
 package telegram
 
-// User-facing texts. Russian, kept in one place per project convention.
+// User-facing texts. Russian, kept in one place per project convention. Tone
+// (product.md): documents are "хранятся в Telegram" / "ещё не в Drive", the
+// goal is the user's Google Drive; never "временно".
+
+// Core flow texts (#9, #10, #12, #13, #14).
 const (
-	startText = "Привет! Я Most Docs — сохраню твои документы в твой Google Drive.\n\n" +
-		"Скоро подключим Drive и научимся принимать файлы."
+	textStart = "Привет! Я Most Docs. Пришли документ — фото, PDF или файл, — " +
+		"я разложу его по категориям и найду по запросу.\n\n" +
+		"Цель — хранить документы на твоём Google Drive. Пока Drive не подключён, " +
+		"они лежат во входящей папке в Telegram — можно начать без настройки.\n\n" +
+		"Подключишь Drive — бот будет видеть только файлы, которые сам создал."
 
-	unknownText = "Не понимаю эту команду. Пока я умею только /start и /convert."
+	textHelp = "Что я умею:\n" +
+		"• Приём документов — пришли фото, PDF или файл и выбери категорию.\n" +
+		"• /list — твои документы по категориям.\n" +
+		"• Поиск — напиши слово из названия.\n" +
+		"• /convert — фото → PDF или сжать изображение.\n\n" +
+		"Цель — перенести документы на твой Google Drive; пока они хранятся в Telegram."
 
-	textDriveConnected = "Google Drive подключён ✅ Пришлите документ — я сохраню его на ваш Диск."
+	textDriveConnected = "Google Drive подключён ✅ Новые документы будут попадать на твой Диск."
+
+	textChooseCategory = "Выбери категорию:"
+	textAlreadySaved   = "Этот файл уже сохранён."
+	textSaved          = "Сохранил ✅"
+	textRecategorized  = "Категория обновлена ✅"
+	textRenamed        = "Переименовал ✅"
+
+	textRenamePrompt = "Пришли новое название документа."
+	textRenameEmpty  = "Название пустое. Нажми «Переименовать» и пришли название ещё раз."
+
+	textDeleteConfirm   = "Удалить этот документ? Отменить будет нельзя."
+	textDeleted         = "Документ удалён 🗑"
+	textDeleteCancelled = "Удаление отменено."
+
+	textCatalogEmpty = "Пока пусто — пришли документ, и он появится здесь."
+	textNothingFound = "Ничего не нашёл. Загляни в /list или пришли новый документ."
+
+	textOfferDrive = "Хочешь, чтобы документы лежали на твоём Google Drive? Подключи — " +
+		"новые файлы будут попадать туда автоматически, а бот увидит только то, что сам создал."
+	textTransferSoon = "Перенос в Drive появится вместе с подключением Drive."
+
+	textUnknown    = "Не понимаю эту команду. Я умею /start, /list, /convert и /help."
+	textError      = "Что-то пошло не так. Попробуй ещё раз."
+	textSendFailed = "Не удалось отправить файл. Попробуй ещё раз."
+)
+
+// Inline button labels for the core flow.
+const (
+	btnConnectDrive = "☁️ Подключить Google Drive"
+	btnSendFile     = "📤 Прислать файл"
+	btnOpenDrive    = "☁️ Открыть в Drive"
+	btnRename       = "✏️ Переименовать"
+	btnChangeCat    = "🗂 Категория"
+	btnDelete       = "🗑 Удалить"
+	btnDeleteYes    = "Да, удалить"
+	btnDeleteNo     = "Отмена"
+	btnTransfer     = "📤 Перенести в Drive"
+	btnBackToCats   = "⬅️ Категории"
 )
 
 // Converter mode (/convert) texts.
@@ -41,7 +91,7 @@ const (
 	textConvertBestEffort = "Меньше не вышло — сжал до %d КБ."
 )
 
-// Inline button labels.
+// Inline button labels for /convert.
 const (
 	btnPDF         = "📄 Фото → PDF"
 	btnCompress    = "🗜 Сжать"
