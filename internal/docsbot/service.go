@@ -17,13 +17,15 @@ const (
 // Service holds the Most Docs use cases. It depends only on ports, never on
 // Telegram, Postgres or Drive SDKs.
 type Service struct {
-	repo  Repo
-	drive Drive
+	repo    Repo
+	drive   Drive
+	files   FileSource
+	uploads Uploads
 }
 
 // NewService wires the service around its ports.
-func NewService(repo Repo, drive Drive) *Service {
-	return &Service{repo: repo, drive: drive}
+func NewService(repo Repo, drive Drive, files FileSource, uploads Uploads) *Service {
+	return &Service{repo: repo, drive: drive, files: files, uploads: uploads}
 }
 
 // Receive stores a freshly sent file as pending and asks for a category. A file
@@ -48,7 +50,7 @@ func (s *Service) Receive(ctx context.Context, in IncomingFile) (Reply, error) {
 
 // ChooseCategory saves a pending document under cat. It is idempotent: a second
 // tap on an already-saved document just returns it. When Drive is connected the
-// document is queued for upload (#11 performs it); otherwise it stays in
+// document is queued for upload (the upload_document worker performs it); otherwise it stays in
 // Telegram and we may offer to connect Drive.
 func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID, cat Category) (Saved, error) {
 	if !cat.Valid() {
@@ -73,9 +75,8 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 		return Saved{}, fmt.Errorf("drive status: %w", err)
 	}
 	if connected {
-		// TODO(#11): enqueue upload_document in the same tx as this status.
-		if err := s.repo.SetBackupStatus(ctx, id, BackupPending); err != nil {
-			return Saved{}, fmt.Errorf("mark backup pending: %w", err)
+		if err := s.uploads.EnqueueUpload(ctx, user, id); err != nil {
+			return Saved{}, fmt.Errorf("enqueue upload: %w", err)
 		}
 		doc.BackupStatus = BackupPending
 		return Saved{Doc: doc}, nil
@@ -86,6 +87,106 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 		return Saved{}, fmt.Errorf("count saved: %w", err)
 	}
 	return Saved{Doc: doc, OfferDrive: count == 1 || count == 5}, nil
+}
+
+// BackupResult is the outcome of a Drive upload attempt.
+type BackupResult struct {
+	Doc      Document
+	TooLarge bool
+}
+
+// Backup uploads a saved document to the user's Drive. It is the upload_document
+// worker's use case and is idempotent: an already backed-up document is a no-op.
+// A file above the download limit is marked too_large and left in Telegram; a
+// revoked grant returns ErrDriveRevoked; transient errors are returned for retry.
+func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (BackupResult, error) {
+	doc, err := s.repo.DocumentByID(ctx, user, id)
+	if err != nil {
+		return BackupResult{}, fmt.Errorf("load document: %w", err)
+	}
+	if doc.BackupStatus == BackupBackedUp {
+		return BackupResult{Doc: doc}, nil
+	}
+	if err := s.repo.SetBackupStatus(ctx, id, BackupUploading); err != nil {
+		return BackupResult{}, fmt.Errorf("mark uploading: %w", err)
+	}
+
+	data, mime, err := s.files.Download(ctx, doc.TgFileID)
+	if errors.Is(err, ErrFileTooLarge) {
+		if err := s.repo.SetBackupStatus(ctx, id, BackupTooLarge); err != nil {
+			return BackupResult{}, fmt.Errorf("mark too large: %w", err)
+		}
+		doc.BackupStatus = BackupTooLarge
+		return BackupResult{Doc: doc, TooLarge: true}, nil
+	}
+	if err != nil {
+		return BackupResult{}, fmt.Errorf("download file: %w", err)
+	}
+
+	file, err := s.drive.Upload(ctx, user, DriveUpload{Category: doc.Category, Name: doc.Title, MIME: mime, Data: data})
+	if errors.Is(err, ErrDriveRevoked) {
+		return BackupResult{}, ErrDriveRevoked
+	}
+	if err != nil {
+		return BackupResult{}, fmt.Errorf("upload to drive: %w", err)
+	}
+
+	if err := s.repo.MarkBackedUp(ctx, id, file.ID); err != nil {
+		return BackupResult{}, fmt.Errorf("mark backed up: %w", err)
+	}
+	doc.BackupStatus = BackupBackedUp
+	doc.DriveFileID = file.ID
+	return BackupResult{Doc: doc}, nil
+}
+
+// MarkBackupFailed records a terminal upload failure. The user is accepted for a
+// consistent, user-scoped API even though the status update is keyed by id.
+func (s *Service) MarkBackupFailed(ctx context.Context, _ UserID, id DocumentID) error {
+	if err := s.repo.SetBackupStatus(ctx, id, BackupFailed); err != nil {
+		return fmt.Errorf("mark backup failed: %w", err)
+	}
+	return nil
+}
+
+// TransferSaved enqueues a Drive upload for every saved document not yet backed
+// up, returning how many were queued. Used after the user connects Drive.
+func (s *Service) TransferSaved(ctx context.Context, user UserID) (int, error) {
+	ids, err := s.repo.NotBackedUpIDs(ctx, user)
+	if err != nil {
+		return 0, fmt.Errorf("list not backed up: %w", err)
+	}
+	for i, id := range ids {
+		if err := s.uploads.EnqueueUpload(ctx, user, id); err != nil {
+			return i, fmt.Errorf("enqueue upload: %w", err)
+		}
+	}
+	return len(ids), nil
+}
+
+// NotBackedUpCount reports how many saved documents are not yet on Drive.
+func (s *Service) NotBackedUpCount(ctx context.Context, user UserID) (int, error) {
+	n, err := s.repo.CountNotBackedUp(ctx, user)
+	if err != nil {
+		return 0, fmt.Errorf("count not backed up: %w", err)
+	}
+	return n, nil
+}
+
+// DriveConnected reports whether the user's Drive is connected.
+func (s *Service) DriveConnected(ctx context.Context, user UserID) (bool, error) {
+	ok, err := s.drive.Connected(ctx, user)
+	if err != nil {
+		return false, fmt.Errorf("drive status: %w", err)
+	}
+	return ok, nil
+}
+
+// RetryBackup re-enqueues a single document's Drive upload.
+func (s *Service) RetryBackup(ctx context.Context, user UserID, id DocumentID) error {
+	if err := s.uploads.EnqueueUpload(ctx, user, id); err != nil {
+		return fmt.Errorf("enqueue upload: %w", err)
+	}
+	return nil
 }
 
 // Card returns one document's detail, scoped to the user.

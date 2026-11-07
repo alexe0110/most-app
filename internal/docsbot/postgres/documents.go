@@ -202,6 +202,39 @@ func (r *Repo) Search(ctx context.Context, user docsbot.UserID, query string, li
 	return toDocuments(rows), nil
 }
 
+// MarkBackedUp records a successful Drive upload.
+func (r *Repo) MarkBackedUp(ctx context.Context, id docsbot.DocumentID, driveFileID string) error {
+	docID, err := parseUUID(string(id))
+	if err != nil {
+		return err
+	}
+	err = r.MarkDocumentBackedUp(ctx, MarkDocumentBackedUpParams{
+		ID:          docID,
+		DriveFileID: pgtype.Text{String: driveFileID, Valid: true},
+	})
+	if err != nil {
+		return fmt.Errorf("mark document backed up: %w", err)
+	}
+	return nil
+}
+
+// NotBackedUpIDs lists the user's saved documents not yet on Drive, oldest first.
+func (r *Repo) NotBackedUpIDs(ctx context.Context, user docsbot.UserID) ([]docsbot.DocumentID, error) {
+	uid, err := parseUUID(string(user))
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.ListNotBackedUpDocumentIDs(ctx, uid)
+	if err != nil {
+		return nil, fmt.Errorf("list not backed up documents: %w", err)
+	}
+	out := make([]docsbot.DocumentID, 0, len(rows))
+	for _, id := range rows {
+		out = append(out, docsbot.DocumentID(id.String()))
+	}
+	return out, nil
+}
+
 // ids parses a (document, user) id pair in one step.
 func ids(id docsbot.DocumentID, user docsbot.UserID) (docID, uid pgtype.UUID, err error) {
 	if docID, err = parseUUID(string(id)); err != nil {

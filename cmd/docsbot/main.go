@@ -15,10 +15,12 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	docjobs "github.com/alexe0110/most-app/internal/docsbot/jobs"
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
 	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/config"
 	"github.com/alexe0110/most-app/internal/platform/db"
+	"github.com/alexe0110/most-app/internal/platform/gdrive"
 	"github.com/alexe0110/most-app/internal/platform/jobs"
 	"github.com/alexe0110/most-app/internal/platform/logging"
 	"github.com/alexe0110/most-app/internal/platform/oauth"
@@ -63,24 +65,23 @@ func run() error {
 
 	workers := river.NewWorkers()
 	purge := jobs.RegisterPurgeUsers(workers, pool, log)
-	queue, err := jobs.New(pool, log, workers, purge)
+	bindUpload := docjobs.RegisterUploadDocument(workers, log)
+	queue, err := jobs.New(pool, log, workers, purge) // started below, once wired
 	if err != nil {
 		return err
 	}
-	if err := queue.Start(ctx); err != nil {
-		return fmt.Errorf("start queue: %w", err)
-	}
-	log.Info("job queue started")
 
 	repo := postgres.NewRepo(pool)
-	// Drive upload is #11; until then the stub reports "not connected", so saved
-	// documents stay in Telegram.
-	svc := docsbot.NewService(repo, driveOff{})
+	enq := docjobs.NewEnqueuer(repo, queue)
+	files := &tgFiles{} // bot is set once it is built
 
 	// oauth.Service and the bot each need the other (the bot shows the consent
 	// link; oauth notifies the bot when Drive connects). tgbot is filled just
 	// below, and both closures run only after startup, so the cycle is safe.
-	var tgbot *tg.Bot
+	var (
+		tgbot *tg.Bot
+		svc   *docsbot.Service
+	)
 	oauthSvc, err := oauth.New(oauth.Config{
 		ClientID:     cfg.GoogleClientID,
 		ClientSecret: cfg.GoogleClientSecret,
@@ -88,11 +89,15 @@ func run() error {
 		PublicURL:    cfg.PublicURL,
 		BotURL:       botURL(cfg.TelegramBotUsername),
 	}, repo, func(ctx context.Context, userID string) error {
-		return telegram.NotifyConnected(tgbot, repo)(ctx, userID)
+		return telegram.NotifyConnected(tgbot, repo, svc)(ctx, userID)
 	}, log)
 	if err != nil {
 		return fmt.Errorf("new oauth service: %w", err)
 	}
+
+	gdriveSvc := gdrive.New(gdriveClients{oauth: oauthSvc}, repo)
+	driveAdapter := driveBridge{oauth: oauthSvc, gd: gdriveSvc}
+	svc = docsbot.NewService(repo, driveAdapter, files, enq)
 
 	tgbot, err = tg.New(tg.Config{
 		Token:         cfg.TelegramToken,
@@ -103,6 +108,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	files.bot = tgbot
+	notifier := telegram.NewNotifier(tgbot, repo, oauthSvc, log)
+	bindUpload(svc, notifier)
 	if err := tgbot.SetCommands(ctx, telegram.Commands()); err != nil {
 		log.Error("set bot commands", "err", err) // not fatal
 	}
@@ -114,6 +122,11 @@ func run() error {
 	mux.HandleFunc("GET "+oauth.CallbackPath, oauthSvc.Callback())
 	tgbot.RegisterRoutes(mux) // webhook route; no-op in polling mode
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}
+
+	if err := queue.Start(ctx); err != nil {
+		return fmt.Errorf("start queue: %w", err)
+	}
+	log.Info("job queue started")
 
 	go func() {
 		log.Info("server started", "addr", cfg.HTTPAddr, "env", cfg.Env)
@@ -158,9 +171,51 @@ func botURL(username string) string {
 	return "https://t.me/" + username
 }
 
-// driveOff is the placeholder Drive port: Drive is never connected until #11
-// wires the real implementation (integrations check + upload enqueue), so saved
-// documents stay in Telegram.
-type driveOff struct{}
+// gdriveClients adapts oauth.Service to gdrive.Clients, fixing the bot to "docs".
+type gdriveClients struct{ oauth *oauth.Service }
 
-func (driveOff) Connected(context.Context, docsbot.UserID) (bool, error) { return false, nil }
+func (c gdriveClients) Client(ctx context.Context, userID string) (*http.Client, error) {
+	return c.oauth.Client(ctx, userID, "docs")
+}
+
+// driveBridge implements docsbot.Drive over oauth (connection) and gdrive (upload).
+type driveBridge struct {
+	oauth *oauth.Service
+	gd    *gdrive.Service
+}
+
+func (d driveBridge) Connected(ctx context.Context, user docsbot.UserID) (bool, error) {
+	return d.oauth.Connected(ctx, string(user), "docs")
+}
+
+func (d driveBridge) Upload(ctx context.Context, user docsbot.UserID, in docsbot.DriveUpload) (docsbot.DriveFile, error) {
+	f, err := d.gd.Upload(ctx, string(user), gdrive.Upload{
+		CacheKey:   string(in.Category),
+		FolderName: telegram.CategoryLabel(in.Category),
+		Name:       in.Name,
+		MIME:       in.MIME,
+		Data:       in.Data,
+	})
+	if errors.Is(err, gdrive.ErrAccessRevoked) || errors.Is(err, oauth.ErrAccessRevoked) {
+		return docsbot.DriveFile{}, docsbot.ErrDriveRevoked
+	}
+	if err != nil {
+		return docsbot.DriveFile{}, err
+	}
+	return docsbot.DriveFile{ID: f.ID, Link: f.Link}, nil
+}
+
+// tgFiles implements docsbot.FileSource over the Telegram bot. bot is set after
+// the bot is built (before the queue starts), breaking the svc-bot cycle.
+type tgFiles struct{ bot *tg.Bot }
+
+func (f *tgFiles) Download(ctx context.Context, fileID string) ([]byte, string, error) {
+	data, mime, err := f.bot.Download(ctx, fileID)
+	if errors.Is(err, tg.ErrFileTooLarge) {
+		return nil, "", docsbot.ErrFileTooLarge
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	return data, mime, nil
+}

@@ -10,14 +10,54 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
-// fakeDrive reports a configurable connection state.
+// fakeDrive reports a configurable connection state and upload outcome.
 type fakeDrive struct {
-	connected bool
-	err       error
+	connected  bool
+	err        error
+	uploadFile docsbot.DriveFile
+	uploadErr  error
+	uploads    *int // counts Upload calls when set
 }
 
 func (d fakeDrive) Connected(context.Context, docsbot.UserID) (bool, error) {
 	return d.connected, d.err
+}
+
+func (d fakeDrive) Upload(context.Context, docsbot.UserID, docsbot.DriveUpload) (docsbot.DriveFile, error) {
+	if d.uploads != nil {
+		*d.uploads++
+	}
+	return d.uploadFile, d.uploadErr
+}
+
+// fakeFiles returns a configurable download result.
+type fakeFiles struct {
+	data      []byte
+	mime      string
+	err       error
+	downloads *int // counts Download calls when set
+}
+
+func (f fakeFiles) Download(context.Context, string) ([]byte, string, error) {
+	if f.downloads != nil {
+		*f.downloads++
+	}
+	return f.data, f.mime, f.err
+}
+
+// fakeUploads records enqueued uploads and, like the real atomic enqueue, marks
+// the document pending.
+type fakeUploads struct {
+	repo  *fakeRepo
+	calls []docsbot.DocumentID
+}
+
+func (u *fakeUploads) EnqueueUpload(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID) error {
+	u.calls = append(u.calls, id)
+	d := u.repo.docs[id]
+	d.BackupStatus = docsbot.BackupPending
+	u.repo.docs[id] = d
+	return nil
 }
 
 // fakeRepo is an in-memory docsbot.Repo for unit tests.
@@ -170,6 +210,28 @@ func (r *fakeRepo) Search(_ context.Context, user docsbot.UserID, q string, limi
 	}
 	if len(out) > limit {
 		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (r *fakeRepo) MarkBackedUp(_ context.Context, id docsbot.DocumentID, driveFileID string) error {
+	d := r.docs[id]
+	d.BackupStatus, d.DriveFileID = docsbot.BackupBackedUp, driveFileID
+	r.docs[id] = d
+	return nil
+}
+
+func (r *fakeRepo) NotBackedUpIDs(_ context.Context, user docsbot.UserID) ([]docsbot.DocumentID, error) {
+	var docs []docsbot.Document
+	for _, d := range r.savedFor(user) {
+		if !d.InDrive() {
+			docs = append(docs, d)
+		}
+	}
+	sort.Slice(docs, func(i, j int) bool { return docs[i].CreatedAt.Before(docs[j].CreatedAt) })
+	out := make([]docsbot.DocumentID, 0, len(docs))
+	for _, d := range docs {
+		out = append(out, d.ID)
 	}
 	return out, nil
 }

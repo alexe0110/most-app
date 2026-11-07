@@ -66,3 +66,28 @@ func TestRevoke(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, statusRevoked, ig.Status)
 }
+
+func TestConnected(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string // empty means no integration
+		want   bool
+	}{
+		{name: "active", status: statusActive, want: true},
+		{name: "revoked", status: statusRevoked, want: false},
+		{name: "no integration", status: "", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newFakeStore()
+			svc := newTestService(t, store, nil, &fakeGoogle{})
+			if tt.status != "" {
+				seedIntegration(t, svc, store, tt.status)
+			}
+
+			got, err := svc.Connected(context.Background(), "user-1", "docs")
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}

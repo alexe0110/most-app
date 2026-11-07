@@ -1,6 +1,7 @@
 package docsbot_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -71,7 +72,7 @@ func TestService_Receive(t *testing.T) {
 			if tt.seed != nil {
 				repo.seed(*tt.seed)
 			}
-			svc := docsbot.NewService(repo, fakeDrive{})
+			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo})
 			rep, err := svc.Receive(t.Context(), incoming(tt.unique))
 			require.NoError(t, err)
 			tt.assert(t, rep, repo)
@@ -102,7 +103,8 @@ func TestService_ChooseCategory(t *testing.T) {
 				repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther})
 			}
 			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: "Паспорт", TgFileUniqueID: "u"})
-			svc := docsbot.NewService(repo, fakeDrive{connected: tt.connected})
+			uploads := &fakeUploads{repo: repo}
+			svc := docsbot.NewService(repo, fakeDrive{connected: tt.connected}, fakeFiles{}, uploads)
 
 			got, err := svc.ChooseCategory(t.Context(), user, doc.ID, tt.cat)
 			if tt.wantErr != nil {
@@ -114,8 +116,10 @@ func TestService_ChooseCategory(t *testing.T) {
 			require.Equal(t, docsbot.StatusSaved, repo.docs[doc.ID].Status)
 			require.Equal(t, tt.cat, repo.docs[doc.ID].Category)
 			if tt.wantBackupPed {
+				require.Equal(t, []docsbot.DocumentID{doc.ID}, uploads.calls, "upload enqueued once")
 				require.Equal(t, docsbot.BackupPending, repo.docs[doc.ID].BackupStatus)
 			} else {
+				require.Empty(t, uploads.calls)
 				require.Equal(t, docsbot.BackupNone, repo.docs[doc.ID].BackupStatus)
 			}
 		})
@@ -127,7 +131,7 @@ func TestService_ChooseCategory_idempotent(t *testing.T) {
 	doc := repo.seed(docsbot.Document{
 		UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatPassport, TgFileUniqueID: "u",
 	})
-	svc := docsbot.NewService(repo, fakeDrive{})
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo})
 
 	got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatReceipts)
 	require.NoError(t, err)
@@ -138,7 +142,7 @@ func TestService_ChooseCategory_idempotent(t *testing.T) {
 func TestService_Rename(t *testing.T) {
 	repo := newFakeRepo()
 	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "old"})
-	svc := docsbot.NewService(repo, fakeDrive{})
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo})
 
 	_, err := svc.Rename(t.Context(), user, doc.ID, "   ")
 	require.ErrorIs(t, err, docsbot.ErrEmptyTitle)
@@ -151,7 +155,7 @@ func TestService_Rename(t *testing.T) {
 func TestService_Recategorize_rejectsUnknown(t *testing.T) {
 	repo := newFakeRepo()
 	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther})
-	svc := docsbot.NewService(repo, fakeDrive{})
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo})
 
 	_, err := svc.Recategorize(t.Context(), user, doc.ID, docsbot.Category("nope"))
 	require.ErrorIs(t, err, docsbot.ErrUnknownCategory)
@@ -162,7 +166,7 @@ func TestService_CategoryPage_paginates(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatReceipts})
 	}
-	svc := docsbot.NewService(repo, fakeDrive{})
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo})
 
 	page, err := svc.CategoryPage(t.Context(), user, docsbot.CatReceipts, 2)
 	require.NoError(t, err)
@@ -182,10 +186,110 @@ func TestService_Search(t *testing.T) {
 	repo := newFakeRepo()
 	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "Паспорт РК"})
 	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "Договор аренды"})
-	svc := docsbot.NewService(repo, fakeDrive{})
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo})
 
 	found, err := svc.Search(t.Context(), user, "паспорт")
 	require.NoError(t, err)
 	require.Len(t, found.Docs, 1)
 	require.Equal(t, "Паспорт РК", found.Docs[0].Title)
+}
+
+func TestService_Backup(t *testing.T) {
+	errBoom := errors.New("boom")
+	tests := []struct {
+		name         string
+		backup       docsbot.BackupStatus
+		files        fakeFiles
+		drive        fakeDrive
+		wantErr      error
+		wantTooLarge bool
+		wantStatus   docsbot.BackupStatus
+		wantFileID   string
+		wantDownload int
+		wantUpload   int
+	}{
+		{
+			name:       "success",
+			files:      fakeFiles{data: []byte("x"), mime: "application/pdf"},
+			drive:      fakeDrive{uploadFile: docsbot.DriveFile{ID: "drv-1"}},
+			wantStatus: docsbot.BackupBackedUp, wantFileID: "drv-1", wantDownload: 1, wantUpload: 1,
+		},
+		{
+			name:         "too large stays in telegram",
+			files:        fakeFiles{err: docsbot.ErrFileTooLarge},
+			wantTooLarge: true, wantStatus: docsbot.BackupTooLarge, wantDownload: 1,
+		},
+		{
+			name:    "revoked grant is terminal",
+			files:   fakeFiles{data: []byte("x")},
+			drive:   fakeDrive{uploadErr: docsbot.ErrDriveRevoked},
+			wantErr: docsbot.ErrDriveRevoked, wantStatus: docsbot.BackupUploading, wantDownload: 1, wantUpload: 1,
+		},
+		{
+			name:    "transient upload error is retryable",
+			files:   fakeFiles{data: []byte("x")},
+			drive:   fakeDrive{uploadErr: errBoom},
+			wantErr: errBoom, wantStatus: docsbot.BackupUploading, wantDownload: 1, wantUpload: 1,
+		},
+		{
+			name:    "transient download error is retryable",
+			files:   fakeFiles{err: errBoom},
+			wantErr: errBoom, wantStatus: docsbot.BackupUploading, wantDownload: 1,
+		},
+		{
+			name:       "already backed up is a no-op",
+			backup:     docsbot.BackupBackedUp,
+			wantStatus: docsbot.BackupBackedUp,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			doc := repo.seed(docsbot.Document{
+				UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatPassport,
+				Title: "Паспорт", TgFileID: "tg-1", BackupStatus: tt.backup,
+			})
+			var downloads, uploads int
+			tt.files.downloads, tt.drive.uploads = &downloads, &uploads
+			svc := docsbot.NewService(repo, tt.drive, tt.files, &fakeUploads{repo: repo})
+
+			res, err := svc.Backup(t.Context(), user, doc.ID)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.wantTooLarge, res.TooLarge)
+				require.Equal(t, tt.wantStatus, res.Doc.BackupStatus)
+				require.Equal(t, tt.wantFileID, res.Doc.DriveFileID)
+			}
+			require.Equal(t, tt.wantStatus, repo.docs[doc.ID].BackupStatus)
+			require.Equal(t, tt.wantFileID, repo.docs[doc.ID].DriveFileID)
+			require.Equal(t, tt.wantDownload, downloads)
+			require.Equal(t, tt.wantUpload, uploads)
+		})
+	}
+}
+
+func TestService_TransferSaved(t *testing.T) {
+	repo := newFakeRepo()
+	a := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther})
+	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, BackupStatus: docsbot.BackupBackedUp})
+	b := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, BackupStatus: docsbot.BackupFailed})
+	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending})
+	uploads := &fakeUploads{repo: repo}
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, uploads)
+
+	n, err := svc.TransferSaved(t.Context(), user)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	require.Equal(t, []docsbot.DocumentID{a.ID, b.ID}, uploads.calls)
+}
+
+func TestService_MarkBackupFailed(t *testing.T) {
+	repo := newFakeRepo()
+	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupUploading})
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo})
+
+	require.NoError(t, svc.MarkBackupFailed(t.Context(), user, doc.ID))
+	require.Equal(t, docsbot.BackupFailed, repo.docs[doc.ID].BackupStatus)
 }

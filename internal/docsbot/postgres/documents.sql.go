@@ -16,7 +16,7 @@ select count(*)
 from documents
 where user_id = $1
   and status = 'saved'
-  and backup_status <> 'backed_up'
+  and backup_status not in ('backed_up', 'too_large')
 `
 
 func (q *Queries) CountDocumentsNotBackedUp(ctx context.Context, userID pgtype.UUID) (int64, error) {
@@ -254,6 +254,53 @@ func (q *Queries) ListDocumentsByCategory(ctx context.Context, arg ListDocuments
 		return nil, err
 	}
 	return items, nil
+}
+
+const listNotBackedUpDocumentIDs = `-- name: ListNotBackedUpDocumentIDs :many
+select id
+from documents
+where user_id = $1
+  and status = 'saved'
+  and backup_status not in ('backed_up', 'too_large')
+order by created_at
+`
+
+func (q *Queries) ListNotBackedUpDocumentIDs(ctx context.Context, userID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listNotBackedUpDocumentIDs, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markDocumentBackedUp = `-- name: MarkDocumentBackedUp :exec
+update documents
+set backup_status = 'backed_up',
+    drive_file_id = $1,
+    updated_at    = now()
+where id = $2
+`
+
+type MarkDocumentBackedUpParams struct {
+	DriveFileID pgtype.Text
+	ID          pgtype.UUID
+}
+
+func (q *Queries) MarkDocumentBackedUp(ctx context.Context, arg MarkDocumentBackedUpParams) error {
+	_, err := q.db.Exec(ctx, markDocumentBackedUp, arg.DriveFileID, arg.ID)
+	return err
 }
 
 const saveDocumentCategory = `-- name: SaveDocumentCategory :exec

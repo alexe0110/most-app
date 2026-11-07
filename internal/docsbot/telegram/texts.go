@@ -39,7 +39,16 @@ const (
 
 	textOfferDrive = "Хочешь, чтобы документы лежали на твоём Google Drive? Подключи — " +
 		"новые файлы будут попадать туда автоматически, а бот увидит только то, что сам создал."
-	textTransferSoon = "Перенос в Drive появится вместе с подключением Drive."
+
+	textSettings          = "Google Drive пока не подключён. Подключи — документы будут копироваться на твой Диск, а бот увидит только то, что сам создал."
+	textSettingsConnected = "Google Drive подключён ✅ Если сменил аккаунт — можно переподключить."
+	textTransferOffer     = "Перенести %d сохранённых документов в Google Drive?"                 // %d = count
+	textTransferStarted   = "Начинаю перенос %d документов в Drive — пришлю, когда будут готовы." // %d = count
+	textTransferDeclined  = "Хорошо. Перенести можно позже — в /list или /settings."
+	textBackedUp          = "☁️ «%s» теперь в Google Drive." // %s = title
+	textBackupFailed      = "Не удалось выгрузить документ в Google Drive. Попробовать ещё раз?"
+	textReconnect         = "Доступ к Google Drive отозван. Подключи заново, чтобы продолжить выгрузку."
+	textRetryQueued       = "Повторяю выгрузку в Google Drive."
 
 	textUnknown    = "Не понимаю эту команду. Я умею /start, /list, /convert и /help."
 	textError      = "Что-то пошло не так. Попробуй ещё раз."
@@ -58,6 +67,10 @@ const (
 	btnDeleteNo     = "Отмена"
 	btnTransfer     = "📤 Перенести в Drive"
 	btnBackToCats   = "⬅️ Категории"
+	btnTransferYes  = "Да, перенести"
+	btnTransferNo   = "Не сейчас"
+	btnRetryBackup  = "🔁 Повторить"
+	btnReconnect    = "☁️ Переподключить Google Drive"
 )
 
 // Converter mode (/convert) texts.

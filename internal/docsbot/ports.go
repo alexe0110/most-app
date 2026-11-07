@@ -26,6 +26,10 @@ type Repo interface {
 	CategoryCounts(ctx context.Context, user UserID) ([]CategoryCount, error)
 	ListByCategory(ctx context.Context, user UserID, cat Category, limit, offset int) ([]Document, error)
 	Search(ctx context.Context, user UserID, query string, limit int) ([]Document, error)
+	// MarkBackedUp records a successful Drive upload: backup_status=backed_up + drive_file_id.
+	MarkBackedUp(ctx context.Context, id DocumentID, driveFileID string) error
+	// NotBackedUpIDs lists the user's saved documents not yet on Drive, oldest first.
+	NotBackedUpIDs(ctx context.Context, user UserID) ([]DocumentID, error)
 }
 
 // CategoryCount is the number of saved documents in a category.
@@ -34,9 +38,36 @@ type CategoryCount struct {
 	Count    int
 }
 
-// Drive reports a user's Google Drive connection. #11 adds the real
-// implementation (over the integrations table) plus enqueuing uploads; for now
-// a wiring stub reports "not connected", so documents stay in Telegram.
+// Drive reports a user's Google Drive connection and stores files there.
 type Drive interface {
 	Connected(ctx context.Context, user UserID) (bool, error)
+	// Upload stores the document's bytes on the user's Drive. A revoked grant
+	// returns ErrDriveRevoked.
+	Upload(ctx context.Context, user UserID, in DriveUpload) (DriveFile, error)
+}
+
+// DriveUpload is a file to copy to the user's Drive.
+type DriveUpload struct {
+	Category Category
+	Name     string
+	MIME     string
+	Data     []byte
+}
+
+// DriveFile is a stored Drive file: its id and a shareable link.
+type DriveFile struct {
+	ID   string
+	Link string
+}
+
+// FileSource downloads a stored Telegram file by its file_id. A file above the
+// Bot API limit returns ErrFileTooLarge.
+type FileSource interface {
+	Download(ctx context.Context, fileID string) (data []byte, mime string, err error)
+}
+
+// Uploads enqueues a document's Drive upload, marking backup_status=pending and
+// inserting the job in one transaction.
+type Uploads interface {
+	EnqueueUpload(ctx context.Context, user UserID, id DocumentID) error
 }

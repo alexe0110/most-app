@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -43,20 +44,40 @@ func (d *docs) ownsFile(u *models.Update) bool {
 	return u.Message != nil && (len(u.Message.Photo) > 0 || u.Message.Document != nil)
 }
 
-// start greets the user and offers to connect Drive. The OAuth redirect sends
-// the user back with ?start=connected, which just confirms the connection.
+// start greets the user. The OAuth redirect sends the user back with
+// ?start=connected, which just confirms the connection.
 func (d *docs) start(ctx context.Context, b *bot.Bot, u *models.Update) {
 	chatID := u.Message.Chat.ID
 	if deepLinkConnected(u.Message.Text) {
 		reply(ctx, b, d.log, chatID, textDriveConnected)
 		return
 	}
-	user, _ := userID(ctx)
-	if url, ok := d.connectURL(ctx, user); ok {
-		d.send(ctx, b, chatID, textStart, connectKeyboard(url))
+	reply(ctx, b, d.log, chatID, textStart)
+}
+
+// settings shows the Drive connection state with a connect/reconnect button.
+func (d *docs) settings(ctx context.Context, b *bot.Bot, u *models.Update) {
+	user, ok := userID(ctx)
+	if !ok {
 		return
 	}
-	reply(ctx, b, d.log, chatID, textStart)
+	chatID := u.Message.Chat.ID
+	connected, err := d.svc.DriveConnected(ctx, user)
+	if err != nil {
+		d.fail(ctx, b, chatID, "drive status", err)
+		return
+	}
+	url, haveURL := d.connectURL(ctx, user)
+	switch {
+	case connected && haveURL:
+		d.send(ctx, b, chatID, textSettingsConnected, reconnectKeyboard(url))
+	case connected:
+		reply(ctx, b, d.log, chatID, textSettingsConnected)
+	case haveURL:
+		d.send(ctx, b, chatID, textSettings, connectKeyboard(url))
+	default:
+		reply(ctx, b, d.log, chatID, textSettings)
+	}
 }
 
 func (d *docs) help(ctx context.Context, b *bot.Bot, u *models.Update) {
@@ -165,12 +186,56 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.onListCat(ctx, b, u, user, parts)
 	case actListBack:
 		d.onListBack(ctx, b, u, user)
-	case actTransfer:
-		if chatID, ok := callbackChat(u); ok {
-			reply(ctx, b, d.log, chatID, textTransferSoon)
-		}
+	case actTransfer, actTransferYes:
+		d.onTransfer(ctx, b, u, user)
+	case actTransferNo:
+		d.onTransferNo(ctx, b, u)
+	case actRetry:
+		d.onRetry(ctx, b, u, user, parts)
 	case actNoop:
 	}
+}
+
+// onTransfer queues every not-yet-backed-up document for upload to Drive.
+func (d *docs) onTransfer(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
+	count, err := d.svc.TransferSaved(ctx, user)
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		if cid, found := callbackChat(u); found && err != nil {
+			d.fail(ctx, b, cid, "transfer", err)
+		}
+		return
+	}
+	if err != nil {
+		d.fail(ctx, b, chatID, "transfer", err)
+		return
+	}
+	d.editText(ctx, b, chatID, msgID, fmt.Sprintf(textTransferStarted, count))
+}
+
+func (d *docs) onTransferNo(ctx context.Context, b *bot.Bot, u *models.Update) {
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	d.editText(ctx, b, chatID, msgID, textTransferDeclined)
+}
+
+// onRetry re-queues a failed backup.
+func (d *docs) onRetry(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	id, ok := docID(parts)
+	if !ok {
+		return
+	}
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	if err := d.svc.RetryBackup(ctx, user, id); err != nil {
+		d.fail(ctx, b, chatID, "retry backup", err)
+		return
+	}
+	d.editText(ctx, b, chatID, msgID, textRetryQueued)
 }
 
 // onCategory saves a new document under the chosen category, retires the picker

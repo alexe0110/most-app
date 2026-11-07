@@ -16,6 +16,10 @@ type fakeDrive struct{}
 
 func (fakeDrive) Connected(context.Context, docsbot.UserID) (bool, error) { return false, nil }
 
+func (fakeDrive) Upload(context.Context, docsbot.UserID, docsbot.DriveUpload) (docsbot.DriveFile, error) {
+	return docsbot.DriveFile{}, nil
+}
+
 // fakeAuth returns a fixed consent URL for the connect button.
 type fakeAuth struct{}
 
@@ -177,5 +181,23 @@ func (r *fakeRepo) Search(_ context.Context, user docsbot.UserID, q string, limi
 // fakeDeps builds a Service over in-memory fakes, plus the fake authorizer.
 func fakeDeps() (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
 	repo := newFakeRepo()
-	return docsbot.NewService(repo, fakeDrive{}), fakeAuth{}, repo
+	// Drive is never connected here, so files and uploads are not reached.
+	return docsbot.NewService(repo, fakeDrive{}, nil, nil), fakeAuth{}, repo
+}
+
+func (r *fakeRepo) MarkBackedUp(_ context.Context, id docsbot.DocumentID, driveFileID string) error {
+	d := r.docs[id]
+	d.BackupStatus, d.DriveFileID = docsbot.BackupBackedUp, driveFileID
+	r.docs[id] = d
+	return nil
+}
+
+func (r *fakeRepo) NotBackedUpIDs(_ context.Context, user docsbot.UserID) ([]docsbot.DocumentID, error) {
+	var out []docsbot.DocumentID
+	for _, d := range r.savedFor(user) {
+		if !d.InDrive() {
+			out = append(out, d.ID)
+		}
+	}
+	return out, nil
 }
