@@ -5,10 +5,13 @@ package tg
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -26,6 +29,14 @@ const (
 // webhookPath is where the webhook handler lives on the shared HTTP mux.
 const webhookPath = "/tg/webhook"
 
+const (
+	maxFileBytes = 20 << 20 // Bot API download limit
+	downloadWait = 30 * time.Second
+)
+
+// ErrFileTooLarge means the file is above the Bot API download limit (20 MB).
+var ErrFileTooLarge = errors.New("tg: file exceeds download limit")
+
 // Config carries the Telegram settings resolved from the environment.
 type Config struct {
 	Token         string
@@ -37,8 +48,9 @@ type Config struct {
 // Bot wraps the go-telegram client. The inbound adapter adds its handlers
 // through the register callback and never sees the client otherwise.
 type Bot struct {
-	api *bot.Bot
-	cfg Config
+	api  *bot.Bot
+	cfg  Config
+	http *http.Client
 }
 
 // New builds the bot, installs the common middleware (panic recovery, update
@@ -59,7 +71,7 @@ func New(cfg Config, users Users, log *slog.Logger, register func(*bot.Bot)) (*B
 	}
 	register(api)
 
-	return &Bot{api: api, cfg: cfg}, nil
+	return &Bot{api: api, cfg: cfg, http: &http.Client{Timeout: downloadWait}}, nil
 }
 
 // RegisterRoutes mounts the webhook handler on mux. It is a no-op in polling
@@ -108,6 +120,40 @@ func (b *Bot) SetCommands(ctx context.Context, commands []models.BotCommand) err
 		return fmt.Errorf("set my commands: %w", err)
 	}
 	return nil
+}
+
+// Download fetches a Telegram file's bytes and content type by file_id, capped
+// at the Bot API's 20 MB download limit; a larger file returns ErrFileTooLarge.
+func (b *Bot) Download(ctx context.Context, fileID string) (data []byte, mime string, err error) {
+	ctx, cancel := context.WithTimeout(ctx, downloadWait)
+	defer cancel()
+
+	file, err := b.api.GetFile(ctx, &bot.GetFileParams{FileID: fileID})
+	if err != nil {
+		return nil, "", fmt.Errorf("get file: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.api.FileDownloadLink(file), nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("build download request: %w", err)
+	}
+	resp, err := b.http.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("download file: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("download file: status %d", resp.StatusCode)
+	}
+
+	data, err = io.ReadAll(io.LimitReader(resp.Body, maxFileBytes+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("read file: %w", err)
+	}
+	if len(data) > maxFileBytes {
+		return nil, "", ErrFileTooLarge
+	}
+	return data, resp.Header.Get("Content-Type"), nil
 }
 
 // webhookHandler adds the secret-token check: the SDK only logs a bad secret

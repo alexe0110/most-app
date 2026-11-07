@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -126,6 +127,18 @@ func (s *Service) AuthURL(ctx context.Context, userID, bot string) (string, erro
 		oauth2.SetAuthURLParam("prompt", "consent"),
 		oauth2.S256ChallengeOption(verifier),
 	), nil
+}
+
+// Connected reports whether the user has an active (non-revoked) integration.
+func (s *Service) Connected(ctx context.Context, userID, bot string) (bool, error) {
+	ig, err := s.store.Integration(ctx, userID, bot, provider)
+	if errors.Is(err, ErrNoIntegration) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return ig.Status == statusActive, nil
 }
 
 // randomToken returns n cryptographically random bytes, URL-safe base64 encoded.

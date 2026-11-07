@@ -85,10 +85,13 @@ erDiagram
 | `uploading`     | Задача выгрузки выполняется                 | `backed_up` / `failed` |
 | `backed_up`     | Файл скопирован на Drive (`drive_file_id`)  | —                      |
 | `failed`        | Выгрузка не удалась после ретраев           | `uploading` (повтор)   |
+| `too_large`     | Файл > 20 МБ, скачать для выгрузки нельзя; остаётся в Telegram | —                      |
 
 В каталоге и поиске 📥 показывается, пока `backup_status` ≠ `backed_up`.
 
 > Миграция `0003_documents_backup` (в этом PR): добавляет `backup_status text not null default 'none'` с check `('none','pending','uploading','backed_up','failed')`, заменяет ограничение `status` на `('pending','saved')` и добавляет `kind text not null check ('photo','document')` — чтобы вернуть оригинал тем же методом (`sendPhoto`/`sendDocument`).
+
+> Миграция `0004_documents_too_large`: добавляет значение `too_large` в check `backup_status`.
 
 ## v1
 
