@@ -427,6 +427,9 @@ func (d *docs) trackUpload(ctx context.Context, b *bot.Bot, chatID int64, user d
 	case reuse && sm.Kind == docsbot.StatusSingle:
 		// The earlier single card stays as is; a new batch starts from this picker.
 		kind = docsbot.StatusBatch
+	case reuse && sm.Kind == docsbot.StatusTransfer:
+		// An open transfer is intentionally not grouped with: this picker becomes
+		// its own single card (the default below).
 	}
 	text, kb := renderStatusMessage(docsbot.StatusMessage{Kind: kind}, []docsbot.Document{doc}, nil)
 	d.editHTML(ctx, b, chatID, pickerMsgID, text, kb)

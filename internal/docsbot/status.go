@@ -43,9 +43,11 @@ func (s *Service) startGroupedUpload(ctx context.Context, user UserID, chatID in
 	}
 	for _, id := range ids {
 		if err := s.status.Attach(ctx, id, sm.ID); err != nil {
+			_ = s.status.Close(ctx, sm.ID) // best-effort cleanup; keep the original error
 			return StatusView{}, false, fmt.Errorf("attach transfer doc: %w", err)
 		}
 		if err := s.uploads.EnqueueUpload(ctx, user, id); err != nil {
+			_ = s.status.Close(ctx, sm.ID) // best-effort cleanup; keep the original error
 			return StatusView{}, false, fmt.Errorf("enqueue upload: %w", err)
 		}
 	}

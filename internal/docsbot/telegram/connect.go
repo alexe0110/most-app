@@ -75,7 +75,8 @@ type Notifier struct {
 	revokedAt map[docsbot.UserID]time.Time // last reconnect prompt per user
 }
 
-// reconnectDebounce keeps a revoked grant from prompting once per document.
+// reconnectDebounce limits the reconnect prompt to once per user per this period,
+// so a revoked grant does not prompt for every document of a batch.
 const reconnectDebounce = 10 * time.Minute
 
 // NewNotifier builds the Telegram Notifier that the upload worker reports to.
@@ -169,8 +170,12 @@ func errString(err error) string {
 func (n *Notifier) Reconnect(ctx context.Context, user docsbot.UserID) error {
 	n.mu.Lock()
 	last := n.revokedAt[user]
+	expired := !last.IsZero() && time.Since(last) >= reconnectDebounce
+	if expired {
+		delete(n.revokedAt, user) // keep the map bounded
+	}
 	n.mu.Unlock()
-	if !last.IsZero() && time.Since(last) < reconnectDebounce {
+	if !last.IsZero() && !expired {
 		return nil
 	}
 	chatID, err := n.users.TgUserID(ctx, string(user))
