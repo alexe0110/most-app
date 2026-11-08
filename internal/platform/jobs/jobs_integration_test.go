@@ -75,7 +75,7 @@ func discardLog() *slog.Logger { return slog.New(slog.DiscardHandler) }
 // startedClient builds a client, starts it and stops it on cleanup.
 func startedClient(t *testing.T, pool *pgxpool.Pool, workers *river.Workers) *jobs.Client {
 	t.Helper()
-	c, err := jobs.New(pool, discardLog(), workers)
+	c, err := jobs.New(pool, discardLog(), workers, nil)
 	require.NoError(t, err)
 	require.NoError(t, c.Start(t.Context()))
 	t.Cleanup(func() {
@@ -123,7 +123,7 @@ func TestClient_insertTxRollback(t *testing.T) {
 
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &okWorker{})
-	queue, err := jobs.New(pool, discardLog(), workers) // not started: we test insertion only
+	queue, err := jobs.New(pool, discardLog(), workers, nil) // not started: we test insertion only
 	require.NoError(t, err)
 
 	tx, err := pool.Begin(ctx)
@@ -150,7 +150,7 @@ func TestClient_restartDoesNotLoseJobs(t *testing.T) {
 	// Client A enqueues a job and is never started.
 	workersA := river.NewWorkers()
 	river.AddWorker(workersA, &okWorker{})
-	crashed, err := jobs.New(pool, discardLog(), workersA)
+	crashed, err := jobs.New(pool, discardLog(), workersA, nil)
 	require.NoError(t, err)
 	_, err = crashed.Insert(ctx, okArgs{}, nil)
 	require.NoError(t, err)
@@ -181,7 +181,7 @@ func TestPurgeUsers(t *testing.T) {
 
 	workers := river.NewWorkers()
 	purge := jobs.RegisterPurgeUsers(workers, pool, discardLog())
-	queue, err := jobs.New(pool, discardLog(), workers, purge)
+	queue, err := jobs.New(pool, discardLog(), workers, nil, purge)
 	require.NoError(t, err)
 	require.NoError(t, queue.Start(ctx))
 	t.Cleanup(func() {
@@ -214,7 +214,7 @@ func TestClient_deleteJobsByArg(t *testing.T) {
 
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &uplWorker{})
-	queue, err := jobs.New(pool, discardLog(), workers) // not started: jobs stay queued
+	queue, err := jobs.New(pool, discardLog(), workers, nil) // not started: jobs stay queued
 	require.NoError(t, err)
 
 	for _, uid := range []string{"user-a", "user-a", "user-b"} {
@@ -258,4 +258,36 @@ func countRows(t *testing.T, pool *pgxpool.Pool, query, arg string) int {
 	var n int
 	require.NoError(t, pool.QueryRow(t.Context(), query, arg).Scan(&n))
 	return n
+}
+
+// TestClient_extraQueueKeepsDefault covers: a named queue passed to New runs
+// next to the default one, so jobs on both queues are processed.
+func TestClient_extraQueueKeepsDefault(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := t.Context()
+
+	done := make(chan struct{}, 2)
+	workers := river.NewWorkers()
+	river.AddWorker(workers, &okWorker{done: done})
+	queue, err := jobs.New(pool, discardLog(), workers, map[string]river.QueueConfig{"extra": {MaxWorkers: 1}})
+	require.NoError(t, err)
+	require.NoError(t, queue.Start(ctx))
+	t.Cleanup(func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		require.NoError(t, queue.Stop(stopCtx))
+	})
+
+	_, err = queue.Insert(ctx, okArgs{}, nil)
+	require.NoError(t, err)
+	_, err = queue.Insert(ctx, okArgs{}, &river.InsertOpts{Queue: "extra"})
+	require.NoError(t, err)
+
+	for range 2 {
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			t.Fatal("job on default or extra queue never ran")
+		}
+	}
 }
