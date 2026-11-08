@@ -72,3 +72,15 @@ type Export struct {
 	Total     int
 	Truncated bool
 }
+
+// StatusView is what the channel needs to render/refresh a batch status message.
+// Grouped is false when the document is not part of a status message (then the
+// adapter falls back to a single per-document message).
+type StatusView struct {
+	Doc         Document
+	Grouped     bool
+	Message     StatusMessage
+	Lines       []Document
+	FolderByCat map[Category]string
+	AllTerminal bool
+}

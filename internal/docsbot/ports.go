@@ -97,3 +97,16 @@ type Uploads interface {
 	// CancelUploads removes the user's pending (not yet running) upload_document jobs.
 	CancelUploads(ctx context.Context, user UserID) error
 }
+
+// StatusMessages persists the per-batch upload status message and the documents
+// attached to it. Declared by the domain, implemented by docsbot/postgres.
+type StatusMessages interface {
+	// OpenForUser returns the user's newest unclosed status message, if any.
+	OpenForUser(ctx context.Context, user UserID) (StatusMessage, bool, error)
+	Create(ctx context.Context, user UserID, chatID int64, messageID int) (StatusMessage, error)
+	Close(ctx context.Context, id StatusMessageID) error
+	SetMessageID(ctx context.Context, id StatusMessageID, messageID int) error
+	Attach(ctx context.Context, doc DocumentID, id StatusMessageID) error
+	DocumentsIn(ctx context.Context, id StatusMessageID) ([]Document, error)
+	ByID(ctx context.Context, id StatusMessageID) (StatusMessage, error)
+}

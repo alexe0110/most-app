@@ -8,6 +8,9 @@ type UserID string
 // DocumentID is a document's internal (UUID) identifier.
 type DocumentID string
 
+// StatusMessageID is a batch status message's internal (UUID) identifier.
+type StatusMessageID string
+
 // Category is a document bucket. The stored value is a stable slug; the Russian
 // label shown to the user lives in the telegram adapter (texts.go).
 type Category string
@@ -68,6 +71,12 @@ const (
 	BackupTooLarge BackupStatus = "too_large"
 )
 
+// Terminal reports whether the upload has reached a final state: backed up,
+// failed or too large.
+func (b BackupStatus) Terminal() bool {
+	return b == BackupBackedUp || b == BackupFailed || b == BackupTooLarge
+}
+
 // Kind records how the file was sent, so it can be resent with the right method.
 type Kind string
 
@@ -90,7 +99,19 @@ type Document struct {
 	TgFileUniqueID string
 	DriveFileID    string
 	BackupStatus   BackupStatus
-	CreatedAt      time.Time
+	// StatusMessageID is the status-message group the document belongs to, "" if none.
+	StatusMessageID StatusMessageID
+	CreatedAt       time.Time
+}
+
+// StatusMessage is the single Telegram message that tracks a batch of uploads.
+type StatusMessage struct {
+	ID        StatusMessageID
+	UserID    UserID
+	ChatID    int64
+	MessageID int
+	CreatedAt time.Time
+	Closed    bool
 }
 
 // InDrive reports whether the document has been backed up to the user's Drive.

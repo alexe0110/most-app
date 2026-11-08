@@ -305,3 +305,79 @@ func (r *fakeRepo) CategoryFolderID(_ context.Context, _ docsbot.UserID, cat doc
 	id, ok := r.folders[cat]
 	return id, ok, nil
 }
+
+// fakeStatus is an in-memory docsbot.StatusMessages over the fake repo's documents.
+type fakeStatus struct {
+	repo *fakeRepo
+	msgs map[docsbot.StatusMessageID]docsbot.StatusMessage
+	seq  int
+}
+
+var _ docsbot.StatusMessages = (*fakeStatus)(nil)
+
+func newFakeStatus(repo *fakeRepo) *fakeStatus {
+	return &fakeStatus{repo: repo, msgs: map[docsbot.StatusMessageID]docsbot.StatusMessage{}}
+}
+
+func (s *fakeStatus) OpenForUser(_ context.Context, user docsbot.UserID) (docsbot.StatusMessage, bool, error) {
+	var best docsbot.StatusMessage
+	found := false
+	for _, m := range s.msgs {
+		if m.UserID == user && !m.Closed && (!found || m.CreatedAt.After(best.CreatedAt)) {
+			best, found = m, true
+		}
+	}
+	return best, found, nil
+}
+
+func (s *fakeStatus) Create(_ context.Context, user docsbot.UserID, chatID int64, messageID int) (docsbot.StatusMessage, error) {
+	s.seq++
+	m := docsbot.StatusMessage{
+		ID:        docsbot.StatusMessageID(fmt.Sprintf("sm-%d", s.seq)),
+		UserID:    user,
+		ChatID:    chatID,
+		MessageID: messageID,
+	}
+	s.msgs[m.ID] = m
+	return m, nil
+}
+
+func (s *fakeStatus) Close(_ context.Context, id docsbot.StatusMessageID) error {
+	m := s.msgs[id]
+	m.Closed = true
+	s.msgs[id] = m
+	return nil
+}
+
+func (s *fakeStatus) SetMessageID(_ context.Context, id docsbot.StatusMessageID, messageID int) error {
+	m := s.msgs[id]
+	m.MessageID = messageID
+	s.msgs[id] = m
+	return nil
+}
+
+func (s *fakeStatus) Attach(_ context.Context, doc docsbot.DocumentID, id docsbot.StatusMessageID) error {
+	d := s.repo.docs[doc]
+	d.StatusMessageID = id
+	s.repo.docs[doc] = d
+	return nil
+}
+
+func (s *fakeStatus) DocumentsIn(_ context.Context, id docsbot.StatusMessageID) ([]docsbot.Document, error) {
+	var out []docsbot.Document
+	for _, d := range s.repo.docs {
+		if d.StatusMessageID == id {
+			out = append(out, d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func (s *fakeStatus) ByID(_ context.Context, id docsbot.StatusMessageID) (docsbot.StatusMessage, error) {
+	m, ok := s.msgs[id]
+	if !ok {
+		return docsbot.StatusMessage{}, docsbot.ErrNotFound
+	}
+	return m, nil
+}
