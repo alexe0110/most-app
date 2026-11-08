@@ -330,6 +330,29 @@ func TestService_Disconnect(t *testing.T) {
 		require.Error(t, svc.Disconnect(t.Context(), user))
 		require.Empty(t, uploads.cancels)
 	})
+	// Criterion 2: disconnect keeps stored documents — it must not delete them,
+	// clear a backed-up doc's drive_file_id or change its backup_status.
+	t.Run("leaves stored documents untouched", func(t *testing.T) {
+		repo := newFakeRepo()
+		backed := repo.seed(docsbot.Document{
+			UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatPassport,
+			BackupStatus: docsbot.BackupBackedUp, DriveFileID: "drv-1",
+		})
+		onlyTg := repo.seed(docsbot.Document{
+			UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther,
+			BackupStatus: docsbot.BackupNone,
+		})
+		uploads := &fakeUploads{repo: repo}
+		svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, uploads)
+
+		require.NoError(t, svc.Disconnect(t.Context(), user))
+
+		require.Empty(t, repo.deleted, "disconnect must not delete user data")
+		require.Len(t, repo.docs, 2, "no documents removed")
+		require.Equal(t, docsbot.BackupBackedUp, repo.docs[backed.ID].BackupStatus, "backed-up status kept")
+		require.Equal(t, "drv-1", repo.docs[backed.ID].DriveFileID, "drive_file_id kept")
+		require.Equal(t, docsbot.BackupNone, repo.docs[onlyTg.ID].BackupStatus, "telegram-only doc unchanged")
+	})
 }
 
 func TestService_DeleteAllData(t *testing.T) {
