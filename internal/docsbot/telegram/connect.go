@@ -28,7 +28,7 @@ type driveCounter interface {
 
 // NotifyConnected builds the OnConnected callback: after Drive is linked it tells
 // the user, and offers to transfer any documents still only in Telegram.
-func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter) oauth.OnConnected {
+func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slog.Logger) oauth.OnConnected {
 	return func(ctx context.Context, userID string) error {
 		chatID, err := users.TgUserID(ctx, userID)
 		if err != nil {
@@ -37,6 +37,7 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter) oauth.On
 		if err := b.Send(ctx, chatID, textDriveConnected); err != nil {
 			return err
 		}
+		log.InfoContext(ctx, "drive connected", "user_id", userID)
 		n, err := counter.NotBackedUpCount(ctx, docsbot.UserID(userID))
 		if err != nil {
 			return fmt.Errorf("count not backed up: %w", err)
@@ -69,14 +70,18 @@ type Notifier struct {
 	svc   statusService
 	log   *slog.Logger
 
-	mu       sync.Mutex
-	lastEdit map[docsbot.StatusMessageID]time.Time
+	mu        sync.Mutex
+	lastEdit  map[docsbot.StatusMessageID]time.Time
+	revokedAt map[docsbot.UserID]time.Time // last reconnect prompt per user
 }
+
+// reconnectDebounce keeps a revoked grant from prompting once per document.
+const reconnectDebounce = 10 * time.Minute
 
 // NewNotifier builds the Telegram Notifier that the upload worker reports to.
 func NewNotifier(b *tg.Bot, users userLookup, auth Authorizer, svc statusService, log *slog.Logger) *Notifier {
 	return &Notifier{bot: b, users: users, auth: auth, svc: svc, log: log,
-		lastEdit: map[docsbot.StatusMessageID]time.Time{}}
+		lastEdit: map[docsbot.StatusMessageID]time.Time{}, revokedAt: map[docsbot.UserID]time.Time{}}
 }
 
 // UploadOutcome reflects a document's final upload state: it refreshes the batch
@@ -160,6 +165,13 @@ func errString(err error) string {
 
 // Reconnect asks the user to re-link Drive after access was revoked.
 func (n *Notifier) Reconnect(ctx context.Context, user docsbot.UserID) error {
+	n.mu.Lock()
+	if last := n.revokedAt[user]; !last.IsZero() && time.Since(last) < reconnectDebounce {
+		n.mu.Unlock()
+		return nil
+	}
+	n.revokedAt[user] = time.Now()
+	n.mu.Unlock()
 	chatID, err := n.users.TgUserID(ctx, string(user))
 	if err != nil {
 		return fmt.Errorf("resolve tg user: %w", err)

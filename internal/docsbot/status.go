@@ -30,6 +30,32 @@ func (s *Service) OpenStatus(ctx context.Context, user UserID, chatID int64, mes
 	return sm, nil
 }
 
+// startGroupedUpload opens a transfer status message on an existing Telegram
+// message, attaches every document to it, enqueues each upload, and returns the
+// view to render. No ids means nothing to do (ok=false).
+func (s *Service) startGroupedUpload(ctx context.Context, user UserID, chatID int64, messageID int, ids []DocumentID) (StatusView, bool, error) {
+	if len(ids) == 0 {
+		return StatusView{}, false, nil
+	}
+	sm, err := s.status.Create(ctx, user, chatID, messageID, StatusTransfer)
+	if err != nil {
+		return StatusView{}, false, fmt.Errorf("create transfer status: %w", err)
+	}
+	for _, id := range ids {
+		if err := s.status.Attach(ctx, id, sm.ID); err != nil {
+			return StatusView{}, false, fmt.Errorf("attach transfer doc: %w", err)
+		}
+		if err := s.uploads.EnqueueUpload(ctx, user, id); err != nil {
+			return StatusView{}, false, fmt.Errorf("enqueue upload: %w", err)
+		}
+	}
+	v, err := s.StatusViewByID(ctx, user, sm.ID)
+	if err != nil {
+		return StatusView{}, false, err
+	}
+	return v, true, nil
+}
+
 // AttachStatus adds the document to an existing status message.
 func (s *Service) AttachStatus(ctx context.Context, doc DocumentID, id StatusMessageID) error {
 	if err := s.status.Attach(ctx, doc, id); err != nil {

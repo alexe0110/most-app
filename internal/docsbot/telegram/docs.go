@@ -249,25 +249,28 @@ func (d *docs) onDisconnect(ctx context.Context, b *bot.Bot, u *models.Update, u
 		d.fail(ctx, b, chatID, "disconnect", err)
 		return
 	}
+	d.log.InfoContext(ctx, "drive disconnected", "user_id", user)
 	d.editText(ctx, b, chatID, msgID, textDisconnected)
 }
 
-// onRetryAll re-queues every failed Drive upload.
+// onRetryAll re-queues every failed Drive upload; the /settings message turns
+// into a transfer status message.
 func (d *docs) onRetryAll(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
 	chatID, msgID, ok := callbackMessage(u)
 	if !ok {
 		return
 	}
-	n, err := d.svc.RetryFailed(ctx, user)
+	view, ok, err := d.svc.RetryFailed(ctx, user, chatID, msgID)
 	if err != nil {
 		d.fail(ctx, b, chatID, "retry failed", err)
 		return
 	}
-	if n == 0 {
+	if !ok {
 		d.editText(ctx, b, chatID, msgID, textNoFailed)
 		return
 	}
-	d.editText(ctx, b, chatID, msgID, fmt.Sprintf(textRetryAllQueued, n))
+	d.log.InfoContext(ctx, "retry all", "user_id", user, "count", len(view.Lines))
+	d.redrawStatus(ctx, b, user, view)
 }
 
 // onExport resends the user's stored documents from Telegram, paced under the
@@ -286,6 +289,7 @@ func (d *docs) onExport(ctx context.Context, b *bot.Bot, u *models.Update, user 
 		reply(ctx, b, d.log, chatID, textExportEmpty)
 		return
 	}
+	d.log.InfoContext(ctx, "export started", "user_id", user, "count", len(exp.Docs))
 	reply(ctx, b, d.log, chatID, textExportStart)
 	for i, doc := range exp.Docs {
 		if i > 0 && !pause(ctx, exportPause) {
@@ -306,6 +310,9 @@ func (d *docs) onDeleteData(ctx context.Context, b *bot.Bot, u *models.Update) {
 	if !ok {
 		return
 	}
+	if user, ok := userID(ctx); ok {
+		d.log.InfoContext(ctx, "delete data requested", "user_id", user)
+	}
 	d.confirms.arm(u.CallbackQuery.From.ID)
 	reply(ctx, b, d.log, chatID, textDeleteDataPrompt)
 }
@@ -320,24 +327,28 @@ func (d *docs) onDeleteConfirm(ctx context.Context, b *bot.Bot, chatID int64, us
 		d.fail(ctx, b, chatID, "delete all data", err)
 		return
 	}
+	d.log.InfoContext(ctx, "data deleted", "user_id", user)
 	reply(ctx, b, d.log, chatID, textDataDeleted)
 }
 
-// onTransfer queues every not-yet-backed-up document for upload to Drive.
+// onTransfer moves every not-yet-backed-up document to Drive; the offer message
+// turns into a transfer status message.
 func (d *docs) onTransfer(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
-	count, err := d.svc.TransferSaved(ctx, user)
 	chatID, msgID, ok := callbackMessage(u)
 	if !ok {
-		if cid, found := callbackChat(u); found && err != nil {
-			d.fail(ctx, b, cid, "transfer", err)
-		}
 		return
 	}
+	view, ok, err := d.svc.TransferSaved(ctx, user, chatID, msgID)
 	if err != nil {
 		d.fail(ctx, b, chatID, "transfer", err)
 		return
 	}
-	d.editText(ctx, b, chatID, msgID, fmt.Sprintf(textTransferStarted, count))
+	if !ok {
+		d.editText(ctx, b, chatID, msgID, textNothingToTransfer)
+		return
+	}
+	d.log.InfoContext(ctx, "transfer started", "user_id", user, "count", len(view.Lines))
+	d.redrawStatus(ctx, b, user, view)
 }
 
 func (d *docs) onTransferNo(ctx context.Context, b *bot.Bot, u *models.Update) {

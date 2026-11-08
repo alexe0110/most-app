@@ -280,3 +280,14 @@ func TestNotifier_UploadOutcome_throttle(t *testing.T) {
 	require.Less(t, otherElapsed, 500*time.Millisecond, "another message is not blocked by the sleeping one")
 	require.Len(t, e.api.callsOf("editMessageText"), 3)
 }
+
+func TestNotifier_Reconnect_debounced(t *testing.T) {
+	e := newNotifierEnv(t)
+
+	require.NoError(t, e.n.Reconnect(t.Context(), testUserID))
+	require.NoError(t, e.n.Reconnect(t.Context(), testUserID))
+	require.Len(t, e.api.callsOf("sendMessage"), 1, "one reconnect prompt per batch")
+
+	require.NoError(t, e.n.Reconnect(t.Context(), "another-user"))
+	require.Len(t, e.api.callsOf("sendMessage"), 2, "a different user is prompted separately")
+}

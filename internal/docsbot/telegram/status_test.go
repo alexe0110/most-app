@@ -179,3 +179,38 @@ func TestRetryBatch_foreignMessageIsIgnored(t *testing.T) {
 	require.Empty(t, statusEdits(sent), "someone else's batch is never redrawn")
 	require.Equal(t, docsbot.BackupFailed, repo.docs[bad.ID].BackupStatus, "and never re-queued")
 }
+
+func TestTransfer_editsOfferIntoStatusMessage(t *testing.T) {
+	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: true})
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	for i := 0; i < 3; i++ {
+		repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: fmt.Sprintf("f%d", i)})
+	}
+
+	b.ProcessUpdate(ctx, dataCallbackMsg(100, 21, "d:try"))
+
+	require.Empty(t, sent.texts, "no per-document or extra message")
+	require.Len(t, sent.edits, 1)
+	require.Contains(t, sent.edits[0], "Перенос в Drive (0 из 3)")
+}
+
+func TestTransfer_nothingToTransfer(t *testing.T) {
+	b, sent, _ := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: true})
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	b.ProcessUpdate(ctx, dataCallbackMsg(100, 21, "d:try"))
+
+	require.Len(t, sent.edits, 1)
+	require.Contains(t, sent.edits[0], "Всё уже в Google Drive.")
+}
+
+func TestRetryAll_editsSettingsIntoStatusMessage(t *testing.T) {
+	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: true})
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupFailed, Title: "x"})
+
+	b.ProcessUpdate(ctx, dataCallbackMsg(100, 22, "d:rta"))
+
+	require.Len(t, sent.edits, 1)
+	require.Contains(t, sent.edits[0], "Перенос в Drive (0 из 1)")
+}

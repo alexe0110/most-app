@@ -83,7 +83,7 @@ func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentAr
 		}
 		return fmt.Errorf("upload document: %w", err)
 	}
-	w.log.InfoContext(ctx, "upload finished", "user_id", user, "doc_id", id,
+	w.log.InfoContext(ctx, "upload finished", "user_id", user, "doc_id", id, "category", res.Doc.Category,
 		"backup_status", res.Doc.BackupStatus, "duration_ms", time.Since(start).Milliseconds())
 	// A too-large file stays in Telegram (backup_status=too_large); the outcome
 	// still updates its status line.

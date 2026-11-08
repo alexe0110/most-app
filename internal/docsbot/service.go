@@ -211,19 +211,15 @@ func (s *Service) MarkBackupFailed(ctx context.Context, _ UserID, id DocumentID)
 	return nil
 }
 
-// TransferSaved enqueues a Drive upload for every saved document not yet backed
-// up, returning how many were queued. Used after the user connects Drive.
-func (s *Service) TransferSaved(ctx context.Context, user UserID) (int, error) {
+// TransferSaved moves every saved document not yet backed up to Drive, tracked by
+// one transfer status message that takes over the given Telegram message. ok is
+// false when there is nothing to transfer.
+func (s *Service) TransferSaved(ctx context.Context, user UserID, chatID int64, messageID int) (StatusView, bool, error) {
 	ids, err := s.repo.NotBackedUpIDs(ctx, user)
 	if err != nil {
-		return 0, fmt.Errorf("list not backed up: %w", err)
+		return StatusView{}, false, fmt.Errorf("list not backed up: %w", err)
 	}
-	for i, id := range ids {
-		if err := s.uploads.EnqueueUpload(ctx, user, id); err != nil {
-			return i, fmt.Errorf("enqueue upload: %w", err)
-		}
-	}
-	return len(ids), nil
+	return s.startGroupedUpload(ctx, user, chatID, messageID, ids)
 }
 
 // NotBackedUpCount reports how many saved documents are not yet on Drive.
@@ -302,18 +298,14 @@ func (s *Service) DeleteAllData(ctx context.Context, user UserID) error {
 	return nil
 }
 
-// RetryFailed re-enqueues a Drive upload for every failed document, returning the count.
-func (s *Service) RetryFailed(ctx context.Context, user UserID) (int, error) {
+// RetryFailed re-queues every failed Drive upload under one transfer status
+// message that takes over the given Telegram message. ok is false when nothing failed.
+func (s *Service) RetryFailed(ctx context.Context, user UserID, chatID int64, messageID int) (StatusView, bool, error) {
 	ids, err := s.repo.FailedIDs(ctx, user)
 	if err != nil {
-		return 0, fmt.Errorf("list failed: %w", err)
+		return StatusView{}, false, fmt.Errorf("list failed: %w", err)
 	}
-	for i, id := range ids {
-		if err := s.uploads.EnqueueUpload(ctx, user, id); err != nil {
-			return i, fmt.Errorf("enqueue upload: %w", err)
-		}
-	}
-	return len(ids), nil
+	return s.startGroupedUpload(ctx, user, chatID, messageID, ids)
 }
 
 // ExportAll returns the user's saved documents (capped at exportLimit) to resend.

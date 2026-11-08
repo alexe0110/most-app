@@ -328,10 +328,26 @@ func TestService_TransferSaved(t *testing.T) {
 	uploads := &fakeUploads{repo: repo}
 	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, uploads, repo, newFakeStatus(repo))
 
-	n, err := svc.TransferSaved(t.Context(), user)
+	view, ok, err := svc.TransferSaved(t.Context(), user, 5, 50)
 	require.NoError(t, err)
-	require.Equal(t, 2, n)
+	require.True(t, ok)
+	require.Len(t, view.Lines, 2)
+	require.Equal(t, docsbot.StatusTransfer, view.Message.Kind)
+	require.Equal(t, 50, view.Message.MessageID)
+	require.Equal(t, view.Message.ID, repo.docs[a.ID].StatusMessageID)
+	require.Equal(t, view.Message.ID, repo.docs[b.ID].StatusMessageID)
 	require.Equal(t, []docsbot.DocumentID{a.ID, b.ID}, uploads.calls)
+}
+
+func TestService_TransferSaved_nothingToDo(t *testing.T) {
+	repo := newFakeRepo()
+	uploads := &fakeUploads{repo: repo}
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, uploads, repo, newFakeStatus(repo))
+
+	_, ok, err := svc.TransferSaved(t.Context(), user, 5, 50)
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Empty(t, uploads.calls)
 }
 
 func TestService_MarkBackupFailed(t *testing.T) {
@@ -427,10 +443,19 @@ func TestService_RetryFailed(t *testing.T) {
 	uploads := &fakeUploads{repo: repo}
 	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, uploads, repo, newFakeStatus(repo))
 
-	n, err := svc.RetryFailed(t.Context(), user)
+	view, ok, err := svc.RetryFailed(t.Context(), user, 5, 50)
 	require.NoError(t, err)
-	require.Equal(t, 2, n)
+	require.True(t, ok)
+	require.Len(t, view.Lines, 2)
+	require.Equal(t, docsbot.StatusTransfer, view.Message.Kind)
+	require.Equal(t, view.Message.ID, repo.docs[a.ID].StatusMessageID)
 	require.Equal(t, []docsbot.DocumentID{a.ID, b.ID}, uploads.calls)
+
+	empty := newFakeRepo()
+	_, ok, err = docsbot.NewService(empty, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: empty}, empty, newFakeStatus(empty)).
+		RetryFailed(t.Context(), user, 5, 50)
+	require.NoError(t, err)
+	require.False(t, ok)
 }
 
 func TestService_ExportAll(t *testing.T) {

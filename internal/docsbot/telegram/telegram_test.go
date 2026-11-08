@@ -539,3 +539,42 @@ func TestDeleteNo_restoresCardAndStaleIsGone(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallback(100, "d:dn:missing"))
 	require.True(t, has(sent.edits, "Этого документа уже нет"), "edits %q", sent.edits)
 }
+
+// lockedBuffer is a log sink safe for concurrent handlers.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
+
+func TestSettingsActions_logEventsWithoutLeaks(t *testing.T) {
+	var sink lockedBuffer
+	log := slog.New(slog.NewJSONHandler(&sink, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	b, _, repo := newBotWithLog(t, log)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "ПаспортSECRET"})
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:try"))
+	b.ProcessUpdate(ctx, dataCallback(100, "d:exp"))
+	b.ProcessUpdate(ctx, dataCallback(100, "d:dc"))
+	b.ProcessUpdate(ctx, dataCallback(100, "d:dd"))
+
+	out := sink.String()
+	for _, ev := range []string{"transfer started", "export started", "drive disconnected", "delete data requested"} {
+		require.Contains(t, out, ev)
+	}
+	for _, leak := range []string{"ПаспортSECRET", "SECRET", "123:ABC", "chat_id", "tg_user_id"} {
+		require.NotContains(t, out, leak)
+	}
+}
