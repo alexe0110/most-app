@@ -52,6 +52,7 @@ type Bot struct {
 	api  *bot.Bot
 	cfg  Config
 	http *http.Client
+	log  *slog.Logger
 }
 
 // New builds the bot, installs the common middleware (panic recovery, update
@@ -72,7 +73,7 @@ func New(cfg Config, users Users, log *slog.Logger, register func(*bot.Bot)) (*B
 	}
 	register(api)
 
-	return &Bot{api: api, cfg: cfg, http: &http.Client{Timeout: downloadWait}}, nil
+	return &Bot{api: api, cfg: cfg, http: &http.Client{Timeout: downloadWait}, log: log}, nil
 }
 
 // RegisterRoutes mounts the webhook handler on mux. It is a no-op in polling
@@ -105,7 +106,10 @@ func (b *Bot) Run(ctx context.Context) error {
 // Send delivers a plain-text message, for notifications sent outside an update
 // handler (e.g. the OAuth callback).
 func (b *Bot) Send(ctx context.Context, chatID int64, text string) error {
-	if _, err := b.api.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text}); err != nil {
+	start := time.Now()
+	_, err := b.api.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text})
+	b.trace(ctx, "sendMessage", start, err)
+	if err != nil {
 		return fmt.Errorf("send message: %w", err)
 	}
 	return nil
@@ -114,7 +118,10 @@ func (b *Bot) Send(ctx context.Context, chatID int64, text string) error {
 // SendMarkup delivers a message with a reply markup (e.g. an inline keyboard),
 // for notifications sent outside an update handler.
 func (b *Bot) SendMarkup(ctx context.Context, chatID int64, text string, markup models.ReplyMarkup) error {
-	if _, err := b.api.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ReplyMarkup: markup}); err != nil {
+	start := time.Now()
+	_, err := b.api.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ReplyMarkup: markup})
+	b.trace(ctx, "sendMessage", start, err)
+	if err != nil {
 		return fmt.Errorf("send message: %w", err)
 	}
 	return nil
@@ -126,7 +133,10 @@ func (b *Bot) SetCommands(ctx context.Context, commands []models.BotCommand) err
 	if len(commands) == 0 {
 		return nil
 	}
-	if _, err := b.api.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: commands}); err != nil {
+	start := time.Now()
+	_, err := b.api.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: commands})
+	b.trace(ctx, "setMyCommands", start, err)
+	if err != nil {
 		return fmt.Errorf("set my commands: %w", err)
 	}
 	return nil
@@ -135,6 +145,9 @@ func (b *Bot) SetCommands(ctx context.Context, commands []models.BotCommand) err
 // Download fetches a Telegram file's bytes and content type by file_id, capped
 // at the Bot API's 20 MB download limit; a larger file returns ErrFileTooLarge.
 func (b *Bot) Download(ctx context.Context, fileID string) (data []byte, mime string, err error) {
+	start := time.Now()
+	defer func() { b.trace(ctx, "getFile+download", start, err) }()
+
 	ctx, cancel := context.WithTimeout(ctx, downloadWait)
 	defer cancel()
 
@@ -175,6 +188,16 @@ func (b *Bot) Download(ctx context.Context, fileID string) (data []byte, mime st
 		return nil, "", ErrFileTooLarge
 	}
 	return data, resp.Header.Get("Content-Type"), nil
+}
+
+// trace logs one Telegram API call at Debug: the method and timing, never
+// the payload, URL or token.
+func (b *Bot) trace(ctx context.Context, op string, start time.Time, err error) {
+	attrs := []any{"op", op, "duration_ms", time.Since(start).Milliseconds()}
+	if err != nil {
+		attrs = append(attrs, "err", err)
+	}
+	b.log.DebugContext(ctx, "telegram api", attrs...)
 }
 
 // webhookHandler adds the secret-token check: the SDK only logs a bad secret
