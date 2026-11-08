@@ -78,6 +78,9 @@ func (r *Repo) DeleteUserData(ctx context.Context, user docsbot.UserID) error {
 		if err := q.DeleteUserIntegrations(ctx, uid); err != nil {
 			return fmt.Errorf("delete user integrations: %w", err)
 		}
+		if err := q.DeleteUserStatusMessages(ctx, uid); err != nil {
+			return fmt.Errorf("delete user status messages: %w", err)
+		}
 		if err := q.SoftDeleteUser(ctx, uid); err != nil {
 			return fmt.Errorf("soft delete user: %w", err)
 		}

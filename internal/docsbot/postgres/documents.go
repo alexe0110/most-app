@@ -253,18 +253,23 @@ func notFoundOr(err error, what string) error {
 }
 
 func toDocument(d Document) docsbot.Document {
+	var statusID docsbot.StatusMessageID
+	if d.StatusMessageID.Valid {
+		statusID = docsbot.StatusMessageID(d.StatusMessageID.String())
+	}
 	return docsbot.Document{
-		ID:             docsbot.DocumentID(d.ID.String()),
-		UserID:         docsbot.UserID(d.UserID.String()),
-		Status:         docsbot.Status(d.Status),
-		Category:       docsbot.Category(d.Category),
-		Title:          d.Title,
-		Kind:           docsbot.Kind(d.Kind),
-		TgFileID:       d.TgFileID,
-		TgFileUniqueID: d.TgFileUniqueID,
-		DriveFileID:    d.DriveFileID.String,
-		BackupStatus:   docsbot.BackupStatus(d.BackupStatus),
-		CreatedAt:      d.CreatedAt.Time,
+		StatusMessageID: statusID,
+		ID:              docsbot.DocumentID(d.ID.String()),
+		UserID:          docsbot.UserID(d.UserID.String()),
+		Status:          docsbot.Status(d.Status),
+		Category:        docsbot.Category(d.Category),
+		Title:           d.Title,
+		Kind:            docsbot.Kind(d.Kind),
+		TgFileID:        d.TgFileID,
+		TgFileUniqueID:  d.TgFileUniqueID,
+		DriveFileID:     d.DriveFileID.String,
+		BackupStatus:    docsbot.BackupStatus(d.BackupStatus),
+		CreatedAt:       d.CreatedAt.Time,
 	}
 }
 

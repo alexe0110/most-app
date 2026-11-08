@@ -136,7 +136,7 @@ func (q *Queries) DocumentCategoryCounts(ctx context.Context, userID pgtype.UUID
 }
 
 const getDocumentByID = `-- name: GetDocumentByID :one
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id
 from documents
 where id = $1
   and user_id = $2
@@ -163,12 +163,13 @@ func (q *Queries) GetDocumentByID(ctx context.Context, arg GetDocumentByIDParams
 		&i.UpdatedAt,
 		&i.Kind,
 		&i.BackupStatus,
+		&i.StatusMessageID,
 	)
 	return i, err
 }
 
 const getDocumentByUniqueID = `-- name: GetDocumentByUniqueID :one
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id
 from documents
 where user_id = $1
   and tg_file_unique_id = $2
@@ -195,6 +196,7 @@ func (q *Queries) GetDocumentByUniqueID(ctx context.Context, arg GetDocumentByUn
 		&i.UpdatedAt,
 		&i.Kind,
 		&i.BackupStatus,
+		&i.StatusMessageID,
 	)
 	return i, err
 }
@@ -202,7 +204,7 @@ func (q *Queries) GetDocumentByUniqueID(ctx context.Context, arg GetDocumentByUn
 const insertDocument = `-- name: InsertDocument :one
 insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id)
 values ($1, $2, $3, $4, $5, $6, $7)
-returning id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status
+returning id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id
 `
 
 type InsertDocumentParams struct {
@@ -241,12 +243,13 @@ func (q *Queries) InsertDocument(ctx context.Context, arg InsertDocumentParams) 
 		&i.UpdatedAt,
 		&i.Kind,
 		&i.BackupStatus,
+		&i.StatusMessageID,
 	)
 	return i, err
 }
 
 const listDocumentsByCategory = `-- name: ListDocumentsByCategory :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id
 from documents
 where user_id = $1
   and category = $2
@@ -289,6 +292,7 @@ func (q *Queries) ListDocumentsByCategory(ctx context.Context, arg ListDocuments
 			&i.UpdatedAt,
 			&i.Kind,
 			&i.BackupStatus,
+			&i.StatusMessageID,
 		); err != nil {
 			return nil, err
 		}
@@ -359,7 +363,7 @@ func (q *Queries) ListNotBackedUpDocumentIDs(ctx context.Context, userID pgtype.
 }
 
 const listSavedDocumentsForExport = `-- name: ListSavedDocumentsForExport :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id
 from documents
 where user_id = $1
   and status = 'saved'
@@ -394,6 +398,7 @@ func (q *Queries) ListSavedDocumentsForExport(ctx context.Context, arg ListSaved
 			&i.UpdatedAt,
 			&i.Kind,
 			&i.BackupStatus,
+			&i.StatusMessageID,
 		); err != nil {
 			return nil, err
 		}
@@ -444,7 +449,7 @@ func (q *Queries) SaveDocumentCategory(ctx context.Context, arg SaveDocumentCate
 }
 
 const searchDocuments = `-- name: SearchDocuments :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id
 from documents
 where user_id = $1
   and status = 'saved'
@@ -481,6 +486,7 @@ func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams
 			&i.UpdatedAt,
 			&i.Kind,
 			&i.BackupStatus,
+			&i.StatusMessageID,
 		); err != nil {
 			return nil, err
 		}
