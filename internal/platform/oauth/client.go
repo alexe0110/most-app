@@ -80,7 +80,7 @@ func (s *Service) RevokeBestEffort(ctx context.Context, userID, bot string) erro
 	if err == nil || errors.Is(err, ErrNoIntegration) {
 		return nil
 	}
-	s.log.Warn("drive revoke at google failed; disabling locally", "err", err, "user_id", userID)
+	s.log.Warn("drive revoke failed; forcing local revoke", "err", err, "user_id", userID)
 	if mErr := s.store.UpdateIntegrationStatus(ctx, userID, bot, provider, statusRevoked); mErr != nil {
 		return fmt.Errorf("mark integration revoked: %w", mErr)
 	}

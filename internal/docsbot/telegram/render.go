@@ -200,7 +200,9 @@ func renderSettings(v docsbot.SettingsView, connectURL string, haveURL bool) (st
 	if v.DriveConnected {
 		rows = append(rows, []models.InlineKeyboardButton{{Text: btnDisconnect, CallbackData: cbPrefix + actDisconnect}})
 	}
-	if v.Failed > 0 {
+	// Retry only makes sense while Drive is connected; a disconnected retry would
+	// re-fail every document and spam reconnect prompts.
+	if v.DriveConnected && v.Failed > 0 {
 		rows = append(rows, []models.InlineKeyboardButton{{
 			Text: fmt.Sprintf("%s (%d)", btnRetryAll, v.Failed), CallbackData: cbPrefix + actRetryAll,
 		}})
