@@ -137,6 +137,58 @@ func TestChooseCategory_savesAndShowsCard(t *testing.T) {
 	require.Equal(t, docsbot.CatOther, repo.docs[doc.ID].Category)
 }
 
+func dataCallback(chatID int64, data string) *models.Update {
+	return &models.Update{CallbackQuery: &models.CallbackQuery{
+		ID:   "cb",
+		From: models.User{ID: chatID},
+		Data: data,
+		Message: models.MaybeInaccessibleMessage{
+			Message: &models.Message{ID: 7, Chat: models.Chat{ID: chatID, Type: models.ChatTypePrivate}},
+		},
+	}}
+}
+
+func textUpdate(chatID int64, text string) *models.Update {
+	return &models.Update{Message: &models.Message{
+		From: &models.User{ID: chatID},
+		Chat: models.Chat{ID: chatID, Type: models.ChatTypePrivate},
+		Text: text,
+	}}
+}
+
+func TestSettings_showsCountsAndControls(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatPassport, Title: "p", TgFileUniqueID: "u1"})
+	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "o", TgFileUniqueID: "u2"})
+
+	b.ProcessUpdate(ctx, commandUpdate(100, "settings"))
+
+	require.True(t, has(sent.texts, "Google Drive"), "sent %q", sent.texts)
+	require.True(t, has(sent.texts, "Документов: 2"), "sent %q", sent.texts)
+}
+
+func TestDeleteData_confirmation(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Title: "p", TgFileUniqueID: "u1"})
+
+	// Tapping "Удалить мои данные" asks for the exact word.
+	b.ProcessUpdate(ctx, dataCallback(100, "d:dd"))
+	require.True(t, has(sent.texts, "УДАЛИТЬ"), "prompt asks for the word: %q", sent.texts)
+
+	// A wrong word cancels and leaves the data in place.
+	b.ProcessUpdate(ctx, textUpdate(100, "удалить"))
+	require.True(t, has(sent.texts, "отменено"), "sent %q", sent.texts)
+	require.Len(t, repo.docs, 1, "data intact after a wrong word")
+
+	// Re-arm, then the exact word deletes everything.
+	b.ProcessUpdate(ctx, dataCallback(100, "d:dd"))
+	b.ProcessUpdate(ctx, textUpdate(100, "УДАЛИТЬ"))
+	require.True(t, has(sent.texts, "Данные удалены"), "sent %q", sent.texts)
+	require.Empty(t, repo.docs, "data deleted after the exact word")
+}
+
 func TestSearch_findsSavedDocument(t *testing.T) {
 	b, sent, repo := newBot(t)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)

@@ -11,14 +11,19 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 )
 
-// fakeDrive always reports "not connected", like the production stub.
-type fakeDrive struct{}
+// fakeDrive reports a configurable connection state; by default "not connected",
+// like the production stub.
+type fakeDrive struct {
+	connected bool
+}
 
-func (fakeDrive) Connected(context.Context, docsbot.UserID) (bool, error) { return false, nil }
+func (d fakeDrive) Connected(context.Context, docsbot.UserID) (bool, error) { return d.connected, nil }
 
 func (fakeDrive) Upload(context.Context, docsbot.UserID, docsbot.DriveUpload) (docsbot.DriveFile, error) {
 	return docsbot.DriveFile{}, nil
 }
+
+func (fakeDrive) Revoke(context.Context, docsbot.UserID) error { return nil }
 
 // fakeAuth returns a fixed consent URL for the connect button.
 type fakeAuth struct{}
@@ -178,11 +183,20 @@ func (r *fakeRepo) Search(_ context.Context, user docsbot.UserID, q string, limi
 	return out, nil
 }
 
+// fakeUploads is a no-op Uploads port: handler tests assert on the repo and the
+// sent messages, not on the queue.
+type fakeUploads struct{}
+
+func (fakeUploads) EnqueueUpload(context.Context, docsbot.UserID, docsbot.DocumentID) error {
+	return nil
+}
+func (fakeUploads) CancelUploads(context.Context, docsbot.UserID) error { return nil }
+
 // fakeDeps builds a Service over in-memory fakes, plus the fake authorizer.
 func fakeDeps() (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
 	repo := newFakeRepo()
-	// Drive is never connected here, so files and uploads are not reached.
-	return docsbot.NewService(repo, fakeDrive{}, nil, nil), fakeAuth{}, repo
+	// Drive is never connected here, so files are not reached; uploads is a no-op.
+	return docsbot.NewService(repo, fakeDrive{}, nil, fakeUploads{}), fakeAuth{}, repo
 }
 
 func (r *fakeRepo) MarkBackedUp(_ context.Context, id docsbot.DocumentID, driveFileID string) error {
@@ -200,4 +214,43 @@ func (r *fakeRepo) NotBackedUpIDs(_ context.Context, user docsbot.UserID) ([]doc
 		}
 	}
 	return out, nil
+}
+
+func (r *fakeRepo) BackupStatusCounts(_ context.Context, user docsbot.UserID) ([]docsbot.BackupStatusCount, error) {
+	byStatus := map[docsbot.BackupStatus]int{}
+	for _, d := range r.savedFor(user) {
+		byStatus[d.BackupStatus]++
+	}
+	out := make([]docsbot.BackupStatusCount, 0, len(byStatus))
+	for st, n := range byStatus {
+		out = append(out, docsbot.BackupStatusCount{Status: st, Count: n})
+	}
+	return out, nil
+}
+
+func (r *fakeRepo) FailedIDs(_ context.Context, user docsbot.UserID) ([]docsbot.DocumentID, error) {
+	var out []docsbot.DocumentID
+	for _, d := range r.savedFor(user) {
+		if d.BackupStatus == docsbot.BackupFailed {
+			out = append(out, d.ID)
+		}
+	}
+	return out, nil
+}
+
+func (r *fakeRepo) SavedForExport(_ context.Context, user docsbot.UserID, limit int) ([]docsbot.Document, error) {
+	docs := r.savedFor(user)
+	if len(docs) > limit {
+		docs = docs[:limit]
+	}
+	return docs, nil
+}
+
+func (r *fakeRepo) DeleteUserData(_ context.Context, user docsbot.UserID) error {
+	for id, d := range r.docs {
+		if d.UserID == user {
+			delete(r.docs, id)
+		}
+	}
+	return nil
 }

@@ -205,9 +205,10 @@ func (d driveBridge) Upload(ctx context.Context, user docsbot.UserID, in docsbot
 	return docsbot.DriveFile{ID: f.ID, Link: f.Link}, nil
 }
 
-// Revoke best-effort revokes the user's Drive access. #15 wires this to oauth.
+// Revoke best-effort revokes the user's Drive access at Google and marks the
+// integration revoked locally even if Google is unreachable.
 func (d driveBridge) Revoke(ctx context.Context, user docsbot.UserID) error {
-	return nil
+	return d.oauth.RevokeBestEffort(ctx, string(user), "docs")
 }
 
 // tgFiles implements docsbot.FileSource over the Telegram bot. bot is set after

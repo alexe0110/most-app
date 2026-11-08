@@ -40,19 +40,38 @@ const (
 	textOfferDrive = "Хочешь, чтобы документы лежали на твоём Google Drive? Подключи — " +
 		"новые файлы будут попадать туда автоматически, а бот увидит только то, что сам создал."
 
-	textSettings          = "Google Drive пока не подключён. Подключи — документы будут копироваться на твой Диск, а бот увидит только то, что сам создал."
-	textSettingsConnected = "Google Drive подключён ✅ Если сменил аккаунт — можно переподключить."
-	textTransferOffer     = "Перенести %d сохранённых документов в Google Drive?"                 // %d = count
-	textTransferStarted   = "Начинаю перенос %d документов в Drive — пришлю, когда будут готовы." // %d = count
-	textTransferDeclined  = "Хорошо. Перенести можно позже — в /list или /settings."
-	textBackedUp          = "☁️ «%s» теперь в Google Drive." // %s = title
-	textBackupFailed      = "Не удалось выгрузить документ в Google Drive. Попробовать ещё раз?"
-	textReconnect         = "Доступ к Google Drive отозван. Подключи заново, чтобы продолжить выгрузку."
-	textRetryQueued       = "Повторяю выгрузку в Google Drive."
+	textTransferOffer    = "Перенести %d сохранённых документов в Google Drive?"                 // %d = count
+	textTransferStarted  = "Начинаю перенос %d документов в Drive — пришлю, когда будут готовы." // %d = count
+	textTransferDeclined = "Хорошо. Перенести можно позже — в /list или /settings."
+	textBackedUp         = "☁️ «%s» теперь в Google Drive." // %s = title
+	textBackupFailed     = "Не удалось выгрузить документ в Google Drive. Попробовать ещё раз?"
+	textReconnect        = "Доступ к Google Drive отозван. Подключи заново, чтобы продолжить выгрузку."
+	textRetryQueued      = "Повторяю выгрузку в Google Drive."
 
 	textUnknown    = "Не понимаю эту команду. Я умею /start, /list, /convert и /help."
 	textError      = "Что-то пошло не так. Попробуй ещё раз."
 	textSendFailed = "Не удалось отправить файл. Попробуй ещё раз."
+)
+
+// Settings, disconnect, export and delete texts (#15).
+const (
+	textDisconnected = "Google Drive отключён. Новые документы останутся в Telegram, " +
+		"а уже выгруженные файлы и ссылки на них сохранены."
+	textRetryAllQueued = "Повторяю выгрузку в Google Drive: %d шт." // %d = count
+	textNoFailed       = "Документов с ошибкой выгрузки нет."
+
+	textExportEmpty     = "Пока нечего присылать — сохранённых документов нет."
+	textExportStart     = "Присылаю твои документы…"
+	textExportDone      = "Готово — прислал %d документов."                                                     // %d = count
+	textExportTruncated = "Прислал %d из %d. Нажми «Прислать все документы» ещё раз, чтобы получить остальные." // sent, total
+
+	textDeleteDataPrompt = "Это удалит все твои данные у бота: документы, категории и подключение Google Drive.\n\n" +
+		"Файлы, уже выгруженные на твой Google Drive, останутся у тебя. Сообщения в этом чате бот удалить не может.\n\n" +
+		"Советую сначала нажать «Прислать все документы».\n\n" +
+		"Чтобы подтвердить, пришли слово УДАЛИТЬ."
+	textDataDeleted = "Данные удалены. Файлы на Google Drive остались у тебя; сообщения в этом чате можно удалить вручную.\n\n" +
+		"Напиши /start, чтобы начать заново."
+	textDeleteWrongWord = "Удаление отменено — слово не совпало."
 )
 
 // Inline button labels for the core flow.
@@ -71,6 +90,10 @@ const (
 	btnTransferNo   = "Не сейчас"
 	btnRetryBackup  = "🔁 Повторить"
 	btnReconnect    = "☁️ Переподключить Google Drive"
+	btnDisconnect   = "🔌 Отключить Google Drive"
+	btnRetryAll     = "🔁 Повторить выгрузку"
+	btnExportAll    = "📨 Прислать все документы"
+	btnDeleteData   = "🗑 Удалить мои данные"
 )
 
 // Converter mode (/convert) texts.
