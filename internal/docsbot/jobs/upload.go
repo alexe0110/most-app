@@ -106,7 +106,10 @@ func (e *Enqueuer) EnqueueUpload(ctx context.Context, user docsbot.UserID, id do
 	})
 }
 
-// CancelUploads removes the user's pending upload_document jobs. #15 fills this in.
+// CancelUploads removes the user's pending (not yet running) upload_document jobs.
 func (e *Enqueuer) CancelUploads(ctx context.Context, user docsbot.UserID) error {
+	if _, err := e.queue.DeleteJobsByArg(ctx, UploadDocumentArgs{}.Kind(), "UserID", string(user)); err != nil {
+		return fmt.Errorf("cancel uploads: %w", err)
+	}
 	return nil
 }

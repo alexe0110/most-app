@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -65,6 +66,26 @@ func TestRevoke(t *testing.T) {
 	ig, err := store.Integration(context.Background(), "user-1", "docs", provider)
 	require.NoError(t, err)
 	require.Equal(t, statusRevoked, ig.Status)
+}
+
+func TestRevokeBestEffort(t *testing.T) {
+	t.Run("google failure still revokes locally", func(t *testing.T) {
+		store := newFakeStore()
+		svc := newTestService(t, store, nil, &fakeGoogle{revokeStatus: http.StatusInternalServerError})
+		seedIntegration(t, svc, store, statusActive)
+
+		require.NoError(t, svc.RevokeBestEffort(context.Background(), "user-1", "docs"))
+
+		ig, err := store.Integration(context.Background(), "user-1", "docs", provider)
+		require.NoError(t, err)
+		require.Equal(t, statusRevoked, ig.Status, "a failed Google revoke still disables the integration locally")
+	})
+	t.Run("no integration is a no-op", func(t *testing.T) {
+		store := newFakeStore()
+		svc := newTestService(t, store, nil, &fakeGoogle{})
+
+		require.NoError(t, svc.RevokeBestEffort(context.Background(), "user-1", "docs"))
+	})
 }
 
 func TestConnected(t *testing.T) {
