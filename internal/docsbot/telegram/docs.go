@@ -487,9 +487,11 @@ func (d *docs) sendHTML(ctx context.Context, b *bot.Bot, chatID int64, text stri
 // editHTML rewrites an HTML message; "message is not modified" is not an error.
 func (d *docs) editHTML(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup) {
 	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text, ParseMode: models.ParseModeHTML}
-	if kb != nil {
-		params.ReplyMarkup = kb
+	if kb == nil {
+		// An omitted reply_markup keeps the old keyboard; an empty one clears it.
+		kb = &models.InlineKeyboardMarkup{}
 	}
+	params.ReplyMarkup = kb
 	start := time.Now()
 	_, err := b.EditMessageText(ctx, params)
 	traceAPI(ctx, d.log, "editMessageText", start)
@@ -639,7 +641,7 @@ func (d *docs) returnToOrigin(ctx context.Context, b *bot.Bot, u *models.Update,
 		parts := strings.Split(orig, ":")
 		cat, ok := docsbot.ParseCategory(parts[1])
 		if !ok || len(parts) < 3 {
-			d.editText(ctx, b, chatID, msgID, textDeleted)
+			d.editDeleted(ctx, b, chatID, msgID)
 			return
 		}
 		page, _ := strconv.Atoi(parts[2])
@@ -668,8 +670,20 @@ func (d *docs) returnToOrigin(ctx context.Context, b *bot.Bot, u *models.Update,
 		text, kb := renderFound(found)
 		d.editMessage(ctx, b, chatID, msgID, text, kb)
 	default:
-		d.editText(ctx, b, chatID, msgID, textDeleted)
+		d.editDeleted(ctx, b, chatID, msgID)
 	}
+}
+
+// editDeleted shows the "deleted" note with a way back to the catalog.
+func (d *docs) editDeleted(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
+	d.editMessage(ctx, b, chatID, msgID, textDeleted, myDocsKeyboard())
+}
+
+// myDocsKeyboard is a single "Мои документы" button back to the catalog.
+func myDocsKeyboard() *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: btnMyDocs, CallbackData: cbPrefix + actListBack},
+	}}}
 }
 
 // editCatalog replaces a message with the category catalog.
@@ -804,10 +818,7 @@ func (d *docs) editCard(ctx context.Context, b *bot.Bot, chatID int64, msgID int
 
 // gone replaces a message about a vanished document with a way back to the catalog.
 func (d *docs) gone(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
-	kb := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: btnMyDocs, CallbackData: cbPrefix + actListBack},
-	}}}
-	d.editMessage(ctx, b, chatID, msgID, textGone, kb)
+	d.editMessage(ctx, b, chatID, msgID, textGone, myDocsKeyboard())
 }
 
 // onOpenCard renders a document's card in place of the list/search message, with
@@ -877,9 +888,11 @@ func (d *docs) send(ctx context.Context, b *bot.Bot, chatID int64, text string, 
 // editMessage rewrites a message's text and keyboard in place (used for paging).
 func (d *docs) editMessage(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup) {
 	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text}
-	if kb != nil {
-		params.ReplyMarkup = kb
+	if kb == nil {
+		// An omitted reply_markup keeps the old keyboard; an empty one clears it.
+		kb = &models.InlineKeyboardMarkup{}
 	}
+	params.ReplyMarkup = kb
 	start := time.Now()
 	_, err := b.EditMessageText(ctx, params)
 	traceAPI(ctx, d.log, "editMessageText", start)

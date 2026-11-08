@@ -24,11 +24,9 @@ const (
 	textChooseCategory = "Выбери категорию:"
 	textAlreadySaved   = "Этот файл уже сохранён."
 	textSaved          = "Сохранил ✅"
-	textRecategorized  = "Категория обновлена ✅"
-	textRenamed        = "Переименовал ✅"
 
 	textRenamePrompt = "Пришли новое название документа."
-	textRenameEmpty  = "Название пустое. Нажми «Переименовать» и пришли название ещё раз."
+	textRenameEmpty  = "Название пустое. Нажми «Имя» и пришли название ещё раз."
 
 	textDeleteConfirm   = "Удалить этот документ? Отменить будет нельзя."
 	textDeleted         = "Документ удалён 🗑"

@@ -331,6 +331,27 @@ func TestDeleteYes_returnsToOrigin(t *testing.T) {
 	require.Empty(t, sent.texts, "everything is edited in place")
 }
 
+func TestDeleteYes_withoutOriginClearsKeyboard(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := repo.seed(docsbot.Document{
+		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+		Category: docsbot.CatPassport, Title: "Паспорт РК", TgFileID: "f", TgFileUniqueID: "u",
+	})
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(doc.ID)))
+	b.ProcessUpdate(ctx, dataCallback(100, "d:dy:"+string(doc.ID)))
+
+	require.True(t, has(sent.edits, "Документ удалён"), "edits %q", sent.edits)
+	last := sent.editMarkups[len(sent.editMarkups)-1]
+	require.NotEmpty(t, last, "reply_markup must be sent to clear the old keyboard")
+	require.Contains(t, last, "Мои документы")
+	require.Contains(t, last, `"d:lb"`)
+	for _, cbData := range []string{"d:snd", "d:rn", "d:sc", "d:del", "d:oc"} {
+		require.NotContains(t, last, cbData, "no card buttons remain")
+	}
+}
+
 func TestSearchBack_rerunsLastSearch(t *testing.T) {
 	b, sent, repo := newBot(t)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
