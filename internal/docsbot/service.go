@@ -29,6 +29,7 @@ type Service struct {
 	folders Folders
 	status  StatusMessages
 	now     func() time.Time
+	name    func(Category) string
 }
 
 // Option tunes a Service at construction.
@@ -39,9 +40,19 @@ func WithClock(now func() time.Time) Option {
 	return func(s *Service) { s.now = now }
 }
 
+// WithCategoryNamer sets how a category slug is turned into the display name
+// used in a document's default title. Injected from the telegram adapter.
+func WithCategoryNamer(fn func(Category) string) Option {
+	return func(s *Service) { s.name = fn }
+}
+
 // NewService wires the service around its ports.
 func NewService(repo Repo, drive Drive, files FileSource, uploads Uploads, folders Folders, status StatusMessages, opts ...Option) *Service {
-	s := &Service{repo: repo, drive: drive, files: files, uploads: uploads, folders: folders, status: status, now: time.Now}
+	s := &Service{
+		repo: repo, drive: drive, files: files, uploads: uploads, folders: folders, status: status,
+		now:  time.Now,
+		name: func(c Category) string { return string(c) },
+	}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -90,6 +101,17 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 	doc.Category = cat
 	doc.Status = StatusSaved
 
+	if strings.TrimSpace(doc.Title) == "" {
+		title, err := s.defaultTitle(ctx, user, cat)
+		if err != nil {
+			return Saved{}, err
+		}
+		if err := s.repo.SetTitle(ctx, user, id, title); err != nil {
+			return Saved{}, fmt.Errorf("set default title: %w", err)
+		}
+		doc.Title = title
+	}
+
 	connected, err := s.drive.Connected(ctx, user)
 	if err != nil {
 		return Saved{}, fmt.Errorf("drive status: %w", err)
@@ -107,6 +129,23 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 		return Saved{}, fmt.Errorf("count saved: %w", err)
 	}
 	return Saved{Doc: doc, OfferDrive: count == 1 || count == 5}, nil
+}
+
+// defaultTitle builds "<category> — dd.mm.yyyy", adding " (n)" until it is unique
+// within the user's category.
+func (s *Service) defaultTitle(ctx context.Context, user UserID, cat Category) (string, error) {
+	base := s.name(cat) + " — " + s.now().Format("02.01.2006")
+	title := base
+	for i := 2; ; i++ {
+		exists, err := s.repo.TitleExistsInCategory(ctx, user, cat, title)
+		if err != nil {
+			return "", fmt.Errorf("check title collision: %w", err)
+		}
+		if !exists {
+			return title, nil
+		}
+		title = fmt.Sprintf("%s (%d)", base, i)
+	}
 }
 
 // BackupResult is the outcome of a Drive upload attempt.

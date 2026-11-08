@@ -82,6 +82,65 @@ func TestDocuments_lifecycle(t *testing.T) {
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
 }
 
+func TestDocuments_sizeAndMIME(t *testing.T) {
+	repo, user := domainRepo(t)
+	ctx := t.Context()
+
+	withMeta, err := repo.CreateDocument(ctx, docsbot.IncomingFile{
+		UserID: user, Kind: docsbot.KindDocument, Title: "a.pdf", FileID: "f1", FileUniqueID: "u1",
+		FileSize: 12345, MIME: "application/pdf",
+	})
+	require.NoError(t, err)
+	got, err := repo.DocumentByID(ctx, user, withMeta.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(12345), got.FileSize)
+	require.Equal(t, "application/pdf", got.MIME)
+
+	bare, err := repo.CreateDocument(ctx, docsbot.IncomingFile{
+		UserID: user, Kind: docsbot.KindPhoto, Title: "", FileID: "f2", FileUniqueID: "u2",
+	})
+	require.NoError(t, err)
+	got, err = repo.DocumentByID(ctx, user, bare.ID)
+	require.NoError(t, err)
+	require.Zero(t, got.FileSize)
+	require.Empty(t, got.MIME)
+}
+
+func TestDocuments_titleExistsInCategory(t *testing.T) {
+	repo, user := domainRepo(t)
+	ctx := t.Context()
+
+	d, err := repo.CreateDocument(ctx, docsbot.IncomingFile{
+		UserID: user, Kind: docsbot.KindDocument, Title: "Медицина — 08.11.2026", FileID: "f", FileUniqueID: "u",
+	})
+	require.NoError(t, err)
+
+	// Pending documents do not count.
+	ok, err := repo.TitleExistsInCategory(ctx, user, docsbot.CatMedical, "Медицина — 08.11.2026")
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	require.NoError(t, repo.SaveDocument(ctx, user, d.ID, docsbot.CatMedical))
+
+	tests := []struct {
+		name  string
+		cat   docsbot.Category
+		title string
+		want  bool
+	}{
+		{name: "same category and title", cat: docsbot.CatMedical, title: "Медицина — 08.11.2026", want: true},
+		{name: "other title", cat: docsbot.CatMedical, title: "Медицина — 09.11.2026"},
+		{name: "other category", cat: docsbot.CatOther, title: "Медицина — 08.11.2026"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := repo.TitleExistsInCategory(ctx, user, tt.cat, tt.title)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestDocuments_listPagination(t *testing.T) {
 	repo, user := domainRepo(t)
 	ctx := t.Context()

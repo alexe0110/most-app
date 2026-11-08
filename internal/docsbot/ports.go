@@ -17,6 +17,9 @@ type Repo interface {
 	SaveDocument(ctx context.Context, user UserID, id DocumentID, cat Category) error
 	SetBackupStatus(ctx context.Context, id DocumentID, s BackupStatus) error
 	SetTitle(ctx context.Context, user UserID, id DocumentID, title string) error
+	// TitleExistsInCategory reports whether the user already has a saved document
+	// with this exact title in the category (used to de-duplicate default names).
+	TitleExistsInCategory(ctx context.Context, user UserID, cat Category, title string) (bool, error)
 	SetCategory(ctx context.Context, user UserID, id DocumentID, cat Category) error
 	DeleteDocument(ctx context.Context, user UserID, id DocumentID) error
 	// CountSaved counts the user's saved documents.

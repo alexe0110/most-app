@@ -21,10 +21,12 @@ import (
 
 // capture records what the bot sent to the fake Bot API, split by method.
 type capture struct {
-	mu      sync.Mutex
-	texts   []string // sendMessage
-	edits   []string // editMessageText
-	markups []string // sendMessage reply_markup
+	mu          sync.Mutex
+	texts       []string // sendMessage
+	edits       []string // editMessageText
+	markups     []string // sendMessage reply_markup
+	editMarkups []string // editMessageText reply_markup
+	files       []string // sendDocument/sendPhoto caption
 }
 
 func (c *capture) record(bucket *[]string, s string) {
@@ -66,8 +68,11 @@ func newBotWith(t *testing.T, log *slog.Logger, drive fakeDrive) (*bot.Bot, *cap
 		case strings.HasSuffix(r.URL.Path, "/sendMessage"):
 			sent.record(&sent.texts, r.FormValue("text"))
 			sent.record(&sent.markups, r.FormValue("reply_markup"))
+		case strings.HasSuffix(r.URL.Path, "/sendDocument"), strings.HasSuffix(r.URL.Path, "/sendPhoto"):
+			sent.record(&sent.files, r.FormValue("caption"))
 		case strings.HasSuffix(r.URL.Path, "/editMessageText"):
 			sent.record(&sent.edits, r.FormValue("text"))
+			sent.record(&sent.editMarkups, r.FormValue("reply_markup"))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"ok":true,"result":{}}`)
@@ -242,6 +247,128 @@ func TestSearch_findsSavedDocument(t *testing.T) {
 	require.True(t, has(sent.texts, "Нашёл"), "sent %q", sent.texts)
 }
 
+func TestOpenCard_editsMessageWithBack(t *testing.T) {
+	tests := []struct {
+		name     string
+		suffix   string
+		wantBack string
+	}{
+		{"from list", ":l:" + string(docsbot.CatPassport) + ":1", "d:lc:" + string(docsbot.CatPassport) + ":1"},
+		{"from search", ":s", "d:sb"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, sent, repo := newBot(t)
+			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			doc := repo.seed(docsbot.Document{
+				UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+				Category: docsbot.CatPassport, Title: "Паспорт РК", TgFileID: "f", TgFileUniqueID: "u",
+			})
+
+			b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(doc.ID)+tt.suffix))
+
+			require.True(t, has(sent.edits, "Категория:"), "edits %q", sent.edits)
+			require.True(t, has(sent.edits, "📄"), "edits %q", sent.edits)
+			require.True(t, has(sent.editMarkups, "⬅️ Назад"), "markups %q", sent.editMarkups)
+			require.True(t, has(sent.editMarkups, tt.wantBack), "markups %q", sent.editMarkups)
+			require.Empty(t, sent.texts, "no file or message is sent")
+		})
+	}
+}
+
+func TestOpenCard_unknownDocumentIsGone(t *testing.T) {
+	b, sent, _ := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:oc:missing:s"))
+
+	require.True(t, has(sent.edits, "Этого документа уже нет"), "edits %q", sent.edits)
+	require.True(t, has(sent.editMarkups, "Мои документы"), "markups %q", sent.editMarkups)
+}
+
+func TestSetCategory_editsCardInPlace(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := repo.seed(docsbot.Document{
+		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+		Category: docsbot.CatPassport, Title: "Паспорт РК", TgFileID: "f", TgFileUniqueID: "u",
+	})
+	b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(doc.ID)+":l:"+string(docsbot.CatPassport)+":1"))
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:sc:"+string(doc.ID)+":"+string(docsbot.CatOther)))
+
+	require.Len(t, sent.edits, 2)
+	last := sent.edits[len(sent.edits)-1]
+	require.Contains(t, last, "Категория:")
+	require.Contains(t, last, telegram.CategoryLabel(docsbot.CatOther))
+	require.True(t, has(sent.editMarkups, "d:lc:"+string(docsbot.CatPassport)+":1"), "origin kept: %q", sent.editMarkups)
+	require.Empty(t, sent.texts, "no new card is sent")
+}
+
+func TestDeleteYes_returnsToOrigin(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	seed := func(title, uid string) docsbot.Document {
+		return repo.seed(docsbot.Document{
+			UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+			Category: docsbot.CatPassport, Title: title, TgFileID: uid, TgFileUniqueID: uid,
+		})
+	}
+	first, second := seed("Первый", "u1"), seed("Второй", "u2")
+	open := func(id docsbot.DocumentID) {
+		b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(id)+":l:"+string(docsbot.CatPassport)+":1"))
+	}
+
+	open(first.ID)
+	b.ProcessUpdate(ctx, dataCallback(100, "d:del:"+string(first.ID)))
+	require.True(t, has(sent.edits, "Удалить этот документ"), "edits %q", sent.edits)
+	b.ProcessUpdate(ctx, dataCallback(100, "d:dy:"+string(first.ID)))
+	require.True(t, has(sent.edits, telegram.CategoryLabel(docsbot.CatPassport)+" — 1"), "category page: %q", sent.edits)
+
+	open(second.ID)
+	b.ProcessUpdate(ctx, dataCallback(100, "d:dy:"+string(second.ID)))
+	require.True(t, has(sent.edits, "Пока пусто"), "catalog when empty: %q", sent.edits)
+	require.Empty(t, sent.texts, "everything is edited in place")
+}
+
+func TestDeleteYes_withoutOriginClearsKeyboard(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := repo.seed(docsbot.Document{
+		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+		Category: docsbot.CatPassport, Title: "Паспорт РК", TgFileID: "f", TgFileUniqueID: "u",
+	})
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(doc.ID)))
+	b.ProcessUpdate(ctx, dataCallback(100, "d:dy:"+string(doc.ID)))
+
+	require.True(t, has(sent.edits, "Документ удалён"), "edits %q", sent.edits)
+	last := sent.editMarkups[len(sent.editMarkups)-1]
+	require.NotEmpty(t, last, "reply_markup must be sent to clear the old keyboard")
+	require.Contains(t, last, "Мои документы")
+	require.Contains(t, last, `"d:lb"`)
+	for _, cbData := range []string{"d:snd", "d:rn", "d:sc", "d:del", "d:oc"} {
+		require.NotContains(t, last, cbData, "no card buttons remain")
+	}
+}
+
+func TestSearchBack_rerunsLastSearch(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	repo.seed(docsbot.Document{
+		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+		Category: docsbot.CatPassport, Title: "Паспорт РК", TgFileID: "f", TgFileUniqueID: "u",
+	})
+	b.ProcessUpdate(ctx, textUpdate(100, "паспорт"))
+
+	for range 2 { // the query survives repeated "Назад"
+		b.ProcessUpdate(ctx, dataCallback(100, "d:sb"))
+	}
+
+	require.Len(t, sent.edits, 2)
+	require.True(t, has(sent.edits, "Нашёл (1):"), "edits %q", sent.edits)
+}
+
 func TestLogs_traceDocumentWithoutLeaks(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -307,4 +434,92 @@ func TestLogs_editFlowWithoutLeaks(t *testing.T) {
 	for _, leak := range []string{"Паспорт", "НовоеИмяСекрет", "123:ABC", "chat_id", "tg_user_id", "f1", "u1"} {
 		require.NotContains(t, out, leak)
 	}
+}
+
+func seedPassport(repo *fakeRepo, title, uid string) docsbot.Document {
+	return repo.seed(docsbot.Document{
+		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+		Category: docsbot.CatPassport, Title: title, TgFileID: uid, TgFileUniqueID: uid,
+	})
+}
+
+func TestSearchBack_withoutQueryFallsBackToCatalog(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	seedPassport(repo, "Паспорт", "u1")
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:sb"))
+
+	require.Len(t, sent.edits, 1)
+	require.Contains(t, sent.edits[0], "Твои документы")
+	require.Contains(t, sent.editMarkups[0], "d:lc:"+string(docsbot.CatPassport))
+	require.Empty(t, sent.texts)
+}
+
+func TestDeleteYes_fromSearchReturnsToSearch(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	keep := seedPassport(repo, "Паспорт один", "u1")
+	gone := seedPassport(repo, "Паспорт два", "u2")
+	b.ProcessUpdate(ctx, textUpdate(100, "паспорт"))
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(gone.ID)+":s"))
+	b.ProcessUpdate(ctx, dataCallback(100, "d:dy:"+string(gone.ID)))
+
+	require.Equal(t, "Нашёл (1):", sent.edits[len(sent.edits)-1])
+	require.NotContains(t, repo.docs, gone.ID)
+	require.Contains(t, repo.docs, keep.ID)
+}
+
+func TestRename_editsCardInPlace(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := seedPassport(repo, "Старое", "u1")
+	b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(doc.ID)+":l:"+string(docsbot.CatPassport)+":1"))
+	b.ProcessUpdate(ctx, dataCallback(100, "d:rn:"+string(doc.ID)))
+	require.Len(t, sent.texts, 1, "only the force-reply prompt is sent")
+
+	b.ProcessUpdate(ctx, textUpdate(100, "Новое имя"))
+
+	require.Len(t, sent.texts, 1, "no new card message")
+	require.Equal(t, "Новое имя", repo.docs[doc.ID].Title)
+	require.Contains(t, sent.edits[len(sent.edits)-1], "Новое имя")
+	require.True(t, has(sent.editMarkups, "d:lc:"+string(docsbot.CatPassport)+":1"), "origin kept: %q", sent.editMarkups)
+}
+
+func TestRename_deletedDocumentIsGone(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := seedPassport(repo, "Старое", "u1")
+	b.ProcessUpdate(ctx, dataCallback(100, "d:rn:"+string(doc.ID)))
+	delete(repo.docs, doc.ID)
+
+	b.ProcessUpdate(ctx, textUpdate(100, "Новое"))
+
+	require.True(t, has(sent.texts, "Этого документа уже нет"), "texts %q", sent.texts)
+	require.False(t, has(sent.texts, "Что-то пошло не так"))
+}
+
+func TestSend_sendsFileWithCaptionAndStaleIsGone(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := seedPassport(repo, "Паспорт РК", "u1")
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:snd:"+string(doc.ID)))
+	require.Equal(t, []string{"Паспорт РК · " + telegram.CategoryLabel(docsbot.CatPassport)}, sent.files)
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:snd:missing"))
+	require.True(t, has(sent.texts, "Этого документа уже нет"), "texts %q", sent.texts)
+}
+
+func TestDeleteNo_restoresCardAndStaleIsGone(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := seedPassport(repo, "Паспорт РК", "u1")
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:dn:"+string(doc.ID)))
+	require.Contains(t, sent.edits[0], "Категория:")
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:dn:missing"))
+	require.True(t, has(sent.edits, "Этого документа уже нет"), "edits %q", sent.edits)
 }

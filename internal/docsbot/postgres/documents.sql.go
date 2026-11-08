@@ -136,7 +136,7 @@ func (q *Queries) DocumentCategoryCounts(ctx context.Context, userID pgtype.UUID
 }
 
 const getDocumentByID = `-- name: GetDocumentByID :one
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type
 from documents
 where id = $1
   and user_id = $2
@@ -164,12 +164,14 @@ func (q *Queries) GetDocumentByID(ctx context.Context, arg GetDocumentByIDParams
 		&i.Kind,
 		&i.BackupStatus,
 		&i.StatusMessageID,
+		&i.FileSize,
+		&i.MimeType,
 	)
 	return i, err
 }
 
 const getDocumentByUniqueID = `-- name: GetDocumentByUniqueID :one
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type
 from documents
 where user_id = $1
   and tg_file_unique_id = $2
@@ -197,14 +199,16 @@ func (q *Queries) GetDocumentByUniqueID(ctx context.Context, arg GetDocumentByUn
 		&i.Kind,
 		&i.BackupStatus,
 		&i.StatusMessageID,
+		&i.FileSize,
+		&i.MimeType,
 	)
 	return i, err
 }
 
 const insertDocument = `-- name: InsertDocument :one
-insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id)
-values ($1, $2, $3, $4, $5, $6, $7)
-returning id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id
+insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, file_size, mime_type)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+returning id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type
 `
 
 type InsertDocumentParams struct {
@@ -215,6 +219,8 @@ type InsertDocumentParams struct {
 	Title          string
 	TgFileID       string
 	TgFileUniqueID string
+	FileSize       pgtype.Int8
+	MimeType       pgtype.Text
 }
 
 // A received file starts as pending with no category; the category and 'saved'
@@ -228,6 +234,8 @@ func (q *Queries) InsertDocument(ctx context.Context, arg InsertDocumentParams) 
 		arg.Title,
 		arg.TgFileID,
 		arg.TgFileUniqueID,
+		arg.FileSize,
+		arg.MimeType,
 	)
 	var i Document
 	err := row.Scan(
@@ -244,12 +252,14 @@ func (q *Queries) InsertDocument(ctx context.Context, arg InsertDocumentParams) 
 		&i.Kind,
 		&i.BackupStatus,
 		&i.StatusMessageID,
+		&i.FileSize,
+		&i.MimeType,
 	)
 	return i, err
 }
 
 const listDocumentsByCategory = `-- name: ListDocumentsByCategory :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type
 from documents
 where user_id = $1
   and category = $2
@@ -293,6 +303,8 @@ func (q *Queries) ListDocumentsByCategory(ctx context.Context, arg ListDocuments
 			&i.Kind,
 			&i.BackupStatus,
 			&i.StatusMessageID,
+			&i.FileSize,
+			&i.MimeType,
 		); err != nil {
 			return nil, err
 		}
@@ -363,7 +375,7 @@ func (q *Queries) ListNotBackedUpDocumentIDs(ctx context.Context, userID pgtype.
 }
 
 const listSavedDocumentsForExport = `-- name: ListSavedDocumentsForExport :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type
 from documents
 where user_id = $1
   and status = 'saved'
@@ -399,6 +411,8 @@ func (q *Queries) ListSavedDocumentsForExport(ctx context.Context, arg ListSaved
 			&i.Kind,
 			&i.BackupStatus,
 			&i.StatusMessageID,
+			&i.FileSize,
+			&i.MimeType,
 		); err != nil {
 			return nil, err
 		}
@@ -449,7 +463,7 @@ func (q *Queries) SaveDocumentCategory(ctx context.Context, arg SaveDocumentCate
 }
 
 const searchDocuments = `-- name: SearchDocuments :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type
 from documents
 where user_id = $1
   and status = 'saved'
@@ -487,6 +501,8 @@ func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams
 			&i.Kind,
 			&i.BackupStatus,
 			&i.StatusMessageID,
+			&i.FileSize,
+			&i.MimeType,
 		); err != nil {
 			return nil, err
 		}
@@ -496,6 +512,30 @@ func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams
 		return nil, err
 	}
 	return items, nil
+}
+
+const titleExistsInCategory = `-- name: TitleExistsInCategory :one
+select exists (
+    select 1
+    from documents
+    where user_id = $1
+      and category = $2
+      and status = 'saved'
+      and title = $3
+)
+`
+
+type TitleExistsInCategoryParams struct {
+	UserID   pgtype.UUID
+	Category string
+	Title    string
+}
+
+func (q *Queries) TitleExistsInCategory(ctx context.Context, arg TitleExistsInCategoryParams) (bool, error) {
+	row := q.db.QueryRow(ctx, titleExistsInCategory, arg.UserID, arg.Category, arg.Title)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const updateDocumentBackupStatus = `-- name: UpdateDocumentBackupStatus :exec

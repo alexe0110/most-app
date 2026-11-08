@@ -31,6 +31,8 @@ func (r *Repo) CreateDocument(ctx context.Context, in docsbot.IncomingFile) (doc
 		Title:          in.Title,
 		TgFileID:       in.FileID,
 		TgFileUniqueID: in.FileUniqueID,
+		FileSize:       pgtype.Int8{Int64: in.FileSize, Valid: in.FileSize > 0},
+		MimeType:       pgtype.Text{String: in.MIME, Valid: in.MIME != ""},
 	})
 	if err != nil {
 		return docsbot.Document{}, fmt.Errorf("insert document: %w", err)
@@ -110,6 +112,20 @@ func (r *Repo) SetCategory(ctx context.Context, user docsbot.UserID, id docsbot.
 		return fmt.Errorf("update document category: %w", err)
 	}
 	return nil
+}
+
+// TitleExistsInCategory reports whether the user has a saved document with this
+// title in the category.
+func (r *Repo) TitleExistsInCategory(ctx context.Context, user docsbot.UserID, cat docsbot.Category, title string) (bool, error) {
+	uid, err := parseUUID(string(user))
+	if err != nil {
+		return false, err
+	}
+	ok, err := r.Queries.TitleExistsInCategory(ctx, TitleExistsInCategoryParams{UserID: uid, Category: string(cat), Title: title})
+	if err != nil {
+		return false, fmt.Errorf("title exists in category: %w", err)
+	}
+	return ok, nil
 }
 
 // DeleteDocument removes a document.
@@ -268,6 +284,8 @@ func toDocument(d Document) docsbot.Document {
 		TgFileID:        d.TgFileID,
 		TgFileUniqueID:  d.TgFileUniqueID,
 		DriveFileID:     d.DriveFileID.String,
+		FileSize:        d.FileSize.Int64,
+		MIME:            d.MimeType.String,
 		BackupStatus:    docsbot.BackupStatus(d.BackupStatus),
 		CreatedAt:       d.CreatedAt.Time,
 	}

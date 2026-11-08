@@ -29,6 +29,8 @@ type docs struct {
 	log      *slog.Logger
 	renames  *renameStore
 	confirms *confirmStore
+	searches *searchStore
+	origins  *originStore
 }
 
 func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger) *docs {
@@ -36,6 +38,8 @@ func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger) *docs {
 		svc: svc, auth: auth, log: log,
 		renames:  newRenameStore(time.Now),
 		confirms: newConfirmStore(time.Now),
+		searches: newSearchStore(time.Now),
+		origins:  newOriginStore(time.Now),
 	}
 }
 
@@ -146,10 +150,11 @@ func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.onDeleteConfirm(ctx, b, chatID, user, u.Message.Text)
 		return
 	}
-	if id, ok := d.renames.take(u.Message.From.ID); ok {
-		d.applyRename(ctx, b, chatID, user, id, u.Message.Text)
+	if id, chat, msg, ok := d.renames.take(u.Message.From.ID); ok {
+		d.applyRename(ctx, b, chatID, user, id, chat, msg, u.Message.Text)
 		return
 	}
+	d.searches.set(u.Message.From.ID, u.Message.Text)
 	d.runSearch(ctx, b, chatID, user, u.Message.Text)
 }
 
@@ -165,12 +170,12 @@ func (d *docs) runSearch(ctx context.Context, b *bot.Bot, chatID int64, user doc
 
 // callback dispatches an inline-button press by its action.
 func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
-	d.answer(ctx, b, u.CallbackQuery.ID)
+	parts := strings.Split(u.CallbackQuery.Data, ":") // d:<action>[:docID[:arg]]
+	d.answerText(ctx, b, u.CallbackQuery.ID, toastFor(parts))
 	user, ok := userID(ctx)
 	if !ok {
 		return
 	}
-	parts := strings.Split(u.CallbackQuery.Data, ":") // d:<action>[:docID[:arg]]
 	if len(parts) < 2 {
 		return
 	}
@@ -190,9 +195,13 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 	case actDeleteYes:
 		d.onDeleteYes(ctx, b, u, user, parts)
 	case actDeleteNo:
-		d.onDeleteNo(ctx, b, u)
+		d.onDeleteNo(ctx, b, u, user, parts)
 	case actListCat:
 		d.onListCat(ctx, b, u, user, parts)
+	case actOpenCard:
+		d.onOpenCard(ctx, b, u, user, parts)
+	case actSearchBack:
+		d.onSearchBack(ctx, b, u, user)
 	case actListBack:
 		d.onListBack(ctx, b, u, user)
 	case actTransfer, actTransferYes:
@@ -213,6 +222,20 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.onRetryBatch(ctx, b, u, user, parts)
 	case actNoop:
 	}
+}
+
+// toastFor is the short pop-up shown for an action, "" for none.
+func toastFor(parts []string) string {
+	if len(parts) < 2 {
+		return ""
+	}
+	switch parts[1] {
+	case actSend:
+		return toastSending
+	case actSetCategory, actDeleteYes:
+		return toastDone
+	}
+	return ""
 }
 
 // onDisconnect revokes Drive access and stops pending uploads, leaving stored
@@ -464,9 +487,11 @@ func (d *docs) sendHTML(ctx context.Context, b *bot.Bot, chatID int64, text stri
 // editHTML rewrites an HTML message; "message is not modified" is not an error.
 func (d *docs) editHTML(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup) {
 	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text, ParseMode: models.ParseModeHTML}
-	if kb != nil {
-		params.ReplyMarkup = kb
+	if kb == nil {
+		// An omitted reply_markup keeps the old keyboard; an empty one clears it.
+		kb = &models.InlineKeyboardMarkup{}
 	}
+	params.ReplyMarkup = kb
 	start := time.Now()
 	_, err := b.EditMessageText(ctx, params)
 	traceAPI(ctx, d.log, "editMessageText", start)
@@ -486,13 +511,17 @@ func (d *docs) onSetCategory(ctx context.Context, b *bot.Bot, u *models.Update, 
 		return
 	}
 	card, err := d.svc.Recategorize(ctx, user, id, cat)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		d.gone(ctx, b, chatID, msgID)
+		return
+	}
 	if err != nil {
 		d.fail(ctx, b, chatID, "recategorize", err)
 		return
 	}
 	d.log.InfoContext(ctx, "document recategorized", "user_id", user, "doc_id", card.Doc.ID, "category", cat)
-	d.editText(ctx, b, chatID, msgID, "✅ "+categoryLabel(cat))
-	d.sendCard(ctx, b, chatID, card.Doc, textRecategorized, card.CategoryFolderID)
+	orig, _ := d.origins.get(chatID, msgID)
+	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
 }
 
 // onChangeCat swaps a card's buttons for the category picker.
@@ -519,6 +548,10 @@ func (d *docs) onSend(ctx context.Context, b *bot.Bot, u *models.Update, user do
 		return
 	}
 	card, err := d.svc.Card(ctx, user, id)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		reply(ctx, b, d.log, chatID, textGone)
+		return
+	}
 	if err != nil {
 		d.fail(ctx, b, chatID, "load card", err)
 		return
@@ -532,11 +565,11 @@ func (d *docs) onRenamePrompt(ctx context.Context, b *bot.Bot, u *models.Update,
 	if !ok {
 		return
 	}
-	chatID, ok := callbackChat(u)
+	chatID, msgID, ok := callbackMessage(u)
 	if !ok {
 		return
 	}
-	d.renames.set(u.CallbackQuery.From.ID, id)
+	d.renames.set(u.CallbackQuery.From.ID, id, chatID, msgID)
 	start := time.Now()
 	_, err := b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:      chatID,
@@ -549,16 +582,19 @@ func (d *docs) onRenamePrompt(ctx context.Context, b *bot.Bot, u *models.Update,
 	}
 }
 
-func (d *docs) applyRename(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID, title string) {
+func (d *docs) applyRename(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID, cardChat int64, cardMsg int, title string) {
 	card, err := d.svc.Rename(ctx, user, id, title)
 	switch {
 	case errors.Is(err, docsbot.ErrEmptyTitle):
 		reply(ctx, b, d.log, chatID, textRenameEmpty)
+	case errors.Is(err, docsbot.ErrNotFound):
+		reply(ctx, b, d.log, chatID, textGone)
 	case err != nil:
 		d.fail(ctx, b, chatID, "rename", err)
 	default:
 		d.log.InfoContext(ctx, "document renamed", "user_id", user, "doc_id", id)
-		d.sendCard(ctx, b, chatID, card.Doc, textRenamed, card.CategoryFolderID)
+		orig, _ := d.origins.get(cardChat, cardMsg)
+		d.editCard(ctx, b, cardChat, cardMsg, card.Doc, card.CategoryFolderID, orig)
 	}
 }
 
@@ -568,7 +604,7 @@ func (d *docs) onDeleteAsk(ctx context.Context, b *bot.Bot, u *models.Update, pa
 	if !ok {
 		return
 	}
-	chatID, ok := callbackChat(u)
+	chatID, msgID, ok := callbackMessage(u)
 	if !ok {
 		return
 	}
@@ -576,7 +612,7 @@ func (d *docs) onDeleteAsk(ctx context.Context, b *bot.Bot, u *models.Update, pa
 		{Text: btnDeleteYes, CallbackData: cb(actDeleteYes, id)},
 		{Text: btnDeleteNo, CallbackData: cb(actDeleteNo, id)},
 	}}}
-	d.send(ctx, b, chatID, textDeleteConfirm, kb)
+	d.editMessage(ctx, b, chatID, msgID, textDeleteConfirm, kb)
 }
 
 func (d *docs) onDeleteYes(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
@@ -593,15 +629,95 @@ func (d *docs) onDeleteYes(ctx context.Context, b *bot.Bot, u *models.Update, us
 		return
 	}
 	d.log.InfoContext(ctx, "document deleted", "user_id", user, "doc_id", id)
-	d.editText(ctx, b, chatID, msgID, textDeleted)
+	d.returnToOrigin(ctx, b, u, user, chatID, msgID)
 }
 
-func (d *docs) onDeleteNo(ctx context.Context, b *bot.Bot, u *models.Update) {
+// returnToOrigin replaces the deleted card's message with the list or search it
+// was opened from, falling back to a plain "deleted" note.
+func (d *docs) returnToOrigin(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, chatID int64, msgID int) {
+	orig, _ := d.origins.get(chatID, msgID)
+	switch {
+	case strings.HasPrefix(orig, "l:"):
+		parts := strings.Split(orig, ":")
+		cat, ok := docsbot.ParseCategory(parts[1])
+		if !ok || len(parts) < 3 {
+			d.editDeleted(ctx, b, chatID, msgID)
+			return
+		}
+		page, _ := strconv.Atoi(parts[2])
+		p, err := d.svc.CategoryPage(ctx, user, cat, page)
+		if err != nil {
+			d.fail(ctx, b, chatID, "category page", err)
+			return
+		}
+		if p.Total > 0 {
+			text, kb := renderCategoryPage(p)
+			d.editMessage(ctx, b, chatID, msgID, text, kb)
+			return
+		}
+		d.editCatalog(ctx, b, user, chatID, msgID)
+	case orig == "s":
+		q, ok := d.searches.take(u.CallbackQuery.From.ID)
+		if !ok {
+			d.editCatalog(ctx, b, user, chatID, msgID)
+			return
+		}
+		found, err := d.svc.Search(ctx, user, q)
+		if err != nil {
+			d.fail(ctx, b, chatID, "search", err)
+			return
+		}
+		text, kb := renderFound(found)
+		d.editMessage(ctx, b, chatID, msgID, text, kb)
+	default:
+		d.editDeleted(ctx, b, chatID, msgID)
+	}
+}
+
+// editDeleted shows the "deleted" note with a way back to the catalog.
+func (d *docs) editDeleted(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
+	d.editMessage(ctx, b, chatID, msgID, textDeleted, myDocsKeyboard())
+}
+
+// myDocsKeyboard is a single "Мои документы" button back to the catalog.
+func myDocsKeyboard() *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: btnMyDocs, CallbackData: cbPrefix + actListBack},
+	}}}
+}
+
+// editCatalog replaces a message with the category catalog.
+func (d *docs) editCatalog(ctx context.Context, b *bot.Bot, user docsbot.UserID, chatID int64, msgID int) {
+	cat, err := d.svc.Catalog(ctx, user)
+	if err != nil {
+		d.fail(ctx, b, chatID, "catalog", err)
+		return
+	}
+	text, kb := renderCatalog(cat)
+	d.editMessage(ctx, b, chatID, msgID, text, kb)
+}
+
+// onDeleteNo puts the card back in place of the confirmation.
+func (d *docs) onDeleteNo(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	id, ok := docID(parts)
+	if !ok {
+		return
+	}
 	chatID, msgID, ok := callbackMessage(u)
 	if !ok {
 		return
 	}
-	d.editText(ctx, b, chatID, msgID, textDeleteCancelled)
+	card, err := d.svc.Card(ctx, user, id)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		d.gone(ctx, b, chatID, msgID)
+		return
+	}
+	if err != nil {
+		d.fail(ctx, b, chatID, "load card", err)
+		return
+	}
+	orig, _ := d.origins.get(chatID, msgID)
+	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
 }
 
 // onListCat opens (or pages) a category, editing the list message in place.
@@ -666,14 +782,15 @@ func (d *docs) connectURL(ctx context.Context, user docsbot.UserID) (string, boo
 // sendFile resends a stored file with the method matching how it arrived.
 func (d *docs) sendFile(ctx context.Context, b *bot.Bot, chatID int64, doc docsbot.Document) {
 	var err error
+	caption := doc.Title + " · " + categoryLabel(doc.Category)
 	op := "sendDocument"
 	start := time.Now()
 	switch doc.Kind {
 	case docsbot.KindPhoto:
 		op = "sendPhoto"
-		_, err = b.SendPhoto(ctx, &bot.SendPhotoParams{ChatID: chatID, Photo: &models.InputFileString{Data: doc.TgFileID}})
+		_, err = b.SendPhoto(ctx, &bot.SendPhotoParams{ChatID: chatID, Photo: &models.InputFileString{Data: doc.TgFileID}, Caption: caption})
 	default:
-		_, err = b.SendDocument(ctx, &bot.SendDocumentParams{ChatID: chatID, Document: &models.InputFileString{Data: doc.TgFileID}})
+		_, err = b.SendDocument(ctx, &bot.SendDocumentParams{ChatID: chatID, Document: &models.InputFileString{Data: doc.TgFileID}, Caption: caption})
 	}
 	traceAPI(ctx, d.log, op, start)
 	if err != nil {
@@ -689,7 +806,69 @@ func (d *docs) sendCard(ctx context.Context, b *bot.Bot, chatID int64, doc docsb
 	if header != "" {
 		text = header + "\n\n" + text
 	}
-	d.send(ctx, b, chatID, text, cardKeyboard(doc, folderID))
+	d.send(ctx, b, chatID, text, cardKeyboard(doc, folderID, ""))
+}
+
+// editCard replaces a message with a document's card and remembers where the
+// card was opened from (orig) so "Назад" and returns survive later edits.
+func (d *docs) editCard(ctx context.Context, b *bot.Bot, chatID int64, msgID int, doc docsbot.Document, folderID, orig string) {
+	d.editMessage(ctx, b, chatID, msgID, cardText(doc), cardKeyboard(doc, folderID, orig))
+	d.origins.set(chatID, msgID, orig)
+}
+
+// gone replaces a message about a vanished document with a way back to the catalog.
+func (d *docs) gone(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
+	d.editMessage(ctx, b, chatID, msgID, textGone, myDocsKeyboard())
+}
+
+// onOpenCard renders a document's card in place of the list/search message, with
+// a "Назад" button back to where it was opened from.
+func (d *docs) onOpenCard(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	id, ok := docID(parts)
+	if !ok {
+		return
+	}
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	card, err := d.svc.Card(ctx, user, id)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		d.gone(ctx, b, chatID, msgID)
+		return
+	}
+	if err != nil {
+		d.fail(ctx, b, chatID, "load card", err)
+		return
+	}
+	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, strings.Join(parts[3:], ":"))
+}
+
+// onSearchBack re-runs the user's last search in place of the card; without a
+// remembered query it falls back to the catalog.
+func (d *docs) onSearchBack(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	q, ok := d.searches.take(u.CallbackQuery.From.ID)
+	if !ok {
+		cat, err := d.svc.Catalog(ctx, user)
+		if err != nil {
+			d.fail(ctx, b, chatID, "catalog", err)
+			return
+		}
+		text, kb := renderCatalog(cat)
+		d.editMessage(ctx, b, chatID, msgID, text, kb)
+		return
+	}
+	found, err := d.svc.Search(ctx, user, q)
+	if err != nil {
+		d.fail(ctx, b, chatID, "search", err)
+		return
+	}
+	text, kb := renderFound(found)
+	d.editMessage(ctx, b, chatID, msgID, text, kb)
 }
 
 // send posts a message, with an inline keyboard when kb is non-nil.
@@ -709,9 +888,11 @@ func (d *docs) send(ctx context.Context, b *bot.Bot, chatID int64, text string, 
 // editMessage rewrites a message's text and keyboard in place (used for paging).
 func (d *docs) editMessage(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup) {
 	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text}
-	if kb != nil {
-		params.ReplyMarkup = kb
+	if kb == nil {
+		// An omitted reply_markup keeps the old keyboard; an empty one clears it.
+		kb = &models.InlineKeyboardMarkup{}
 	}
+	params.ReplyMarkup = kb
 	start := time.Now()
 	_, err := b.EditMessageText(ctx, params)
 	traceAPI(ctx, d.log, "editMessageText", start)
@@ -737,10 +918,10 @@ func (d *docs) editMarkup(ctx context.Context, b *bot.Bot, chatID int64, msgID i
 	}
 }
 
-// answer stops the button's loading spinner.
-func (d *docs) answer(ctx context.Context, b *bot.Bot, callbackID string) {
+// answerText stops the button's loading spinner, showing text as a toast if set.
+func (d *docs) answerText(ctx context.Context, b *bot.Bot, callbackID, text string) {
 	start := time.Now()
-	_, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: callbackID})
+	_, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: callbackID, Text: text})
 	traceAPI(ctx, d.log, "answerCallbackQuery", start)
 	if err != nil {
 		d.log.Error("answer callback", "err", err)
@@ -807,8 +988,10 @@ type renameStore struct {
 }
 
 type renameEntry struct {
-	id docsbot.DocumentID
-	at time.Time
+	id   docsbot.DocumentID
+	chat int64 // the card's message, edited in place after the rename
+	msg  int
+	at   time.Time
 }
 
 const renameTTL = 5 * time.Minute
@@ -817,25 +1000,113 @@ func newRenameStore(now func() time.Time) *renameStore {
 	return &renameStore{m: map[int64]renameEntry{}, now: now}
 }
 
-func (s *renameStore) set(user int64, id docsbot.DocumentID) {
+func (s *renameStore) set(user int64, id docsbot.DocumentID, chat int64, msg int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.m[user] = renameEntry{id: id, at: s.now()}
+	s.m[user] = renameEntry{id: id, chat: chat, msg: msg, at: s.now()}
 }
 
 // take removes and returns the armed document, if any and not expired.
-func (s *renameStore) take(user int64) (docsbot.DocumentID, bool) {
+func (s *renameStore) take(user int64) (id docsbot.DocumentID, chat int64, msg int, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, found := s.m[user]
+	if !found {
+		return "", 0, 0, false
+	}
+	delete(s.m, user)
+	if s.now().Sub(e.at) > renameTTL {
+		return "", 0, 0, false
+	}
+	return e.id, e.chat, e.msg, true
+}
+
+// originStore remembers where each card message was opened from (a list page, the
+// search, or nowhere) so edits of the card keep its "Назад" and delete can return.
+// In memory only; entries expire after originTTL.
+type originStore struct {
+	mu  sync.Mutex
+	m   map[originKey]originEntry
+	now func() time.Time
+}
+
+type originKey struct {
+	chat int64
+	msg  int
+}
+
+type originEntry struct {
+	orig string // "l:<cat>:<page>", "s" or ""
+	at   time.Time
+}
+
+const originTTL = 30 * time.Minute
+
+func newOriginStore(now func() time.Time) *originStore {
+	return &originStore{m: map[originKey]originEntry{}, now: now}
+}
+
+func (s *originStore) set(chat int64, msg int, orig string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m[originKey{chat, msg}] = originEntry{orig: orig, at: s.now()}
+}
+
+// get returns the origin if present and not expired; the entry is kept.
+func (s *originStore) get(chat int64, msg int) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := originKey{chat, msg}
+	e, ok := s.m[k]
+	if !ok {
+		return "", false
+	}
+	if s.now().Sub(e.at) > originTTL {
+		delete(s.m, k)
+		return "", false
+	}
+	return e.orig, true
+}
+
+// searchStore remembers each user's last search query so a card opened from the
+// results can go back to them. In memory only; entries expire after searchTTL.
+type searchStore struct {
+	mu  sync.Mutex
+	m   map[int64]searchEntry
+	now func() time.Time
+}
+
+type searchEntry struct {
+	query string
+	at    time.Time
+}
+
+const searchTTL = 10 * time.Minute
+
+func newSearchStore(now func() time.Time) *searchStore {
+	return &searchStore{m: map[int64]searchEntry{}, now: now}
+}
+
+func (s *searchStore) set(user int64, query string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m[user] = searchEntry{query: query, at: s.now()}
+}
+
+// take returns the remembered query if not expired. It keeps the entry so
+// repeated "Назад" presses keep working.
+func (s *searchStore) take(user int64) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.m[user]
 	if !ok {
 		return "", false
 	}
-	delete(s.m, user)
-	if s.now().Sub(e.at) > renameTTL {
+	if s.now().Sub(e.at) > searchTTL {
+		delete(s.m, user)
 		return "", false
 	}
-	return e.id, true
+	return e.query, true
 }
 
 // confirmWord is the exact word the user must type to delete all their data.

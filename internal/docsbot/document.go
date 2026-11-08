@@ -98,7 +98,10 @@ type Document struct {
 	TgFileID       string
 	TgFileUniqueID string
 	DriveFileID    string
-	BackupStatus   BackupStatus
+	// FileSize is the size in bytes, 0 if unknown.
+	FileSize     int64
+	MIME         string
+	BackupStatus BackupStatus
 	// StatusMessageID is the status-message group the document belongs to, "" if none.
 	StatusMessageID StatusMessageID
 	CreatedAt       time.Time
@@ -124,4 +127,7 @@ type IncomingFile struct {
 	FileID       string
 	FileUniqueID string
 	Title        string
+	// FileSize is the size in bytes, 0 if unknown.
+	FileSize int64
+	MIME     string
 }
