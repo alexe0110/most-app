@@ -19,8 +19,8 @@ func (s *Service) StatusTarget(ctx context.Context, user UserID) (StatusMessage,
 }
 
 // OpenStatus records a new status message and attaches the document to it.
-func (s *Service) OpenStatus(ctx context.Context, user UserID, chatID int64, messageID int, doc DocumentID) (StatusMessage, error) {
-	sm, err := s.status.Create(ctx, user, chatID, messageID)
+func (s *Service) OpenStatus(ctx context.Context, user UserID, chatID int64, messageID int, doc DocumentID, kind StatusKind) (StatusMessage, error) {
+	sm, err := s.status.Create(ctx, user, chatID, messageID, kind)
 	if err != nil {
 		return StatusMessage{}, fmt.Errorf("create status message: %w", err)
 	}
@@ -28,6 +28,34 @@ func (s *Service) OpenStatus(ctx context.Context, user UserID, chatID int64, mes
 		return StatusMessage{}, fmt.Errorf("attach document: %w", err)
 	}
 	return sm, nil
+}
+
+// startGroupedUpload opens a transfer status message on an existing Telegram
+// message, attaches every document to it, enqueues each upload, and returns the
+// view to render. No ids means nothing to do (ok=false).
+func (s *Service) startGroupedUpload(ctx context.Context, user UserID, chatID int64, messageID int, ids []DocumentID) (StatusView, bool, error) {
+	if len(ids) == 0 {
+		return StatusView{}, false, nil
+	}
+	sm, err := s.status.Create(ctx, user, chatID, messageID, StatusTransfer)
+	if err != nil {
+		return StatusView{}, false, fmt.Errorf("create transfer status: %w", err)
+	}
+	for _, id := range ids {
+		if err := s.status.Attach(ctx, id, sm.ID); err != nil {
+			_ = s.status.Close(ctx, sm.ID) // best-effort cleanup; keep the original error
+			return StatusView{}, false, fmt.Errorf("attach transfer doc: %w", err)
+		}
+		if err := s.uploads.EnqueueUpload(ctx, user, id); err != nil {
+			_ = s.status.Close(ctx, sm.ID) // best-effort cleanup; keep the original error
+			return StatusView{}, false, fmt.Errorf("enqueue upload: %w", err)
+		}
+	}
+	v, err := s.StatusViewByID(ctx, user, sm.ID)
+	if err != nil {
+		return StatusView{}, false, err
+	}
+	return v, true, nil
 }
 
 // AttachStatus adds the document to an existing status message.

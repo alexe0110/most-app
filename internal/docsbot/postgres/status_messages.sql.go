@@ -51,7 +51,7 @@ func (q *Queries) DeleteUserStatusMessages(ctx context.Context, userID pgtype.UU
 }
 
 const getOpenStatusMessageForUser = `-- name: GetOpenStatusMessageForUser :one
-select id, user_id, chat_id, message_id, created_at, closed_at
+select id, user_id, chat_id, message_id, created_at, closed_at, kind
 from status_messages
 where user_id = $1
   and closed_at is null
@@ -69,12 +69,13 @@ func (q *Queries) GetOpenStatusMessageForUser(ctx context.Context, userID pgtype
 		&i.MessageID,
 		&i.CreatedAt,
 		&i.ClosedAt,
+		&i.Kind,
 	)
 	return i, err
 }
 
 const getStatusMessageByID = `-- name: GetStatusMessageByID :one
-select id, user_id, chat_id, message_id, created_at, closed_at
+select id, user_id, chat_id, message_id, created_at, closed_at, kind
 from status_messages
 where id = $1
 `
@@ -89,24 +90,31 @@ func (q *Queries) GetStatusMessageByID(ctx context.Context, id pgtype.UUID) (Sta
 		&i.MessageID,
 		&i.CreatedAt,
 		&i.ClosedAt,
+		&i.Kind,
 	)
 	return i, err
 }
 
 const insertStatusMessage = `-- name: InsertStatusMessage :one
-insert into status_messages (user_id, chat_id, message_id)
-values ($1, $2, $3)
-returning id, user_id, chat_id, message_id, created_at, closed_at
+insert into status_messages (user_id, chat_id, message_id, kind)
+values ($1, $2, $3, $4)
+returning id, user_id, chat_id, message_id, created_at, closed_at, kind
 `
 
 type InsertStatusMessageParams struct {
 	UserID    pgtype.UUID
 	ChatID    int64
 	MessageID int64
+	Kind      string
 }
 
 func (q *Queries) InsertStatusMessage(ctx context.Context, arg InsertStatusMessageParams) (StatusMessage, error) {
-	row := q.db.QueryRow(ctx, insertStatusMessage, arg.UserID, arg.ChatID, arg.MessageID)
+	row := q.db.QueryRow(ctx, insertStatusMessage,
+		arg.UserID,
+		arg.ChatID,
+		arg.MessageID,
+		arg.Kind,
+	)
 	var i StatusMessage
 	err := row.Scan(
 		&i.ID,
@@ -115,6 +123,7 @@ func (q *Queries) InsertStatusMessage(ctx context.Context, arg InsertStatusMessa
 		&i.MessageID,
 		&i.CreatedAt,
 		&i.ClosedAt,
+		&i.Kind,
 	)
 	return i, err
 }

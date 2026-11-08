@@ -28,7 +28,7 @@ type driveCounter interface {
 
 // NotifyConnected builds the OnConnected callback: after Drive is linked it tells
 // the user, and offers to transfer any documents still only in Telegram.
-func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter) oauth.OnConnected {
+func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slog.Logger) oauth.OnConnected {
 	return func(ctx context.Context, userID string) error {
 		chatID, err := users.TgUserID(ctx, userID)
 		if err != nil {
@@ -37,6 +37,7 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter) oauth.On
 		if err := b.Send(ctx, chatID, textDriveConnected); err != nil {
 			return err
 		}
+		log.InfoContext(ctx, "drive connected", "user_id", userID)
 		n, err := counter.NotBackedUpCount(ctx, docsbot.UserID(userID))
 		if err != nil {
 			return fmt.Errorf("count not backed up: %w", err)
@@ -69,14 +70,19 @@ type Notifier struct {
 	svc   statusService
 	log   *slog.Logger
 
-	mu       sync.Mutex
-	lastEdit map[docsbot.StatusMessageID]time.Time
+	mu        sync.Mutex
+	lastEdit  map[docsbot.StatusMessageID]time.Time
+	revokedAt map[docsbot.UserID]time.Time // last reconnect prompt per user
 }
+
+// reconnectDebounce limits the reconnect prompt to once per user per this period,
+// so a revoked grant does not prompt for every document of a batch.
+const reconnectDebounce = 10 * time.Minute
 
 // NewNotifier builds the Telegram Notifier that the upload worker reports to.
 func NewNotifier(b *tg.Bot, users userLookup, auth Authorizer, svc statusService, log *slog.Logger) *Notifier {
 	return &Notifier{bot: b, users: users, auth: auth, svc: svc, log: log,
-		lastEdit: map[docsbot.StatusMessageID]time.Time{}}
+		lastEdit: map[docsbot.StatusMessageID]time.Time{}, revokedAt: map[docsbot.UserID]time.Time{}}
 }
 
 // UploadOutcome reflects a document's final upload state: it refreshes the batch
@@ -158,16 +164,35 @@ func errString(err error) string {
 	return err.Error()
 }
 
-// Reconnect asks the user to re-link Drive after access was revoked.
+// Reconnect asks the user to re-link Drive after access was revoked. At most one
+// prompt is delivered per reconnectDebounce; a failed send does not count, so a
+// retry can still reach the user.
 func (n *Notifier) Reconnect(ctx context.Context, user docsbot.UserID) error {
+	n.mu.Lock()
+	last := n.revokedAt[user]
+	expired := !last.IsZero() && time.Since(last) >= reconnectDebounce
+	if expired {
+		delete(n.revokedAt, user) // keep the map bounded
+	}
+	n.mu.Unlock()
+	if !last.IsZero() && !expired {
+		return nil
+	}
 	chatID, err := n.users.TgUserID(ctx, string(user))
 	if err != nil {
 		return fmt.Errorf("resolve tg user: %w", err)
 	}
-	url, uErr := n.auth.AuthURL(ctx, string(user), botName)
-	if uErr != nil {
+	if url, uErr := n.auth.AuthURL(ctx, string(user), botName); uErr != nil {
 		n.log.Error("build auth url", "err", uErr)
-		return n.bot.Send(ctx, chatID, textReconnect)
+		err = n.bot.Send(ctx, chatID, textReconnect)
+	} else {
+		err = n.bot.SendMarkup(ctx, chatID, textReconnect, reconnectKeyboard(url))
 	}
-	return n.bot.SendMarkup(ctx, chatID, textReconnect, reconnectKeyboard(url))
+	if err != nil {
+		return err
+	}
+	n.mu.Lock()
+	n.revokedAt[user] = time.Now()
+	n.mu.Unlock()
+	return nil
 }

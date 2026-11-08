@@ -23,7 +23,6 @@ const (
 
 	textChooseCategory = "Выбери категорию:"
 	textAlreadySaved   = "Этот файл уже сохранён."
-	textSaved          = "Сохранил ✅"
 
 	textRenamePrompt = "Пришли новое название документа."
 	textRenameEmpty  = "Название пустое. Нажми «Имя» и пришли название ещё раз."
@@ -43,15 +42,24 @@ const (
 	textOfferDrive = "Хочешь, чтобы документы лежали на твоём Google Drive? Подключи — " +
 		"новые файлы будут попадать туда автоматически, а бот увидит только то, что сам создал."
 
-	textTransferOffer    = "Перенести %d сохранённых документов в Google Drive?"                 // %d = count
-	textTransferStarted  = "Начинаю перенос %d документов в Drive — пришлю, когда будут готовы." // %d = count
-	textTransferDeclined = "Хорошо. Перенести можно позже — в /list или /settings."
-	textBackedUp         = "☁️ «%s» теперь в Google Drive." // %s = title
-	textBackupFailed     = "Не удалось выгрузить документ в Google Drive. Попробовать ещё раз?"
-	textReconnect        = "Доступ к Google Drive отозван. Подключи заново, чтобы продолжить выгрузку."
-	textRetryQueued      = "Повторяю выгрузку в Google Drive."
-	textStatusHeader     = "Загрузка в Drive (%d из %d)" // done, total
-	textStatusMore       = "…и ещё %d"                   // %d = hidden lines
+	textTransferOffer     = "Перенести %d сохранённых документов в Google Drive?" // %d = count
+	textNothingToTransfer = "Всё уже в Google Drive."
+	textTransferDeclined  = "Хорошо. Перенести можно позже — в /list или /settings."
+	textBackedUp          = "☁️ «%s» теперь в Google Drive." // %s = title
+	textBackupFailed      = "Не удалось выгрузить документ в Google Drive. Попробовать ещё раз?"
+	textReconnect         = "Доступ к Google Drive отозван. Подключи заново, чтобы продолжить выгрузку."
+	textRetryQueued       = "Повторяю выгрузку в Google Drive."
+	textStatusHeader      = "Загрузка в Drive (%d из %d)" // done, total
+	textStatusMore        = "…и ещё %d"                   // %d = hidden lines
+	textStatusListHint    = "✏️ Изменить имя и категорию: /list"
+	textTransferHeader    = "Перенос в Drive (%d из %d)" // done, total
+	textTransferAllDone   = "Готово: %d в Drive"         // %d = backed up
+
+	textStoragePending      = "⏳ Загружаю в Drive…"
+	textStorageInDrive      = "☁️ В Google Drive"
+	textStorageFailed       = "❌ Не удалось выгрузить в Drive"
+	textStorageTooLarge     = "📥 Слишком большой для Drive"
+	textStorageTelegramOnly = "📥 Только в Telegram, ещё не в Drive"
 
 	textUnknown    = "Не понимаю эту команду. Я умею /start, /list, /convert и /help."
 	textError      = "Что-то пошло не так. Попробуй ещё раз."
@@ -62,8 +70,7 @@ const (
 const (
 	textDisconnected = "Google Drive отключён. Новые документы останутся в Telegram, " +
 		"а уже выгруженные файлы и ссылки на них сохранены."
-	textRetryAllQueued = "Повторяю выгрузку в Google Drive: %d шт." // %d = count
-	textNoFailed       = "Документов с ошибкой выгрузки нет."
+	textNoFailed = "Документов с ошибкой выгрузки нет."
 
 	textExportEmpty     = "Пока нечего присылать — сохранённых документов нет."
 	textExportStart     = "Присылаю твои документы…"

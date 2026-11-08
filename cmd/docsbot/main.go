@@ -89,7 +89,7 @@ func run() error {
 		PublicURL:    cfg.PublicURL,
 		BotURL:       botURL(cfg.TelegramBotUsername),
 	}, repo, func(ctx context.Context, userID string) error {
-		return telegram.NotifyConnected(tgbot, repo, svc)(ctx, userID)
+		return telegram.NotifyConnected(tgbot, repo, svc, log)(ctx, userID)
 	}, log)
 	if err != nil {
 		return fmt.Errorf("new oauth service: %w", err)

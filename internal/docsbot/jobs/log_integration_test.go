@@ -59,6 +59,7 @@ func TestUploadDocument_logsLifecycle(t *testing.T) {
 	require.Contains(t, out, `"job_id"`)
 	require.Contains(t, out, `"backup_status":"backed_up"`)
 	require.Contains(t, out, `"duration_ms"`)
+	require.Contains(t, out, `"category"`)
 	requireNoLeaks(t, out)
 }
 

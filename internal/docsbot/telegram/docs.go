@@ -249,25 +249,28 @@ func (d *docs) onDisconnect(ctx context.Context, b *bot.Bot, u *models.Update, u
 		d.fail(ctx, b, chatID, "disconnect", err)
 		return
 	}
+	d.log.InfoContext(ctx, "drive disconnected", "user_id", user)
 	d.editText(ctx, b, chatID, msgID, textDisconnected)
 }
 
-// onRetryAll re-queues every failed Drive upload.
+// onRetryAll re-queues every failed Drive upload; the /settings message turns
+// into a transfer status message.
 func (d *docs) onRetryAll(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
 	chatID, msgID, ok := callbackMessage(u)
 	if !ok {
 		return
 	}
-	n, err := d.svc.RetryFailed(ctx, user)
+	view, ok, err := d.svc.RetryFailed(ctx, user, chatID, msgID)
 	if err != nil {
 		d.fail(ctx, b, chatID, "retry failed", err)
 		return
 	}
-	if n == 0 {
+	if !ok {
 		d.editText(ctx, b, chatID, msgID, textNoFailed)
 		return
 	}
-	d.editText(ctx, b, chatID, msgID, fmt.Sprintf(textRetryAllQueued, n))
+	d.log.InfoContext(ctx, "retry all", "user_id", user, "count", len(view.Lines))
+	d.redrawStatus(ctx, b, user, view)
 }
 
 // onExport resends the user's stored documents from Telegram, paced under the
@@ -286,6 +289,7 @@ func (d *docs) onExport(ctx context.Context, b *bot.Bot, u *models.Update, user 
 		reply(ctx, b, d.log, chatID, textExportEmpty)
 		return
 	}
+	d.log.InfoContext(ctx, "export started", "user_id", user, "count", len(exp.Docs))
 	reply(ctx, b, d.log, chatID, textExportStart)
 	for i, doc := range exp.Docs {
 		if i > 0 && !pause(ctx, exportPause) {
@@ -306,6 +310,9 @@ func (d *docs) onDeleteData(ctx context.Context, b *bot.Bot, u *models.Update) {
 	if !ok {
 		return
 	}
+	if user, ok := userID(ctx); ok {
+		d.log.InfoContext(ctx, "delete data requested", "user_id", user)
+	}
 	d.confirms.arm(u.CallbackQuery.From.ID)
 	reply(ctx, b, d.log, chatID, textDeleteDataPrompt)
 }
@@ -320,24 +327,28 @@ func (d *docs) onDeleteConfirm(ctx context.Context, b *bot.Bot, chatID int64, us
 		d.fail(ctx, b, chatID, "delete all data", err)
 		return
 	}
+	d.log.InfoContext(ctx, "data deleted", "user_id", user)
 	reply(ctx, b, d.log, chatID, textDataDeleted)
 }
 
-// onTransfer queues every not-yet-backed-up document for upload to Drive.
+// onTransfer moves every not-yet-backed-up document to Drive; the offer message
+// turns into a transfer status message.
 func (d *docs) onTransfer(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
-	count, err := d.svc.TransferSaved(ctx, user)
 	chatID, msgID, ok := callbackMessage(u)
 	if !ok {
-		if cid, found := callbackChat(u); found && err != nil {
-			d.fail(ctx, b, cid, "transfer", err)
-		}
 		return
 	}
+	view, ok, err := d.svc.TransferSaved(ctx, user, chatID, msgID)
 	if err != nil {
 		d.fail(ctx, b, chatID, "transfer", err)
 		return
 	}
-	d.editText(ctx, b, chatID, msgID, fmt.Sprintf(textTransferStarted, count))
+	if !ok {
+		d.editText(ctx, b, chatID, msgID, textNothingToTransfer)
+		return
+	}
+	d.log.InfoContext(ctx, "transfer started", "user_id", user, "count", len(view.Lines))
+	d.redrawStatus(ctx, b, user, view)
 }
 
 func (d *docs) onTransferNo(ctx context.Context, b *bot.Bot, u *models.Update) {
@@ -365,8 +376,8 @@ func (d *docs) onRetry(ctx context.Context, b *bot.Bot, u *models.Update, user d
 	d.editText(ctx, b, chatID, msgID, textRetryQueued)
 }
 
-// onCategory saves a new document under the chosen category, retires the picker
-// buttons (replacing them with a ✅), and shows the card.
+// onCategory saves a new document under the chosen category. The picker message
+// becomes the card (Drive off) or a live upload card / batch status (Drive on).
 func (d *docs) onCategory(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
 	id, cat, ok := docCategory(parts)
 	if !ok {
@@ -383,42 +394,57 @@ func (d *docs) onCategory(ctx context.Context, b *bot.Bot, u *models.Update, use
 	}
 	d.log.InfoContext(ctx, "document saved", "user_id", user, "doc_id", saved.Doc.ID,
 		"category", cat, "backup_status", saved.Doc.BackupStatus)
-	d.editText(ctx, b, chatID, msgID, "✅ "+categoryLabel(cat))
 	if saved.Doc.BackupStatus == docsbot.BackupPending {
-		// Drive is connected: the upload is queued and tracked in a batch status message.
-		d.trackUpload(ctx, b, chatID, user, saved.Doc)
+		// Drive is connected: the upload is queued and tracked in a status message.
+		d.trackUpload(ctx, b, chatID, user, saved.Doc, msgID)
 		return
 	}
-	d.sendCard(ctx, b, chatID, saved.Doc, textSaved, "")
+	d.editCard(ctx, b, chatID, msgID, saved.Doc, "", "")
 	if saved.OfferDrive {
 		d.offerDrive(ctx, b, chatID, user)
 	}
 }
 
-// trackUpload adds a queued document to the user's open status message, or opens
-// a new one when there is none inside the grouping window.
-func (d *docs) trackUpload(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, doc docsbot.Document) {
+// trackUpload shows a queued document's upload status. A lone document turns the
+// picker message into a live card; further documents inside the grouping window
+// share one batch message, and their pickers are retired or become that batch.
+func (d *docs) trackUpload(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, doc docsbot.Document, pickerMsgID int) {
 	sm, reuse, err := d.svc.StatusTarget(ctx, user)
 	if err != nil {
 		d.fail(ctx, b, chatID, "status target", err)
 		return
 	}
-	if reuse {
+	kind := docsbot.StatusSingle
+	switch {
+	case reuse && sm.Kind == docsbot.StatusBatch:
 		if err := d.svc.AttachStatus(ctx, doc.ID, sm.ID); err != nil {
 			d.fail(ctx, b, chatID, "attach status", err)
 			return
 		}
+		d.deleteMessage(ctx, b, chatID, pickerMsgID)
 		d.refreshStatus(ctx, b, user, doc.ID)
 		return
+	case reuse && sm.Kind == docsbot.StatusSingle:
+		// The earlier single card stays as is; a new batch starts from this picker.
+		kind = docsbot.StatusBatch
+	case reuse && sm.Kind == docsbot.StatusTransfer:
+		// An open transfer is intentionally not grouped with: this picker becomes
+		// its own single card (the default below).
 	}
-	text, kb := renderStatusMessage(docsbot.StatusMessage{}, []docsbot.Document{doc}, nil)
-	messageID, err := d.sendHTML(ctx, b, chatID, text, kb)
-	if err != nil {
-		d.fail(ctx, b, chatID, "send status message", err)
-		return
-	}
-	if _, err := d.svc.OpenStatus(ctx, user, chatID, messageID, doc.ID); err != nil {
+	text, kb := renderStatusMessage(docsbot.StatusMessage{Kind: kind}, []docsbot.Document{doc}, nil)
+	d.editHTML(ctx, b, chatID, pickerMsgID, text, kb)
+	if _, err := d.svc.OpenStatus(ctx, user, chatID, pickerMsgID, doc.ID, kind); err != nil {
 		d.fail(ctx, b, chatID, "open status", err)
+	}
+}
+
+// deleteMessage removes a message; failures are logged, not shown.
+func (d *docs) deleteMessage(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
+	start := time.Now()
+	_, err := b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: msgID})
+	traceAPI(ctx, d.log, "deleteMessage", start)
+	if err != nil {
+		d.log.ErrorContext(ctx, "delete message", "err", err)
 	}
 }
 
@@ -467,21 +493,6 @@ func (d *docs) onRetryBatch(ctx context.Context, b *bot.Bot, u *models.Update, u
 		return
 	}
 	d.redrawStatus(ctx, b, user, view)
-}
-
-// sendHTML posts an HTML message and returns its id.
-func (d *docs) sendHTML(ctx context.Context, b *bot.Bot, chatID int64, text string, kb *models.InlineKeyboardMarkup) (int, error) {
-	params := &bot.SendMessageParams{ChatID: chatID, Text: text, ParseMode: models.ParseModeHTML}
-	if kb != nil {
-		params.ReplyMarkup = kb
-	}
-	start := time.Now()
-	msg, err := b.SendMessage(ctx, params)
-	traceAPI(ctx, d.log, "sendMessage", start)
-	if err != nil {
-		return 0, fmt.Errorf("send html message: %w", err)
-	}
-	return msg.ID, nil
 }
 
 // editHTML rewrites an HTML message; "message is not modified" is not an error.

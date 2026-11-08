@@ -115,7 +115,18 @@ type StatusMessage struct {
 	MessageID int
 	CreatedAt time.Time
 	Closed    bool
+	Kind      StatusKind
 }
+
+// StatusKind distinguishes how a status message renders.
+type StatusKind string
+
+// Status kinds.
+const (
+	StatusSingle   StatusKind = "single"   // one uploading document, rendered as a live card
+	StatusBatch    StatusKind = "batch"    // 2+ documents, rendered as a counter + lines
+	StatusTransfer StatusKind = "transfer" // a bulk transfer/retry, rendered like a batch with its own header
+)
 
 // InDrive reports whether the document has been backed up to the user's Drive.
 func (d Document) InDrive() bool { return d.BackupStatus == BackupBackedUp }

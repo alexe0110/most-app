@@ -291,6 +291,71 @@ func TestRenderStatusMessage_counterAndRetry(t *testing.T) {
 	require.Equal(t, btnRetryBackup, kb.InlineKeyboard[0][0].Text)
 }
 
+func TestStorageLine(t *testing.T) {
+	tests := []struct {
+		st   docsbot.BackupStatus
+		want string
+	}{
+		{docsbot.BackupPending, "⏳ Загружаю в Drive…"},
+		{docsbot.BackupUploading, "⏳ Загружаю в Drive…"},
+		{docsbot.BackupBackedUp, "☁️ В Google Drive"},
+		{docsbot.BackupFailed, "❌ Не удалось выгрузить в Drive"},
+		{docsbot.BackupTooLarge, "📥 Слишком большой для Drive"},
+		{docsbot.BackupNone, "📥 Только в Telegram, ещё не в Drive"},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.want, storageLine(docsbot.Document{BackupStatus: tt.st}), tt.st)
+	}
+}
+
+func TestRenderStatusMessage_single(t *testing.T) {
+	sm := docsbot.StatusMessage{ID: "sm", Kind: docsbot.StatusSingle}
+
+	text, kb := renderStatusMessage(sm, []docsbot.Document{statusDoc("<a>.pdf", docsbot.BackupPending)}, nil)
+	require.Contains(t, text, "📄 &lt;a&gt;.pdf")
+	require.Contains(t, text, "Категория: Паспорт и ID")
+	require.Contains(t, text, "⏳ Загружаю в Drive…")
+	require.Equal(t, cb(actSend, "d"), kb.InlineKeyboard[0][0].CallbackData)
+	require.Len(t, kb.InlineKeyboard, 2, "card buttons only")
+
+	text, kb = renderStatusMessage(sm, []docsbot.Document{statusDoc("a.pdf", docsbot.BackupBackedUp)},
+		map[docsbot.Category]string{docsbot.CatPassport: "FOLD"})
+	require.Contains(t, text, "☁️ В Google Drive")
+	require.Equal(t, btnOpenDrive, kb.InlineKeyboard[0][1].Text)
+	require.Equal(t, btnOpenFolder, kb.InlineKeyboard[0][2].Text)
+
+	_, kb = renderStatusMessage(sm, []docsbot.Document{statusDoc("a.pdf", docsbot.BackupFailed)}, nil)
+	last := kb.InlineKeyboard[len(kb.InlineKeyboard)-1]
+	require.Equal(t, btnRetryBackup, last[0].Text)
+	require.Equal(t, "d:rsm:sm", last[0].CallbackData)
+
+	text, _ = renderStatusMessage(sm, []docsbot.Document{statusDoc("a", docsbot.BackupPending), statusDoc("b", docsbot.BackupPending)}, nil)
+	require.True(t, strings.HasPrefix(text, "Загрузка в Drive (0 из 2)"), "more than one line falls back to a batch")
+}
+
+func TestRenderStatusMessage_batchHint(t *testing.T) {
+	text, _ := renderStatusMessage(docsbot.StatusMessage{ID: "sm", Kind: docsbot.StatusBatch},
+		[]docsbot.Document{statusDoc("a", docsbot.BackupPending)}, nil)
+	require.Contains(t, text, "✏️ Изменить имя и категорию: /list")
+}
+
+func TestRenderStatusMessage_transfer(t *testing.T) {
+	sm := docsbot.StatusMessage{ID: "sm", Kind: docsbot.StatusTransfer}
+
+	text, _ := renderStatusMessage(sm, []docsbot.Document{
+		statusDoc("a", docsbot.BackupBackedUp), statusDoc("b", docsbot.BackupPending)}, nil)
+	require.True(t, strings.HasPrefix(text, "Перенос в Drive (1 из 2)"), text)
+	require.NotContains(t, text, "Готово")
+
+	text, kb := renderStatusMessage(sm, []docsbot.Document{
+		statusDoc("a", docsbot.BackupBackedUp), statusDoc("b", docsbot.BackupTooLarge)}, nil)
+	require.Contains(t, text, "Готово: 1 в Drive")
+	require.Nil(t, kb)
+
+	_, kb = renderStatusMessage(sm, []docsbot.Document{statusDoc("a", docsbot.BackupFailed)}, nil)
+	require.NotNil(t, kb)
+}
+
 func TestRenderStatusMessage_overflow(t *testing.T) {
 	var lines []docsbot.Document
 	for i := 0; i < 25; i++ {

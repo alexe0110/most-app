@@ -122,9 +122,12 @@ func reconnectKeyboard(url string) *models.InlineKeyboardMarkup {
 }
 
 // cardText describes one document: name, category, date, and where it lives.
-func cardText(doc docsbot.Document) string {
+func cardText(doc docsbot.Document) string { return cardBody(doc.Title, doc) }
+
+// cardBody is cardText with a caller-prepared title (HTML-escaped for HTML messages).
+func cardBody(title string, doc docsbot.Document) string {
 	b := &strings.Builder{}
-	fmt.Fprintf(b, "📄 %s\n", doc.Title)
+	fmt.Fprintf(b, "📄 %s\n", title)
 	fmt.Fprintf(b, "Категория: %s\n", categoryLabel(doc.Category))
 	fmt.Fprintf(b, "Добавлен: %s", formatDate(doc.CreatedAt))
 	if t := fileType(doc); t != "" {
@@ -134,12 +137,24 @@ func cardText(doc docsbot.Document) string {
 		b.WriteString(" · " + sz)
 	}
 	b.WriteString("\n")
-	if doc.InDrive() {
-		b.WriteString("☁️ В Google Drive")
-	} else {
-		b.WriteString("📥 Только в Telegram, ещё не в Drive")
-	}
+	b.WriteString(storageLine(doc))
 	return b.String()
+}
+
+// storageLine says where the document lives right now (plain text).
+func storageLine(doc docsbot.Document) string {
+	switch {
+	case doc.BackupStatus == docsbot.BackupPending || doc.BackupStatus == docsbot.BackupUploading:
+		return textStoragePending
+	case doc.InDrive():
+		return textStorageInDrive
+	case doc.BackupStatus == docsbot.BackupFailed:
+		return textStorageFailed
+	case doc.BackupStatus == docsbot.BackupTooLarge:
+		return textStorageTooLarge
+	default:
+		return textStorageTelegramOnly
+	}
 }
 
 // fileType is a short label of the file kind; "" when unknown.
@@ -418,20 +433,30 @@ const statusMaxLines = 20
 // statusNameLimit shortens long document names inside status lines.
 const statusNameLimit = 40
 
-// renderStatusMessage draws the batch status message (HTML): a counter header,
-// one line per document, and a retry button when some uploads failed.
+// renderStatusMessage draws a status message (HTML) according to its kind: a
+// live card for one document, or a counter with one line per document.
 func renderStatusMessage(sm docsbot.StatusMessage, lines []docsbot.Document, folderByCat map[docsbot.Category]string) (string, *models.InlineKeyboardMarkup) {
-	done, failed := 0, false
+	if sm.Kind == docsbot.StatusSingle && len(lines) == 1 {
+		return renderSingleStatus(sm, lines[0], folderByCat)
+	}
+	done, backedUp, failed := 0, 0, false
 	for _, d := range lines {
 		if d.BackupStatus.Terminal() {
 			done++
+		}
+		if d.InDrive() {
+			backedUp++
 		}
 		if d.BackupStatus == docsbot.BackupFailed {
 			failed = true
 		}
 	}
+	header := textStatusHeader
+	if sm.Kind == docsbot.StatusTransfer {
+		header = textTransferHeader
+	}
 	b := &strings.Builder{}
-	fmt.Fprintf(b, textStatusHeader, done, len(lines))
+	fmt.Fprintf(b, header, done, len(lines))
 	for i, d := range lines {
 		if i == statusMaxLines {
 			fmt.Fprintf(b, "\n"+textStatusMore, len(lines)-statusMaxLines)
@@ -440,11 +465,31 @@ func renderStatusMessage(sm docsbot.StatusMessage, lines []docsbot.Document, fol
 		b.WriteString("\n")
 		b.WriteString(statusLine(d, folderByCat))
 	}
+	if sm.Kind == docsbot.StatusTransfer {
+		if done == len(lines) {
+			b.WriteString("\n\n" + fmt.Sprintf(textTransferAllDone, backedUp))
+		}
+	} else {
+		b.WriteString("\n\n" + textStatusListHint)
+	}
 	if !failed {
 		return b.String(), nil
 	}
-	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: btnRetryBackup, CallbackData: cbPrefix + actRetryBatch + ":" + string(sm.ID)},
+	return b.String(), retryBatchKeyboard(sm.ID)
+}
+
+// renderSingleStatus draws one uploading document as a card with a live storage line.
+func renderSingleStatus(sm docsbot.StatusMessage, doc docsbot.Document, folderByCat map[docsbot.Category]string) (string, *models.InlineKeyboardMarkup) {
+	kb := cardKeyboard(doc, folderByCat[doc.Category], "")
+	if doc.BackupStatus == docsbot.BackupFailed {
+		kb.InlineKeyboard = append(kb.InlineKeyboard, retryBatchKeyboard(sm.ID).InlineKeyboard...)
+	}
+	return cardBody(html.EscapeString(doc.Title), doc), kb
+}
+
+func retryBatchKeyboard(id docsbot.StatusMessageID) *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: btnRetryBackup, CallbackData: cbPrefix + actRetryBatch + ":" + string(id)},
 	}}}
 }
 

@@ -14,7 +14,7 @@ func TestService_RetryStatusFailed(t *testing.T) {
 	setup := func() (*docsbot.Service, *fakeUploads, *fakeRepo, docsbot.StatusMessageID, map[string]docsbot.DocumentID) {
 		repo := newFakeRepo()
 		status := newFakeStatus(repo)
-		sm, err := status.Create(ctx, user, 7, 70)
+		sm, err := status.Create(ctx, user, 7, 70, docsbot.StatusBatch)
 		require.NoError(t, err)
 		ids := map[string]docsbot.DocumentID{}
 		for name, st := range map[string]docsbot.BackupStatus{
@@ -71,7 +71,7 @@ func TestService_OpenAndAttachStatus(t *testing.T) {
 	a := repo.seed(docsbot.Document{UserID: user})
 	b := repo.seed(docsbot.Document{UserID: user})
 
-	sm, err := svc.OpenStatus(ctx, user, 9, 90, a.ID)
+	sm, err := svc.OpenStatus(ctx, user, 9, 90, a.ID, docsbot.StatusSingle)
 	require.NoError(t, err)
 	require.NoError(t, svc.AttachStatus(ctx, b.ID, sm.ID))
 
