@@ -130,12 +130,18 @@ func cardText(doc docsbot.Document) string {
 	return b.String()
 }
 
+// folderURL is the Drive web link to a folder.
+func folderURL(id string) string { return "https://drive.google.com/drive/folders/" + id }
+
 // cardKeyboard renders a document's actions. "Открыть в Drive" appears only once
-// the file is backed up.
-func cardKeyboard(doc docsbot.Document) *models.InlineKeyboardMarkup {
+// the file is backed up, the folder button only when the category folder exists.
+func cardKeyboard(doc docsbot.Document, folderID string) *models.InlineKeyboardMarkup {
 	top := []models.InlineKeyboardButton{{Text: btnSendFile, CallbackData: cb(actSend, doc.ID)}}
 	if doc.InDrive() {
 		top = append(top, models.InlineKeyboardButton{Text: btnOpenDrive, URL: driveURL(doc.DriveFileID)})
+	}
+	if folderID != "" {
+		top = append(top, models.InlineKeyboardButton{Text: btnOpenFolder, URL: folderURL(folderID)})
 	}
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
 		top,
@@ -235,6 +241,9 @@ func renderCategoryPage(p docsbot.CategoryPage) (string, *models.InlineKeyboardM
 	}
 	if nav := paginationRow(p); nav != nil {
 		rows = append(rows, nav)
+	}
+	if p.FolderID != "" {
+		rows = append(rows, []models.InlineKeyboardButton{{Text: btnOpenCategoryFolder, URL: folderURL(p.FolderID)}})
 	}
 	rows = append(rows, []models.InlineKeyboardButton{{Text: btnBackToCats, CallbackData: cbPrefix + actListBack}})
 	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}

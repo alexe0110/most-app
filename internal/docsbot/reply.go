@@ -23,7 +23,12 @@ func (AlreadySaved) isReply() {}
 func (Saved) isReply()        {}
 
 // Card is one document's detail view.
-type Card struct{ Doc Document }
+type Card struct {
+	Doc Document
+	// CategoryFolderID is the Drive folder id of the document's category; empty
+	// while the folder has not been created.
+	CategoryFolderID string
+}
 
 // Catalog lists categories with their saved-document counts. NotInDrive and
 // DriveConnected drive the 📥 banner, shown only once Drive is connected.
@@ -41,6 +46,7 @@ type CategoryPage struct {
 	Pages          int
 	Total          int
 	DriveConnected bool
+	FolderID       string // Drive folder of the category; empty if not created yet
 }
 
 // Found holds search results for a query.

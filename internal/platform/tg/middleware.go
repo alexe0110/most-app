@@ -53,11 +53,7 @@ func recoverPanic(log *slog.Logger) bot.Middleware {
 func logUpdate(log *slog.Logger) bot.Middleware {
 	return func(next bot.HandlerFunc) bot.HandlerFunc {
 		return func(ctx context.Context, b *bot.Bot, update *models.Update) {
-			attrs := []any{"update_id", update.ID, "kind", updateKind(update)}
-			if from := sender(update); from != nil {
-				attrs = append(attrs, "tg_user_id", from.ID)
-			}
-			log.Info("message from telegram", attrs...)
+			log.Info("message from telegram", "update_id", update.ID, "kind", updateKind(update))
 			next(ctx, b, update)
 		}
 	}
@@ -75,7 +71,7 @@ func ensureUser(users Users, log *slog.Logger) bot.Middleware {
 			}
 			id, err := users.Ensure(ctx, from.ID, from.LanguageCode)
 			if err != nil {
-				log.Error("ensure user", "err", err, "tg_user_id", from.ID)
+				log.Error("ensure user", "err", err)
 				return
 			}
 			next(context.WithValue(ctx, userIDKey, id), b, update)

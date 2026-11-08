@@ -108,3 +108,20 @@ func TestBackups_enqueueUploadTx(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, docsbot.BackupPending, got.BackupStatus)
 }
+
+func TestFolders_categoryFolderID(t *testing.T) {
+	repo, user := domainRepo(t)
+	ctx := t.Context()
+
+	require.NoError(t, repo.SaveFolderID(ctx, string(user), "passport", "folder-x"))
+
+	id, ok, err := repo.CategoryFolderID(ctx, user, docsbot.Category("passport"))
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "folder-x", id)
+
+	id, ok, err = repo.CategoryFolderID(ctx, user, docsbot.Category("medical"))
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Empty(t, id)
+}

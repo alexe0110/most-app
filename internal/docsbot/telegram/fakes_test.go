@@ -34,8 +34,9 @@ func (fakeAuth) AuthURL(context.Context, string, string) (string, error) {
 
 // fakeRepo is an in-memory docsbot.Repo for handler tests.
 type fakeRepo struct {
-	docs map[docsbot.DocumentID]docsbot.Document
-	seq  int
+	folders map[docsbot.Category]string // cached Drive folder ids by category
+	docs    map[docsbot.DocumentID]docsbot.Document
+	seq     int
 }
 
 var _ docsbot.Repo = (*fakeRepo)(nil)
@@ -196,7 +197,7 @@ func (fakeUploads) CancelUploads(context.Context, docsbot.UserID) error { return
 func fakeDeps() (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
 	repo := newFakeRepo()
 	// Drive is never connected here, so files are not reached; uploads is a no-op.
-	return docsbot.NewService(repo, fakeDrive{}, nil, fakeUploads{}), fakeAuth{}, repo
+	return docsbot.NewService(repo, fakeDrive{}, nil, fakeUploads{}, repo), fakeAuth{}, repo
 }
 
 func (r *fakeRepo) MarkBackedUp(_ context.Context, id docsbot.DocumentID, driveFileID string) error {
@@ -253,4 +254,11 @@ func (r *fakeRepo) DeleteUserData(_ context.Context, user docsbot.UserID) error 
 		}
 	}
 	return nil
+}
+
+var _ docsbot.Folders = (*fakeRepo)(nil)
+
+func (r *fakeRepo) CategoryFolderID(_ context.Context, _ docsbot.UserID, cat docsbot.Category) (string, bool, error) {
+	id, ok := r.folders[cat]
+	return id, ok, nil
 }

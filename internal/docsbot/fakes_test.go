@@ -77,6 +77,7 @@ func (u *fakeUploads) CancelUploads(_ context.Context, user docsbot.UserID) erro
 
 // fakeRepo is an in-memory docsbot.Repo for unit tests.
 type fakeRepo struct {
+	folders map[docsbot.Category]string // cached Drive folder ids by category
 	docs    map[docsbot.DocumentID]docsbot.Document
 	seq     int
 	deleted []docsbot.UserID // users passed to DeleteUserData
@@ -296,4 +297,11 @@ func (r *fakeRepo) DeleteUserData(_ context.Context, user docsbot.UserID) error 
 	}
 	r.deleted = append(r.deleted, user)
 	return nil
+}
+
+var _ docsbot.Folders = (*fakeRepo)(nil)
+
+func (r *fakeRepo) CategoryFolderID(_ context.Context, _ docsbot.UserID, cat docsbot.Category) (string, bool, error) {
+	id, ok := r.folders[cat]
+	return id, ok, nil
 }

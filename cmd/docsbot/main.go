@@ -95,9 +95,9 @@ func run() error {
 		return fmt.Errorf("new oauth service: %w", err)
 	}
 
-	gdriveSvc := gdrive.New(gdriveClients{oauth: oauthSvc}, repo)
+	gdriveSvc := gdrive.New(gdriveClients{oauth: oauthSvc}, repo, gdrive.WithLogger(log))
 	driveAdapter := driveBridge{oauth: oauthSvc, gd: gdriveSvc}
-	svc = docsbot.NewService(repo, driveAdapter, files, enq)
+	svc = docsbot.NewService(repo, driveAdapter, files, enq, repo)
 
 	tgbot, err = tg.New(tg.Config{
 		Token:         cfg.TelegramToken,

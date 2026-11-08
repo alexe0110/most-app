@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
@@ -55,25 +56,34 @@ func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentAr
 	user := docsbot.UserID(job.Args.UserID)
 	id := docsbot.DocumentID(job.Args.DocumentID)
 
+	start := time.Now()
+	w.log.InfoContext(ctx, "upload started", "job_id", job.ID, "attempt", job.Attempt, "user_id", user, "doc_id", id)
+
 	res, err := w.svc.Backup(ctx, user, id)
 	switch {
 	case errors.Is(err, docsbot.ErrDriveRevoked):
 		if err := w.svc.MarkBackupFailed(ctx, user, id); err != nil {
-			w.log.Error("mark backup failed", "err", err, "user_id", user)
+			w.log.ErrorContext(ctx, "mark backup failed", "err", err, "user_id", user, "doc_id", id)
 		}
 		_ = w.notify.Reconnect(ctx, user)
-		w.log.Warn("drive upload: access revoked", "user_id", user)
+		w.log.WarnContext(ctx, "drive upload: access revoked", "job_id", job.ID, "attempt", job.Attempt,
+			"user_id", user, "doc_id", id, "duration_ms", time.Since(start).Milliseconds())
 		return nil
 	case err != nil:
 		if job.Attempt >= job.MaxAttempts {
 			if markErr := w.svc.MarkBackupFailed(ctx, user, id); markErr != nil {
-				w.log.Error("mark backup failed", "err", markErr, "user_id", user)
+				w.log.ErrorContext(ctx, "mark backup failed", "err", markErr, "user_id", user, "doc_id", id)
 			}
 			_ = w.notify.BackupFailed(ctx, user, docsbot.Document{ID: id, UserID: user})
-			w.log.Error("drive upload failed permanently", "err", err, "user_id", user)
+			w.log.ErrorContext(ctx, "drive upload failed permanently", "job_id", job.ID, "attempt", job.Attempt,
+				"err", err, "user_id", user, "doc_id", id, "duration_ms", time.Since(start).Milliseconds())
+		} else {
+			w.log.DebugContext(ctx, "upload retry", "attempt", job.Attempt, "err", err, "user_id", user, "doc_id", id)
 		}
 		return fmt.Errorf("upload document: %w", err)
 	}
+	w.log.InfoContext(ctx, "upload finished", "user_id", user, "doc_id", id,
+		"backup_status", res.Doc.BackupStatus, "duration_ms", time.Since(start).Milliseconds())
 	if res.TooLarge {
 		return nil // stays in Telegram, backup_status=too_large
 	}

@@ -115,9 +115,16 @@ func (d *docs) receive(ctx context.Context, b *bot.Bot, u *models.Update) {
 	}
 	switch r := rep.(type) {
 	case docsbot.NeedCategory:
+		d.log.InfoContext(ctx, "document received", "user_id", user, "doc_id", r.Doc.ID, "kind", r.Doc.Kind)
 		d.send(ctx, b, chatID, textChooseCategory, categoryKeyboard(actCategory, r.Doc.ID))
 	case docsbot.AlreadySaved:
-		d.sendCard(ctx, b, chatID, r.Doc, textAlreadySaved)
+		d.log.InfoContext(ctx, "document received", "user_id", user, "doc_id", r.Doc.ID, "kind", r.Doc.Kind, "duplicate", true)
+		card, err := d.svc.Card(ctx, user, r.Doc.ID)
+		if err != nil {
+			d.fail(ctx, b, chatID, "load card", err)
+			return
+		}
+		d.sendCard(ctx, b, chatID, card.Doc, textAlreadySaved, card.CategoryFolderID)
 	}
 }
 
@@ -349,8 +356,10 @@ func (d *docs) onCategory(ctx context.Context, b *bot.Bot, u *models.Update, use
 		d.fail(ctx, b, chatID, "choose category", err)
 		return
 	}
+	d.log.InfoContext(ctx, "document saved", "user_id", user, "doc_id", saved.Doc.ID,
+		"category", cat, "backup_status", saved.Doc.BackupStatus)
 	d.editText(ctx, b, chatID, msgID, "✅ "+categoryLabel(cat))
-	d.sendCard(ctx, b, chatID, saved.Doc, textSaved)
+	d.sendCard(ctx, b, chatID, saved.Doc, textSaved, "")
 	if saved.OfferDrive {
 		d.offerDrive(ctx, b, chatID, user)
 	}
@@ -371,8 +380,9 @@ func (d *docs) onSetCategory(ctx context.Context, b *bot.Bot, u *models.Update, 
 		d.fail(ctx, b, chatID, "recategorize", err)
 		return
 	}
+	d.log.InfoContext(ctx, "document recategorized", "user_id", user, "doc_id", card.Doc.ID, "category", cat)
 	d.editText(ctx, b, chatID, msgID, "✅ "+categoryLabel(cat))
-	d.sendCard(ctx, b, chatID, card.Doc, textRecategorized)
+	d.sendCard(ctx, b, chatID, card.Doc, textRecategorized, card.CategoryFolderID)
 }
 
 // onChangeCat swaps a card's buttons for the category picker.
@@ -417,12 +427,15 @@ func (d *docs) onRenamePrompt(ctx context.Context, b *bot.Bot, u *models.Update,
 		return
 	}
 	d.renames.set(u.CallbackQuery.From.ID, id)
-	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
+	start := time.Now()
+	_, err := b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:      chatID,
 		Text:        textRenamePrompt,
 		ReplyMarkup: &models.ForceReply{ForceReply: true, InputFieldPlaceholder: "Новое имя"},
-	}); err != nil {
-		d.log.Error("send rename prompt", "err", err, "chat_id", chatID)
+	})
+	traceAPI(ctx, d.log, "sendMessage", start)
+	if err != nil {
+		d.log.Error("send rename prompt", "err", err)
 	}
 }
 
@@ -434,7 +447,8 @@ func (d *docs) applyRename(ctx context.Context, b *bot.Bot, chatID int64, user d
 	case err != nil:
 		d.fail(ctx, b, chatID, "rename", err)
 	default:
-		d.sendCard(ctx, b, chatID, card.Doc, textRenamed)
+		d.log.InfoContext(ctx, "document renamed", "user_id", user, "doc_id", id)
+		d.sendCard(ctx, b, chatID, card.Doc, textRenamed, card.CategoryFolderID)
 	}
 }
 
@@ -468,6 +482,7 @@ func (d *docs) onDeleteYes(ctx context.Context, b *bot.Bot, u *models.Update, us
 		d.fail(ctx, b, chatID, "delete", err)
 		return
 	}
+	d.log.InfoContext(ctx, "document deleted", "user_id", user, "doc_id", id)
 	d.editText(ctx, b, chatID, msgID, textDeleted)
 }
 
@@ -541,24 +556,30 @@ func (d *docs) connectURL(ctx context.Context, user docsbot.UserID) (string, boo
 // sendFile resends a stored file with the method matching how it arrived.
 func (d *docs) sendFile(ctx context.Context, b *bot.Bot, chatID int64, doc docsbot.Document) {
 	var err error
+	op := "sendDocument"
+	start := time.Now()
 	switch doc.Kind {
 	case docsbot.KindPhoto:
+		op = "sendPhoto"
 		_, err = b.SendPhoto(ctx, &bot.SendPhotoParams{ChatID: chatID, Photo: &models.InputFileString{Data: doc.TgFileID}})
 	default:
 		_, err = b.SendDocument(ctx, &bot.SendDocumentParams{ChatID: chatID, Document: &models.InputFileString{Data: doc.TgFileID}})
 	}
+	traceAPI(ctx, d.log, op, start)
 	if err != nil {
-		d.log.Error("send file", "err", err, "chat_id", chatID)
+		d.log.ErrorContext(ctx, "send file", "err", err, "user_id", doc.UserID, "doc_id", doc.ID)
 		reply(ctx, b, d.log, chatID, textSendFailed)
+		return
 	}
+	d.log.InfoContext(ctx, "document sent", "user_id", doc.UserID, "doc_id", doc.ID)
 }
 
-func (d *docs) sendCard(ctx context.Context, b *bot.Bot, chatID int64, doc docsbot.Document, header string) {
+func (d *docs) sendCard(ctx context.Context, b *bot.Bot, chatID int64, doc docsbot.Document, header, folderID string) {
 	text := cardText(doc)
 	if header != "" {
 		text = header + "\n\n" + text
 	}
-	d.send(ctx, b, chatID, text, cardKeyboard(doc))
+	d.send(ctx, b, chatID, text, cardKeyboard(doc, folderID))
 }
 
 // send posts a message, with an inline keyboard when kb is non-nil.
@@ -567,8 +588,11 @@ func (d *docs) send(ctx context.Context, b *bot.Bot, chatID int64, text string, 
 	if kb != nil {
 		params.ReplyMarkup = kb
 	}
-	if _, err := b.SendMessage(ctx, params); err != nil {
-		d.log.Error("send telegram message", "err", err, "chat_id", chatID)
+	start := time.Now()
+	_, err := b.SendMessage(ctx, params)
+	traceAPI(ctx, d.log, "sendMessage", start)
+	if err != nil {
+		d.log.Error("send telegram message", "err", err)
 	}
 }
 
@@ -578,8 +602,11 @@ func (d *docs) editMessage(ctx context.Context, b *bot.Bot, chatID int64, msgID 
 	if kb != nil {
 		params.ReplyMarkup = kb
 	}
-	if _, err := b.EditMessageText(ctx, params); err != nil {
-		d.log.Error("edit telegram message", "err", err, "chat_id", chatID)
+	start := time.Now()
+	_, err := b.EditMessageText(ctx, params)
+	traceAPI(ctx, d.log, "editMessageText", start)
+	if err != nil {
+		d.log.Error("edit telegram message", "err", err)
 	}
 }
 
@@ -590,23 +617,33 @@ func (d *docs) editText(ctx context.Context, b *bot.Bot, chatID int64, msgID int
 
 // editMarkup replaces a message's inline keyboard, keeping its text.
 func (d *docs) editMarkup(ctx context.Context, b *bot.Bot, chatID int64, msgID int, kb *models.InlineKeyboardMarkup) {
-	if _, err := b.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
+	start := time.Now()
+	_, err := b.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
 		ChatID: chatID, MessageID: msgID, ReplyMarkup: kb,
-	}); err != nil {
-		d.log.Error("edit telegram markup", "err", err, "chat_id", chatID)
+	})
+	traceAPI(ctx, d.log, "editMessageReplyMarkup", start)
+	if err != nil {
+		d.log.Error("edit telegram markup", "err", err)
 	}
 }
 
 // answer stops the button's loading spinner.
 func (d *docs) answer(ctx context.Context, b *bot.Bot, callbackID string) {
-	if _, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: callbackID}); err != nil {
+	start := time.Now()
+	_, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: callbackID})
+	traceAPI(ctx, d.log, "answerCallbackQuery", start)
+	if err != nil {
 		d.log.Error("answer callback", "err", err)
 	}
 }
 
 // fail logs the real error once and shows the user a generic message.
 func (d *docs) fail(ctx context.Context, b *bot.Bot, chatID int64, what string, err error) {
-	d.log.Error(what, "err", err, "chat_id", chatID)
+	if user, ok := userID(ctx); ok {
+		d.log.ErrorContext(ctx, what, "err", err, "user_id", user)
+	} else {
+		d.log.ErrorContext(ctx, what, "err", err)
+	}
 	reply(ctx, b, d.log, chatID, textError)
 }
 
