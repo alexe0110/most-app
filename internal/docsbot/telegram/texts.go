@@ -47,6 +47,8 @@ const (
 	textBackupFailed     = "Не удалось выгрузить документ в Google Drive. Попробовать ещё раз?"
 	textReconnect        = "Доступ к Google Drive отозван. Подключи заново, чтобы продолжить выгрузку."
 	textRetryQueued      = "Повторяю выгрузку в Google Drive."
+	textStatusHeader     = "Загрузка в Drive (%d из %d)" // done, total
+	textStatusMore       = "…и ещё %d"                   // %d = hidden lines
 
 	textUnknown    = "Не понимаю эту команду. Я умею /start, /list, /convert и /help."
 	textError      = "Что-то пошло не так. Попробуй ещё раз."

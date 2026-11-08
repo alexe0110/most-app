@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"html"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ const (
 	actRetryAll    = "rta" // retry every failed backup
 	actExport      = "exp" // resend all documents from Telegram
 	actDeleteData  = "dd"  // start the delete-all-data confirmation
+	actRetryBatch  = "rsm" // retry failed docs in a status message: d:rsm:<smID>
 	actNoop        = "noop"
 )
 
@@ -340,4 +342,59 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return string(r[:n-1]) + "…"
+}
+
+// statusMaxLines caps the document lines in one status message so it stays well
+// below Telegram's 4096-character limit.
+const statusMaxLines = 20
+
+// statusNameLimit shortens long document names inside status lines.
+const statusNameLimit = 40
+
+// renderStatusMessage draws the batch status message (HTML): a counter header,
+// one line per document, and a retry button when some uploads failed.
+func renderStatusMessage(sm docsbot.StatusMessage, lines []docsbot.Document, folderByCat map[docsbot.Category]string) (string, *models.InlineKeyboardMarkup) {
+	done, failed := 0, false
+	for _, d := range lines {
+		if d.BackupStatus.Terminal() {
+			done++
+		}
+		if d.BackupStatus == docsbot.BackupFailed {
+			failed = true
+		}
+	}
+	b := &strings.Builder{}
+	fmt.Fprintf(b, textStatusHeader, done, len(lines))
+	for i, d := range lines {
+		if i == statusMaxLines {
+			fmt.Fprintf(b, "\n"+textStatusMore, len(lines)-statusMaxLines)
+			break
+		}
+		b.WriteString("\n")
+		b.WriteString(statusLine(d, folderByCat))
+	}
+	if !failed {
+		return b.String(), nil
+	}
+	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: btnRetryBackup, CallbackData: cbPrefix + actRetryBatch + ":" + string(sm.ID)},
+	}}}
+}
+
+func statusLine(d docsbot.Document, folderByCat map[docsbot.Category]string) string {
+	name := html.EscapeString(truncate(d.Title, statusNameLimit))
+	switch d.BackupStatus {
+	case docsbot.BackupBackedUp:
+		line := fmt.Sprintf("✅ %s · %s · <a href=%q>файл</a>", name, categoryLabel(d.Category), driveURL(d.DriveFileID))
+		if id := folderByCat[d.Category]; id != "" {
+			line += fmt.Sprintf(" <a href=%q>папка</a>", folderURL(id))
+		}
+		return line
+	case docsbot.BackupFailed:
+		return "❌ " + name + " · не удалось"
+	case docsbot.BackupTooLarge:
+		return "📥 " + name + " · слишком большой для Drive"
+	default:
+		return fmt.Sprintf("⏳ %s · %s", name, categoryLabel(d.Category))
+	}
 }

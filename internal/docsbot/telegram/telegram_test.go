@@ -53,6 +53,12 @@ func newBot(t *testing.T) (*bot.Bot, *capture, *fakeRepo) {
 // newBotWithLog is newBot with a caller-supplied logger.
 func newBotWithLog(t *testing.T, log *slog.Logger) (*bot.Bot, *capture, *fakeRepo) {
 	t.Helper()
+	return newBotWith(t, log, fakeDrive{})
+}
+
+// newBotWith is newBotWithLog with a chosen Drive state.
+func newBotWith(t *testing.T, log *slog.Logger, drive fakeDrive) (*bot.Bot, *capture, *fakeRepo) {
+	t.Helper()
 	sent := &capture{}
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +77,7 @@ func newBotWithLog(t *testing.T, log *slog.Logger) (*bot.Bot, *capture, *fakeRep
 	b, err := bot.New("123:ABC", bot.WithServerURL(ts.URL), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
 	require.NoError(t, err)
 
-	svc, auth, repo := fakeDeps()
+	svc, auth, repo := fakeDepsWith(drive)
 	telegram.Register(b, log, svc, auth)
 	return b, sent, repo
 }
