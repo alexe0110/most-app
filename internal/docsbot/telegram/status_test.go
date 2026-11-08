@@ -214,3 +214,107 @@ func TestRetryAll_editsSettingsIntoStatusMessage(t *testing.T) {
 	require.Len(t, sent.edits, 1)
 	require.Contains(t, sent.edits[0], "Перенос в Drive (0 из 1)")
 }
+
+// nudges counts the connect-Drive offers among sent messages.
+func nudges(c *capture) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, m := range c.texts {
+		if strings.Contains(m, "Google Drive") {
+			n++
+		}
+	}
+	return n
+}
+
+func TestChooseCategory_driveOff_nudgeOnlyOnFirstAndFifth(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ids := seedPending(repo, 6)
+
+	var after []int
+	for i, id := range ids {
+		pick(ctx, b, id, 11+i)
+		after = append(after, nudges(sent))
+	}
+
+	require.Equal(t, []int{1, 1, 1, 1, 2, 2}, after, "nudge after the 1st and 5th document only")
+	require.Len(t, sent.edits, 6, "every picker became a card in place")
+}
+
+func TestChooseCategory_driveOn_neverNudges(t *testing.T) {
+	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: true})
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	for i, id := range seedPending(repo, 5) {
+		pick(ctx, b, id, 11+i)
+	}
+	require.Zero(t, nudges(sent))
+}
+
+func TestTransfer_manyDocsShareOneStatusMessage(t *testing.T) {
+	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: true})
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	var seeded []docsbot.DocumentID
+	for i := 0; i < 7; i++ {
+		d := repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: fmt.Sprintf("f%d", i)})
+		seeded = append(seeded, d.ID)
+	}
+
+	b.ProcessUpdate(ctx, dataCallbackMsg(100, 21, "d:try"))
+
+	require.Empty(t, sent.texts, "one status message, no per-document notices")
+	require.Len(t, sent.edits, 1)
+	require.Contains(t, sent.edits[0], "Перенос в Drive (0 из 7)")
+	smIDs := map[docsbot.StatusMessageID]bool{}
+	for _, id := range seeded {
+		require.NotEmpty(t, repo.docs[id].StatusMessageID)
+		smIDs[repo.docs[id].StatusMessageID] = true
+	}
+	require.Len(t, smIDs, 1)
+	sm, err := repo.status.ByID(t.Context(), repo.docs[seeded[0]].StatusMessageID)
+	require.NoError(t, err)
+	require.Equal(t, docsbot.StatusTransfer, sm.Kind)
+	require.Equal(t, 21, sm.MessageID)
+}
+
+func TestRetryAll_nothingFailed(t *testing.T) {
+	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: true})
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupBackedUp, Title: "x"})
+
+	b.ProcessUpdate(ctx, dataCallbackMsg(100, 22, "d:rta"))
+
+	require.Empty(t, sent.texts)
+	require.Len(t, sent.edits, 1)
+	require.Contains(t, sent.edits[0], "Документов с ошибкой выгрузки нет.")
+}
+
+func TestTransfer_otherUsersDocsAreNotTouched(t *testing.T) {
+	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: true})
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	other := repo.seed(docsbot.Document{UserID: "other-user", Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "theirs"})
+
+	b.ProcessUpdate(ctx, dataCallbackMsg(100, 21, "d:try"))
+
+	require.Empty(t, repo.docs[other.ID].StatusMessageID)
+	require.Contains(t, sent.edits[0], "Всё уже в Google Drive.")
+}
+
+func TestLogs_retryAllAndUploadStartWithoutLeaks(t *testing.T) {
+	var sink lockedBuffer
+	log := slog.New(slog.NewJSONHandler(&sink, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	b, _, repo := newBotWith(t, log, fakeDrive{connected: true})
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupFailed, Title: "СекретныйTITLE"})
+
+	b.ProcessUpdate(ctx, dataCallbackMsg(100, 22, "d:rta"))
+
+	out := sink.String()
+	require.Contains(t, out, "retry all")
+	require.Contains(t, out, `"count":1`)
+	for _, leak := range []string{"СекретныйTITLE", "123:ABC", "chat_id", "tg_user_id"} {
+		require.NotContains(t, out, leak)
+	}
+}

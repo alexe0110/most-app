@@ -163,23 +163,31 @@ func errString(err error) string {
 	return err.Error()
 }
 
-// Reconnect asks the user to re-link Drive after access was revoked.
+// Reconnect asks the user to re-link Drive after access was revoked. At most one
+// prompt is delivered per reconnectDebounce; a failed send does not count, so a
+// retry can still reach the user.
 func (n *Notifier) Reconnect(ctx context.Context, user docsbot.UserID) error {
 	n.mu.Lock()
-	if last := n.revokedAt[user]; !last.IsZero() && time.Since(last) < reconnectDebounce {
-		n.mu.Unlock()
+	last := n.revokedAt[user]
+	n.mu.Unlock()
+	if !last.IsZero() && time.Since(last) < reconnectDebounce {
 		return nil
 	}
-	n.revokedAt[user] = time.Now()
-	n.mu.Unlock()
 	chatID, err := n.users.TgUserID(ctx, string(user))
 	if err != nil {
 		return fmt.Errorf("resolve tg user: %w", err)
 	}
-	url, uErr := n.auth.AuthURL(ctx, string(user), botName)
-	if uErr != nil {
+	if url, uErr := n.auth.AuthURL(ctx, string(user), botName); uErr != nil {
 		n.log.Error("build auth url", "err", uErr)
-		return n.bot.Send(ctx, chatID, textReconnect)
+		err = n.bot.Send(ctx, chatID, textReconnect)
+	} else {
+		err = n.bot.SendMarkup(ctx, chatID, textReconnect, reconnectKeyboard(url))
 	}
-	return n.bot.SendMarkup(ctx, chatID, textReconnect, reconnectKeyboard(url))
+	if err != nil {
+		return err
+	}
+	n.mu.Lock()
+	n.revokedAt[user] = time.Now()
+	n.mu.Unlock()
+	return nil
 }

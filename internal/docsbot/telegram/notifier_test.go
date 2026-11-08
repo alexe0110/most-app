@@ -2,6 +2,7 @@ package telegram_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -104,6 +105,8 @@ type notifierEnv struct {
 	repo   *fakeRepo
 	status *fakeStatus
 	n      *telegram.Notifier
+	bot    *tg.Bot
+	svc    *docsbot.Service
 }
 
 // newNotifierEnv builds a real tg.Bot against the fake API. It mutates
@@ -127,7 +130,7 @@ func newNotifierEnv(t *testing.T) *notifierEnv {
 	repo := newFakeRepo()
 	status := newFakeStatus(repo)
 	svc := docsbot.NewService(repo, fakeDrive{connected: true}, nil, fakeUploads{}, repo, status)
-	return &notifierEnv{api: api, repo: repo, status: status, n: telegram.NewNotifier(b, chatLookup{}, fakeAuth{}, svc, log)}
+	return &notifierEnv{api: api, repo: repo, status: status, bot: b, svc: svc, n: telegram.NewNotifier(b, chatLookup{}, fakeAuth{}, svc, log)}
 }
 
 // batch seeds a status message (chat 100, message 70) with one document per status.
@@ -290,4 +293,58 @@ func TestNotifier_Reconnect_debounced(t *testing.T) {
 
 	require.NoError(t, e.n.Reconnect(t.Context(), "another-user"))
 	require.Len(t, e.api.callsOf("sendMessage"), 2, "a different user is prompted separately")
+}
+
+func TestNotifier_UploadOutcome_singleAndTransferKindsSendNoNotice(t *testing.T) {
+	for _, kind := range []docsbot.StatusKind{docsbot.StatusSingle, docsbot.StatusTransfer} {
+		t.Run(string(kind), func(t *testing.T) {
+			e := newNotifierEnv(t)
+			sm, err := e.status.Create(t.Context(), testUserID, 100, 70, kind)
+			require.NoError(t, err)
+			doc := e.repo.seed(docsbot.Document{
+				UserID: testUserID, Title: "Doc", Category: docsbot.CatPassport,
+				BackupStatus: docsbot.BackupBackedUp, DriveFileID: "F1", StatusMessageID: sm.ID,
+			})
+
+			require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, doc.ID))
+
+			require.Empty(t, e.api.callsOf("sendMessage"), "a grouped doc never gets a per-document notice")
+			edits := e.api.callsOf("editMessageText")
+			require.Len(t, edits, 1)
+			require.Equal(t, "70", edits[0].messageID)
+			require.True(t, e.status.msgs[sm.ID].Closed)
+		})
+	}
+}
+
+func TestNotifier_UploadOutcome_transferDoneText(t *testing.T) {
+	e := newNotifierEnv(t)
+	sm, err := e.status.Create(t.Context(), testUserID, 100, 70, docsbot.StatusTransfer)
+	require.NoError(t, err)
+	var last docsbot.Document
+	for i := 0; i < 3; i++ {
+		last = e.repo.seed(docsbot.Document{UserID: testUserID, Title: "Doc", Category: docsbot.CatPassport,
+			BackupStatus: docsbot.BackupBackedUp, DriveFileID: "F", StatusMessageID: sm.ID})
+	}
+
+	require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, last.ID))
+
+	edits := e.api.callsOf("editMessageText")
+	require.Len(t, edits, 1)
+	require.Contains(t, edits[0].text, "Перенос в Drive (3 из 3)")
+	require.Contains(t, edits[0].text, "Готово: 3 в Drive")
+}
+
+type failingLookup struct{ err error }
+
+func (f failingLookup) TgUserID(context.Context, string) (int64, error) { return 0, f.err }
+
+// A failed prompt must not silence the next attempt: a retried job should still
+// be able to ask the user to reconnect.
+func TestNotifier_Reconnect_failedPromptDoesNotArmDebounce(t *testing.T) {
+	e := newNotifierEnv(t)
+	n := telegram.NewNotifier(e.bot, failingLookup{err: errors.New("boom")}, fakeAuth{}, e.svc, slog.New(slog.DiscardHandler))
+
+	require.Error(t, n.Reconnect(t.Context(), testUserID))
+	require.Error(t, n.Reconnect(t.Context(), testUserID), "the second attempt must try again, not be swallowed by the debounce")
 }
