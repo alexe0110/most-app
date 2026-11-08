@@ -16,3 +16,8 @@ delete
 from drive_folders
 where user_id = $1
   and category = $2;
+
+-- name: DeleteUserDriveFolders :exec
+delete
+from drive_folders
+where user_id = @user_id;

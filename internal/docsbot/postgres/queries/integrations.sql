@@ -21,3 +21,8 @@ set status     = $4,
 where user_id = $1
   and bot = $2
   and provider = $3;
+
+-- name: DeleteUserIntegrations :exec
+delete
+from integrations
+where user_id = @user_id;
