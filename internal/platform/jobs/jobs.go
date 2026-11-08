@@ -82,6 +82,34 @@ func (c *Client) InsertTx(ctx context.Context, tx pgx.Tx, args river.JobArgs, op
 	return res, nil
 }
 
+// DeleteJobsByArg removes queued (not yet running) jobs of the given kind whose
+// JSON argument argKey equals argVal, returning how many were deleted. Running
+// jobs are left to finish. argKey must be a trusted constant (a job-args field
+// name), never user input, since it is interpolated into the query.
+func (c *Client) DeleteJobsByArg(ctx context.Context, kind, argKey, argVal string) (int, error) {
+	params := river.NewJobDeleteManyParams().
+		Kinds(kind).
+		States(
+			rivertype.JobStateAvailable,
+			rivertype.JobStateScheduled,
+			rivertype.JobStateRetryable,
+			rivertype.JobStatePending,
+		).
+		Where(fmt.Sprintf("args ->> '%s' = @val", argKey), river.NamedArgs{"val": argVal}).
+		First(100)
+	total := 0
+	for {
+		res, err := c.river.JobDeleteMany(ctx, params)
+		if err != nil {
+			return total, fmt.Errorf("delete jobs by arg: %w", err)
+		}
+		total += len(res.Jobs)
+		if len(res.Jobs) < 100 {
+			return total, nil
+		}
+	}
+}
+
 // Migrate brings the River queue tables up to date. Run it before New.
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	migrator, err := rivermigrate.New(riverpgxv5.New(pool), nil)

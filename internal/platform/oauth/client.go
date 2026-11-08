@@ -70,6 +70,23 @@ func (s *Service) Revoke(ctx context.Context, userID, bot string) error {
 	return nil
 }
 
+// RevokeBestEffort revokes the user's token at Google and guarantees the
+// integration ends up marked revoked locally, even when Google is unreachable or
+// the token is already gone. A Google-side failure is logged and swallowed; only a
+// failure to mark the integration revoked in the store is returned. A missing
+// integration is a no-op.
+func (s *Service) RevokeBestEffort(ctx context.Context, userID, bot string) error {
+	err := s.Revoke(ctx, userID, bot)
+	if err == nil || errors.Is(err, ErrNoIntegration) {
+		return nil
+	}
+	s.log.Warn("drive revoke failed; forcing local revoke", "err", err, "user_id", userID)
+	if mErr := s.store.UpdateIntegrationStatus(ctx, userID, bot, provider, statusRevoked); mErr != nil {
+		return fmt.Errorf("mark integration revoked: %w", mErr)
+	}
+	return nil
+}
+
 func (s *Service) revokeAtGoogle(ctx context.Context, token string) error {
 	form := url.Values{"token": {token}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.revokeURL, strings.NewReader(form.Encode()))

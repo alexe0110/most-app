@@ -57,6 +57,50 @@ func (q *Queries) DeleteDocumentByID(ctx context.Context, arg DeleteDocumentByID
 	return err
 }
 
+const deleteUserDocuments = `-- name: DeleteUserDocuments :exec
+delete
+from documents
+where user_id = $1
+`
+
+func (q *Queries) DeleteUserDocuments(ctx context.Context, userID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteUserDocuments, userID)
+	return err
+}
+
+const documentBackupStatusCounts = `-- name: DocumentBackupStatusCounts :many
+select backup_status, count(*) as n
+from documents
+where user_id = $1
+  and status = 'saved'
+group by backup_status
+`
+
+type DocumentBackupStatusCountsRow struct {
+	BackupStatus string
+	N            int64
+}
+
+func (q *Queries) DocumentBackupStatusCounts(ctx context.Context, userID pgtype.UUID) ([]DocumentBackupStatusCountsRow, error) {
+	rows, err := q.db.Query(ctx, documentBackupStatusCounts, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DocumentBackupStatusCountsRow{}
+	for rows.Next() {
+		var i DocumentBackupStatusCountsRow
+		if err := rows.Scan(&i.BackupStatus, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const documentCategoryCounts = `-- name: DocumentCategoryCounts :many
 select category, count(*) as n
 from documents
@@ -256,6 +300,35 @@ func (q *Queries) ListDocumentsByCategory(ctx context.Context, arg ListDocuments
 	return items, nil
 }
 
+const listFailedDocumentIDs = `-- name: ListFailedDocumentIDs :many
+select id
+from documents
+where user_id = $1
+  and status = 'saved'
+  and backup_status = 'failed'
+order by created_at
+`
+
+func (q *Queries) ListFailedDocumentIDs(ctx context.Context, userID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listFailedDocumentIDs, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listNotBackedUpDocumentIDs = `-- name: ListNotBackedUpDocumentIDs :many
 select id
 from documents
@@ -278,6 +351,53 @@ func (q *Queries) ListNotBackedUpDocumentIDs(ctx context.Context, userID pgtype.
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSavedDocumentsForExport = `-- name: ListSavedDocumentsForExport :many
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status
+from documents
+where user_id = $1
+  and status = 'saved'
+order by created_at
+limit $2
+`
+
+type ListSavedDocumentsForExportParams struct {
+	UserID pgtype.UUID
+	Lim    int32
+}
+
+func (q *Queries) ListSavedDocumentsForExport(ctx context.Context, arg ListSavedDocumentsForExportParams) ([]Document, error) {
+	rows, err := q.db.Query(ctx, listSavedDocumentsForExport, arg.UserID, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Document{}
+	for rows.Next() {
+		var i Document
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Status,
+			&i.Category,
+			&i.Title,
+			&i.TgFileID,
+			&i.TgFileUniqueID,
+			&i.DriveFileID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Kind,
+			&i.BackupStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

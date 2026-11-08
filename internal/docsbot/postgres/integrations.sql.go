@@ -11,6 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteUserIntegrations = `-- name: DeleteUserIntegrations :exec
+delete
+from integrations
+where user_id = $1
+`
+
+func (q *Queries) DeleteUserIntegrations(ctx context.Context, userID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteUserIntegrations, userID)
+	return err
+}
+
 const getIntegration = `-- name: GetIntegration :one
 select id, user_id, bot, provider, refresh_token_enc, status, created_at, updated_at
 from integrations

@@ -30,6 +30,10 @@ const (
 	actTransferYes = "try" // confirm the transfer offer
 	actTransferNo  = "trn" // decline the transfer offer
 	actRetry       = "rt"  // retry a failed backup: d:rt:<docID>
+	actDisconnect  = "dc"  // disconnect Google Drive
+	actRetryAll    = "rta" // retry every failed backup
+	actExport      = "exp" // resend all documents from Telegram
+	actDeleteData  = "dd"  // start the delete-all-data confirmation
 	actNoop        = "noop"
 )
 
@@ -163,6 +167,50 @@ func renderCatalog(c docsbot.Catalog) (string, *models.InlineKeyboardMarkup) {
 	if c.DriveConnected && c.NotInDrive > 0 {
 		rows = append(rows, []models.InlineKeyboardButton{{Text: btnTransfer, CallbackData: cbPrefix + actTransfer}})
 	}
+	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+// renderSettings draws the /settings screen: Drive state, document counts, and
+// the available actions. connectURL is the Google consent link; haveURL is false
+// when it could not be built (then no connect/reconnect button is shown).
+func renderSettings(v docsbot.SettingsView, connectURL string, haveURL bool) (string, *models.InlineKeyboardMarkup) {
+	b := &strings.Builder{}
+	if v.DriveConnected {
+		b.WriteString("Google Drive: подключён ✅")
+	} else {
+		b.WriteString("Google Drive: не подключён")
+	}
+	fmt.Fprintf(b, "\n\nДокументов: %d", v.Total)
+	if v.DriveConnected {
+		fmt.Fprintf(b, "\n☁️ В Drive: %d", v.InDrive)
+		fmt.Fprintf(b, "\n📥 Только в Telegram: %d", v.OnlyTelegram)
+	}
+	if v.Failed > 0 {
+		fmt.Fprintf(b, "\n⚠️ Не выгрузились: %d", v.Failed)
+	}
+
+	var rows [][]models.InlineKeyboardButton
+	if haveURL {
+		label := btnConnectDrive
+		if v.DriveConnected {
+			label = btnReconnect
+		}
+		rows = append(rows, []models.InlineKeyboardButton{{Text: label, URL: connectURL}})
+	}
+	if v.DriveConnected {
+		rows = append(rows, []models.InlineKeyboardButton{{Text: btnDisconnect, CallbackData: cbPrefix + actDisconnect}})
+	}
+	// Retry only makes sense while Drive is connected; a disconnected retry would
+	// re-fail every document and spam reconnect prompts.
+	if v.DriveConnected && v.Failed > 0 {
+		rows = append(rows, []models.InlineKeyboardButton{{
+			Text: fmt.Sprintf("%s (%d)", btnRetryAll, v.Failed), CallbackData: cbPrefix + actRetryAll,
+		}})
+	}
+	if v.Total > 0 {
+		rows = append(rows, []models.InlineKeyboardButton{{Text: btnExportAll, CallbackData: cbPrefix + actExport}})
+	}
+	rows = append(rows, []models.InlineKeyboardButton{{Text: btnDeleteData, CallbackData: cbPrefix + actDeleteData}})
 	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 

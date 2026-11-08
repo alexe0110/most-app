@@ -55,6 +55,21 @@ func (w *flakyWorker) Work(_ context.Context, job *river.Job[flakyArgs]) error {
 	return nil
 }
 
+// uplArgs mimics docsbot's upload_document job: its args carry a UserID so the
+// cancellation path can filter by it.
+type uplArgs struct {
+	UserID     string
+	DocumentID string
+}
+
+func (uplArgs) Kind() string { return "upload_document" }
+
+type uplWorker struct {
+	river.WorkerDefaults[uplArgs]
+}
+
+func (uplWorker) Work(context.Context, *river.Job[uplArgs]) error { return nil }
+
 func discardLog() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
 // startedClient builds a client, starts it and stops it on cleanup.
@@ -189,6 +204,32 @@ func TestPurgeUsers(t *testing.T) {
 	require.Equal(t, 1, countRows(t, pool, `select count(*) from users where id = $1::uuid`, keptID), "kept user survives")
 	require.Equal(t, 1, countRows(t, pool, `select count(*) from documents where user_id = $1::uuid`, keptID), "kept user's document survives")
 	require.Equal(t, 0, countRows(t, pool, `select count(*) from documents where user_id = $1::uuid`, delID), "deleted user's document cascades")
+}
+
+// TestClient_deleteJobsByArg covers: cancelling one user's queued jobs of a kind
+// removes exactly those, leaving other users' jobs of the same kind untouched.
+func TestClient_deleteJobsByArg(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := t.Context()
+
+	workers := river.NewWorkers()
+	river.AddWorker(workers, &uplWorker{})
+	queue, err := jobs.New(pool, discardLog(), workers) // not started: jobs stay queued
+	require.NoError(t, err)
+
+	for _, uid := range []string{"user-a", "user-a", "user-b"} {
+		_, err := queue.Insert(ctx, uplArgs{UserID: uid, DocumentID: "doc"}, nil)
+		require.NoError(t, err)
+	}
+
+	n, err := queue.DeleteJobsByArg(ctx, "upload_document", "UserID", "user-a")
+	require.NoError(t, err)
+	require.Equal(t, 2, n, "both of user-a's jobs are removed")
+
+	var remaining int
+	require.NoError(t, pool.QueryRow(ctx,
+		`select count(*) from river_job where kind = 'upload_document'`).Scan(&remaining))
+	require.Equal(t, 1, remaining, "user-b's job remains")
 }
 
 func insertUser(t *testing.T, pool *pgxpool.Pool, tgID int64, deleted bool) string {

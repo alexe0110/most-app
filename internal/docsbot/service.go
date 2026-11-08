@@ -12,6 +12,8 @@ const (
 	pageSize = 10
 	// searchLimit caps search results (#14).
 	searchLimit = 10
+	// exportLimit caps how many documents one "send all" request resends (#15).
+	exportLimit = 50
 )
 
 // Service holds the Most Docs use cases. It depends only on ports, never on
@@ -187,6 +189,83 @@ func (s *Service) RetryBackup(ctx context.Context, user UserID, id DocumentID) e
 		return fmt.Errorf("enqueue upload: %w", err)
 	}
 	return nil
+}
+
+// Settings reports the Drive connection and the user's document counts for /settings.
+func (s *Service) Settings(ctx context.Context, user UserID) (SettingsView, error) {
+	connected, err := s.drive.Connected(ctx, user)
+	if err != nil {
+		return SettingsView{}, fmt.Errorf("drive status: %w", err)
+	}
+	counts, err := s.repo.BackupStatusCounts(ctx, user)
+	if err != nil {
+		return SettingsView{}, fmt.Errorf("backup status counts: %w", err)
+	}
+	view := SettingsView{DriveConnected: connected}
+	for _, c := range counts {
+		view.Total += c.Count
+		switch c.Status {
+		case BackupBackedUp:
+			view.InDrive += c.Count
+		case BackupFailed:
+			view.Failed += c.Count
+		}
+	}
+	view.OnlyTelegram = view.Total - view.InDrive - view.Failed
+	return view, nil
+}
+
+// Disconnect revokes Drive access (best-effort) and cancels the user's pending uploads.
+func (s *Service) Disconnect(ctx context.Context, user UserID) error {
+	if err := s.drive.Revoke(ctx, user); err != nil {
+		return fmt.Errorf("revoke drive access: %w", err)
+	}
+	if err := s.uploads.CancelUploads(ctx, user); err != nil {
+		return fmt.Errorf("cancel uploads: %w", err)
+	}
+	return nil
+}
+
+// DeleteAllData revokes Drive access, cancels pending uploads and deletes all of the
+// user's data, then soft-deletes the user.
+func (s *Service) DeleteAllData(ctx context.Context, user UserID) error {
+	if err := s.drive.Revoke(ctx, user); err != nil {
+		return fmt.Errorf("revoke drive access: %w", err)
+	}
+	if err := s.uploads.CancelUploads(ctx, user); err != nil {
+		return fmt.Errorf("cancel uploads: %w", err)
+	}
+	if err := s.repo.DeleteUserData(ctx, user); err != nil {
+		return fmt.Errorf("delete user data: %w", err)
+	}
+	return nil
+}
+
+// RetryFailed re-enqueues a Drive upload for every failed document, returning the count.
+func (s *Service) RetryFailed(ctx context.Context, user UserID) (int, error) {
+	ids, err := s.repo.FailedIDs(ctx, user)
+	if err != nil {
+		return 0, fmt.Errorf("list failed: %w", err)
+	}
+	for i, id := range ids {
+		if err := s.uploads.EnqueueUpload(ctx, user, id); err != nil {
+			return i, fmt.Errorf("enqueue upload: %w", err)
+		}
+	}
+	return len(ids), nil
+}
+
+// ExportAll returns the user's saved documents (capped at exportLimit) to resend.
+func (s *Service) ExportAll(ctx context.Context, user UserID) (Export, error) {
+	total, err := s.repo.CountSaved(ctx, user)
+	if err != nil {
+		return Export{}, fmt.Errorf("count saved: %w", err)
+	}
+	docs, err := s.repo.SavedForExport(ctx, user, exportLimit)
+	if err != nil {
+		return Export{}, fmt.Errorf("list for export: %w", err)
+	}
+	return Export{Docs: docs, Total: total, Truncated: total > exportLimit}, nil
 }
 
 // Card returns one document's detail, scoped to the user.

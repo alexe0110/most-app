@@ -28,6 +28,17 @@ func (q *Queries) DeleteDriveFolder(ctx context.Context, arg DeleteDriveFolderPa
 	return err
 }
 
+const deleteUserDriveFolders = `-- name: DeleteUserDriveFolders :exec
+delete
+from drive_folders
+where user_id = $1
+`
+
+func (q *Queries) DeleteUserDriveFolders(ctx context.Context, userID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteUserDriveFolders, userID)
+	return err
+}
+
 const getDriveFolder = `-- name: GetDriveFolder :one
 select user_id, category, drive_folder_id, created_at
 from drive_folders

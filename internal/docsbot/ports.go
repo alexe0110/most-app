@@ -30,6 +30,15 @@ type Repo interface {
 	MarkBackedUp(ctx context.Context, id DocumentID, driveFileID string) error
 	// NotBackedUpIDs lists the user's saved documents not yet on Drive, oldest first.
 	NotBackedUpIDs(ctx context.Context, user UserID) ([]DocumentID, error)
+	// BackupStatusCounts returns the user's saved-document counts grouped by backup_status.
+	BackupStatusCounts(ctx context.Context, user UserID) ([]BackupStatusCount, error)
+	// FailedIDs lists the user's saved documents whose Drive upload failed, oldest first.
+	FailedIDs(ctx context.Context, user UserID) ([]DocumentID, error)
+	// SavedForExport lists up to limit of the user's saved documents, oldest first, to resend from Telegram.
+	SavedForExport(ctx context.Context, user UserID, limit int) ([]Document, error)
+	// DeleteUserData deletes the user's documents, drive_folders and integrations and
+	// soft-deletes the user (users.deleted_at), all in one transaction.
+	DeleteUserData(ctx context.Context, user UserID) error
 }
 
 // CategoryCount is the number of saved documents in a category.
@@ -38,12 +47,22 @@ type CategoryCount struct {
 	Count    int
 }
 
+// BackupStatusCount is the number of saved documents in one backup_status.
+type BackupStatusCount struct {
+	Status BackupStatus
+	Count  int
+}
+
 // Drive reports a user's Google Drive connection and stores files there.
 type Drive interface {
 	Connected(ctx context.Context, user UserID) (bool, error)
 	// Upload stores the document's bytes on the user's Drive. A revoked grant
 	// returns ErrDriveRevoked.
 	Upload(ctx context.Context, user UserID, in DriveUpload) (DriveFile, error)
+	// Revoke best-effort revokes the user's Drive access at Google and marks the
+	// integration revoked locally. The adapter guarantees the local revoke even if
+	// Google is unreachable; an error means the local state could not be updated.
+	Revoke(ctx context.Context, user UserID) error
 }
 
 // DriveUpload is a file to copy to the user's Drive.
@@ -70,4 +89,6 @@ type FileSource interface {
 // inserting the job in one transaction.
 type Uploads interface {
 	EnqueueUpload(ctx context.Context, user UserID, id DocumentID) error
+	// CancelUploads removes the user's pending (not yet running) upload_document jobs.
+	CancelUploads(ctx context.Context, user UserID) error
 }

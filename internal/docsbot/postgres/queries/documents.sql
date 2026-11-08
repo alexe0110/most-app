@@ -104,3 +104,31 @@ where user_id = @user_id
   and status = 'saved'
   and backup_status not in ('backed_up', 'too_large')
 order by created_at;
+
+-- name: DocumentBackupStatusCounts :many
+select backup_status, count(*) as n
+from documents
+where user_id = @user_id
+  and status = 'saved'
+group by backup_status;
+
+-- name: ListFailedDocumentIDs :many
+select id
+from documents
+where user_id = @user_id
+  and status = 'saved'
+  and backup_status = 'failed'
+order by created_at;
+
+-- name: ListSavedDocumentsForExport :many
+select *
+from documents
+where user_id = @user_id
+  and status = 'saved'
+order by created_at
+limit @lim;
+
+-- name: DeleteUserDocuments :exec
+delete
+from documents
+where user_id = @user_id;

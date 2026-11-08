@@ -24,14 +24,19 @@ const botName = "docs"
 // Service calls and renders the replies. State is the domain's; the only local
 // state is which document a user is renaming (force-reply).
 type docs struct {
-	svc     *docsbot.Service
-	auth    Authorizer
-	log     *slog.Logger
-	renames *renameStore
+	svc      *docsbot.Service
+	auth     Authorizer
+	log      *slog.Logger
+	renames  *renameStore
+	confirms *confirmStore
 }
 
 func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger) *docs {
-	return &docs{svc: svc, auth: auth, log: log, renames: newRenameStore(time.Now)}
+	return &docs{
+		svc: svc, auth: auth, log: log,
+		renames:  newRenameStore(time.Now),
+		confirms: newConfirmStore(time.Now),
+	}
 }
 
 // ownsCallback matches this feature's inline buttons.
@@ -55,29 +60,22 @@ func (d *docs) start(ctx context.Context, b *bot.Bot, u *models.Update) {
 	reply(ctx, b, d.log, chatID, textStart)
 }
 
-// settings shows the Drive connection state with a connect/reconnect button.
+// settings shows the Drive connection state, document counts, and the data
+// controls: connect/reconnect, disconnect, retry failed, export and delete.
 func (d *docs) settings(ctx context.Context, b *bot.Bot, u *models.Update) {
 	user, ok := userID(ctx)
 	if !ok {
 		return
 	}
 	chatID := u.Message.Chat.ID
-	connected, err := d.svc.DriveConnected(ctx, user)
+	view, err := d.svc.Settings(ctx, user)
 	if err != nil {
-		d.fail(ctx, b, chatID, "drive status", err)
+		d.fail(ctx, b, chatID, "settings", err)
 		return
 	}
 	url, haveURL := d.connectURL(ctx, user)
-	switch {
-	case connected && haveURL:
-		d.send(ctx, b, chatID, textSettingsConnected, reconnectKeyboard(url))
-	case connected:
-		reply(ctx, b, d.log, chatID, textSettingsConnected)
-	case haveURL:
-		d.send(ctx, b, chatID, textSettings, connectKeyboard(url))
-	default:
-		reply(ctx, b, d.log, chatID, textSettings)
-	}
+	text, kb := renderSettings(view, url, haveURL)
+	d.send(ctx, b, chatID, text, kb)
 }
 
 func (d *docs) help(ctx context.Context, b *bot.Bot, u *models.Update) {
@@ -137,6 +135,10 @@ func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 	if !ok {
 		return
 	}
+	if d.confirms.take(u.Message.From.ID) {
+		d.onDeleteConfirm(ctx, b, chatID, user, u.Message.Text)
+		return
+	}
 	if id, ok := d.renames.take(u.Message.From.ID); ok {
 		d.applyRename(ctx, b, chatID, user, id, u.Message.Text)
 		return
@@ -192,8 +194,101 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.onTransferNo(ctx, b, u)
 	case actRetry:
 		d.onRetry(ctx, b, u, user, parts)
+	case actDisconnect:
+		d.onDisconnect(ctx, b, u, user)
+	case actRetryAll:
+		d.onRetryAll(ctx, b, u, user)
+	case actExport:
+		d.onExport(ctx, b, u, user)
+	case actDeleteData:
+		d.onDeleteData(ctx, b, u)
 	case actNoop:
 	}
+}
+
+// onDisconnect revokes Drive access and stops pending uploads, leaving stored
+// documents (and any Drive links) untouched.
+func (d *docs) onDisconnect(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	if err := d.svc.Disconnect(ctx, user); err != nil {
+		d.fail(ctx, b, chatID, "disconnect", err)
+		return
+	}
+	d.editText(ctx, b, chatID, msgID, textDisconnected)
+}
+
+// onRetryAll re-queues every failed Drive upload.
+func (d *docs) onRetryAll(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	n, err := d.svc.RetryFailed(ctx, user)
+	if err != nil {
+		d.fail(ctx, b, chatID, "retry failed", err)
+		return
+	}
+	if n == 0 {
+		d.editText(ctx, b, chatID, msgID, textNoFailed)
+		return
+	}
+	d.editText(ctx, b, chatID, msgID, fmt.Sprintf(textRetryAllQueued, n))
+}
+
+// onExport resends the user's stored documents from Telegram, paced under the
+// Bot API rate limit, up to the service's per-request cap.
+func (d *docs) onExport(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
+	chatID, ok := callbackChat(u)
+	if !ok {
+		return
+	}
+	exp, err := d.svc.ExportAll(ctx, user)
+	if err != nil {
+		d.fail(ctx, b, chatID, "export", err)
+		return
+	}
+	if exp.Total == 0 {
+		reply(ctx, b, d.log, chatID, textExportEmpty)
+		return
+	}
+	reply(ctx, b, d.log, chatID, textExportStart)
+	for i, doc := range exp.Docs {
+		if i > 0 && !pause(ctx, exportPause) {
+			return // context cancelled; stop sending
+		}
+		d.sendFile(ctx, b, chatID, doc)
+	}
+	if exp.Truncated {
+		reply(ctx, b, d.log, chatID, fmt.Sprintf(textExportTruncated, len(exp.Docs), exp.Total))
+		return
+	}
+	reply(ctx, b, d.log, chatID, fmt.Sprintf(textExportDone, len(exp.Docs)))
+}
+
+// onDeleteData arms the "type УДАЛИТЬ" confirmation and explains what is removed.
+func (d *docs) onDeleteData(ctx context.Context, b *bot.Bot, u *models.Update) {
+	chatID, ok := callbackChat(u)
+	if !ok {
+		return
+	}
+	d.confirms.arm(u.CallbackQuery.From.ID)
+	reply(ctx, b, d.log, chatID, textDeleteDataPrompt)
+}
+
+// onDeleteConfirm deletes everything once the user typed the exact word.
+func (d *docs) onDeleteConfirm(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, text string) {
+	if strings.TrimSpace(text) != confirmWord {
+		reply(ctx, b, d.log, chatID, textDeleteWrongWord)
+		return
+	}
+	if err := d.svc.DeleteAllData(ctx, user); err != nil {
+		d.fail(ctx, b, chatID, "delete all data", err)
+		return
+	}
+	reply(ctx, b, d.log, chatID, textDataDeleted)
 }
 
 // onTransfer queues every not-yet-backed-up document for upload to Drive.
@@ -594,4 +689,55 @@ func (s *renameStore) take(user int64) (docsbot.DocumentID, bool) {
 		return "", false
 	}
 	return e.id, true
+}
+
+// confirmWord is the exact word the user must type to delete all their data.
+const confirmWord = "УДАЛИТЬ"
+
+// exportPause spaces out resent files to stay under Telegram's rate limit.
+const exportPause = 50 * time.Millisecond
+
+// pause waits for d, returning false if ctx is cancelled first.
+func pause(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// confirmStore remembers that a user is being asked to confirm data deletion. In
+// memory only, like renameStore: a restart or a stale arm just means the user
+// taps "Удалить мои данные" again.
+type confirmStore struct {
+	mu  sync.Mutex
+	m   map[int64]time.Time
+	now func() time.Time
+}
+
+const confirmTTL = 2 * time.Minute
+
+func newConfirmStore(now func() time.Time) *confirmStore {
+	return &confirmStore{m: map[int64]time.Time{}, now: now}
+}
+
+func (s *confirmStore) arm(user int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m[user] = s.now()
+}
+
+// take reports whether the user has a live deletion confirmation armed, clearing it.
+func (s *confirmStore) take(user int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	at, ok := s.m[user]
+	if !ok {
+		return false
+	}
+	delete(s.m, user)
+	return s.now().Sub(at) <= confirmTTL
 }

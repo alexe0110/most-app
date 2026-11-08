@@ -16,7 +16,9 @@ type fakeDrive struct {
 	err        error
 	uploadFile docsbot.DriveFile
 	uploadErr  error
-	uploads    *int // counts Upload calls when set
+	uploads    *int  // counts Upload calls when set
+	revokeErr  error // returned by Revoke
+	revoked    *bool // set to true on Revoke when provided
 }
 
 func (d fakeDrive) Connected(context.Context, docsbot.UserID) (bool, error) {
@@ -28,6 +30,13 @@ func (d fakeDrive) Upload(context.Context, docsbot.UserID, docsbot.DriveUpload) 
 		*d.uploads++
 	}
 	return d.uploadFile, d.uploadErr
+}
+
+func (d fakeDrive) Revoke(context.Context, docsbot.UserID) error {
+	if d.revoked != nil {
+		*d.revoked = true
+	}
+	return d.revokeErr
 }
 
 // fakeFiles returns a configurable download result.
@@ -48,8 +57,9 @@ func (f fakeFiles) Download(context.Context, string) ([]byte, string, error) {
 // fakeUploads records enqueued uploads and, like the real atomic enqueue, marks
 // the document pending.
 type fakeUploads struct {
-	repo  *fakeRepo
-	calls []docsbot.DocumentID
+	repo    *fakeRepo
+	calls   []docsbot.DocumentID
+	cancels []docsbot.UserID
 }
 
 func (u *fakeUploads) EnqueueUpload(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID) error {
@@ -60,10 +70,16 @@ func (u *fakeUploads) EnqueueUpload(_ context.Context, _ docsbot.UserID, id docs
 	return nil
 }
 
+func (u *fakeUploads) CancelUploads(_ context.Context, user docsbot.UserID) error {
+	u.cancels = append(u.cancels, user)
+	return nil
+}
+
 // fakeRepo is an in-memory docsbot.Repo for unit tests.
 type fakeRepo struct {
-	docs map[docsbot.DocumentID]docsbot.Document
-	seq  int
+	docs    map[docsbot.DocumentID]docsbot.Document
+	seq     int
+	deleted []docsbot.UserID // users passed to DeleteUserData
 }
 
 var _ docsbot.Repo = (*fakeRepo)(nil)
@@ -234,4 +250,50 @@ func (r *fakeRepo) NotBackedUpIDs(_ context.Context, user docsbot.UserID) ([]doc
 		out = append(out, d.ID)
 	}
 	return out, nil
+}
+
+func (r *fakeRepo) BackupStatusCounts(_ context.Context, user docsbot.UserID) ([]docsbot.BackupStatusCount, error) {
+	byStatus := map[docsbot.BackupStatus]int{}
+	for _, d := range r.savedFor(user) {
+		byStatus[d.BackupStatus]++
+	}
+	out := make([]docsbot.BackupStatusCount, 0, len(byStatus))
+	for st, n := range byStatus {
+		out = append(out, docsbot.BackupStatusCount{Status: st, Count: n})
+	}
+	return out, nil
+}
+
+func (r *fakeRepo) FailedIDs(_ context.Context, user docsbot.UserID) ([]docsbot.DocumentID, error) {
+	var docs []docsbot.Document
+	for _, d := range r.savedFor(user) {
+		if d.BackupStatus == docsbot.BackupFailed {
+			docs = append(docs, d)
+		}
+	}
+	sort.Slice(docs, func(i, j int) bool { return docs[i].CreatedAt.Before(docs[j].CreatedAt) })
+	out := make([]docsbot.DocumentID, 0, len(docs))
+	for _, d := range docs {
+		out = append(out, d.ID)
+	}
+	return out, nil
+}
+
+func (r *fakeRepo) SavedForExport(_ context.Context, user docsbot.UserID, limit int) ([]docsbot.Document, error) {
+	docs := r.savedFor(user)
+	sort.Slice(docs, func(i, j int) bool { return docs[i].CreatedAt.Before(docs[j].CreatedAt) })
+	if len(docs) > limit {
+		docs = docs[:limit]
+	}
+	return docs, nil
+}
+
+func (r *fakeRepo) DeleteUserData(_ context.Context, user docsbot.UserID) error {
+	for id, d := range r.docs {
+		if d.UserID == user {
+			delete(r.docs, id)
+		}
+	}
+	r.deleted = append(r.deleted, user)
+	return nil
 }

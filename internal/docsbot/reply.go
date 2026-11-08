@@ -48,3 +48,21 @@ type Found struct {
 	Query string
 	Docs  []Document
 }
+
+// SettingsView is the /settings screen: Drive state and document counts.
+// OnlyTelegram is saved documents neither backed up nor failed.
+type SettingsView struct {
+	DriveConnected bool
+	Total          int
+	InDrive        int
+	OnlyTelegram   int
+	Failed         int
+}
+
+// Export is the set of documents to resend from Telegram. Truncated is true when
+// the user has more saved documents than one export may send.
+type Export struct {
+	Docs      []Document
+	Total     int
+	Truncated bool
+}
