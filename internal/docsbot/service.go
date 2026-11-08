@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const (
@@ -14,6 +15,8 @@ const (
 	searchLimit = 10
 	// exportLimit caps how many documents one "send all" request resends (#15).
 	exportLimit = 50
+	// statusWindow is how long an open status message keeps absorbing new documents.
+	statusWindow = 30 * time.Second
 )
 
 // Service holds the Most Docs use cases. It depends only on ports, never on
@@ -24,11 +27,25 @@ type Service struct {
 	files   FileSource
 	uploads Uploads
 	folders Folders
+	status  StatusMessages
+	now     func() time.Time
+}
+
+// Option tunes a Service at construction.
+type Option func(*Service)
+
+// WithClock replaces the time source; used to pin the status-message window in tests.
+func WithClock(now func() time.Time) Option {
+	return func(s *Service) { s.now = now }
 }
 
 // NewService wires the service around its ports.
-func NewService(repo Repo, drive Drive, files FileSource, uploads Uploads, folders Folders) *Service {
-	return &Service{repo: repo, drive: drive, files: files, uploads: uploads, folders: folders}
+func NewService(repo Repo, drive Drive, files FileSource, uploads Uploads, folders Folders, status StatusMessages, opts ...Option) *Service {
+	s := &Service{repo: repo, drive: drive, files: files, uploads: uploads, folders: folders, status: status, now: time.Now}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Receive stores a freshly sent file as pending and asks for a category. A file

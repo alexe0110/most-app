@@ -4,6 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/platform/oauth"
@@ -43,36 +48,114 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter) oauth.On
 	}
 }
 
+// statusService is the part of docsbot.Service the Notifier needs to refresh
+// batch status messages. Declared here, at the consumer.
+type statusService interface {
+	StatusView(ctx context.Context, user docsbot.UserID, doc docsbot.DocumentID) (docsbot.StatusView, error)
+	CloseStatus(ctx context.Context, id docsbot.StatusMessageID) error
+	SetStatusMessageID(ctx context.Context, id docsbot.StatusMessageID, messageID int) error
+}
+
+// editInterval is the minimum gap between edits of one status message, to stay
+// under Telegram's per-chat rate limits.
+const editInterval = time.Second
+
 // Notifier posts upload outcomes to the user in Telegram. It satisfies
 // docsbot/jobs.Notifier (checked where it is bound to the worker in cmd).
 type Notifier struct {
 	bot   *tg.Bot
 	users userLookup
 	auth  Authorizer
+	svc   statusService
 	log   *slog.Logger
+
+	mu       sync.Mutex
+	lastEdit map[docsbot.StatusMessageID]time.Time
 }
 
 // NewNotifier builds the Telegram Notifier that the upload worker reports to.
-func NewNotifier(b *tg.Bot, users userLookup, auth Authorizer, log *slog.Logger) *Notifier {
-	return &Notifier{bot: b, users: users, auth: auth, log: log}
+func NewNotifier(b *tg.Bot, users userLookup, auth Authorizer, svc statusService, log *slog.Logger) *Notifier {
+	return &Notifier{bot: b, users: users, auth: auth, svc: svc, log: log,
+		lastEdit: map[docsbot.StatusMessageID]time.Time{}}
 }
 
-// BackedUp tells the user a document reached Drive, with a link to open it.
-func (n *Notifier) BackedUp(ctx context.Context, user docsbot.UserID, doc docsbot.Document) error {
+// UploadOutcome reflects a document's final upload state: it refreshes the batch
+// status message, or, for a document outside one, sends a single notice.
+func (n *Notifier) UploadOutcome(ctx context.Context, user docsbot.UserID, doc docsbot.DocumentID) error {
+	view, err := n.svc.StatusView(ctx, user, doc)
+	if err != nil {
+		n.log.ErrorContext(ctx, "load status view", "err", err, "user_id", user, "doc_id", doc)
+		return fmt.Errorf("status view: %w", err)
+	}
+	if !view.Grouped {
+		return n.singleOutcome(ctx, user, view.Doc)
+	}
+	text, kb := renderStatusMessage(view.Message, view.Lines, view.FolderByCat)
+	n.throttle(view.Message.ID)
+	err = n.bot.EditHTML(ctx, view.Message.ChatID, view.Message.MessageID, text, kb)
+	switch msg := strings.ToLower(errString(err)); {
+	case err == nil, strings.Contains(msg, "message is not modified"):
+	case strings.Contains(msg, "message to edit not found"), strings.Contains(msg, "message can't be edited"):
+		mid, serr := n.bot.SendHTML(ctx, view.Message.ChatID, text, kb)
+		if serr != nil {
+			n.log.ErrorContext(ctx, "resend status message", "err", serr, "user_id", user)
+		} else if uerr := n.svc.SetStatusMessageID(ctx, view.Message.ID, mid); uerr != nil {
+			n.log.ErrorContext(ctx, "save status message id", "err", uerr, "user_id", user)
+		}
+	default:
+		n.log.ErrorContext(ctx, "edit status message", "err", err, "user_id", user)
+	}
+	if view.AllTerminal {
+		n.mu.Lock()
+		delete(n.lastEdit, view.Message.ID)
+		n.mu.Unlock()
+		if cerr := n.svc.CloseStatus(ctx, view.Message.ID); cerr != nil {
+			n.log.ErrorContext(ctx, "close status message", "err", cerr, "user_id", user)
+		}
+	}
+	return nil
+}
+
+// singleOutcome is the per-document notice for a document without a status message.
+func (n *Notifier) singleOutcome(ctx context.Context, user docsbot.UserID, doc docsbot.Document) error {
+	var (
+		text string
+		kb   *models.InlineKeyboardMarkup
+	)
+	switch doc.BackupStatus {
+	case docsbot.BackupBackedUp:
+		text, kb = fmt.Sprintf(textBackedUp, doc.Title), openDriveKeyboard(doc)
+	case docsbot.BackupFailed:
+		text, kb = textBackupFailed, retryKeyboard(doc.ID)
+	default:
+		return nil
+	}
 	chatID, err := n.users.TgUserID(ctx, string(user))
 	if err != nil {
 		return fmt.Errorf("resolve tg user: %w", err)
 	}
-	return n.bot.SendMarkup(ctx, chatID, fmt.Sprintf(textBackedUp, doc.Title), openDriveKeyboard(doc))
+	return n.bot.SendMarkup(ctx, chatID, text, kb)
 }
 
-// BackupFailed tells the user an upload failed for good, with a retry button.
-func (n *Notifier) BackupFailed(ctx context.Context, user docsbot.UserID, doc docsbot.Document) error {
-	chatID, err := n.users.TgUserID(ctx, string(user))
-	if err != nil {
-		return fmt.Errorf("resolve tg user: %w", err)
+// throttle sleeps so consecutive edits of one status message are at least
+// editInterval apart. The upload queue runs one worker, so callers are serial.
+func (n *Notifier) throttle(id docsbot.StatusMessageID) {
+	n.mu.Lock()
+	last := n.lastEdit[id]
+	n.mu.Unlock()
+	if wait := editInterval - time.Since(last); wait > 0 && !last.IsZero() {
+		time.Sleep(wait)
 	}
-	return n.bot.SendMarkup(ctx, chatID, textBackupFailed, retryKeyboard(doc.ID))
+	n.mu.Lock()
+	n.lastEdit[id] = time.Now()
+	n.mu.Unlock()
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // Reconnect asks the user to re-link Drive after access was revoked.

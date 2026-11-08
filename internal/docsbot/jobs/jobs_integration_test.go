@@ -39,14 +39,13 @@ type spyNotifier struct {
 	backedUp []docsbot.DocumentID
 }
 
-func (s *spyNotifier) BackedUp(_ context.Context, _ docsbot.UserID, d docsbot.Document) error {
+func (s *spyNotifier) UploadOutcome(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.backedUp = append(s.backedUp, d.ID)
+	s.backedUp = append(s.backedUp, id)
 	return nil
 }
-func (*spyNotifier) BackupFailed(context.Context, docsbot.UserID, docsbot.Document) error { return nil }
-func (*spyNotifier) Reconnect(context.Context, docsbot.UserID) error                      { return nil }
+func (*spyNotifier) Reconnect(context.Context, docsbot.UserID) error { return nil }
 
 func (s *spyNotifier) seen() []docsbot.DocumentID {
 	s.mu.Lock()
@@ -81,7 +80,7 @@ func runUploadWithLog(t *testing.T, files docsbot.FileSource, drive docsbot.Driv
 	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
 	require.NoError(t, err)
 	enq := jobs.NewEnqueuer(repo, queue)
-	svc := docsbot.NewService(repo, drive, files, enq, repo)
+	svc := docsbot.NewService(repo, drive, files, enq, repo, repo)
 	spy = &spyNotifier{}
 	bind(svc, spy)
 
@@ -127,5 +126,6 @@ func TestUploadDocument_tooLarge(t *testing.T) {
 		status, _ := backupState(t, pool, id)
 		return status == "too_large"
 	}, 30*time.Second, 100*time.Millisecond)
-	require.Empty(t, spy.seen(), "no success notification for a too-large file")
+	require.Eventually(t, func() bool { return len(spy.seen()) == 1 }, 5*time.Second, 50*time.Millisecond)
+	require.Equal(t, id, spy.seen()[0], "outcome is reported so the status line shows the file stays in Telegram")
 }

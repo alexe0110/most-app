@@ -38,8 +38,8 @@ type Backuper interface {
 // Notifier tells the user in Telegram how an upload ended. Implemented by the
 // telegram adapter; errors are best-effort.
 type Notifier interface {
-	BackedUp(ctx context.Context, user docsbot.UserID, doc docsbot.Document) error
-	BackupFailed(ctx context.Context, user docsbot.UserID, doc docsbot.Document) error
+	// UploadOutcome reports a document's final state (backed up, failed or too large).
+	UploadOutcome(ctx context.Context, user docsbot.UserID, doc docsbot.DocumentID) error
 	Reconnect(ctx context.Context, user docsbot.UserID) error
 }
 
@@ -65,6 +65,7 @@ func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentAr
 		if err := w.svc.MarkBackupFailed(ctx, user, id); err != nil {
 			w.log.ErrorContext(ctx, "mark backup failed", "err", err, "user_id", user, "doc_id", id)
 		}
+		_ = w.notify.UploadOutcome(ctx, user, id)
 		_ = w.notify.Reconnect(ctx, user)
 		w.log.WarnContext(ctx, "drive upload: access revoked", "job_id", job.ID, "attempt", job.Attempt,
 			"user_id", user, "doc_id", id, "duration_ms", time.Since(start).Milliseconds())
@@ -74,7 +75,7 @@ func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentAr
 			if markErr := w.svc.MarkBackupFailed(ctx, user, id); markErr != nil {
 				w.log.ErrorContext(ctx, "mark backup failed", "err", markErr, "user_id", user, "doc_id", id)
 			}
-			_ = w.notify.BackupFailed(ctx, user, docsbot.Document{ID: id, UserID: user})
+			_ = w.notify.UploadOutcome(ctx, user, id)
 			w.log.ErrorContext(ctx, "drive upload failed permanently", "job_id", job.ID, "attempt", job.Attempt,
 				"err", err, "user_id", user, "doc_id", id, "duration_ms", time.Since(start).Milliseconds())
 		} else {
@@ -84,10 +85,9 @@ func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentAr
 	}
 	w.log.InfoContext(ctx, "upload finished", "user_id", user, "doc_id", id,
 		"backup_status", res.Doc.BackupStatus, "duration_ms", time.Since(start).Milliseconds())
-	if res.TooLarge {
-		return nil // stays in Telegram, backup_status=too_large
-	}
-	_ = w.notify.BackedUp(ctx, user, res.Doc)
+	// A too-large file stays in Telegram (backup_status=too_large); the outcome
+	// still updates its status line.
+	_ = w.notify.UploadOutcome(ctx, user, id)
 	return nil
 }
 

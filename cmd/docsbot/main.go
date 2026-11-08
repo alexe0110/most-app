@@ -97,7 +97,7 @@ func run() error {
 
 	gdriveSvc := gdrive.New(gdriveClients{oauth: oauthSvc}, repo, gdrive.WithLogger(log))
 	driveAdapter := driveBridge{oauth: oauthSvc, gd: gdriveSvc}
-	svc = docsbot.NewService(repo, driveAdapter, files, enq, repo)
+	svc = docsbot.NewService(repo, driveAdapter, files, enq, repo, repo)
 
 	tgbot, err = tg.New(tg.Config{
 		Token:         cfg.TelegramToken,
@@ -109,7 +109,7 @@ func run() error {
 		return err
 	}
 	files.bot = tgbot
-	notifier := telegram.NewNotifier(tgbot, repo, oauthSvc, log)
+	notifier := telegram.NewNotifier(tgbot, repo, oauthSvc, svc, log)
 	bindUpload(svc, notifier)
 	if err := tgbot.SetCommands(ctx, telegram.Commands()); err != nil {
 		log.Error("set bot commands", "err", err) // not fatal

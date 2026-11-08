@@ -209,6 +209,8 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.onExport(ctx, b, u, user)
 	case actDeleteData:
 		d.onDeleteData(ctx, b, u)
+	case actRetryBatch:
+		d.onRetryBatch(ctx, b, u, user, parts)
 	case actNoop:
 	}
 }
@@ -359,9 +361,117 @@ func (d *docs) onCategory(ctx context.Context, b *bot.Bot, u *models.Update, use
 	d.log.InfoContext(ctx, "document saved", "user_id", user, "doc_id", saved.Doc.ID,
 		"category", cat, "backup_status", saved.Doc.BackupStatus)
 	d.editText(ctx, b, chatID, msgID, "✅ "+categoryLabel(cat))
+	if saved.Doc.BackupStatus == docsbot.BackupPending {
+		// Drive is connected: the upload is queued and tracked in a batch status message.
+		d.trackUpload(ctx, b, chatID, user, saved.Doc)
+		return
+	}
 	d.sendCard(ctx, b, chatID, saved.Doc, textSaved, "")
 	if saved.OfferDrive {
 		d.offerDrive(ctx, b, chatID, user)
+	}
+}
+
+// trackUpload adds a queued document to the user's open status message, or opens
+// a new one when there is none inside the grouping window.
+func (d *docs) trackUpload(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, doc docsbot.Document) {
+	sm, reuse, err := d.svc.StatusTarget(ctx, user)
+	if err != nil {
+		d.fail(ctx, b, chatID, "status target", err)
+		return
+	}
+	if reuse {
+		if err := d.svc.AttachStatus(ctx, doc.ID, sm.ID); err != nil {
+			d.fail(ctx, b, chatID, "attach status", err)
+			return
+		}
+		d.refreshStatus(ctx, b, user, doc.ID)
+		return
+	}
+	text, kb := renderStatusMessage(docsbot.StatusMessage{}, []docsbot.Document{doc}, nil)
+	messageID, err := d.sendHTML(ctx, b, chatID, text, kb)
+	if err != nil {
+		d.fail(ctx, b, chatID, "send status message", err)
+		return
+	}
+	if _, err := d.svc.OpenStatus(ctx, user, chatID, messageID, doc.ID); err != nil {
+		d.fail(ctx, b, chatID, "open status", err)
+	}
+}
+
+// refreshStatus redraws the status message the document belongs to. Best-effort:
+// failures are logged, not shown.
+func (d *docs) refreshStatus(ctx context.Context, b *bot.Bot, user docsbot.UserID, doc docsbot.DocumentID) {
+	view, err := d.svc.StatusView(ctx, user, doc)
+	if err != nil {
+		d.log.ErrorContext(ctx, "load status view", "err", err, "user_id", user, "doc_id", doc)
+		return
+	}
+	d.redrawStatus(ctx, b, user, view)
+}
+
+func (d *docs) redrawStatus(ctx context.Context, b *bot.Bot, user docsbot.UserID, view docsbot.StatusView) {
+	if !view.Grouped {
+		return
+	}
+	text, kb := renderStatusMessage(view.Message, view.Lines, view.FolderByCat)
+	d.editHTML(ctx, b, view.Message.ChatID, view.Message.MessageID, text, kb)
+	if view.AllTerminal {
+		if err := d.svc.CloseStatus(ctx, view.Message.ID); err != nil {
+			d.log.ErrorContext(ctx, "close status message", "err", err, "user_id", user)
+		}
+	}
+}
+
+// onRetryBatch re-queues the failed uploads of a status message and redraws it.
+func (d *docs) onRetryBatch(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	id, ok := docID(parts)
+	if !ok {
+		return
+	}
+	chatID, _, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	smID := docsbot.StatusMessageID(id)
+	if _, err := d.svc.RetryStatusFailed(ctx, user, smID); err != nil {
+		d.fail(ctx, b, chatID, "retry status failed", err)
+		return
+	}
+	view, err := d.svc.StatusViewByID(ctx, user, smID)
+	if err != nil {
+		d.log.ErrorContext(ctx, "load status view", "err", err, "user_id", user)
+		return
+	}
+	d.redrawStatus(ctx, b, user, view)
+}
+
+// sendHTML posts an HTML message and returns its id.
+func (d *docs) sendHTML(ctx context.Context, b *bot.Bot, chatID int64, text string, kb *models.InlineKeyboardMarkup) (int, error) {
+	params := &bot.SendMessageParams{ChatID: chatID, Text: text, ParseMode: models.ParseModeHTML}
+	if kb != nil {
+		params.ReplyMarkup = kb
+	}
+	start := time.Now()
+	msg, err := b.SendMessage(ctx, params)
+	traceAPI(ctx, d.log, "sendMessage", start)
+	if err != nil {
+		return 0, fmt.Errorf("send html message: %w", err)
+	}
+	return msg.ID, nil
+}
+
+// editHTML rewrites an HTML message; "message is not modified" is not an error.
+func (d *docs) editHTML(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup) {
+	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text, ParseMode: models.ParseModeHTML}
+	if kb != nil {
+		params.ReplyMarkup = kb
+	}
+	start := time.Now()
+	_, err := b.EditMessageText(ctx, params)
+	traceAPI(ctx, d.log, "editMessageText", start)
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
+		d.log.ErrorContext(ctx, "edit status message", "err", err)
 	}
 }
 

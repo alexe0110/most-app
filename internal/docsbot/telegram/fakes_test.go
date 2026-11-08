@@ -36,6 +36,7 @@ func (fakeAuth) AuthURL(context.Context, string, string) (string, error) {
 type fakeRepo struct {
 	folders map[docsbot.Category]string // cached Drive folder ids by category
 	docs    map[docsbot.DocumentID]docsbot.Document
+	status  *fakeStatus // set by fakeDepsWith
 	seq     int
 }
 
@@ -186,18 +187,30 @@ func (r *fakeRepo) Search(_ context.Context, user docsbot.UserID, q string, limi
 
 // fakeUploads is a no-op Uploads port: handler tests assert on the repo and the
 // sent messages, not on the queue.
-type fakeUploads struct{}
+// With repo set it also marks the document pending, like the real enqueue.
+type fakeUploads struct{ repo *fakeRepo }
 
-func (fakeUploads) EnqueueUpload(context.Context, docsbot.UserID, docsbot.DocumentID) error {
+func (u fakeUploads) EnqueueUpload(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID) error {
+	if u.repo != nil {
+		d := u.repo.docs[id]
+		d.BackupStatus = docsbot.BackupPending
+		u.repo.docs[id] = d
+	}
 	return nil
 }
 func (fakeUploads) CancelUploads(context.Context, docsbot.UserID) error { return nil }
 
 // fakeDeps builds a Service over in-memory fakes, plus the fake authorizer.
 func fakeDeps() (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
+	return fakeDepsWith(fakeDrive{})
+}
+
+// fakeDepsWith is fakeDeps with a chosen Drive state. Files are never reached
+// and uploads is a no-op.
+func fakeDepsWith(drive fakeDrive) (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
 	repo := newFakeRepo()
-	// Drive is never connected here, so files are not reached; uploads is a no-op.
-	return docsbot.NewService(repo, fakeDrive{}, nil, fakeUploads{}, repo), fakeAuth{}, repo
+	repo.status = newFakeStatus(repo)
+	return docsbot.NewService(repo, drive, nil, fakeUploads{repo: repo}, repo, repo.status), fakeAuth{}, repo
 }
 
 func (r *fakeRepo) MarkBackedUp(_ context.Context, id docsbot.DocumentID, driveFileID string) error {
@@ -261,4 +274,81 @@ var _ docsbot.Folders = (*fakeRepo)(nil)
 func (r *fakeRepo) CategoryFolderID(_ context.Context, _ docsbot.UserID, cat docsbot.Category) (string, bool, error) {
 	id, ok := r.folders[cat]
 	return id, ok, nil
+}
+
+// fakeStatus is an in-memory docsbot.StatusMessages over the fake repo's documents.
+type fakeStatus struct {
+	repo *fakeRepo
+	msgs map[docsbot.StatusMessageID]docsbot.StatusMessage
+	seq  int
+}
+
+var _ docsbot.StatusMessages = (*fakeStatus)(nil)
+
+func newFakeStatus(repo *fakeRepo) *fakeStatus {
+	return &fakeStatus{repo: repo, msgs: map[docsbot.StatusMessageID]docsbot.StatusMessage{}}
+}
+
+func (s *fakeStatus) OpenForUser(_ context.Context, user docsbot.UserID) (docsbot.StatusMessage, bool, error) {
+	var best docsbot.StatusMessage
+	found := false
+	for _, m := range s.msgs {
+		if m.UserID == user && !m.Closed && (!found || m.CreatedAt.After(best.CreatedAt)) {
+			best, found = m, true
+		}
+	}
+	return best, found, nil
+}
+
+func (s *fakeStatus) Create(_ context.Context, user docsbot.UserID, chatID int64, messageID int) (docsbot.StatusMessage, error) {
+	s.seq++
+	m := docsbot.StatusMessage{
+		ID:        docsbot.StatusMessageID(fmt.Sprintf("sm-%d", s.seq)),
+		UserID:    user,
+		ChatID:    chatID,
+		MessageID: messageID,
+		CreatedAt: time.Now(),
+	}
+	s.msgs[m.ID] = m
+	return m, nil
+}
+
+func (s *fakeStatus) Close(_ context.Context, id docsbot.StatusMessageID) error {
+	m := s.msgs[id]
+	m.Closed = true
+	s.msgs[id] = m
+	return nil
+}
+
+func (s *fakeStatus) SetMessageID(_ context.Context, id docsbot.StatusMessageID, messageID int) error {
+	m := s.msgs[id]
+	m.MessageID = messageID
+	s.msgs[id] = m
+	return nil
+}
+
+func (s *fakeStatus) Attach(_ context.Context, doc docsbot.DocumentID, id docsbot.StatusMessageID) error {
+	d := s.repo.docs[doc]
+	d.StatusMessageID = id
+	s.repo.docs[doc] = d
+	return nil
+}
+
+func (s *fakeStatus) DocumentsIn(_ context.Context, id docsbot.StatusMessageID) ([]docsbot.Document, error) {
+	var out []docsbot.Document
+	for _, d := range s.repo.docs {
+		if d.StatusMessageID == id {
+			out = append(out, d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func (s *fakeStatus) ByID(_ context.Context, id docsbot.StatusMessageID) (docsbot.StatusMessage, error) {
+	m, ok := s.msgs[id]
+	if !ok {
+		return docsbot.StatusMessage{}, docsbot.ErrNotFound
+	}
+	return m, nil
 }

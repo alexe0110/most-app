@@ -9,18 +9,19 @@ import (
 )
 
 type Document struct {
-	ID             pgtype.UUID
-	UserID         pgtype.UUID
-	Status         string
-	Category       string
-	Title          string
-	TgFileID       string
-	TgFileUniqueID string
-	DriveFileID    pgtype.Text
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-	Kind           string
-	BackupStatus   string
+	ID              pgtype.UUID
+	UserID          pgtype.UUID
+	Status          string
+	Category        string
+	Title           string
+	TgFileID        string
+	TgFileUniqueID  string
+	DriveFileID     pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	Kind            string
+	BackupStatus    string
+	StatusMessageID pgtype.UUID
 }
 
 type DriveFolder struct {
@@ -48,6 +49,15 @@ type OauthState struct {
 	Verifier  string
 	ExpiresAt pgtype.Timestamptz
 	CreatedAt pgtype.Timestamptz
+}
+
+type StatusMessage struct {
+	ID        pgtype.UUID
+	UserID    pgtype.UUID
+	ChatID    int64
+	MessageID int64
+	CreatedAt pgtype.Timestamptz
+	ClosedAt  pgtype.Timestamptz
 }
 
 type User struct {

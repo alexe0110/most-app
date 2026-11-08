@@ -127,6 +127,34 @@ func (b *Bot) SendMarkup(ctx context.Context, chatID int64, text string, markup 
 	return nil
 }
 
+// SendHTML delivers an HTML-formatted message (markup may be nil) and returns
+// its message id.
+func (b *Bot) SendHTML(ctx context.Context, chatID int64, text string, markup models.ReplyMarkup) (int, error) {
+	start := time.Now()
+	res, err := b.api.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID: chatID, Text: text, ParseMode: models.ParseModeHTML, ReplyMarkup: markup,
+	})
+	b.trace(ctx, "sendMessage", start, err)
+	if err != nil {
+		return 0, fmt.Errorf("send message: %w", err)
+	}
+	return res.ID, nil
+}
+
+// EditHTML rewrites a message with HTML text and markup (nil drops the
+// keyboard). The error is returned for the caller to classify.
+func (b *Bot) EditHTML(ctx context.Context, chatID int64, messageID int, text string, markup models.ReplyMarkup) error {
+	start := time.Now()
+	_, err := b.api.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID: chatID, MessageID: messageID, Text: text, ParseMode: models.ParseModeHTML, ReplyMarkup: markup,
+	})
+	b.trace(ctx, "editMessageText", start, err)
+	if err != nil {
+		return fmt.Errorf("edit message: %w", err)
+	}
+	return nil
+}
+
 // SetCommands publishes the bot's command menu (setMyCommands). Called once at
 // startup so the menu is defined in code, the same for dev and prod.
 func (b *Bot) SetCommands(ctx context.Context, commands []models.BotCommand) error {
