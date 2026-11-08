@@ -168,7 +168,7 @@ func (s *Service) folderAlive(ctx context.Context, httpc *http.Client, id string
 func (s *Service) findFolder(ctx context.Context, httpc *http.Client, name, parentID string) (string, error) {
 	q := fmt.Sprintf("name='%s' and mimeType='%s' and '%s' in parents and trashed=false",
 		escapeQuery(name), folderMIME, parentID)
-	files, err := s.list(ctx, httpc, q)
+	files, err := s.list(ctx, httpc, q, "createdTime")
 	if err != nil {
 		return "", fmt.Errorf("drive find folder: %w", err)
 	}
@@ -203,7 +203,7 @@ func (s *Service) uniqueName(ctx context.Context, httpc *http.Client, folderID, 
 	candidate := name
 	for i := 1; i <= maxNameTries; i++ {
 		q := fmt.Sprintf("name='%s' and '%s' in parents and trashed=false", escapeQuery(candidate), folderID)
-		files, err := s.list(ctx, httpc, q)
+		files, err := s.list(ctx, httpc, q, "")
 		if err != nil {
 			return "", fmt.Errorf("drive check name: %w", err)
 		}
@@ -215,12 +215,16 @@ func (s *Service) uniqueName(ctx context.Context, httpc *http.Client, folderID, 
 	return candidate, nil
 }
 
-// list runs a files.list query and returns the matching ids.
-func (s *Service) list(ctx context.Context, httpc *http.Client, q string) ([]string, error) {
+// list runs a files.list query and returns the matching ids. A non-empty
+// orderBy sorts the result (e.g. "createdTime" puts the oldest file first).
+func (s *Service) list(ctx context.Context, httpc *http.Client, q, orderBy string) ([]string, error) {
 	v := url.Values{}
 	v.Set("q", q)
 	v.Set("fields", "files(id,name)")
 	v.Set("spaces", "drive")
+	if orderBy != "" {
+		v.Set("orderBy", orderBy)
+	}
 
 	var out struct {
 		Files []struct {

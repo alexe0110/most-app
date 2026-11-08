@@ -53,9 +53,11 @@ func (c *fakeCache) DeleteFolderID(_ context.Context, _, key string) error {
 // fakeDrive emulates the slice of the Drive API the client uses.
 type fakeDrive struct {
 	t            *testing.T
-	gone         map[string]int  // folder id -> status for files/{id} (404)
-	trashed      map[string]bool // folder id -> trashed
-	existingName string          // a file name already present in the category folder
+	gone         map[string]int      // folder id -> status for files/{id} (404)
+	trashed      map[string]bool     // folder id -> trashed
+	existingName string              // a file name already present in the category folder
+	folders      []map[string]string // folders Drive already has, oldest first (as orderBy=createdTime returns them)
+	lastOrderBy  string              // orderBy of the last folder query
 	webViewLink  string
 	created      []string // folder names created, in order
 	uploadedName string
@@ -76,6 +78,16 @@ func (d *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/drive/v3/files":
 		q := r.URL.Query().Get("q")
 		files := []map[string]string{}
+		if len(d.folders) > 0 && strings.Contains(q, "mimeType='"+folderMIME+"'") {
+			d.lastOrderBy = r.URL.Query().Get("orderBy")
+			for _, f := range d.folders {
+				if strings.Contains(q, "name='"+f["name"]+"'") {
+					files = append(files, f)
+				}
+			}
+			writeJSON(w, map[string]any{"files": files})
+			return
+		}
 		if d.existingName != "" && strings.Contains(q, "name='"+d.existingName+"'") &&
 			!strings.Contains(q, "mimeType=") {
 			files = append(files, map[string]string{"id": "existing", "name": d.existingName})
@@ -182,6 +194,24 @@ func TestUpload_cachedFolderGone(t *testing.T) {
 			require.Equal(t, "folder-Паспорт и ID", cache.ids["passport"])
 		})
 	}
+}
+
+func TestUpload_findFolderPicksOldest(t *testing.T) {
+	d := &fakeDrive{folders: []map[string]string{
+		{"id": "root", "name": rootFolderName},
+		{"id": "old", "name": "Паспорт и ID"},
+		{"id": "new", "name": "Паспорт и ID"},
+	}}
+	cache := newFakeCache()
+	svc := newService(t, d, fakeClients{}, cache)
+
+	_, err := svc.Upload(context.Background(), "user-1", testUpload())
+
+	require.NoError(t, err)
+	require.Equal(t, "createdTime", d.lastOrderBy)
+	require.Empty(t, d.created)
+	require.Equal(t, "old", d.uploadParent)
+	require.Equal(t, "old", cache.ids["passport"])
 }
 
 func TestUpload_cachedFolderAlive(t *testing.T) {
