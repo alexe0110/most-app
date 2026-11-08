@@ -1,6 +1,7 @@
 package telegram_test
 
 import (
+	"bytes"
 	"io"
 	"log/slog"
 	"net/http"
@@ -46,6 +47,12 @@ func has(msgs []string, sub string) bool {
 // Handlers run synchronously, so a test can assert right after ProcessUpdate.
 func newBot(t *testing.T) (*bot.Bot, *capture, *fakeRepo) {
 	t.Helper()
+	return newBotWithLog(t, slog.New(slog.DiscardHandler))
+}
+
+// newBotWithLog is newBot with a caller-supplied logger.
+func newBotWithLog(t *testing.T, log *slog.Logger) (*bot.Bot, *capture, *fakeRepo) {
+	t.Helper()
 	sent := &capture{}
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +72,7 @@ func newBot(t *testing.T) (*bot.Bot, *capture, *fakeRepo) {
 	require.NoError(t, err)
 
 	svc, auth, repo := fakeDeps()
-	telegram.Register(b, slog.New(slog.DiscardHandler), svc, auth)
+	telegram.Register(b, log, svc, auth)
 	return b, sent, repo
 }
 
@@ -227,4 +234,71 @@ func TestSearch_findsSavedDocument(t *testing.T) {
 	b.ProcessUpdate(ctx, update)
 
 	require.True(t, has(sent.texts, "Нашёл"), "sent %q", sent.texts)
+}
+
+func TestLogs_traceDocumentWithoutLeaks(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	b, _, repo := newBotWithLog(t, log)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	// Receive a file, choose a category, search, then ask for the file back.
+	b.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
+		From:     &models.User{ID: 100},
+		Chat:     models.Chat{ID: 100, Type: models.ChatTypePrivate},
+		Document: &models.Document{FileID: "f1", FileUniqueID: "u1", FileName: "Паспорт.pdf"},
+	}})
+	require.Len(t, repo.docs, 1)
+	var id docsbot.DocumentID
+	for k := range repo.docs {
+		id = k
+	}
+	b.ProcessUpdate(ctx, dataCallback(100, "d:cat:"+string(id)+":"+string(docsbot.CatOther)))
+	b.ProcessUpdate(ctx, textUpdate(100, "СекретныйЗапрос"))
+	b.ProcessUpdate(ctx, dataCallback(100, "d:snd:"+string(id)))
+
+	out := buf.String()
+	require.Contains(t, out, `"doc_id":"`+string(id)+`"`)
+	require.Contains(t, out, "document received")
+	require.Contains(t, out, "document saved")
+	require.Contains(t, out, "document sent")
+	require.Contains(t, out, `"op":"sendMessage"`)
+	for _, leak := range []string{"Паспорт", "123:ABC", "СекретныйЗапрос", "chat_id", "tg_user_id", "f1"} {
+		require.NotContains(t, out, leak)
+	}
+}
+
+func TestLogs_editFlowWithoutLeaks(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	b, _, repo := newBotWithLog(t, log)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	recv := func() {
+		b.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
+			From:     &models.User{ID: 100},
+			Chat:     models.Chat{ID: 100, Type: models.ChatTypePrivate},
+			Document: &models.Document{FileID: "f1", FileUniqueID: "u1", FileName: "Паспорт.pdf"},
+		}})
+	}
+	recv()
+	require.Len(t, repo.docs, 1)
+	var id docsbot.DocumentID
+	for k := range repo.docs {
+		id = k
+	}
+	b.ProcessUpdate(ctx, dataCallback(100, "d:cat:"+string(id)+":"+string(docsbot.CatOther)))
+	b.ProcessUpdate(ctx, dataCallback(100, "d:cat:"+string(id)+":"+string(docsbot.CatOther)))
+	b.ProcessUpdate(ctx, dataCallback(100, "d:rn:"+string(id)))
+	b.ProcessUpdate(ctx, textUpdate(100, "НовоеИмяСекрет"))
+	b.ProcessUpdate(ctx, dataCallback(100, "d:dy:"+string(id)))
+
+	out := buf.String()
+	for _, ev := range []string{"document received", "document renamed", "document deleted"} {
+		require.Contains(t, out, ev)
+	}
+	require.Contains(t, out, `"doc_id":"`+string(id)+`"`)
+	for _, leak := range []string{"Паспорт", "НовоеИмяСекрет", "123:ABC", "chat_id", "tg_user_id", "f1", "u1"} {
+		require.NotContains(t, out, leak)
+	}
 }

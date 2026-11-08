@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/alexe0110/most-app/internal/platform/oauth"
 )
@@ -51,6 +53,7 @@ type Service struct {
 	clients Clients
 	cache   FolderCache
 	baseURL string
+	log     *slog.Logger
 }
 
 // Option overrides a Service default.
@@ -59,11 +62,17 @@ type Option func(*Service)
 // WithBaseURL overrides the Google API base (scheme+host, no trailing slash) for tests.
 func WithBaseURL(u string) Option { return func(s *Service) { s.baseURL = u } }
 
+// WithLogger sets the logger for Drive API call traces (Debug level).
+func WithLogger(l *slog.Logger) Option { return func(s *Service) { s.log = l } }
+
 // New builds the Service.
 func New(clients Clients, cache FolderCache, opts ...Option) *Service {
 	s := &Service{clients: clients, cache: cache, baseURL: defaultBaseURL}
 	for _, o := range opts {
 		o(s)
+	}
+	if s.log == nil {
+		s.log = slog.New(slog.DiscardHandler)
 	}
 	return s
 }
@@ -155,7 +164,7 @@ func (s *Service) folderAlive(ctx context.Context, httpc *http.Client, id string
 		Trashed bool `json:"trashed"`
 	}
 	u := s.baseURL + "/drive/v3/files/" + url.PathEscape(id) + "?fields=id,trashed"
-	err := do(ctx, httpc, http.MethodGet, u, "", nil, &out)
+	err := s.do(ctx, "files.get", httpc, http.MethodGet, u, "", nil, &out)
 	if errors.Is(err, errNotFound) {
 		return false, nil
 	}
@@ -190,7 +199,7 @@ func (s *Service) createFolder(ctx context.Context, httpc *http.Client, name, pa
 	var out struct {
 		ID string `json:"id"`
 	}
-	err = do(ctx, httpc, http.MethodPost, s.baseURL+"/drive/v3/files?fields=id",
+	err = s.do(ctx, "files.create", httpc, http.MethodPost, s.baseURL+"/drive/v3/files?fields=id",
 		"application/json; charset=UTF-8", bytes.NewReader(body), &out)
 	if err != nil {
 		return "", fmt.Errorf("drive create folder: %w", err)
@@ -231,7 +240,7 @@ func (s *Service) list(ctx context.Context, httpc *http.Client, q, orderBy strin
 			ID string `json:"id"`
 		} `json:"files"`
 	}
-	if err := do(ctx, httpc, http.MethodGet, s.baseURL+"/drive/v3/files?"+v.Encode(), "", nil, &out); err != nil {
+	if err := s.do(ctx, "files.list", httpc, http.MethodGet, s.baseURL+"/drive/v3/files?"+v.Encode(), "", nil, &out); err != nil {
 		return nil, err
 	}
 	ids := make([]string, 0, len(out.Files))
@@ -271,7 +280,7 @@ func (s *Service) upload(ctx context.Context, httpc *http.Client, folderID, name
 	}
 	u := s.baseURL + "/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink"
 	ct := "multipart/related; boundary=" + mw.Boundary()
-	if err := do(ctx, httpc, http.MethodPost, u, ct, &buf, &out); err != nil {
+	if err := s.do(ctx, "files.upload", httpc, http.MethodPost, u, ct, &buf, &out); err != nil {
 		return File{}, fmt.Errorf("drive upload: %w", err)
 	}
 
@@ -295,35 +304,54 @@ func writePart(mw *multipart.Writer, hdr textproto.MIMEHeader, data []byte) erro
 
 // do performs one request and decodes a JSON response into out. 401 maps to
 // ErrAccessRevoked and 404 to errNotFound; other non-2xx carry only the status.
-func do(ctx context.Context, httpc *http.Client, method, u, contentType string, body io.Reader, out any) error {
+// Each call is traced at Debug with op, status and duration (never URL or body).
+func (s *Service) do(ctx context.Context, op string, httpc *http.Client, method, u, contentType string, body io.Reader, out any) error {
+	start := time.Now()
+	status, err := s.roundTrip(ctx, httpc, method, u, contentType, body, out)
+	attrs := []any{"op", op, "http_status", status, "duration_ms", time.Since(start).Milliseconds()}
+	if err != nil {
+		attrs = append(attrs, "err", err)
+	}
+	s.log.DebugContext(ctx, "drive api", attrs...)
+	return err
+}
+
+// roundTrip runs the request and returns the HTTP status (0 if none was received).
+func (s *Service) roundTrip(ctx context.Context, httpc *http.Client, method, u, contentType string, body io.Reader, out any) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, method, u, body)
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return 0, fmt.Errorf("build request: %w", err)
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
 	resp, err := httpc.Do(req)
 	if err != nil {
-		return fmt.Errorf("send request: %w", err)
+		// The request URL carries folder ids and the file name (q=...); redact it
+		// before the error travels up to a logger.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			ue.URL = "<redacted>"
+		}
+		return 0, fmt.Errorf("send request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
-		return ErrAccessRevoked
+		return resp.StatusCode, ErrAccessRevoked
 	case resp.StatusCode == http.StatusNotFound:
-		return errNotFound
+		return resp.StatusCode, errNotFound
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
 		// Drain a bounded part so the connection can be reused; the body is not
 		// put into the error because it may carry file metadata.
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrBody))
-		return fmt.Errorf("status %d", resp.StatusCode)
+		return resp.StatusCode, fmt.Errorf("status %d", resp.StatusCode)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("decode response: %w", err)
+		return resp.StatusCode, fmt.Errorf("decode response: %w", err)
 	}
-	return nil
+	return resp.StatusCode, nil
 }
 
 // escapeQuery escapes a literal for use inside single quotes in a Drive query.

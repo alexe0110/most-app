@@ -58,17 +58,22 @@ func (s *spyNotifier) seen() []docsbot.DocumentID {
 // repo, id and the spy once the worker is running.
 func runUpload(t *testing.T, files docsbot.FileSource) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, spy *spyNotifier) {
 	t.Helper()
+	return runUploadWithLog(t, files, fakeDrive{}, slog.New(slog.DiscardHandler))
+}
+
+// runUploadWithLog is runUpload with a caller-supplied logger.
+func runUploadWithLog(t *testing.T, files docsbot.FileSource, drive docsbot.Drive, log *slog.Logger) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, spy *spyNotifier) {
+	t.Helper()
 	ctx := t.Context()
 	pool = dbtest.New(t)
 	repo := postgres.NewRepo(pool)
-	log := slog.New(slog.DiscardHandler)
 
 	var uid string
 	require.NoError(t, pool.QueryRow(ctx, `insert into users (tg_user_id) values (1) returning id::text`).Scan(&uid))
 	var did string
 	require.NoError(t, pool.QueryRow(ctx,
 		`insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id)
-		 values ($1::uuid, 'saved', 'document', 'other', 'title', 'file', 'uniq') returning id::text`, uid).Scan(&did))
+		 values ($1::uuid, 'saved', 'document', 'other', 'ПаспортSECRET.pdf', 'file', 'uniq') returning id::text`, uid).Scan(&did))
 	user, id = docsbot.UserID(uid), docsbot.DocumentID(did)
 
 	workers := river.NewWorkers()
@@ -76,7 +81,7 @@ func runUpload(t *testing.T, files docsbot.FileSource) (pool *pgxpool.Pool, user
 	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
 	require.NoError(t, err)
 	enq := jobs.NewEnqueuer(repo, queue)
-	svc := docsbot.NewService(repo, fakeDrive{}, files, enq, repo)
+	svc := docsbot.NewService(repo, drive, files, enq, repo)
 	spy = &spyNotifier{}
 	bind(svc, spy)
 
