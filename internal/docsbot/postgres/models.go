@@ -60,6 +60,7 @@ type StatusMessage struct {
 	MessageID int64
 	CreatedAt pgtype.Timestamptz
 	ClosedAt  pgtype.Timestamptz
+	Kind      string
 }
 
 type User struct {

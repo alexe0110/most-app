@@ -27,6 +27,7 @@ type capture struct {
 	markups     []string // sendMessage reply_markup
 	editMarkups []string // editMessageText reply_markup
 	files       []string // sendDocument/sendPhoto caption
+	deletes     int      // deleteMessage calls
 }
 
 func (c *capture) record(bucket *[]string, s string) {
@@ -70,6 +71,13 @@ func newBotWith(t *testing.T, log *slog.Logger, drive fakeDrive) (*bot.Bot, *cap
 			sent.record(&sent.markups, r.FormValue("reply_markup"))
 		case strings.HasSuffix(r.URL.Path, "/sendDocument"), strings.HasSuffix(r.URL.Path, "/sendPhoto"):
 			sent.record(&sent.files, r.FormValue("caption"))
+		case strings.HasSuffix(r.URL.Path, "/deleteMessage"):
+			sent.mu.Lock()
+			sent.deletes++
+			sent.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"ok":true,"result":true}`)
+			return
 		case strings.HasSuffix(r.URL.Path, "/editMessageText"):
 			sent.record(&sent.edits, r.FormValue("text"))
 			sent.record(&sent.editMarkups, r.FormValue("reply_markup"))
@@ -172,18 +180,26 @@ func TestChooseCategory_savesAndShowsCard(t *testing.T) {
 	}}
 	b.ProcessUpdate(ctx, update)
 
-	require.True(t, has(sent.texts, "Сохранил"), "sent %q", sent.texts)
+	require.False(t, has(sent.texts, "Сохранил"), "the picker becomes the card, no extra message")
+	require.Len(t, sent.texts, 1, "only the Drive nudge for the first document: %q", sent.texts)
+	require.True(t, has(sent.edits, "Категория:"), "edits %q", sent.edits)
+	require.False(t, has(sent.edits, "✅"), "edits %q", sent.edits)
 	require.Equal(t, docsbot.StatusSaved, repo.docs[doc.ID].Status)
 	require.Equal(t, docsbot.CatOther, repo.docs[doc.ID].Category)
 }
 
 func dataCallback(chatID int64, data string) *models.Update {
+	return dataCallbackMsg(chatID, 7, data)
+}
+
+// dataCallbackMsg is dataCallback from the message with the given id.
+func dataCallbackMsg(chatID int64, msgID int, data string) *models.Update {
 	return &models.Update{CallbackQuery: &models.CallbackQuery{
 		ID:   "cb",
 		From: models.User{ID: chatID},
 		Data: data,
 		Message: models.MaybeInaccessibleMessage{
-			Message: &models.Message{ID: 7, Chat: models.Chat{ID: chatID, Type: models.ChatTypePrivate}},
+			Message: &models.Message{ID: msgID, Chat: models.Chat{ID: chatID, Type: models.ChatTypePrivate}},
 		},
 	}}
 }

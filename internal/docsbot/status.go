@@ -19,8 +19,8 @@ func (s *Service) StatusTarget(ctx context.Context, user UserID) (StatusMessage,
 }
 
 // OpenStatus records a new status message and attaches the document to it.
-func (s *Service) OpenStatus(ctx context.Context, user UserID, chatID int64, messageID int, doc DocumentID) (StatusMessage, error) {
-	sm, err := s.status.Create(ctx, user, chatID, messageID)
+func (s *Service) OpenStatus(ctx context.Context, user UserID, chatID int64, messageID int, doc DocumentID, kind StatusKind) (StatusMessage, error) {
+	sm, err := s.status.Create(ctx, user, chatID, messageID, kind)
 	if err != nil {
 		return StatusMessage{}, fmt.Errorf("create status message: %w", err)
 	}

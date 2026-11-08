@@ -106,7 +106,7 @@ type Uploads interface {
 type StatusMessages interface {
 	// OpenForUser returns the user's newest unclosed status message, if any.
 	OpenForUser(ctx context.Context, user UserID) (StatusMessage, bool, error)
-	Create(ctx context.Context, user UserID, chatID int64, messageID int) (StatusMessage, error)
+	Create(ctx context.Context, user UserID, chatID int64, messageID int, kind StatusKind) (StatusMessage, error)
 	Close(ctx context.Context, id StatusMessageID) error
 	SetMessageID(ctx context.Context, id StatusMessageID, messageID int) error
 	Attach(ctx context.Context, doc DocumentID, id StatusMessageID) error

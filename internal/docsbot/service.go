@@ -136,7 +136,7 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 func (s *Service) defaultTitle(ctx context.Context, user UserID, cat Category) (string, error) {
 	base := s.name(cat) + " — " + s.now().Format("02.01.2006")
 	title := base
-	for i := 2; ; i++ {
+	for i := 2; i <= maxTitleSuffix; i++ {
 		exists, err := s.repo.TitleExistsInCategory(ctx, user, cat, title)
 		if err != nil {
 			return "", fmt.Errorf("check title collision: %w", err)
@@ -146,7 +146,11 @@ func (s *Service) defaultTitle(ctx context.Context, user UserID, cat Category) (
 		}
 		title = fmt.Sprintf("%s (%d)", base, i)
 	}
+	return title, nil // titles are not unique-constrained: accept the last candidate
 }
+
+// maxTitleSuffix bounds the default-title collision search.
+const maxTitleSuffix = 100
 
 // BackupResult is the outcome of a Drive upload attempt.
 type BackupResult struct {

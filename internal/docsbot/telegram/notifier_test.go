@@ -133,7 +133,7 @@ func newNotifierEnv(t *testing.T) *notifierEnv {
 // batch seeds a status message (chat 100, message 70) with one document per status.
 func (e *notifierEnv) batch(t *testing.T, statuses ...docsbot.BackupStatus) (docsbot.StatusMessage, []docsbot.Document) {
 	t.Helper()
-	sm, err := e.status.Create(t.Context(), testUserID, 100, 70)
+	sm, err := e.status.Create(t.Context(), testUserID, 100, 70, docsbot.StatusBatch)
 	require.NoError(t, err)
 	var docs []docsbot.Document
 	for _, st := range statuses {

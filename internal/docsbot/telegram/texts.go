@@ -23,7 +23,6 @@ const (
 
 	textChooseCategory = "Выбери категорию:"
 	textAlreadySaved   = "Этот файл уже сохранён."
-	textSaved          = "Сохранил ✅"
 
 	textRenamePrompt = "Пришли новое название документа."
 	textRenameEmpty  = "Название пустое. Нажми «Имя» и пришли название ещё раз."
@@ -52,6 +51,15 @@ const (
 	textRetryQueued      = "Повторяю выгрузку в Google Drive."
 	textStatusHeader     = "Загрузка в Drive (%d из %d)" // done, total
 	textStatusMore       = "…и ещё %d"                   // %d = hidden lines
+	textStatusListHint   = "✏️ Изменить имя и категорию: /list"
+	textTransferHeader   = "Перенос в Drive (%d из %d)" // done, total
+	textTransferAllDone  = "Готово: %d в Drive"         // %d = backed up
+
+	textStoragePending      = "⏳ Загружаю в Drive…"
+	textStorageInDrive      = "☁️ В Google Drive"
+	textStorageFailed       = "❌ Не удалось выгрузить в Drive"
+	textStorageTooLarge     = "📥 Слишком большой для Drive"
+	textStorageTelegramOnly = "📥 Только в Telegram, ещё не в Drive"
 
 	textUnknown    = "Не понимаю эту команду. Я умею /start, /list, /convert и /help."
 	textError      = "Что-то пошло не так. Попробуй ещё раз."

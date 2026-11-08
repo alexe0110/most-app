@@ -1,6 +1,6 @@
 -- name: InsertStatusMessage :one
-insert into status_messages (user_id, chat_id, message_id)
-values (@user_id, @chat_id, @message_id)
+insert into status_messages (user_id, chat_id, message_id, kind)
+values (@user_id, @chat_id, @message_id, @kind)
 returning *;
 
 -- name: GetOpenStatusMessageForUser :one

@@ -32,10 +32,11 @@ func TestStatusMessages_lifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok, "no status message yet")
 
-	sm, err := repo.Create(ctx, user, 800, 11)
+	sm, err := repo.Create(ctx, user, 800, 11, docsbot.StatusSingle)
 	require.NoError(t, err)
 	require.NotEmpty(t, sm.ID)
 	require.Equal(t, 11, sm.MessageID)
+	require.Equal(t, docsbot.StatusSingle, sm.Kind)
 	require.EqualValues(t, 800, sm.ChatID)
 	require.False(t, sm.Closed)
 	require.WithinDuration(t, time.Now(), sm.CreatedAt, time.Minute)
@@ -48,6 +49,7 @@ func TestStatusMessages_lifecycle(t *testing.T) {
 	byID, err := repo.ByID(ctx, sm.ID)
 	require.NoError(t, err)
 	require.Equal(t, user, byID.UserID)
+	require.Equal(t, docsbot.StatusSingle, byID.Kind, "kind round-trips")
 
 	// Attach: the document shows up, oldest first.
 	d1 := newDoc(t, repo, u, "s1")
@@ -88,12 +90,12 @@ func TestStatusMessages_openIsNewestAndPerUser(t *testing.T) {
 	other := makeUser(t, repo, 811)
 	user, otherID := docsbot.UserID(u.ID.String()), docsbot.UserID(other.ID.String())
 
-	older, err := repo.Create(ctx, user, 810, 1)
+	older, err := repo.Create(ctx, user, 810, 1, docsbot.StatusBatch)
 	require.NoError(t, err)
 	time.Sleep(5 * time.Millisecond) // created_at is now(); keep the order unambiguous
-	newer, err := repo.Create(ctx, user, 810, 2)
+	newer, err := repo.Create(ctx, user, 810, 2, docsbot.StatusBatch)
 	require.NoError(t, err)
-	foreign, err := repo.Create(ctx, otherID, 811, 3)
+	foreign, err := repo.Create(ctx, otherID, 811, 3, docsbot.StatusBatch)
 	require.NoError(t, err)
 
 	got, ok, err := repo.OpenForUser(ctx, user)
@@ -133,10 +135,10 @@ func TestStatusMessages_deleteUserData(t *testing.T) {
 	other := makeUser(t, repo, 821)
 	user, otherID := docsbot.UserID(u.ID.String()), docsbot.UserID(other.ID.String())
 
-	sm, err := repo.Create(ctx, user, 820, 1)
+	sm, err := repo.Create(ctx, user, 820, 1, docsbot.StatusBatch)
 	require.NoError(t, err)
 	require.NoError(t, repo.Attach(ctx, newDoc(t, repo, u, "x1"), sm.ID))
-	keep, err := repo.Create(ctx, otherID, 821, 1)
+	keep, err := repo.Create(ctx, otherID, 821, 1, docsbot.StatusBatch)
 	require.NoError(t, err)
 	require.NoError(t, repo.Attach(ctx, newDoc(t, repo, other, "x2"), keep.ID))
 

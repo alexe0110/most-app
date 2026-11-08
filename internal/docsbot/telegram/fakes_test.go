@@ -309,13 +309,14 @@ func (s *fakeStatus) OpenForUser(_ context.Context, user docsbot.UserID) (docsbo
 	return best, found, nil
 }
 
-func (s *fakeStatus) Create(_ context.Context, user docsbot.UserID, chatID int64, messageID int) (docsbot.StatusMessage, error) {
+func (s *fakeStatus) Create(_ context.Context, user docsbot.UserID, chatID int64, messageID int, kind docsbot.StatusKind) (docsbot.StatusMessage, error) {
 	s.seq++
 	m := docsbot.StatusMessage{
 		ID:        docsbot.StatusMessageID(fmt.Sprintf("sm-%d", s.seq)),
 		UserID:    user,
 		ChatID:    chatID,
 		MessageID: messageID,
+		Kind:      kind,
 		CreatedAt: time.Now(),
 	}
 	s.msgs[m.ID] = m

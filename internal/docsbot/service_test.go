@@ -578,7 +578,7 @@ func TestService_StatusView(t *testing.T) {
 			repo := newFakeRepo()
 			repo.folders = map[docsbot.Category]string{docsbot.CatPassport: "folder-p"}
 			status := newFakeStatus(repo)
-			sm, err := status.Create(context.Background(), user, 7, 70)
+			sm, err := status.Create(context.Background(), user, 7, 70, docsbot.StatusBatch)
 			require.NoError(t, err)
 			a := repo.seed(docsbot.Document{UserID: user, Category: docsbot.CatPassport, BackupStatus: docsbot.BackupBackedUp, StatusMessageID: sm.ID})
 			b := repo.seed(docsbot.Document{UserID: user, Category: docsbot.CatAuto, BackupStatus: tt.second, StatusMessageID: sm.ID})

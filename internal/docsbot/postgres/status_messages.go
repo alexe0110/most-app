@@ -29,12 +29,12 @@ func (r *Repo) OpenForUser(ctx context.Context, user docsbot.UserID) (docsbot.St
 }
 
 // Create stores a new open status message.
-func (r *Repo) Create(ctx context.Context, user docsbot.UserID, chatID int64, messageID int) (docsbot.StatusMessage, error) {
+func (r *Repo) Create(ctx context.Context, user docsbot.UserID, chatID int64, messageID int, kind docsbot.StatusKind) (docsbot.StatusMessage, error) {
 	uid, err := parseUUID(string(user))
 	if err != nil {
 		return docsbot.StatusMessage{}, err
 	}
-	row, err := r.InsertStatusMessage(ctx, InsertStatusMessageParams{UserID: uid, ChatID: chatID, MessageID: int64(messageID)})
+	row, err := r.InsertStatusMessage(ctx, InsertStatusMessageParams{UserID: uid, ChatID: chatID, MessageID: int64(messageID), Kind: string(kind)})
 	if err != nil {
 		return docsbot.StatusMessage{}, fmt.Errorf("insert status message: %w", err)
 	}
@@ -115,5 +115,6 @@ func toStatusMessage(m StatusMessage) docsbot.StatusMessage {
 		MessageID: int(m.MessageID),
 		CreatedAt: m.CreatedAt.Time,
 		Closed:    m.ClosedAt.Valid,
+		Kind:      docsbot.StatusKind(m.Kind),
 	}
 }
