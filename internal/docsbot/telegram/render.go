@@ -152,8 +152,8 @@ func fileType(doc docsbot.Document) string {
 	case "image/png":
 		return "PNG"
 	}
-	if ext := filepath.Ext(doc.Title); len(ext) > 1 {
-		return strings.ToUpper(ext[1:])
+	if ext := strings.TrimPrefix(filepath.Ext(doc.Title), "."); looksLikeExt(ext) {
+		return strings.ToUpper(ext)
 	}
 	if doc.Kind == docsbot.KindPhoto {
 		return "Фото"
@@ -161,16 +161,32 @@ func fileType(doc docsbot.Document) string {
 	return ""
 }
 
+// looksLikeExt reports whether s is plausibly a file extension: 1-5 ASCII
+// letters or digits with at least one letter (so a year like "2026" is not one).
+func looksLikeExt(s string) bool {
+	if len(s) < 1 || len(s) > 5 {
+		return false
+	}
+	letter := false
+	for _, r := range s {
+		isLetter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+		if !isLetter && (r < '0' || r > '9') {
+			return false
+		}
+		letter = letter || isLetter
+	}
+	return letter
+}
+
 // humanSize formats a byte count in KB or MB; "" when the size is unknown.
 func humanSize(n int64) string {
-	switch {
-	case n <= 0:
+	if n <= 0 {
 		return ""
-	case n < 1<<20:
-		return fmt.Sprintf("%d КБ", (n+1023)/1024)
-	default:
-		return strings.ReplaceAll(fmt.Sprintf("%.1f", float64(n)/(1<<20)), ".", ",") + " МБ"
 	}
+	if kb := (n + 1023) / 1024; kb < 1024 {
+		return fmt.Sprintf("%d КБ", kb)
+	}
+	return strings.ReplaceAll(fmt.Sprintf("%.1f", float64(n)/(1<<20)), ".", ",") + " МБ"
 }
 
 // folderURL is the Drive web link to a folder.

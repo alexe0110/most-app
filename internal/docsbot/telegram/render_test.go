@@ -370,3 +370,57 @@ func TestIncomingFile(t *testing.T) {
 		})
 	}
 }
+
+func TestHumanSize_boundaries(t *testing.T) {
+	tests := []struct {
+		n    int64
+		want string
+	}{
+		{1024, "1 КБ"}, {1025, "2 КБ"}, {1<<20 - 1024, "1023 КБ"}, {1 << 20, "1,0 МБ"}, {5 << 20, "5,0 МБ"},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.want, humanSize(tt.n), "n=%d", tt.n)
+	}
+	// Just below 1 MiB must not render as the impossible "1024 КБ".
+	require.NotEqual(t, "1024 КБ", humanSize(1<<20-1))
+}
+
+// A default title "Категория — 08.11.2026" has a dotted date; it must not be read as
+// a file extension.
+func TestFileType_defaultAndDottedTitles(t *testing.T) {
+	tests := []struct {
+		name string
+		doc  docsbot.Document
+		want string
+	}{
+		{"default title on a photo", docsbot.Document{Kind: docsbot.KindPhoto, Title: "Медицина — 08.11.2026"}, "Фото"},
+		{"default title on a document", docsbot.Document{Kind: docsbot.KindDocument, Title: "Медицина — 08.11.2026"}, ""},
+		{"sentence with a dot", docsbot.Document{Kind: docsbot.KindDocument, Title: "Справка. Итоги года"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, fileType(tt.doc))
+		})
+	}
+}
+
+func TestRender_longTitlesAreTruncated(t *testing.T) {
+	long := strings.Repeat("Я", 200)
+	_, kb := renderCategoryPage(docsbot.CategoryPage{
+		Category: docsbot.CatOther, Docs: []docsbot.Document{{ID: "1", Title: long}}, Page: 1, Pages: 1, Total: 1,
+	})
+	btn := kb.InlineKeyboard[0][0].Text
+	require.Contains(t, btn, "…")
+	require.Less(t, len([]rune(btn)), 60)
+
+	_, kb = renderFound(docsbot.Found{Docs: []docsbot.Document{{ID: "1", Title: long, Category: docsbot.CatOther}}})
+	btn = kb.InlineKeyboard[0][0].Text
+	require.Contains(t, btn, "…")
+	require.Less(t, len([]rune(btn)), 70)
+}
+
+func TestCardKeyboard_noBackWithoutOrigin(t *testing.T) {
+	kb := cardKeyboard(docsbot.Document{ID: "1"}, "", "")
+	require.Len(t, kb.InlineKeyboard, 2)
+	require.Contains(t, kb.InlineKeyboard[1][0].Text, "Имя")
+}

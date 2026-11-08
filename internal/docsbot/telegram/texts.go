@@ -88,7 +88,7 @@ const (
 	btnOpenDrive          = "☁️ Открыть в Drive"
 	btnOpenFolder         = "📁 Папка в Drive"
 	btnOpenCategoryFolder = "📁 Папка категории"
-	btnRename             = "✏️ Переименовать"
+	btnRename             = "✏️ Имя"
 	btnChangeCat          = "🗂 Категория"
 	btnDelete             = "🗑 Удалить"
 	btnDeleteYes          = "Да, удалить"
