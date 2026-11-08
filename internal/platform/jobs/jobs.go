@@ -31,10 +31,15 @@ type Client struct {
 }
 
 // New builds a River client bound to pool. workers must have at least one
-// worker registered; periodic lists scheduled jobs. Migrate must run first.
-func New(pool *pgxpool.Pool, log *slog.Logger, workers *river.Workers, periodic ...*river.PeriodicJob) (*Client, error) {
+// worker registered; queues adds (or overrides) named queues next to the
+// default one; periodic lists scheduled jobs. Migrate must run first.
+func New(pool *pgxpool.Pool, log *slog.Logger, workers *river.Workers, queues map[string]river.QueueConfig, periodic ...*river.PeriodicJob) (*Client, error) {
+	qs := map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: maxWorkers}}
+	for name, qc := range queues {
+		qs[name] = qc
+	}
 	rc, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
-		Queues:       map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: maxWorkers}},
+		Queues:       qs,
 		Workers:      workers,
 		PeriodicJobs: periodic,
 		MaxAttempts:  maxAttempts,

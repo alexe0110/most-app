@@ -15,6 +15,10 @@ import (
 	pjobs "github.com/alexe0110/most-app/internal/platform/jobs"
 )
 
+// UploadQueue is the River queue for Drive uploads. It runs one worker so
+// parallel uploads cannot race on creating the same Drive folders.
+const UploadQueue = "drive_upload"
+
 // UploadDocumentArgs is the River job that backs a saved document up to Drive.
 type UploadDocumentArgs struct {
 	UserID     string
@@ -101,7 +105,7 @@ func NewEnqueuer(repo *postgres.Repo, queue *pjobs.Client) *Enqueuer {
 // EnqueueUpload marks the document pending and enqueues its upload in one tx.
 func (e *Enqueuer) EnqueueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
 	return e.repo.EnqueueUpload(ctx, id, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := e.queue.InsertTx(ctx, tx, UploadDocumentArgs{UserID: string(user), DocumentID: string(id)}, nil)
+		_, err := e.queue.InsertTx(ctx, tx, UploadDocumentArgs{UserID: string(user), DocumentID: string(id)}, &river.InsertOpts{Queue: UploadQueue})
 		return err
 	})
 }
