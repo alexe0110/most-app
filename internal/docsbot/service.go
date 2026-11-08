@@ -23,11 +23,12 @@ type Service struct {
 	drive   Drive
 	files   FileSource
 	uploads Uploads
+	folders Folders
 }
 
 // NewService wires the service around its ports.
-func NewService(repo Repo, drive Drive, files FileSource, uploads Uploads) *Service {
-	return &Service{repo: repo, drive: drive, files: files, uploads: uploads}
+func NewService(repo Repo, drive Drive, files FileSource, uploads Uploads, folders Folders) *Service {
+	return &Service{repo: repo, drive: drive, files: files, uploads: uploads, folders: folders}
 }
 
 // Receive stores a freshly sent file as pending and asks for a category. A file
@@ -274,7 +275,11 @@ func (s *Service) Card(ctx context.Context, user UserID, id DocumentID) (Card, e
 	if err != nil {
 		return Card{}, fmt.Errorf("load document: %w", err)
 	}
-	return Card{Doc: doc}, nil
+	folderID, _, err := s.folders.CategoryFolderID(ctx, user, doc.Category)
+	if err != nil {
+		return Card{}, fmt.Errorf("category folder: %w", err)
+	}
+	return Card{Doc: doc, CategoryFolderID: folderID}, nil
 }
 
 // Rename changes a document's title to a non-blank value.
@@ -354,8 +359,13 @@ func (s *Service) CategoryPage(ctx context.Context, user UserID, cat Category, p
 	if err != nil {
 		return CategoryPage{}, fmt.Errorf("drive status: %w", err)
 	}
+	folderID, _, err := s.folders.CategoryFolderID(ctx, user, cat)
+	if err != nil {
+		return CategoryPage{}, fmt.Errorf("category folder: %w", err)
+	}
 	return CategoryPage{
 		Category: cat, Docs: docs, Page: page, Pages: pages, Total: total, DriveConnected: connected,
+		FolderID: folderID,
 	}, nil
 }
 

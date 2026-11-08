@@ -158,7 +158,7 @@ func TestUploadDocument_batchCreatesFoldersOnce(t *testing.T) {
 	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
 	require.NoError(t, err)
 	enq := jobs.NewEnqueuer(repo, queue)
-	svc := docsbot.NewService(repo, raceDrive{gd: gd}, fakeFiles{}, enq)
+	svc := docsbot.NewService(repo, raceDrive{gd: gd}, fakeFiles{}, enq, repo)
 	bind(svc, &spyNotifier{})
 
 	require.NoError(t, queue.Start(ctx))
