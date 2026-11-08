@@ -143,7 +143,7 @@ func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Upda
 
 	data, err := c.download(ctx, b, fileID)
 	if err != nil {
-		c.log.Error("convert download image", "err", err, "chat_id", chatID)
+		c.log.Error("convert download image", "err", err)
 		reply(ctx, b, c.log, chatID, textConvertDownloadFailed)
 		return
 	}
@@ -242,7 +242,7 @@ func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, user, chatID int6
 
 	pdf, err := convert.ImagesToPDF(images)
 	if err != nil {
-		c.log.Error("convert images to pdf", "err", err, "chat_id", chatID, "pages", len(images))
+		c.log.Error("convert images to pdf", "err", err, "pages", len(images))
 		reply(ctx, b, c.log, chatID, convertErrorText(err))
 		return
 	}
@@ -263,7 +263,7 @@ func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, user, chatID
 
 	out, err := convert.Compress(src, maxBytes, format)
 	if err != nil {
-		c.log.Error("convert compress", "err", err, "chat_id", chatID)
+		c.log.Error("convert compress", "err", err)
 		reply(ctx, b, c.log, chatID, convertErrorText(err))
 		return
 	}
@@ -390,7 +390,7 @@ func callbackChat(update *models.Update) (int64, bool) {
 // sendMarkup sends text with an inline keyboard.
 func sendMarkup(ctx context.Context, b *bot.Bot, log *slog.Logger, chatID int64, text string, markup models.ReplyMarkup) {
 	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ReplyMarkup: markup}); err != nil {
-		log.Error("send telegram message", "err", err, "chat_id", chatID)
+		log.Error("send telegram message", "err", err)
 	}
 }
 
@@ -401,7 +401,7 @@ func sendDocument(ctx context.Context, b *bot.Bot, log *slog.Logger, chatID int6
 		Document: &models.InputFileUpload{Filename: filename, Data: bytes.NewReader(data)},
 	})
 	if err != nil {
-		log.Error("send telegram document", "err", err, "chat_id", chatID)
+		log.Error("send telegram document", "err", err)
 	}
 }
 
