@@ -33,6 +33,11 @@ const (
 	textDeleteConfirm   = "Удалить этот документ? Отменить будет нельзя."
 	textDeleted         = "Документ удалён 🗑"
 	textDeleteCancelled = "Удаление отменено."
+	textGone            = "Этого документа уже нет."
+
+	// Callback toasts.
+	toastSending = "Отправляю…"
+	toastDone    = "Готово"
 
 	textCatalogEmpty = "Пока пусто — пришли документ, и он появится здесь."
 	textNothingFound = "Ничего не нашёл. Загляни в /list или пришли новый документ."
@@ -89,6 +94,8 @@ const (
 	btnDeleteYes          = "Да, удалить"
 	btnDeleteNo           = "Отмена"
 	btnTransfer           = "📤 Перенести в Drive"
+	btnBack               = "⬅️ Назад"
+	btnMyDocs             = "📂 Мои документы"
 	btnBackToCats         = "⬅️ Категории"
 	btnTransferYes        = "Да, перенести"
 	btnTransferNo         = "Не сейчас"
@@ -104,26 +111,26 @@ const (
 const (
 	textConvertStart = "Что сделать с изображениями?"
 
-	textConvertPDFPrompt = "Пришлите фото — по одному или альбомом. Когда закончите, нажмите «Готово».\n\n" +
-		"Совет: отправляйте снимки «как файл» — иначе Telegram сильно их сожмёт."
+	textConvertPDFPrompt = "Пришли фото — по одному или альбомом. Когда закончишь, нажми «Готово».\n\n" +
+		"Совет: отправляй снимки «как файл» — иначе Telegram сильно их сожмёт."
 
-	textConvertCompressPrompt = "Пришлите одно фото для сжатия.\n\n" +
-		"Совет: отправляйте «как файл» (до 20 МБ) — иначе Telegram уже ужмёт качество."
+	textConvertCompressPrompt = "Пришли одно фото для сжатия.\n\n" +
+		"Совет: отправляй «как файл» (до 20 МБ) — иначе Telegram уже ужмёт качество."
 
 	textConvertChooseLimit  = "До какого размера сжать?"
 	textConvertChooseFormat = "В каком формате сохранить?"
-	textConvertCustomLimit  = "Введите лимит в килобайтах, например 300."
+	textConvertCustomLimit  = "Введи лимит в килобайтах, например 300."
 
 	textConvertBadNumber = "Нужно целое число килобайт, например 300."
-	textConvertTapButton = "Нажмите кнопку выше или /cancel, чтобы выйти."
-	textConvertNoImages  = "Сначала пришлите хотя бы одно фото."
+	textConvertTapButton = "Нажми кнопку выше или /cancel, чтобы выйти."
+	textConvertNoImages  = "Сначала пришли хотя бы одно фото."
 
-	textConvertUnsupported    = "Так я пока не умею. Пришлите фото в JPEG или PNG. HEIC, PDF и видео — позже."
-	textConvertDownloadFailed = "Не удалось получить файл. Попробуйте ещё раз."
-	textConvertTooLarge       = "Изображение слишком большое. Пришлите снимок поменьше."
-	textConvertFailed         = "Не удалось обработать изображение. Проверьте, что это JPEG или PNG."
+	textConvertUnsupported    = "Так я пока не умею. Пришли фото в JPEG или PNG. HEIC, PDF и видео — позже."
+	textConvertDownloadFailed = "Не удалось получить файл. Попробуй ещё раз."
+	textConvertTooLarge       = "Изображение слишком большое. Пришли снимок поменьше."
+	textConvertFailed         = "Не удалось обработать изображение. Проверь, что это JPEG или PNG."
 
-	textConvertExpired   = "Сессия конвертера истекла. Начните заново: /convert."
+	textConvertExpired   = "Сессия конвертера истекла. Начни заново: /convert."
 	textConvertCancelled = "Режим конвертера выключен."
 	textConvertNothing   = "Сейчас нечего отменять."
 

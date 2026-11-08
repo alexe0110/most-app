@@ -3,6 +3,7 @@ package telegram
 import (
 	"fmt"
 	"html"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -36,6 +37,8 @@ const (
 	actExport      = "exp" // resend all documents from Telegram
 	actDeleteData  = "dd"  // start the delete-all-data confirmation
 	actRetryBatch  = "rsm" // retry failed docs in a status message: d:rsm:<smID>
+	actOpenCard    = "oc"  // open a card: d:oc:<docID>:<l|s>[:<cat>:<page>]
+	actSearchBack  = "sb"  // re-run the last search
 	actNoop        = "noop"
 )
 
@@ -123,13 +126,51 @@ func cardText(doc docsbot.Document) string {
 	b := &strings.Builder{}
 	fmt.Fprintf(b, "📄 %s\n", doc.Title)
 	fmt.Fprintf(b, "Категория: %s\n", categoryLabel(doc.Category))
-	fmt.Fprintf(b, "Дата: %s\n", formatDate(doc.CreatedAt))
+	fmt.Fprintf(b, "Добавлен: %s", formatDate(doc.CreatedAt))
+	if t := fileType(doc); t != "" {
+		b.WriteString(" · " + t)
+	}
+	if sz := humanSize(doc.FileSize); sz != "" {
+		b.WriteString(" · " + sz)
+	}
+	b.WriteString("\n")
 	if doc.InDrive() {
 		b.WriteString("☁️ В Google Drive")
 	} else {
-		b.WriteString("📥 Хранится в Telegram — ещё не в Drive")
+		b.WriteString("📥 Только в Telegram, ещё не в Drive")
 	}
 	return b.String()
+}
+
+// fileType is a short label of the file kind; "" when unknown.
+func fileType(doc docsbot.Document) string {
+	switch doc.MIME {
+	case "application/pdf":
+		return "PDF"
+	case "image/jpeg", "image/jpg":
+		return "JPG"
+	case "image/png":
+		return "PNG"
+	}
+	if ext := filepath.Ext(doc.Title); len(ext) > 1 {
+		return strings.ToUpper(ext[1:])
+	}
+	if doc.Kind == docsbot.KindPhoto {
+		return "Фото"
+	}
+	return ""
+}
+
+// humanSize formats a byte count in KB or MB; "" when the size is unknown.
+func humanSize(n int64) string {
+	switch {
+	case n <= 0:
+		return ""
+	case n < 1<<20:
+		return fmt.Sprintf("%d КБ", (n+1023)/1024)
+	default:
+		return strings.ReplaceAll(fmt.Sprintf("%.1f", float64(n)/(1<<20)), ".", ",") + " МБ"
+	}
 }
 
 // folderURL is the Drive web link to a folder.
@@ -137,7 +178,7 @@ func folderURL(id string) string { return "https://drive.google.com/drive/folder
 
 // cardKeyboard renders a document's actions. "Открыть в Drive" appears only once
 // the file is backed up, the folder button only when the category folder exists.
-func cardKeyboard(doc docsbot.Document, folderID string) *models.InlineKeyboardMarkup {
+func cardKeyboard(doc docsbot.Document, folderID, orig string) *models.InlineKeyboardMarkup {
 	top := []models.InlineKeyboardButton{{Text: btnSendFile, CallbackData: cb(actSend, doc.ID)}}
 	if doc.InDrive() {
 		top = append(top, models.InlineKeyboardButton{Text: btnOpenDrive, URL: driveURL(doc.DriveFileID)})
@@ -145,14 +186,30 @@ func cardKeyboard(doc docsbot.Document, folderID string) *models.InlineKeyboardM
 	if folderID != "" {
 		top = append(top, models.InlineKeyboardButton{Text: btnOpenFolder, URL: folderURL(folderID)})
 	}
-	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+	rows := [][]models.InlineKeyboardButton{
 		top,
 		{
 			{Text: btnRename, CallbackData: cb(actRename, doc.ID)},
 			{Text: btnChangeCat, CallbackData: cb(actChangeCat, doc.ID)},
 			{Text: btnDelete, CallbackData: cb(actDeleteAsk, doc.ID)},
 		},
-	}}
+	}
+	if back := backFromOrig(orig); back != "" {
+		rows = append(rows, []models.InlineKeyboardButton{{Text: btnBack, CallbackData: back}})
+	}
+	return &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+// backFromOrig is the callback of the card's "Назад" button for an origin token:
+// the category page for "l:<cat>:<page>", the last search for "s", "" otherwise.
+func backFromOrig(orig string) string {
+	switch {
+	case strings.HasPrefix(orig, "l:"):
+		return cbPrefix + actListCat + strings.TrimPrefix(orig, "l")
+	case orig == "s":
+		return cbPrefix + actSearchBack
+	}
+	return ""
 }
 
 // renderCatalog lists categories with counts; nil keyboard means an empty list.
@@ -222,23 +279,21 @@ func renderSettings(v docsbot.SettingsView, connectURL string, haveURL bool) (st
 	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
-// renderCategoryPage lists one page of a category, a send button per document.
+// renderCategoryPage lists one page of a category, a card-opening button per document.
 func renderCategoryPage(p docsbot.CategoryPage) (string, *models.InlineKeyboardMarkup) {
-	b := &strings.Builder{}
-	fmt.Fprintf(b, "%s — %d", categoryLabel(p.Category), p.Total)
+	text := fmt.Sprintf("%s — %d", categoryLabel(p.Category), p.Total)
 	var rows [][]models.InlineKeyboardButton
 	for _, doc := range p.Docs {
-		badge := ""
+		prefix := "📄 "
 		if p.DriveConnected {
+			prefix = "📥 "
 			if doc.InDrive() {
-				badge = "☁️ "
-			} else {
-				badge = "📥 "
+				prefix = "☁️ "
 			}
 		}
-		fmt.Fprintf(b, "\n\n%s%s · %s", badge, doc.Title, formatDate(doc.CreatedAt))
 		rows = append(rows, []models.InlineKeyboardButton{{
-			Text: "📤 " + truncate(doc.Title, 40), CallbackData: cb(actSend, doc.ID),
+			Text:         prefix + truncate(doc.Title, 32) + " · " + doc.CreatedAt.Format("02.01"),
+			CallbackData: fmt.Sprintf("%s%s:%s:l:%s:%d", cbPrefix, actOpenCard, doc.ID, p.Category, p.Page),
 		}})
 	}
 	if nav := paginationRow(p); nav != nil {
@@ -248,7 +303,7 @@ func renderCategoryPage(p docsbot.CategoryPage) (string, *models.InlineKeyboardM
 		rows = append(rows, []models.InlineKeyboardButton{{Text: btnOpenCategoryFolder, URL: folderURL(p.FolderID)}})
 	}
 	rows = append(rows, []models.InlineKeyboardButton{{Text: btnBackToCats, CallbackData: cbPrefix + actListBack}})
-	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+	return text, &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
 // paginationRow shows ◀ page/pages ▶; arrows appear only where there is a page.
@@ -278,16 +333,14 @@ func renderFound(f docsbot.Found) (string, *models.InlineKeyboardMarkup) {
 	if len(f.Docs) == 0 {
 		return textNothingFound, nil
 	}
-	b := &strings.Builder{}
-	fmt.Fprintf(b, "Нашёл (%d):", len(f.Docs))
 	var rows [][]models.InlineKeyboardButton
 	for _, doc := range f.Docs {
-		fmt.Fprintf(b, "\n\n📄 %s · %s", doc.Title, categoryLabel(doc.Category))
 		rows = append(rows, []models.InlineKeyboardButton{{
-			Text: "📤 " + truncate(doc.Title, 40), CallbackData: cb(actSend, doc.ID),
+			Text:         "📄 " + truncate(doc.Title, 32) + " · " + categoryLabel(doc.Category),
+			CallbackData: fmt.Sprintf("%s%s:%s:s", cbPrefix, actOpenCard, doc.ID),
 		}})
 	}
-	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+	return fmt.Sprintf("Нашёл (%d):", len(f.Docs)), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
 // incomingFile reads the file out of a message; ok is false for a non-file one.
@@ -298,33 +351,31 @@ func incomingFile(m *models.Message, user docsbot.UserID) (docsbot.IncomingFile,
 		return docsbot.IncomingFile{
 			UserID: user, Kind: docsbot.KindPhoto,
 			FileID: p.FileID, FileUniqueID: p.FileUniqueID, Title: photoTitle(m),
+			FileSize: int64(p.FileSize), MIME: "",
 		}, true
 	case m.Document != nil:
 		return docsbot.IncomingFile{
 			UserID: user, Kind: docsbot.KindDocument,
 			FileID: m.Document.FileID, FileUniqueID: m.Document.FileUniqueID, Title: documentTitle(m),
+			FileSize: m.Document.FileSize, MIME: m.Document.MimeType,
 		}, true
 	default:
 		return docsbot.IncomingFile{}, false
 	}
 }
 
+// documentTitle is the file name or caption; "" when neither exists (the domain
+// then assigns a default name).
 func documentTitle(m *models.Message) string {
-	switch {
-	case m.Document.FileName != "":
+	if m.Document.FileName != "" {
 		return m.Document.FileName
-	case m.Caption != "":
-		return m.Caption
-	default:
-		return "Документ"
 	}
+	return m.Caption
 }
 
+// photoTitle is the caption, "" when absent.
 func photoTitle(m *models.Message) string {
-	if m.Caption != "" {
-		return m.Caption
-	}
-	return "Фото"
+	return m.Caption
 }
 
 func driveURL(fileID string) string {

@@ -21,10 +21,11 @@ import (
 
 // capture records what the bot sent to the fake Bot API, split by method.
 type capture struct {
-	mu      sync.Mutex
-	texts   []string // sendMessage
-	edits   []string // editMessageText
-	markups []string // sendMessage reply_markup
+	mu          sync.Mutex
+	texts       []string // sendMessage
+	edits       []string // editMessageText
+	markups     []string // sendMessage reply_markup
+	editMarkups []string // editMessageText reply_markup
 }
 
 func (c *capture) record(bucket *[]string, s string) {
@@ -68,6 +69,7 @@ func newBotWith(t *testing.T, log *slog.Logger, drive fakeDrive) (*bot.Bot, *cap
 			sent.record(&sent.markups, r.FormValue("reply_markup"))
 		case strings.HasSuffix(r.URL.Path, "/editMessageText"):
 			sent.record(&sent.edits, r.FormValue("text"))
+			sent.record(&sent.editMarkups, r.FormValue("reply_markup"))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"ok":true,"result":{}}`)
@@ -240,6 +242,107 @@ func TestSearch_findsSavedDocument(t *testing.T) {
 	b.ProcessUpdate(ctx, update)
 
 	require.True(t, has(sent.texts, "Нашёл"), "sent %q", sent.texts)
+}
+
+func TestOpenCard_editsMessageWithBack(t *testing.T) {
+	tests := []struct {
+		name     string
+		suffix   string
+		wantBack string
+	}{
+		{"from list", ":l:" + string(docsbot.CatPassport) + ":1", "d:lc:" + string(docsbot.CatPassport) + ":1"},
+		{"from search", ":s", "d:sb"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, sent, repo := newBot(t)
+			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			doc := repo.seed(docsbot.Document{
+				UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+				Category: docsbot.CatPassport, Title: "Паспорт РК", TgFileID: "f", TgFileUniqueID: "u",
+			})
+
+			b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(doc.ID)+tt.suffix))
+
+			require.True(t, has(sent.edits, "Категория:"), "edits %q", sent.edits)
+			require.True(t, has(sent.edits, "📄"), "edits %q", sent.edits)
+			require.True(t, has(sent.editMarkups, "⬅️ Назад"), "markups %q", sent.editMarkups)
+			require.True(t, has(sent.editMarkups, tt.wantBack), "markups %q", sent.editMarkups)
+			require.Empty(t, sent.texts, "no file or message is sent")
+		})
+	}
+}
+
+func TestOpenCard_unknownDocumentIsGone(t *testing.T) {
+	b, sent, _ := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:oc:missing:s"))
+
+	require.True(t, has(sent.edits, "Этого документа уже нет"), "edits %q", sent.edits)
+	require.True(t, has(sent.editMarkups, "Мои документы"), "markups %q", sent.editMarkups)
+}
+
+func TestSetCategory_editsCardInPlace(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := repo.seed(docsbot.Document{
+		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+		Category: docsbot.CatPassport, Title: "Паспорт РК", TgFileID: "f", TgFileUniqueID: "u",
+	})
+	b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(doc.ID)+":l:"+string(docsbot.CatPassport)+":1"))
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:sc:"+string(doc.ID)+":"+string(docsbot.CatOther)))
+
+	require.Len(t, sent.edits, 2)
+	last := sent.edits[len(sent.edits)-1]
+	require.Contains(t, last, "Категория:")
+	require.Contains(t, last, telegram.CategoryLabel(docsbot.CatOther))
+	require.True(t, has(sent.editMarkups, "d:lc:"+string(docsbot.CatPassport)+":1"), "origin kept: %q", sent.editMarkups)
+	require.Empty(t, sent.texts, "no new card is sent")
+}
+
+func TestDeleteYes_returnsToOrigin(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	seed := func(title, uid string) docsbot.Document {
+		return repo.seed(docsbot.Document{
+			UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+			Category: docsbot.CatPassport, Title: title, TgFileID: uid, TgFileUniqueID: uid,
+		})
+	}
+	first, second := seed("Первый", "u1"), seed("Второй", "u2")
+	open := func(id docsbot.DocumentID) {
+		b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(id)+":l:"+string(docsbot.CatPassport)+":1"))
+	}
+
+	open(first.ID)
+	b.ProcessUpdate(ctx, dataCallback(100, "d:del:"+string(first.ID)))
+	require.True(t, has(sent.edits, "Удалить этот документ"), "edits %q", sent.edits)
+	b.ProcessUpdate(ctx, dataCallback(100, "d:dy:"+string(first.ID)))
+	require.True(t, has(sent.edits, telegram.CategoryLabel(docsbot.CatPassport)+" — 1"), "category page: %q", sent.edits)
+
+	open(second.ID)
+	b.ProcessUpdate(ctx, dataCallback(100, "d:dy:"+string(second.ID)))
+	require.True(t, has(sent.edits, "Пока пусто"), "catalog when empty: %q", sent.edits)
+	require.Empty(t, sent.texts, "everything is edited in place")
+}
+
+func TestSearchBack_rerunsLastSearch(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	repo.seed(docsbot.Document{
+		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+		Category: docsbot.CatPassport, Title: "Паспорт РК", TgFileID: "f", TgFileUniqueID: "u",
+	})
+	b.ProcessUpdate(ctx, textUpdate(100, "паспорт"))
+
+	for range 2 { // the query survives repeated "Назад"
+		b.ProcessUpdate(ctx, dataCallback(100, "d:sb"))
+	}
+
+	require.Len(t, sent.edits, 2)
+	require.True(t, has(sent.edits, "Нашёл (1):"), "edits %q", sent.edits)
 }
 
 func TestLogs_traceDocumentWithoutLeaks(t *testing.T) {
