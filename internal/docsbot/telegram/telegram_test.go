@@ -20,9 +20,10 @@ import (
 
 // capture records what the bot sent to the fake Bot API, split by method.
 type capture struct {
-	mu    sync.Mutex
-	texts []string // sendMessage
-	edits []string // editMessageText
+	mu      sync.Mutex
+	texts   []string // sendMessage
+	edits   []string // editMessageText
+	markups []string // sendMessage reply_markup
 }
 
 func (c *capture) record(bucket *[]string, s string) {
@@ -51,6 +52,7 @@ func newBot(t *testing.T) (*bot.Bot, *capture, *fakeRepo) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/sendMessage"):
 			sent.record(&sent.texts, r.FormValue("text"))
+			sent.record(&sent.markups, r.FormValue("reply_markup"))
 		case strings.HasSuffix(r.URL.Path, "/editMessageText"):
 			sent.record(&sent.edits, r.FormValue("text"))
 		}
@@ -112,6 +114,26 @@ func TestReceive_asksCategory(t *testing.T) {
 	b.ProcessUpdate(ctx, update)
 
 	require.True(t, has(sent.texts, "категори"), "sent %q", sent.texts)
+}
+
+func TestReceive_duplicateShowsFolderButton(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	repo.folders = map[docsbot.Category]string{docsbot.CatOther: "fld-1"}
+	repo.seed(docsbot.Document{
+		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Category: docsbot.CatOther,
+		Title: "Паспорт", TgFileID: "f1", TgFileUniqueID: "u1",
+		BackupStatus: docsbot.BackupBackedUp, DriveFileID: "drive-1",
+	})
+	b.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
+		From:     &models.User{ID: 100},
+		Chat:     models.Chat{ID: 100, Type: models.ChatTypePrivate},
+		Document: &models.Document{FileID: "f1", FileUniqueID: "u1", FileName: "Паспорт.pdf"},
+	}})
+
+	require.True(t, has(sent.texts, "Паспорт"), "sent %q", sent.texts)
+	require.True(t, has(sent.markups, "https://drive.google.com/drive/folders/fld-1"), "markups %q", sent.markups)
 }
 
 func TestChooseCategory_savesAndShowsCard(t *testing.T) {

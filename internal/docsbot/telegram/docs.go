@@ -117,7 +117,12 @@ func (d *docs) receive(ctx context.Context, b *bot.Bot, u *models.Update) {
 	case docsbot.NeedCategory:
 		d.send(ctx, b, chatID, textChooseCategory, categoryKeyboard(actCategory, r.Doc.ID))
 	case docsbot.AlreadySaved:
-		d.sendCard(ctx, b, chatID, r.Doc, textAlreadySaved)
+		card, err := d.svc.Card(ctx, user, r.Doc.ID)
+		if err != nil {
+			d.fail(ctx, b, chatID, "load card", err)
+			return
+		}
+		d.sendCard(ctx, b, chatID, card.Doc, textAlreadySaved, card.CategoryFolderID)
 	}
 }
 
@@ -350,7 +355,7 @@ func (d *docs) onCategory(ctx context.Context, b *bot.Bot, u *models.Update, use
 		return
 	}
 	d.editText(ctx, b, chatID, msgID, "✅ "+categoryLabel(cat))
-	d.sendCard(ctx, b, chatID, saved.Doc, textSaved)
+	d.sendCard(ctx, b, chatID, saved.Doc, textSaved, "")
 	if saved.OfferDrive {
 		d.offerDrive(ctx, b, chatID, user)
 	}
@@ -372,7 +377,7 @@ func (d *docs) onSetCategory(ctx context.Context, b *bot.Bot, u *models.Update, 
 		return
 	}
 	d.editText(ctx, b, chatID, msgID, "✅ "+categoryLabel(cat))
-	d.sendCard(ctx, b, chatID, card.Doc, textRecategorized)
+	d.sendCard(ctx, b, chatID, card.Doc, textRecategorized, card.CategoryFolderID)
 }
 
 // onChangeCat swaps a card's buttons for the category picker.
@@ -434,7 +439,7 @@ func (d *docs) applyRename(ctx context.Context, b *bot.Bot, chatID int64, user d
 	case err != nil:
 		d.fail(ctx, b, chatID, "rename", err)
 	default:
-		d.sendCard(ctx, b, chatID, card.Doc, textRenamed)
+		d.sendCard(ctx, b, chatID, card.Doc, textRenamed, card.CategoryFolderID)
 	}
 }
 
@@ -553,12 +558,12 @@ func (d *docs) sendFile(ctx context.Context, b *bot.Bot, chatID int64, doc docsb
 	}
 }
 
-func (d *docs) sendCard(ctx context.Context, b *bot.Bot, chatID int64, doc docsbot.Document, header string) {
+func (d *docs) sendCard(ctx context.Context, b *bot.Bot, chatID int64, doc docsbot.Document, header, folderID string) {
 	text := cardText(doc)
 	if header != "" {
 		text = header + "\n\n" + text
 	}
-	d.send(ctx, b, chatID, text, cardKeyboard(doc))
+	d.send(ctx, b, chatID, text, cardKeyboard(doc, folderID))
 }
 
 // send posts a message, with an inline keyboard when kb is non-nil.

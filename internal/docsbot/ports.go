@@ -85,6 +85,11 @@ type FileSource interface {
 	Download(ctx context.Context, fileID string) (data []byte, mime string, err error)
 }
 
+// Folders reports the cached Drive folder id for a user's category, if known.
+type Folders interface {
+	CategoryFolderID(ctx context.Context, user UserID, cat Category) (id string, ok bool, err error)
+}
+
 // Uploads enqueues a document's Drive upload, marking backup_status=pending and
 // inserting the job in one transaction.
 type Uploads interface {
