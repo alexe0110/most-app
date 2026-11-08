@@ -293,3 +293,100 @@ func TestService_MarkBackupFailed(t *testing.T) {
 	require.NoError(t, svc.MarkBackupFailed(t.Context(), user, doc.ID))
 	require.Equal(t, docsbot.BackupFailed, repo.docs[doc.ID].BackupStatus)
 }
+
+func TestService_Settings(t *testing.T) {
+	repo := newFakeRepo()
+	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupBackedUp})
+	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupBackedUp})
+	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupFailed})
+	for i := 0; i < 3; i++ {
+		repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupNone})
+	}
+	svc := docsbot.NewService(repo, fakeDrive{connected: true}, fakeFiles{}, &fakeUploads{repo: repo})
+
+	view, err := svc.Settings(t.Context(), user)
+	require.NoError(t, err)
+	require.Equal(t, docsbot.SettingsView{
+		DriveConnected: true, Total: 6, InDrive: 2, OnlyTelegram: 3, Failed: 1,
+	}, view)
+}
+
+func TestService_Disconnect(t *testing.T) {
+	t.Run("revokes then cancels uploads", func(t *testing.T) {
+		repo := newFakeRepo()
+		var revoked bool
+		uploads := &fakeUploads{repo: repo}
+		svc := docsbot.NewService(repo, fakeDrive{revoked: &revoked}, fakeFiles{}, uploads)
+
+		require.NoError(t, svc.Disconnect(t.Context(), user))
+		require.True(t, revoked)
+		require.Equal(t, []docsbot.UserID{user}, uploads.cancels)
+	})
+	t.Run("revoke failure stops before cancelling", func(t *testing.T) {
+		repo := newFakeRepo()
+		uploads := &fakeUploads{repo: repo}
+		svc := docsbot.NewService(repo, fakeDrive{revokeErr: errors.New("boom")}, fakeFiles{}, uploads)
+
+		require.Error(t, svc.Disconnect(t.Context(), user))
+		require.Empty(t, uploads.cancels)
+	})
+}
+
+func TestService_DeleteAllData(t *testing.T) {
+	repo := newFakeRepo()
+	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved})
+	var revoked bool
+	uploads := &fakeUploads{repo: repo}
+	svc := docsbot.NewService(repo, fakeDrive{revoked: &revoked}, fakeFiles{}, uploads)
+
+	require.NoError(t, svc.DeleteAllData(t.Context(), user))
+	require.True(t, revoked)
+	require.Equal(t, []docsbot.UserID{user}, uploads.cancels)
+	require.Equal(t, []docsbot.UserID{user}, repo.deleted)
+	require.Empty(t, repo.docs)
+}
+
+func TestService_RetryFailed(t *testing.T) {
+	repo := newFakeRepo()
+	a := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupFailed})
+	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupBackedUp})
+	b := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupFailed})
+	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupNone})
+	uploads := &fakeUploads{repo: repo}
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, uploads)
+
+	n, err := svc.RetryFailed(t.Context(), user)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	require.Equal(t, []docsbot.DocumentID{a.ID, b.ID}, uploads.calls)
+}
+
+func TestService_ExportAll(t *testing.T) {
+	t.Run("not truncated", func(t *testing.T) {
+		repo := newFakeRepo()
+		for i := 0; i < 3; i++ {
+			repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved})
+		}
+		svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo})
+
+		exp, err := svc.ExportAll(t.Context(), user)
+		require.NoError(t, err)
+		require.Equal(t, 3, exp.Total)
+		require.False(t, exp.Truncated)
+		require.Len(t, exp.Docs, 3)
+	})
+	t.Run("truncated beyond the export limit", func(t *testing.T) {
+		repo := newFakeRepo()
+		const n = 51 // exportLimit (50) + 1
+		for i := 0; i < n; i++ {
+			repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved})
+		}
+		svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo})
+
+		exp, err := svc.ExportAll(t.Context(), user)
+		require.NoError(t, err)
+		require.Equal(t, n, exp.Total)
+		require.True(t, exp.Truncated)
+		require.Len(t, exp.Docs, 50)
+	})
+}
