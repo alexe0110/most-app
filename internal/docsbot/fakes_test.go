@@ -149,6 +149,15 @@ func (r *fakeRepo) SetTitle(_ context.Context, _ docsbot.UserID, id docsbot.Docu
 	return nil
 }
 
+func (r *fakeRepo) TitleExistsInCategory(_ context.Context, user docsbot.UserID, cat docsbot.Category, title string) (bool, error) {
+	for _, d := range r.docs {
+		if d.UserID == user && d.Category == cat && d.Status == docsbot.StatusSaved && d.Title == title {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (r *fakeRepo) SetCategory(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) error {
 	d := r.docs[id]
 	d.Category = cat

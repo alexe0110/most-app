@@ -1,9 +1,19 @@
 -- name: InsertDocument :one
 -- A received file starts as pending with no category; the category and 'saved'
 -- status are set once the user picks one (SaveDocumentCategory).
-insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id)
-values (@user_id, @status, @kind, @category, @title, @tg_file_id, @tg_file_unique_id)
+insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, file_size, mime_type)
+values (@user_id, @status, @kind, @category, @title, @tg_file_id, @tg_file_unique_id, @file_size, @mime_type)
 returning *;
+
+-- name: TitleExistsInCategory :one
+select exists (
+    select 1
+    from documents
+    where user_id = @user_id
+      and category = @category
+      and status = 'saved'
+      and title = @title
+);
 
 -- name: GetDocumentByUniqueID :one
 select *

@@ -22,6 +22,8 @@ type Document struct {
 	Kind            string
 	BackupStatus    string
 	StatusMessageID pgtype.UUID
+	FileSize        pgtype.Int8
+	MimeType        pgtype.Text
 }
 
 type DriveFolder struct {
