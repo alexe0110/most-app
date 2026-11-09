@@ -125,6 +125,14 @@ func TestPrivateOnly(t *testing.T) {
 			},
 		}}, false, true},
 		{"no chat at all", &models.Update{}, false, false},
+		{"my_chat_member in group", &models.Update{MyChatMember: &models.ChatMemberUpdated{Chat: models.Chat{ID: -1, Type: models.ChatTypeGroup}}}, false, true},
+		{"my_chat_member in supergroup", &models.Update{MyChatMember: &models.ChatMemberUpdated{Chat: models.Chat{ID: -1, Type: models.ChatTypeSupergroup}}}, false, true},
+		{"my_chat_member in channel", &models.Update{MyChatMember: &models.ChatMemberUpdated{Chat: models.Chat{ID: -1, Type: models.ChatTypeChannel}}}, false, false},
+		{"my_chat_member in private (user blocked bot)", &models.Update{MyChatMember: &models.ChatMemberUpdated{Chat: models.Chat{ID: 1, Type: models.ChatTypePrivate}}}, true, false},
+		{"edited private message", &models.Update{EditedMessage: &models.Message{Chat: models.Chat{ID: 1, Type: models.ChatTypePrivate}}}, true, false},
+		{"edited channel post", &models.Update{EditedChannelPost: &models.Message{Chat: models.Chat{ID: -1, Type: models.ChatTypeChannel}}}, false, false},
+		{"callback without message", &models.Update{CallbackQuery: &models.CallbackQuery{From: models.User{ID: 1}}}, false, false},
+		{"inline query", &models.Update{InlineQuery: &models.InlineQuery{From: &models.User{ID: 1}}}, false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -155,6 +163,29 @@ func TestPrivateOnly_groupNeverCreatesUser(t *testing.T) {
 
 	require.False(t, reached)
 	require.Zero(t, users.calls, "privateOnly must run before ensureUser")
+}
+
+func TestPrivateOnly_nonPrivateNeverCreatesUser(t *testing.T) {
+	updates := map[string]*models.Update{
+		"group callback":      chatCallback(models.ChatTypeGroup),
+		"my_chat_member":      {MyChatMember: &models.ChatMemberUpdated{Chat: models.Chat{ID: -1, Type: models.ChatTypeGroup}}},
+		"edited group":        {EditedMessage: &models.Message{From: &models.User{ID: 1}, Chat: models.Chat{ID: -1, Type: models.ChatTypeGroup}}},
+		"channel post":        {ChannelPost: &models.Message{Chat: models.Chat{ID: -1, Type: models.ChatTypeChannel}}},
+		"unknown chat update": {},
+	}
+	for name, u := range updates {
+		t.Run(name, func(t *testing.T) {
+			users := &fakeUsers{id: "user-1"}
+			var reached bool
+			chain := privateOnly(func(context.Context, *bot.Bot, int64) {}, discardLog())(
+				ensureUser(users, discardLog())(func(context.Context, *bot.Bot, *models.Update) { reached = true }))
+
+			chain(context.Background(), nil, u)
+
+			require.False(t, reached)
+			require.Zero(t, users.calls)
+		})
+	}
 }
 
 func TestLeaveGroup_sendsNoticeThenLeaves(t *testing.T) {

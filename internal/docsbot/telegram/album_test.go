@@ -255,3 +255,63 @@ func TestChooseCategory_tooLargeStaysInTelegram(t *testing.T) {
 	require.Equal(t, docsbot.BackupTooLarge, repo.docs[doc.ID].BackupStatus)
 	require.True(t, has(sent.edits, "Слишком большой для Drive"), "edits %q", sent.edits)
 }
+
+func albumDocument(group, uniqueID, name string) *models.Update {
+	return &models.Update{Message: &models.Message{
+		From:         &models.User{ID: 100},
+		Chat:         models.Chat{ID: 100, Type: models.ChatTypePrivate},
+		MediaGroupID: group,
+		Document:     &models.Document{FileID: "f-" + uniqueID, FileUniqueID: uniqueID, FileName: name, FileSize: 1000},
+	}}
+}
+
+func TestAlbum_allDuplicatesShowNoPicker(t *testing.T) {
+	ft, send, sent, repo := albumBot(t, fakeDrive{})
+	for _, uid := range []string{"p1", "p2"} {
+		repo.seed(docsbot.Document{
+			UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindPhoto, Category: docsbot.CatOther,
+			TgFileID: "f-" + uid, TgFileUniqueID: uid, BackupStatus: docsbot.BackupNone,
+		})
+	}
+
+	send(albumPhoto("alb", "p1"))
+	send(albumPhoto("alb", "p2"))
+	ft.fire()
+
+	require.Zero(t, pendingCount(repo, "alb"))
+	require.Len(t, sent.texts, 1, "one summary, no picker: %q", sent.texts)
+	require.Contains(t, sent.texts[0], "Уже были сохранены: 2")
+	require.NotContains(t, sent.markups[0], "d:ga:")
+}
+
+func TestAlbum_photosAndDocumentsGetOnePicker(t *testing.T) {
+	ft, send, sent, repo := albumBot(t, fakeDrive{})
+
+	send(albumPhoto("alb", "p1"))
+	send(albumDocument("alb", "d1", "scan.pdf"))
+	send(albumDocument("alb", "d2", "scan2.pdf"))
+	ft.fire()
+
+	require.Equal(t, 3, pendingCount(repo, "alb"))
+	require.Len(t, sent.texts, 1)
+	require.Contains(t, sent.markups[0], "d:ga:")
+}
+
+func TestAlbum_pickerAfterRestartStillSavesAlbum(t *testing.T) {
+	// A fresh bot (no in-memory album state) with the album already in the DB:
+	// the picker button alone must save every pending photo.
+	_, send, _, repo := albumBot(t, fakeDrive{})
+	var anchor docsbot.DocumentID
+	for _, uid := range []string{"p1", "p2"} {
+		d := repo.seed(docsbot.Document{
+			UserID: testUserID, Status: docsbot.StatusPending, Kind: docsbot.KindPhoto, MediaGroupID: "alb",
+			TgFileID: "f-" + uid, TgFileUniqueID: uid, CreatedAt: time.Now(),
+		})
+		anchor = d.ID
+	}
+
+	send(dataCallback(100, "d:ga:"+string(anchor)+":"+string(docsbot.CatReceipts)))
+
+	require.Zero(t, pendingCount(repo, "alb"))
+	require.Len(t, repo.savedFor(testUserID), 2)
+}

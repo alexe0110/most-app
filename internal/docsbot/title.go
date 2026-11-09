@@ -20,6 +20,9 @@ func NormalizeTitle(s string) string {
 		return r
 	}, s)
 	s = strings.Join(strings.Fields(s), " ")
+	if strings.Trim(s, " \u200d") == "" { // only joiners left: visually blank
+		return ""
+	}
 	if r := []rune(s); len(r) > MaxTitleRunes {
 		s = strings.TrimSpace(string(r[:MaxTitleRunes]))
 	}
