@@ -121,8 +121,8 @@ func TestConvertDoc_foreignDocumentRefused(t *testing.T) {
 func TestConvertDoc_nonImageRefused(t *testing.T) {
 	h := newConvHarness(t)
 	pdf := h.repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "application/pdf",
-		Category: docsbot.CatOther, Title: "a.pdf", TgFileID: "x", TgFileUniqueID: "x",
+		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "application/msword",
+		Category: docsbot.CatOther, Title: "a.doc", TgFileID: "x", TgFileUniqueID: "x",
 	})
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 
@@ -160,7 +160,7 @@ func TestConvert_commandResultSavedOnlyOnTap(t *testing.T) {
 	require.Contains(t, h.lastText(), "категорию")
 }
 
-func TestCard_convertRowOnlyForImages(t *testing.T) {
+func TestCard_convertRowOnlyForConvertible(t *testing.T) {
 	tests := []struct {
 		name string
 		doc  docsbot.Document
@@ -168,7 +168,8 @@ func TestCard_convertRowOnlyForImages(t *testing.T) {
 	}{
 		{"photo", docsbot.Document{Kind: docsbot.KindPhoto}, true},
 		{"png file", docsbot.Document{Kind: docsbot.KindDocument, MIME: "image/png"}, true},
-		{"pdf file", docsbot.Document{Kind: docsbot.KindDocument, MIME: "application/pdf"}, false},
+		{"pdf file", docsbot.Document{Kind: docsbot.KindDocument, MIME: "application/pdf"}, true},
+		{"word file", docsbot.Document{Kind: docsbot.KindDocument, MIME: "application/msword"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

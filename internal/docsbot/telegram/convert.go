@@ -161,9 +161,13 @@ func (c *converter) message(ctx context.Context, b *bot.Bot, update *models.Upda
 	}
 }
 
-// onDocument accepts image documents and rejects the rest (HEIC, PDF, …).
+// onDocument accepts image documents (and PDFs while merging) and rejects the rest.
 func (c *converter) onDocument(ctx context.Context, b *bot.Bot, update *models.Update) {
 	doc := update.Message.Document
+	if doc.MimeType == mimePDF {
+		c.onPDFPart(ctx, b, update)
+		return
+	}
 	if !supportedImageMIME(doc.MimeType) {
 		reply(ctx, b, c.log, update.Message.Chat.ID, textConvertUnsupported)
 		return
@@ -212,6 +216,10 @@ func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Upda
 // onText reads a typed custom size; other text just nudges to tap a button.
 func (c *converter) onText(ctx context.Context, b *bot.Bot, update *models.Update, step step) {
 	chatID := update.Message.Chat.ID
+	if step == stepAwaitRange {
+		c.onRange(ctx, b, update)
+		return
+	}
 	if step != stepCustomLimit {
 		reply(ctx, b, c.log, chatID, textConvertTapButton)
 		return
@@ -241,7 +249,7 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 	data := update.CallbackQuery.Data
 	switch {
 	case strings.HasPrefix(data, cbDocPrefix):
-		sendMarkup(ctx, b, c.log, chatID, textConvertMenu, quickKeyboard(docsbot.DocumentID(strings.TrimPrefix(data, cbDocPrefix))))
+		c.onMenu(ctx, b, chatID, docsbot.DocumentID(strings.TrimPrefix(data, cbDocPrefix)))
 		return
 	case strings.HasPrefix(data, cbQuickPrefix):
 		c.onQuick(ctx, b, update, chatID)
@@ -274,6 +282,10 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 		c.sessions.update(user, func(s *session) { s.step = stepAwaitImage })
 		sendMarkup(ctx, b, c.log, chatID, textConvertCompressPrompt, cancelKeyboard())
 	case cbDone:
+		if sess, ok := c.sessions.live(user); ok && sess.step == stepMergePDF {
+			c.finishMerge(ctx, b, user, chatID)
+			return
+		}
 		c.finishPDF(ctx, b, user, chatID)
 	case cbCancel:
 		c.sessions.end(user)
@@ -342,15 +354,37 @@ func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, user, chatID
 	c.sendResult(ctx, b, chatID, user, name, out, "", suffixCompressed)
 }
 
+// onMenu offers the operations that fit the document's type.
+func (c *converter) onMenu(ctx context.Context, b *bot.Bot, chatID int64, id docsbot.DocumentID) {
+	user, ok := userID(ctx)
+	if !ok {
+		return
+	}
+	card, err := c.svc.Card(ctx, user, id) // the domain checks ownership
+	if errors.Is(err, docsbot.ErrNotFound) {
+		reply(ctx, b, c.log, chatID, textGone)
+		return
+	}
+	if err != nil {
+		c.log.ErrorContext(ctx, "convert load document", "err", err, "user_id", user, "doc_id", id)
+		reply(ctx, b, c.log, chatID, textError)
+		return
+	}
+	switch {
+	case isPDF(card.Doc):
+		sendMarkup(ctx, b, c.log, chatID, textConvertMenu, pdfMenuKeyboard(id))
+	case convertible(card.Doc):
+		sendMarkup(ctx, b, c.log, chatID, textConvertMenu, quickKeyboard(id))
+	default:
+		reply(ctx, b, c.log, chatID, textConvertUnsupported)
+	}
+}
+
 // onQuick converts a stored document straight from the menu: conv:q:<docID>:<op>.
 func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
 	rest := strings.TrimPrefix(update.CallbackQuery.Data, cbQuickPrefix)
 	rawID, op, ok := strings.Cut(rest, ":")
 	if !ok || rawID == "" {
-		return
-	}
-	maxBytes, known := quickLimit(op)
-	if !known && op != opPDF {
 		return
 	}
 	user, ok := userID(ctx)
@@ -372,6 +406,14 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 	doc := card.Doc
 	if !convertible(doc) {
 		reply(ctx, b, c.log, chatID, textConvertUnsupported)
+		return
+	}
+	if isPDF(doc) {
+		c.onPDFOp(ctx, b, update, chatID, user, doc, op)
+		return
+	}
+	maxBytes, known := quickLimit(op)
+	if !known && op != opPDF {
 		return
 	}
 	src, err := c.download(ctx, b, doc.TgFileID)

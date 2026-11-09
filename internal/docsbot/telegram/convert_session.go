@@ -23,6 +23,8 @@ const (
 	stepChooseLimit              // compress: waiting for the size
 	stepCustomLimit              // compress: waiting for a size in KB
 	stepChooseFormat             // compress: waiting for JPEG / PNG
+	stepAwaitRange               // PDF keep/drop: waiting for the page range
+	stepMergePDF                 // PDF merge: collecting PDFs
 )
 
 // pendingImage is a downloaded image. msgID keeps album order (album photos
@@ -38,6 +40,13 @@ type session struct {
 	images   []pendingImage
 	maxBytes int
 	updated  time.Time
+
+	// PDF operations on a stored document (card or picker).
+	sourceDoc   docsbot.DocumentID
+	sourceTitle string
+	pdfOp       string   // opKeep, opDrop or opMerge
+	pdfs        [][]byte // keep/drop: the one source; merge: source first, then the added
+	pdfBytes    int      // total size of pdfs
 }
 
 // orderedImages returns the image bytes in arrival order.

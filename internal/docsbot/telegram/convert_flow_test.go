@@ -45,11 +45,20 @@ type convHarness struct {
 	edits int
 	// downloads lists the file ids the bot fetched, in order.
 	downloads []string
+	// files overrides what a file id downloads; the default is a small JPEG.
+	files map[string][]byte
+}
+
+// serve makes fileID download as data.
+func (h *convHarness) serve(fileID string, data []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.files[fileID] = data
 }
 
 func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 	t.Helper()
-	h := &convHarness{}
+	h := &convHarness{files: map[string][]byte{}}
 
 	// The image every file download serves — a small, decodable JPEG.
 	img := image.NewRGBA(image.Rect(0, 0, 64, 48))
@@ -65,10 +74,15 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 		path := r.URL.Path
 		switch {
 		case strings.HasPrefix(path, "/file/"):
+			id := strings.TrimSuffix(path[strings.LastIndex(path, "/")+1:], ".jpg")
 			h.mu.Lock()
-			h.downloads = append(h.downloads, strings.TrimSuffix(path[strings.LastIndex(path, "/")+1:], ".jpg"))
+			h.downloads = append(h.downloads, id)
+			data, ok := h.files[id]
 			h.mu.Unlock()
-			_, _ = w.Write(photo.Bytes())
+			if !ok {
+				data = photo.Bytes()
+			}
+			_, _ = w.Write(data)
 			return
 		case strings.HasSuffix(path, "/getFile"):
 			var req struct {
@@ -154,6 +168,15 @@ func (h *convHarness) albumMarkup() string {
 		return ""
 	}
 	return h.markupBodies[0]
+}
+
+func (h *convHarness) lastMarkup() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.markupBodies) == 0 {
+		return ""
+	}
+	return h.markupBodies[len(h.markupBodies)-1]
 }
 
 func (h *convHarness) allTexts() string {

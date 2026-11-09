@@ -1,5 +1,5 @@
-// Package convert makes a PDF from images and shrinks images under a size
-// limit. Pure: bytes in, bytes out, no I/O.
+// Package convert makes a PDF from images, shrinks images under a size limit and
+// merges, trims and rotates PDFs. Pure: bytes in, bytes out, no I/O.
 package convert
 
 import (

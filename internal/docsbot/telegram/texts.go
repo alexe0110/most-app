@@ -150,7 +150,7 @@ const (
 	textConvertTapButton = "Нажми кнопку выше или /cancel, чтобы выйти."
 	textConvertNoImages  = "Сначала пришли хотя бы одно фото."
 
-	textConvertUnsupported    = "Так я пока не умею. Пришли фото в JPEG или PNG. HEIC, PDF и видео — позже."
+	textConvertUnsupported    = "Так я пока не умею. Пришли фото в JPEG или PNG. HEIC и видео — позже. С PDF я работаю вне /convert: отправь файл и нажми «🛠»."
 	textConvertDownloadFailed = "Не удалось получить файл. Попробуй ещё раз."
 	textConvertTooLarge       = "Изображение слишком большое. Пришли снимок поменьше."
 	textConvertFailed         = "Не удалось обработать изображение. Проверь, что это JPEG или PNG."
@@ -165,6 +165,17 @@ const (
 
 	textAlbumTooMany = "В один PDF помещается не больше %d страниц. Сохрани фото по одному."
 	textAlbumTooBig  = "Фото в альбоме больше 20 МБ вместе — в один PDF не поместятся. Сохрани их по одному."
+
+	textPDFRangePrompt = "Какие страницы? Например: 1-3,5"
+	textPDFBadRange    = "Не понял, какие страницы. Напиши, например: 1-3,5. Нельзя оставить файл без страниц."
+	textPDFMergePrompt = "Пришли PDF, которые нужно добавить в конец, — по одному. Когда закончишь, нажми «Готово»."
+	textPDFMergeAdded  = "Добавил. Всего файлов: %d. Пришли ещё или нажми «Готово»."
+	textPDFMergeNeeded = "Нужен ещё хотя бы один PDF. Пришли его файлом."
+	textPDFNotPDF      = "Это не PDF. Пришли PDF-файл."
+	textPDFInvalid     = "Не получилось прочитать PDF: файл повреждён или защищён паролем."
+	textPDFTooLarge    = "PDF слишком большой: все файлы вместе не должны быть больше 20 МБ."
+	textPDFTooMany     = "В PDF слишком много страниц: поддерживаю до 500."
+	textPDFTimeout     = "Обработка заняла слишком много времени. Попробуй файл поменьше."
 
 	// textConvertBestEffort takes the reached size in KB (target was out of reach).
 	textConvertBestEffort = "Меньше не вышло — сжал до %d КБ."
@@ -186,21 +197,27 @@ const (
 
 // Inline button labels for converting from a card, a picker and a result.
 const (
-	btnConvertCard   = "🛠 Преобразовать"
-	btnConvertPicker = "🛠 Сжать / В PDF"
-	btnQuick1MB      = "🗜 1 МБ"
-	btnQuick2MB      = "🗜 2 МБ"
-	btnQuick5MB      = "🗜 5 МБ"
-	btnQuickPDF      = "📄 В PDF"
-	btnQuickCancel   = "✖️ Отмена"
-	btnSaveResult    = "💾 Сохранить в документы"
-	btnSkipResult    = "⬇️ Только файл"
+	btnConvertCard      = "🛠 Преобразовать"
+	btnConvertPicker    = "🛠 Сжать / В PDF"
+	btnConvertPickerPDF = "🛠 Действия с PDF"
+	btnQuick1MB         = "🗜 1 МБ"
+	btnQuick2MB         = "🗜 2 МБ"
+	btnQuick5MB         = "🗜 5 МБ"
+	btnQuickPDF         = "📄 В PDF"
+	btnQuickCancel      = "✖️ Отмена"
+	btnPDFRotate        = "🔄 Повернуть ↻"
+	btnPDFKeep          = "✂️ Оставить стр."
+	btnPDFDrop          = "🗑 Убрать стр."
+	btnPDFMerge         = "➕ Склеить"
+	btnSaveResult       = "💾 Сохранить в документы"
+	btnSkipResult       = "⬇️ Только файл"
 )
 
 // Title suffixes of documents made by the converter.
 const (
 	suffixCompressed = " (сжатый)"
 	suffixPDF        = " (PDF)"
+	suffixEdited     = " (изменён)"
 )
 
 // Inline button labels for an album of images.

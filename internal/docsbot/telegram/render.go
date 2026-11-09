@@ -97,7 +97,11 @@ func categoryKeyboard(action string, id docsbot.DocumentID) *models.InlineKeyboa
 func pickerKeyboard(doc docsbot.Document) *models.InlineKeyboardMarkup {
 	kb := categoryKeyboard(actCategory, doc.ID)
 	if convertible(doc) {
-		kb.InlineKeyboard = append(kb.InlineKeyboard, convertRow(doc.ID, btnConvertPicker))
+		label := btnConvertPicker
+		if isPDF(doc) {
+			label = btnConvertPickerPDF
+		}
+		kb.InlineKeyboard = append(kb.InlineKeyboard, convertRow(doc.ID, label))
 	}
 	return kb
 }
@@ -115,13 +119,21 @@ func convertRow(id docsbot.DocumentID, label string) []models.InlineKeyboardButt
 	return []models.InlineKeyboardButton{{Text: label, CallbackData: cbDocPrefix + string(id)}}
 }
 
-// convertible reports whether the converter can read the document: a photo, or a
-// JPEG/PNG file.
+// convertible reports whether the converter can work with the document: a photo,
+// a JPEG/PNG file or a PDF.
 func convertible(doc docsbot.Document) bool {
 	if doc.Kind == docsbot.KindPhoto {
 		return true
 	}
-	return doc.Kind == docsbot.KindDocument && supportedImageMIME(doc.MIME)
+	return doc.Kind == docsbot.KindDocument && (supportedImageMIME(doc.MIME) || isPDF(doc))
+}
+
+// mimePDF is the MIME type of a PDF document.
+const mimePDF = "application/pdf"
+
+// isPDF reports whether the document is a PDF file.
+func isPDF(doc docsbot.Document) bool {
+	return doc.Kind == docsbot.KindDocument && doc.MIME == mimePDF
 }
 
 func connectKeyboard(url string) *models.InlineKeyboardMarkup {

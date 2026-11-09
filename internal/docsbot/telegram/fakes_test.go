@@ -70,7 +70,7 @@ func (r *fakeRepo) CreateDocument(_ context.Context, in docsbot.IncomingFile) (d
 	return r.seed(docsbot.Document{
 		UserID: in.UserID, Status: docsbot.StatusPending, Kind: in.Kind, Title: in.Title,
 		TgFileID: in.FileID, TgFileUniqueID: in.FileUniqueID, BackupStatus: docsbot.BackupNone,
-		MediaGroupID: in.MediaGroupID, FileSize: in.FileSize,
+		MediaGroupID: in.MediaGroupID, FileSize: in.FileSize, MIME: in.MIME,
 	}), nil
 }
 
