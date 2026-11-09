@@ -12,6 +12,9 @@ var (
 	// ErrAccessRevoked means Google rejected the refresh token; the user must
 	// reconnect. This is the domain-level meaning surfaced to callers.
 	ErrAccessRevoked = errors.New("oauth: access revoked")
+	// ErrAccessDisconnected means the user disconnected the integration
+	// themselves; unlike ErrAccessRevoked there is nothing to reconnect.
+	ErrAccessDisconnected = errors.New("oauth: access disconnected by user")
 	// ErrNoRefreshToken means Google returned no refresh token, so offline
 	// access cannot be persisted.
 	ErrNoRefreshToken = errors.New("oauth: no refresh token returned")

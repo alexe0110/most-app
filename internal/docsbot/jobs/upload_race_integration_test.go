@@ -116,6 +116,7 @@ func (d raceDrive) Upload(ctx context.Context, user docsbot.UserID, in docsbot.D
 		Name:       in.Name,
 		MIME:       in.MIME,
 		Data:       in.Data,
+		DocID:      in.DocID,
 	})
 	if err != nil {
 		return docsbot.DriveFile{}, err
@@ -123,6 +124,8 @@ func (d raceDrive) Upload(ctx context.Context, user docsbot.UserID, in docsbot.D
 	return docsbot.DriveFile{ID: f.ID, Link: f.Link}, nil
 }
 func (raceDrive) Revoke(context.Context, docsbot.UserID) error { return nil }
+
+func (raceDrive) Disconnect(context.Context, docsbot.UserID) error { return nil }
 
 func TestUploadDocument_batchCreatesFoldersOnce(t *testing.T) {
 	const total = 10

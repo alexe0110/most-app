@@ -88,6 +88,47 @@ func TestRevokeBestEffort(t *testing.T) {
 	})
 }
 
+func TestClient_alreadyDisconnected(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestService(t, store, nil, &fakeGoogle{})
+	seedIntegration(t, svc, store, statusDisconnected)
+
+	_, err := svc.Client(context.Background(), "user-1", "docs")
+	require.ErrorIs(t, err, ErrAccessDisconnected)
+	require.NotErrorIs(t, err, ErrAccessRevoked)
+}
+
+func TestDisconnectBestEffort(t *testing.T) {
+	t.Run("marks disconnected", func(t *testing.T) {
+		store := newFakeStore()
+		svc := newTestService(t, store, nil, &fakeGoogle{})
+		seedIntegration(t, svc, store, statusActive)
+
+		require.NoError(t, svc.DisconnectBestEffort(context.Background(), "user-1", "docs"))
+
+		ig, err := store.Integration(context.Background(), "user-1", "docs", provider)
+		require.NoError(t, err)
+		require.Equal(t, statusDisconnected, ig.Status)
+	})
+	t.Run("google failure still disconnects locally", func(t *testing.T) {
+		store := newFakeStore()
+		svc := newTestService(t, store, nil, &fakeGoogle{revokeStatus: http.StatusInternalServerError})
+		seedIntegration(t, svc, store, statusActive)
+
+		require.NoError(t, svc.DisconnectBestEffort(context.Background(), "user-1", "docs"))
+
+		ig, err := store.Integration(context.Background(), "user-1", "docs", provider)
+		require.NoError(t, err)
+		require.Equal(t, statusDisconnected, ig.Status)
+	})
+	t.Run("no integration is a no-op", func(t *testing.T) {
+		store := newFakeStore()
+		svc := newTestService(t, store, nil, &fakeGoogle{})
+
+		require.NoError(t, svc.DisconnectBestEffort(context.Background(), "user-1", "docs"))
+	})
+}
+
 func TestConnected(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -96,6 +137,7 @@ func TestConnected(t *testing.T) {
 	}{
 		{name: "active", status: statusActive, want: true},
 		{name: "revoked", status: statusRevoked, want: false},
+		{name: "disconnected", status: statusDisconnected, want: false},
 		{name: "no integration", status: "", want: false},
 	}
 	for _, tt := range tests {

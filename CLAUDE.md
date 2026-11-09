@@ -52,6 +52,7 @@ Before "done": `make lint && make test` pass. Add `make test-int` if an adapter 
 ## Working style
 
 - One task = one PR (`Closes #N`).
+- Branch names in Latin (ASCII) only, never Cyrillic, e.g. `49-sweeper-stuck-uploads`.
 - Stay inside the task. Spotted a problem elsewhere — mention it in the PR, don't fix it.
 - Unsure where code belongs — ask; don't invent a layer.
 - Read only the files you need; use Grep/Glob instead of reading whole directories.

@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/platform/gdrive"
 )
 
@@ -39,6 +40,18 @@ func (r *Repo) SaveFolderID(ctx context.Context, userID, cacheKey, id string) er
 	}
 	if _, err := r.UpsertDriveFolder(ctx, UpsertDriveFolderParams{UserID: uid, Category: cacheKey, DriveFolderID: id}); err != nil {
 		return fmt.Errorf("upsert drive folder: %w", err)
+	}
+	return nil
+}
+
+// DeleteAllFolders clears the user's cached Drive folder ids.
+func (r *Repo) DeleteAllFolders(ctx context.Context, user docsbot.UserID) error {
+	uid, err := parseUUID(string(user))
+	if err != nil {
+		return err
+	}
+	if err := r.DeleteUserDriveFolders(ctx, uid); err != nil {
+		return fmt.Errorf("delete user drive folders: %w", err)
 	}
 	return nil
 }

@@ -17,6 +17,13 @@ const (
 	exportLimit = 50
 	// statusWindow is how long an open status message keeps absorbing new documents.
 	statusWindow = 30 * time.Second
+	// sweepBatch caps how many stuck uploads one sweeper run handles.
+	sweepBatch = 100
+	// sweepStaleAfter is how long a document may sit in pending/uploading before
+	// the sweeper requeues its upload.
+	sweepStaleAfter = 30 * time.Minute
+	// sweepFailAfter is how long a document may stay stuck before it is failed.
+	sweepFailAfter = 24 * time.Hour
 )
 
 // Service holds the Most Docs use cases. It depends only on ports, never on
@@ -156,6 +163,9 @@ const maxTitleSuffix = 100
 type BackupResult struct {
 	Doc      Document
 	TooLarge bool
+	// Noop true means the worker should finish silently: there is nothing to do
+	// (document gone or already backed up) and the user is not notified.
+	Noop bool
 }
 
 // Backup uploads a saved document to the user's Drive. It is the upload_document
@@ -164,13 +174,19 @@ type BackupResult struct {
 // revoked grant returns ErrDriveRevoked; transient errors are returned for retry.
 func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (BackupResult, error) {
 	doc, err := s.repo.DocumentByID(ctx, user, id)
+	if errors.Is(err, ErrNotFound) {
+		// Deleted while the job was queued: finish without retries.
+		return BackupResult{Noop: true}, nil
+	}
 	if err != nil {
 		return BackupResult{}, fmt.Errorf("load document: %w", err)
 	}
 	if doc.BackupStatus == BackupBackedUp {
-		return BackupResult{Doc: doc}, nil
+		return BackupResult{Doc: doc, Noop: true}, nil
 	}
-	if err := s.repo.SetBackupStatus(ctx, id, BackupUploading); err != nil {
+	// Do not bump updated_at here: a poisoned document that crashes every
+	// attempt must still age out to failed via the sweeper's 24h backstop.
+	if err := s.repo.MarkUploading(ctx, id); err != nil {
 		return BackupResult{}, fmt.Errorf("mark uploading: %w", err)
 	}
 
@@ -186,7 +202,14 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 		return BackupResult{}, fmt.Errorf("download file: %w", err)
 	}
 
-	file, err := s.drive.Upload(ctx, user, DriveUpload{Category: doc.Category, Name: doc.Title, MIME: mime, Data: data})
+	file, err := s.drive.Upload(ctx, user, DriveUpload{Category: doc.Category, Name: doc.Title, MIME: mime, Data: data, DocID: string(id)})
+	if errors.Is(err, ErrDriveDisconnected) {
+		// User disconnected Drive mid-upload: drop back to Telegram-only, finish silently.
+		if serr := s.repo.SetBackupStatus(ctx, id, BackupNone); serr != nil {
+			return BackupResult{}, fmt.Errorf("reset backup status: %w", serr)
+		}
+		return BackupResult{Noop: true}, nil
+	}
 	if errors.Is(err, ErrDriveRevoked) {
 		return BackupResult{}, ErrDriveRevoked
 	}
@@ -211,6 +234,40 @@ func (s *Service) MarkBackupFailed(ctx context.Context, _ UserID, id DocumentID)
 	return nil
 }
 
+// SweepResult summarizes one sweeper run.
+type SweepResult struct {
+	Found    int
+	Requeued int
+	Failed   []StuckUpload
+}
+
+// SweepStuckUploads requeues uploads stuck mid-flight and fails the ones stuck
+// for too long. Requeueing does not touch backup_status/updated_at, so the
+// stuck-since clock keeps running; a live job dedups to a no-op.
+func (s *Service) SweepStuckUploads(ctx context.Context) (SweepResult, error) {
+	var res SweepResult
+	now := s.now()
+	rows, err := s.repo.StuckUploads(ctx, now.Add(-sweepStaleAfter), sweepBatch)
+	if err != nil {
+		return res, fmt.Errorf("list stuck uploads: %w", err)
+	}
+	res.Found = len(rows)
+	for _, r := range rows {
+		if now.Sub(r.UpdatedAt) >= sweepFailAfter {
+			if err := s.repo.SetBackupStatus(ctx, r.ID, BackupFailed); err != nil {
+				return res, fmt.Errorf("fail stuck upload: %w", err)
+			}
+			res.Failed = append(res.Failed, r)
+			continue
+		}
+		if err := s.uploads.RequeueUpload(ctx, r.User, r.ID); err != nil {
+			return res, fmt.Errorf("requeue stuck upload: %w", err)
+		}
+		res.Requeued++
+	}
+	return res, nil
+}
+
 // TransferSaved moves every saved document not yet backed up to Drive, tracked by
 // one transfer status message that takes over the given Telegram message. ok is
 // false when there is nothing to transfer.
@@ -229,6 +286,15 @@ func (s *Service) NotBackedUpCount(ctx context.Context, user UserID) (int, error
 		return 0, fmt.Errorf("count not backed up: %w", err)
 	}
 	return n, nil
+}
+
+// ResetDriveFolders clears the user's cached Drive folder ids, so folders are
+// found or created afresh (the Drive may now belong to another Google account).
+func (s *Service) ResetDriveFolders(ctx context.Context, user UserID) error {
+	if err := s.repo.DeleteAllFolders(ctx, user); err != nil {
+		return fmt.Errorf("delete all folders: %w", err)
+	}
+	return nil
 }
 
 // DriveConnected reports whether the user's Drive is connected.
@@ -272,13 +338,17 @@ func (s *Service) Settings(ctx context.Context, user UserID) (SettingsView, erro
 	return view, nil
 }
 
-// Disconnect revokes Drive access (best-effort) and cancels the user's pending uploads.
+// Disconnect turns Drive off at the user's request (best-effort), cancels the
+// user's pending uploads and resets stuck documents back to Telegram-only.
 func (s *Service) Disconnect(ctx context.Context, user UserID) error {
-	if err := s.drive.Revoke(ctx, user); err != nil {
-		return fmt.Errorf("revoke drive access: %w", err)
+	if err := s.drive.Disconnect(ctx, user); err != nil {
+		return fmt.Errorf("disconnect drive: %w", err)
 	}
 	if err := s.uploads.CancelUploads(ctx, user); err != nil {
 		return fmt.Errorf("cancel uploads: %w", err)
+	}
+	if err := s.repo.ResetPendingUploads(ctx, user); err != nil {
+		return fmt.Errorf("reset pending uploads: %w", err)
 	}
 	return nil
 }

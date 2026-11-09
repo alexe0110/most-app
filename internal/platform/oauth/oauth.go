@@ -25,6 +25,8 @@ const (
 
 	statusActive  = "active"
 	statusRevoked = "revoked"
+	// statusDisconnected marks an integration the user turned off themselves.
+	statusDisconnected = "disconnected"
 
 	// CallbackPath is where the OAuth redirect lands on the shared HTTP mux.
 	CallbackPath = "/oauth/google/callback"

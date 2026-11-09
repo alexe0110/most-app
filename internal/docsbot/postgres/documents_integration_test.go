@@ -4,6 +4,7 @@ package postgres_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -207,4 +208,74 @@ func itoa(i int) string {
 		i /= 10
 	}
 	return string(b)
+}
+
+func TestDocuments_resetPendingUploads(t *testing.T) {
+	repo, user := domainRepo(t)
+	ctx := t.Context()
+
+	mk := func(n int, s docsbot.BackupStatus) docsbot.DocumentID {
+		doc, err := repo.CreateDocument(ctx, docsbot.IncomingFile{
+			UserID: user, Kind: docsbot.KindDocument, Title: "d",
+			FileID: "f" + itoa(n), FileUniqueID: "u" + itoa(n),
+		})
+		require.NoError(t, err)
+		require.NoError(t, repo.SaveDocument(ctx, user, doc.ID, docsbot.CatOther))
+		require.NoError(t, repo.SetBackupStatus(ctx, doc.ID, s))
+		return doc.ID
+	}
+	statuses := []docsbot.BackupStatus{
+		docsbot.BackupPending, docsbot.BackupUploading, docsbot.BackupBackedUp,
+		docsbot.BackupTooLarge, docsbot.BackupFailed, docsbot.BackupNone,
+	}
+	ids := make([]docsbot.DocumentID, len(statuses))
+	for i, s := range statuses {
+		ids[i] = mk(i, s)
+	}
+
+	require.NoError(t, repo.ResetPendingUploads(ctx, user))
+
+	want := []docsbot.BackupStatus{
+		docsbot.BackupNone, docsbot.BackupNone, docsbot.BackupBackedUp,
+		docsbot.BackupTooLarge, docsbot.BackupFailed, docsbot.BackupNone,
+	}
+	for i, id := range ids {
+		got, err := repo.DocumentByID(ctx, user, id)
+		require.NoError(t, err)
+		require.Equal(t, want[i], got.BackupStatus, "from %s", statuses[i])
+	}
+}
+
+func TestDocuments_markUploadingKeepsUpdatedAt(t *testing.T) {
+	pool := dbtest.New(t)
+	repo := postgres.NewRepo(pool)
+	user := docsbot.UserID(makeUser(t, repo, 700).ID.String())
+	ctx := t.Context()
+
+	doc, err := repo.CreateDocument(ctx, docsbot.IncomingFile{
+		UserID: user, Kind: docsbot.KindDocument, Title: "d", FileID: "f", FileUniqueID: "u",
+	})
+	require.NoError(t, err)
+	require.NoError(t, repo.SaveDocument(ctx, user, doc.ID, docsbot.CatOther))
+
+	old := time.Now().Add(-25 * time.Hour).UTC().Truncate(time.Microsecond)
+	_, err = pool.Exec(ctx, `update documents set backup_status = 'pending', updated_at = $2 where id = $1::uuid`, string(doc.ID), old)
+	require.NoError(t, err)
+
+	state := func() (string, time.Time) {
+		var status string
+		var at time.Time
+		require.NoError(t, pool.QueryRow(ctx, `select backup_status, updated_at from documents where id = $1::uuid`, string(doc.ID)).Scan(&status, &at))
+		return status, at
+	}
+
+	require.NoError(t, repo.MarkUploading(ctx, doc.ID))
+	status, at := state()
+	require.Equal(t, "uploading", status)
+	require.True(t, old.Equal(at), "updated_at must not change, got %s", at)
+
+	require.NoError(t, repo.SetBackupStatus(ctx, doc.ID, docsbot.BackupFailed))
+	status, at = state()
+	require.Equal(t, "failed", status)
+	require.True(t, at.After(old), "SetBackupStatus must bump updated_at")
 }

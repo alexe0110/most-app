@@ -24,6 +24,7 @@ const (
 	defaultBaseURL = "https://www.googleapis.com"
 	folderMIME     = "application/vnd.google-apps.folder"
 	maxNameTries   = 50
+	docIDProperty  = "most_doc_id" // appProperties key marking the source document
 	maxErrBody     = 2 << 10
 )
 
@@ -44,6 +45,10 @@ type FolderCache interface {
 // ErrAccessRevoked means Google rejected the grant (revoked / 401). The caller
 // translates it into its own domain meaning and should not retry.
 var ErrAccessRevoked = errors.New("gdrive: access revoked")
+
+// ErrAccessDisconnected means the user disconnected Drive themselves. The caller
+// should fall back silently, without asking to reconnect.
+var ErrAccessDisconnected = errors.New("gdrive: access disconnected by user")
 
 // errNotFound is an internal signal for a 404 response.
 var errNotFound = errors.New("gdrive: not found")
@@ -84,6 +89,7 @@ type Upload struct {
 	Name       string // desired file name
 	MIME       string // content type of Data (may be "")
 	Data       []byte
+	DocID      string // stable document id, written to Drive appProperties for idempotent re-upload
 }
 
 // File is an uploaded Drive file.
@@ -99,9 +105,35 @@ func (s *Service) Upload(ctx context.Context, userID string, up Upload) (File, e
 		if errors.Is(err, oauth.ErrAccessRevoked) {
 			return File{}, ErrAccessRevoked
 		}
+		if errors.Is(err, oauth.ErrAccessDisconnected) {
+			return File{}, ErrAccessDisconnected
+		}
 		return File{}, fmt.Errorf("drive client: %w", err)
 	}
 
+	f, err := s.resolveAndUpload(ctx, httpc, userID, up)
+	if errors.Is(err, errNotFound) {
+		// A cached folder passed the alive-check but vanished before use (race):
+		// drop the category cache and retry the whole resolve+upload once.
+		// The root "Most Docs" folder is not cached (its cacheKey is empty), so the
+		// retry re-resolves it via findFolder and needs no separate cache reset.
+		if up.CacheKey != "" {
+			if derr := s.cache.DeleteFolderID(ctx, userID, up.CacheKey); derr != nil {
+				return File{}, fmt.Errorf("reset folder cache: %w", derr)
+			}
+			s.log.InfoContext(ctx, "drive folder cache reset", "user_id", userID, "reason", "stale_folder")
+		}
+		f, err = s.resolveAndUpload(ctx, httpc, userID, up)
+	}
+	if err != nil {
+		return File{}, err
+	}
+	return f, nil
+}
+
+// resolveAndUpload resolves the root and category folders, then uploads the
+// file unless a previous attempt already did.
+func (s *Service) resolveAndUpload(ctx context.Context, httpc *http.Client, userID string, up Upload) (File, error) {
 	rootID, err := s.ensureFolder(ctx, httpc, userID, "", rootFolderName, "root")
 	if err != nil {
 		return File{}, fmt.Errorf("ensure root folder: %w", err)
@@ -109,6 +141,18 @@ func (s *Service) Upload(ctx context.Context, userID string, up Upload) (File, e
 	folderID, err := s.ensureFolder(ctx, httpc, userID, up.CacheKey, up.FolderName, rootID)
 	if err != nil {
 		return File{}, fmt.Errorf("ensure category folder: %w", err)
+	}
+
+	if up.DocID != "" {
+		// A previous attempt may have uploaded the file and died before saving
+		// the result; reuse that file instead of creating "name (1)".
+		f, found, err := s.findFileByDocID(ctx, httpc, folderID, up.DocID)
+		if err != nil {
+			return File{}, fmt.Errorf("find uploaded file: %w", err)
+		}
+		if found {
+			return f, nil
+		}
 	}
 
 	name, err := s.uniqueName(ctx, httpc, folderID, up.Name)
@@ -250,9 +294,47 @@ func (s *Service) list(ctx context.Context, httpc *http.Client, q, orderBy strin
 	return ids, nil
 }
 
+// findFileByDocID looks for a file previously uploaded for the document, marked
+// with the most_doc_id appProperty. drive.file scope only shows app-created files.
+func (s *Service) findFileByDocID(ctx context.Context, httpc *http.Client, folderID, docID string) (File, bool, error) {
+	q := fmt.Sprintf("appProperties has { key='%s' and value='%s' } and '%s' in parents and trashed=false",
+		docIDProperty, escapeQuery(docID), folderID)
+	v := url.Values{}
+	v.Set("q", q)
+	v.Set("fields", "files(id,webViewLink)")
+	v.Set("spaces", "drive")
+
+	var out struct {
+		Files []struct {
+			ID          string `json:"id"`
+			WebViewLink string `json:"webViewLink"`
+		} `json:"files"`
+	}
+	if err := s.do(ctx, "files.list", httpc, http.MethodGet, s.baseURL+"/drive/v3/files?"+v.Encode(), "", nil, &out); err != nil {
+		return File{}, false, fmt.Errorf("drive find by doc id: %w", err)
+	}
+	if len(out.Files) == 0 {
+		return File{}, false, nil
+	}
+	f := out.Files[0]
+	return File{ID: f.ID, Link: fileLink(f.ID, f.WebViewLink)}, true, nil
+}
+
+// fileLink returns the web link, falling back to the canonical view URL.
+func fileLink(id, webViewLink string) string {
+	if webViewLink != "" {
+		return webViewLink
+	}
+	return "https://drive.google.com/file/d/" + id + "/view"
+}
+
 // upload sends the file as multipart/related: JSON metadata, then the bytes.
 func (s *Service) upload(ctx context.Context, httpc *http.Client, folderID, name string, up Upload) (File, error) {
-	meta, err := json.Marshal(map[string]any{"name": name, "parents": []string{folderID}})
+	md := map[string]any{"name": name, "parents": []string{folderID}}
+	if up.DocID != "" {
+		md["appProperties"] = map[string]string{docIDProperty: up.DocID}
+	}
+	meta, err := json.Marshal(md)
 	if err != nil {
 		return File{}, fmt.Errorf("encode metadata: %w", err)
 	}
@@ -284,11 +366,7 @@ func (s *Service) upload(ctx context.Context, httpc *http.Client, folderID, name
 		return File{}, fmt.Errorf("drive upload: %w", err)
 	}
 
-	link := out.WebViewLink
-	if link == "" {
-		link = "https://drive.google.com/file/d/" + out.ID + "/view"
-	}
-	return File{ID: out.ID, Link: link}, nil
+	return File{ID: out.ID, Link: fileLink(out.ID, out.WebViewLink)}, nil
 }
 
 func writePart(mw *multipart.Writer, hdr textproto.MIMEHeader, data []byte) error {

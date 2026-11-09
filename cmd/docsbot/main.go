@@ -66,7 +66,8 @@ func run() error {
 	workers := river.NewWorkers()
 	purge := jobs.RegisterPurgeUsers(workers, pool, log)
 	bindUpload := docjobs.RegisterUploadDocument(workers, log)
-	queue, err := jobs.New(pool, log, workers, map[string]river.QueueConfig{docjobs.UploadQueue: {MaxWorkers: 1}}, purge) // started below, once wired
+	bindSweep, sweepPeriodic := docjobs.RegisterSweepUploads(workers, log)
+	queue, err := jobs.New(pool, log, workers, map[string]river.QueueConfig{docjobs.UploadQueue: {MaxWorkers: 1}}, purge, sweepPeriodic) // started below, once wired
 	if err != nil {
 		return err
 	}
@@ -111,6 +112,7 @@ func run() error {
 	files.bot = tgbot
 	notifier := telegram.NewNotifier(tgbot, repo, oauthSvc, svc, log)
 	bindUpload(svc, notifier)
+	bindSweep(svc, notifier)
 	if err := tgbot.SetCommands(ctx, telegram.Commands()); err != nil {
 		log.Error("set bot commands", "err", err) // not fatal
 	}
@@ -195,9 +197,13 @@ func (d driveBridge) Upload(ctx context.Context, user docsbot.UserID, in docsbot
 		Name:       in.Name,
 		MIME:       in.MIME,
 		Data:       in.Data,
+		DocID:      in.DocID,
 	})
 	if errors.Is(err, gdrive.ErrAccessRevoked) || errors.Is(err, oauth.ErrAccessRevoked) {
 		return docsbot.DriveFile{}, docsbot.ErrDriveRevoked
+	}
+	if errors.Is(err, gdrive.ErrAccessDisconnected) || errors.Is(err, oauth.ErrAccessDisconnected) {
+		return docsbot.DriveFile{}, docsbot.ErrDriveDisconnected
 	}
 	if err != nil {
 		return docsbot.DriveFile{}, err
@@ -209,6 +215,12 @@ func (d driveBridge) Upload(ctx context.Context, user docsbot.UserID, in docsbot
 // integration revoked locally even if Google is unreachable.
 func (d driveBridge) Revoke(ctx context.Context, user docsbot.UserID) error {
 	return d.oauth.RevokeBestEffort(ctx, string(user), "docs")
+}
+
+// Disconnect handles the user turning Drive off: best-effort revoke at Google
+// and mark the integration disconnected (not revoked) locally.
+func (d driveBridge) Disconnect(ctx context.Context, user docsbot.UserID) error {
+	return d.oauth.DisconnectBestEffort(ctx, string(user), "docs")
 }
 
 // tgFiles implements docsbot.FileSource over the Telegram bot. bot is set after

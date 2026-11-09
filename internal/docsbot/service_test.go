@@ -243,6 +243,17 @@ func TestService_Search(t *testing.T) {
 	require.Equal(t, "Паспорт РК", found.Docs[0].Title)
 }
 
+func TestService_Backup_missingDocumentIsNoop(t *testing.T) {
+	repo := newFakeRepo()
+	var uploads int
+	svc := docsbot.NewService(repo, fakeDrive{uploads: &uploads}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo))
+
+	res, err := svc.Backup(t.Context(), user, "missing")
+	require.NoError(t, err)
+	require.Equal(t, docsbot.BackupResult{Noop: true}, res)
+	require.Zero(t, uploads)
+}
+
 func TestService_Backup(t *testing.T) {
 	errBoom := errors.New("boom")
 	tests := []struct {
@@ -252,6 +263,7 @@ func TestService_Backup(t *testing.T) {
 		drive        fakeDrive
 		wantErr      error
 		wantTooLarge bool
+		wantNoop     bool
 		wantStatus   docsbot.BackupStatus
 		wantFileID   string
 		wantDownload int
@@ -288,6 +300,7 @@ func TestService_Backup(t *testing.T) {
 		{
 			name:       "already backed up is a no-op",
 			backup:     docsbot.BackupBackedUp,
+			wantNoop:   true,
 			wantStatus: docsbot.BackupBackedUp,
 		},
 	}
@@ -308,6 +321,7 @@ func TestService_Backup(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				require.Equal(t, tt.wantTooLarge, res.TooLarge)
+				require.Equal(t, tt.wantNoop, res.Noop)
 				require.Equal(t, tt.wantStatus, res.Doc.BackupStatus)
 				require.Equal(t, tt.wantFileID, res.Doc.DriveFileID)
 			}
@@ -317,6 +331,21 @@ func TestService_Backup(t *testing.T) {
 			require.Equal(t, tt.wantUpload, uploads)
 		})
 	}
+}
+
+func TestService_Backup_userDisconnectFinishesSilently(t *testing.T) {
+	repo := newFakeRepo()
+	doc := repo.seed(docsbot.Document{
+		UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatPassport,
+		TgFileID: "tg-1", BackupStatus: docsbot.BackupPending,
+	})
+	drive := fakeDrive{uploadErr: docsbot.ErrDriveDisconnected}
+	svc := docsbot.NewService(repo, drive, fakeFiles{data: []byte("x")}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo))
+
+	res, err := svc.Backup(t.Context(), user, doc.ID)
+	require.NoError(t, err)
+	require.True(t, res.Noop)
+	require.Equal(t, docsbot.BackupNone, repo.docs[doc.ID].BackupStatus)
 }
 
 func TestService_TransferSaved(t *testing.T) {
@@ -376,21 +405,39 @@ func TestService_Settings(t *testing.T) {
 	}, view)
 }
 
+func TestService_ResetDriveFolders(t *testing.T) {
+	repo := newFakeRepo()
+	repo.folders = map[docsbot.Category]string{"passport": "f1", "insurance": "f2"}
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo))
+
+	require.NoError(t, svc.ResetDriveFolders(t.Context(), user))
+	require.Empty(t, repo.folders)
+}
+
 func TestService_Disconnect(t *testing.T) {
-	t.Run("revokes then cancels uploads", func(t *testing.T) {
+	t.Run("disconnects, cancels uploads and resets stuck documents", func(t *testing.T) {
 		repo := newFakeRepo()
-		var revoked bool
+		var disconnected, revoked bool
+		pending := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupPending})
+		uploading := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupUploading})
+		failed := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupFailed})
+		other := repo.seed(docsbot.Document{UserID: "other", Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupPending})
 		uploads := &fakeUploads{repo: repo}
-		svc := docsbot.NewService(repo, fakeDrive{revoked: &revoked}, fakeFiles{}, uploads, repo, newFakeStatus(repo))
+		svc := docsbot.NewService(repo, fakeDrive{disconnected: &disconnected, revoked: &revoked}, fakeFiles{}, uploads, repo, newFakeStatus(repo))
 
 		require.NoError(t, svc.Disconnect(t.Context(), user))
-		require.True(t, revoked)
+		require.True(t, disconnected)
+		require.False(t, revoked, "user disconnect must not use Revoke")
 		require.Equal(t, []docsbot.UserID{user}, uploads.cancels)
+		require.Equal(t, docsbot.BackupNone, repo.docs[pending.ID].BackupStatus)
+		require.Equal(t, docsbot.BackupNone, repo.docs[uploading.ID].BackupStatus)
+		require.Equal(t, docsbot.BackupFailed, repo.docs[failed.ID].BackupStatus)
+		require.Equal(t, docsbot.BackupPending, repo.docs[other.ID].BackupStatus, "other users untouched")
 	})
-	t.Run("revoke failure stops before cancelling", func(t *testing.T) {
+	t.Run("disconnect failure stops before cancelling", func(t *testing.T) {
 		repo := newFakeRepo()
 		uploads := &fakeUploads{repo: repo}
-		svc := docsbot.NewService(repo, fakeDrive{revokeErr: errors.New("boom")}, fakeFiles{}, uploads, repo, newFakeStatus(repo))
+		svc := docsbot.NewService(repo, fakeDrive{disconnectErr: errors.New("boom")}, fakeFiles{}, uploads, repo, newFakeStatus(repo))
 
 		require.Error(t, svc.Disconnect(t.Context(), user))
 		require.Empty(t, uploads.cancels)
@@ -617,6 +664,52 @@ func TestService_StatusView(t *testing.T) {
 			require.ElementsMatch(t, []docsbot.DocumentID{a.ID, b.ID}, []docsbot.DocumentID{v.Lines[0].ID, v.Lines[1].ID})
 			require.Equal(t, map[docsbot.Category]string{docsbot.CatPassport: "folder-p"}, v.FolderByCat)
 			require.Equal(t, tt.allTerminal, v.AllTerminal)
+		})
+	}
+}
+
+func TestService_SweepStuckUploads(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name         string
+		age          time.Duration
+		backup       docsbot.BackupStatus
+		wantFound    int
+		wantRequeued int
+		wantFailed   bool
+		wantStatus   docsbot.BackupStatus
+	}{
+		{name: "stale uploading is requeued", age: time.Hour, backup: docsbot.BackupUploading, wantFound: 1, wantRequeued: 1, wantStatus: docsbot.BackupUploading},
+		{name: "stale pending is requeued", age: 31 * time.Minute, backup: docsbot.BackupPending, wantFound: 1, wantRequeued: 1, wantStatus: docsbot.BackupPending},
+		{name: "older than a day is failed", age: 25 * time.Hour, backup: docsbot.BackupUploading, wantFound: 1, wantFailed: true, wantStatus: docsbot.BackupFailed},
+		{name: "fresh is skipped", age: 10 * time.Minute, backup: docsbot.BackupUploading, wantStatus: docsbot.BackupUploading},
+		{name: "backed up is skipped", age: 25 * time.Hour, backup: docsbot.BackupBackedUp, wantStatus: docsbot.BackupBackedUp},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: tt.backup})
+			// The fake has no updated_at column; tests set it here.
+			repo.updated = map[docsbot.DocumentID]time.Time{doc.ID: now.Add(-tt.age)}
+			uploads := &fakeUploads{repo: repo}
+			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, uploads, repo, newFakeStatus(repo),
+				docsbot.WithClock(func() time.Time { return now }))
+
+			res, err := svc.SweepStuckUploads(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, tt.wantFound, res.Found)
+			require.Equal(t, tt.wantRequeued, res.Requeued)
+			require.Equal(t, tt.wantFailed, len(res.Failed) == 1)
+			require.Equal(t, tt.wantStatus, repo.docs[doc.ID].BackupStatus)
+			if tt.wantRequeued == 1 {
+				require.Equal(t, []docsbot.DocumentID{doc.ID}, uploads.requeued)
+			} else {
+				require.Empty(t, uploads.requeued)
+			}
+			if tt.wantFailed {
+				require.Equal(t, doc.ID, res.Failed[0].ID)
+				require.Equal(t, user, res.Failed[0].User)
+			}
 		})
 	}
 }
