@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"image/jpeg"
 	"math"
 	"strconv"
 
@@ -60,13 +59,14 @@ func ImagesToPDF(images [][]byte) ([]byte, error) {
 			return nil, fmt.Errorf("image %d: %w", i+1, err)
 		}
 
-		var enc bytes.Buffer
-		if err := jpeg.Encode(&enc, img, &jpeg.Options{Quality: pdfJPEGQuality}); err != nil {
+		jpg, err := encodeJPEG(img, pdfJPEGQuality)
+		if err != nil {
 			return nil, fmt.Errorf("encode image %d: %w", i+1, err)
 		}
+		enc := bytes.NewReader(jpg)
 
 		name := "img" + strconv.Itoa(i)
-		pdf.RegisterImageOptionsReader(name, fpdf.ImageOptions{ImageType: "JPG"}, &enc)
+		pdf.RegisterImageOptionsReader(name, fpdf.ImageOptions{ImageType: "JPG"}, enc)
 		pdf.AddPage()
 		w, h := fitWithin(img.Bounds().Dx(), img.Bounds().Dy(), a4WidthMM-2*marginMM, a4HeightMM-2*marginMM)
 		pdf.ImageOptions(name, (a4WidthMM-w)/2, (a4HeightMM-h)/2, w, h, false, fpdf.ImageOptions{ImageType: "JPG"}, 0, "")

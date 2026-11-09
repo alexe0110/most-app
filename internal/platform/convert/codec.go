@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"image"
+	"image/color"
 	"image/jpeg"
 	"image/png"
 
@@ -127,9 +128,23 @@ func compressPNG(img image.Image, maxBytes int) ([]byte, error) {
 	return best, nil
 }
 
+// flattenOnWhite composites a transparent image onto white: JPEG has no alpha,
+// and dropping it would turn transparent pixels black. Opaque images are
+// returned as is.
+func flattenOnWhite(img image.Image) image.Image {
+	if o, ok := img.(interface{ Opaque() bool }); ok && o.Opaque() {
+		return img
+	}
+	b := img.Bounds()
+	dst := image.NewRGBA(b)
+	draw.Draw(dst, b, image.NewUniform(color.White), image.Point{}, draw.Src)
+	draw.Draw(dst, b, img, b.Min, draw.Over)
+	return dst
+}
+
 func encodeJPEG(img image.Image, quality int) ([]byte, error) {
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality}); err != nil {
+	if err := jpeg.Encode(&buf, flattenOnWhite(img), &jpeg.Options{Quality: quality}); err != nil {
 		return nil, fmt.Errorf("encode jpeg: %w", err)
 	}
 	return buf.Bytes(), nil
