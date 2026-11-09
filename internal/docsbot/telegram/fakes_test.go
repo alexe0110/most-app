@@ -25,6 +25,8 @@ func (fakeDrive) Upload(context.Context, docsbot.UserID, docsbot.DriveUpload) (d
 
 func (fakeDrive) Revoke(context.Context, docsbot.UserID) error { return nil }
 
+func (fakeDrive) Disconnect(context.Context, docsbot.UserID) error { return nil }
+
 // fakeAuth returns a fixed consent URL for the connect button.
 type fakeAuth struct{}
 
@@ -85,6 +87,28 @@ func (r *fakeRepo) DocumentByID(_ context.Context, user docsbot.UserID, id docsb
 func (r *fakeRepo) SaveDocument(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) error {
 	d := r.docs[id]
 	d.Category, d.Status = cat, docsbot.StatusSaved
+	r.docs[id] = d
+	return nil
+}
+
+func (*fakeRepo) StuckUploads(context.Context, time.Time, int) ([]docsbot.StuckUpload, error) {
+	return nil, nil
+}
+
+func (r *fakeRepo) ResetPendingUploads(_ context.Context, user docsbot.UserID) error {
+	for id, d := range r.docs {
+		if d.UserID == user && d.Status == docsbot.StatusSaved &&
+			(d.BackupStatus == docsbot.BackupPending || d.BackupStatus == docsbot.BackupUploading) {
+			d.BackupStatus = docsbot.BackupNone
+			r.docs[id] = d
+		}
+	}
+	return nil
+}
+
+func (r *fakeRepo) MarkUploading(_ context.Context, id docsbot.DocumentID) error {
+	d := r.docs[id]
+	d.BackupStatus = docsbot.BackupUploading
 	r.docs[id] = d
 	return nil
 }
@@ -207,6 +231,10 @@ func (u fakeUploads) EnqueueUpload(_ context.Context, _ docsbot.UserID, id docsb
 	}
 	return nil
 }
+func (fakeUploads) RequeueUpload(context.Context, docsbot.UserID, docsbot.DocumentID) error {
+	return nil
+}
+
 func (fakeUploads) CancelUploads(context.Context, docsbot.UserID) error { return nil }
 
 // fakeDeps builds a Service over in-memory fakes, plus the fake authorizer.
@@ -267,6 +295,11 @@ func (r *fakeRepo) SavedForExport(_ context.Context, user docsbot.UserID, limit 
 		docs = docs[:limit]
 	}
 	return docs, nil
+}
+
+func (r *fakeRepo) DeleteAllFolders(_ context.Context, _ docsbot.UserID) error {
+	clear(r.folders)
+	return nil
 }
 
 func (r *fakeRepo) DeleteUserData(_ context.Context, user docsbot.UserID) error {

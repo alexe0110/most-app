@@ -29,8 +29,11 @@ func (s *Service) tokenSource(ctx context.Context, userID, bot string) (oauth2.T
 	if err != nil {
 		return nil, err
 	}
-	if ig.Status == statusRevoked {
+	switch ig.Status {
+	case statusRevoked:
 		return nil, ErrAccessRevoked
+	case statusDisconnected:
+		return nil, ErrAccessDisconnected
 	}
 
 	refresh, err := s.enc.decrypt(ig.RefreshTokenEnc)
@@ -53,6 +56,11 @@ func (s *Service) tokenSource(ctx context.Context, userID, bot string) (oauth2.T
 
 // Revoke revokes the user's token at Google and marks the integration revoked.
 func (s *Service) Revoke(ctx context.Context, userID, bot string) error {
+	return s.revokeWithStatus(ctx, userID, bot, statusRevoked)
+}
+
+// revokeWithStatus revokes the user's token at Google and stores finalStatus.
+func (s *Service) revokeWithStatus(ctx context.Context, userID, bot, finalStatus string) error {
 	ig, err := s.store.Integration(ctx, userID, bot, provider)
 	if err != nil {
 		return err
@@ -64,8 +72,8 @@ func (s *Service) Revoke(ctx context.Context, userID, bot string) error {
 	if err := s.revokeAtGoogle(ctx, string(refresh)); err != nil {
 		return err
 	}
-	if err := s.store.UpdateIntegrationStatus(ctx, userID, bot, provider, statusRevoked); err != nil {
-		return fmt.Errorf("mark integration revoked: %w", err)
+	if err := s.store.UpdateIntegrationStatus(ctx, userID, bot, provider, finalStatus); err != nil {
+		return fmt.Errorf("mark integration %s: %w", finalStatus, err)
 	}
 	return nil
 }
@@ -83,6 +91,21 @@ func (s *Service) RevokeBestEffort(ctx context.Context, userID, bot string) erro
 	s.log.Warn("drive revoke failed; forcing local revoke", "err", err, "user_id", userID)
 	if mErr := s.store.UpdateIntegrationStatus(ctx, userID, bot, provider, statusRevoked); mErr != nil {
 		return fmt.Errorf("mark integration revoked: %w", mErr)
+	}
+	return nil
+}
+
+// DisconnectBestEffort is RevokeBestEffort for a user-initiated disconnect: the
+// integration ends up marked disconnected (not revoked), so later uploads fall
+// back to Telegram silently instead of asking the user to reconnect.
+func (s *Service) DisconnectBestEffort(ctx context.Context, userID, bot string) error {
+	err := s.revokeWithStatus(ctx, userID, bot, statusDisconnected)
+	if err == nil || errors.Is(err, ErrNoIntegration) {
+		return nil
+	}
+	s.log.Warn("drive disconnect failed; forcing local disconnect", "err", err, "user_id", userID)
+	if mErr := s.store.UpdateIntegrationStatus(ctx, userID, bot, provider, statusDisconnected); mErr != nil {
+		return fmt.Errorf("mark integration disconnected: %w", mErr)
 	}
 	return nil
 }

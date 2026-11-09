@@ -442,6 +442,31 @@ func (q *Queries) MarkDocumentBackedUp(ctx context.Context, arg MarkDocumentBack
 	return err
 }
 
+const markDocumentUploading = `-- name: MarkDocumentUploading :exec
+update documents
+set backup_status = 'uploading'
+where id = $1
+`
+
+func (q *Queries) MarkDocumentUploading(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markDocumentUploading, id)
+	return err
+}
+
+const resetPendingUploads = `-- name: ResetPendingUploads :exec
+update documents
+set backup_status = 'none',
+    updated_at    = now()
+where user_id = $1
+  and status = 'saved'
+  and backup_status in ('pending', 'uploading')
+`
+
+func (q *Queries) ResetPendingUploads(ctx context.Context, userID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, resetPendingUploads, userID)
+	return err
+}
+
 const saveDocumentCategory = `-- name: SaveDocumentCategory :exec
 update documents
 set category   = $1,
@@ -504,6 +529,52 @@ func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams
 			&i.FileSize,
 			&i.MimeType,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const stuckUploads = `-- name: StuckUploads :many
+select d.id, d.user_id, d.updated_at
+from documents d
+         join integrations i
+              on i.user_id = d.user_id
+                  and i.bot = 'docs'
+                  and i.provider = 'google'
+                  and i.status = 'active'
+where d.status = 'saved'
+  and d.backup_status in ('pending', 'uploading')
+  and d.updated_at < $1
+order by d.updated_at
+limit $2
+`
+
+type StuckUploadsParams struct {
+	OlderThan pgtype.Timestamptz
+	Lim       int32
+}
+
+type StuckUploadsRow struct {
+	ID        pgtype.UUID
+	UserID    pgtype.UUID
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) StuckUploads(ctx context.Context, arg StuckUploadsParams) ([]StuckUploadsRow, error) {
+	rows, err := q.db.Query(ctx, stuckUploads, arg.OlderThan, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StuckUploadsRow{}
+	for rows.Next() {
+		var i StuckUploadsRow
+		if err := rows.Scan(&i.ID, &i.UserID, &i.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

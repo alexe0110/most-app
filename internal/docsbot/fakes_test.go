@@ -19,6 +19,9 @@ type fakeDrive struct {
 	uploads    *int  // counts Upload calls when set
 	revokeErr  error // returned by Revoke
 	revoked    *bool // set to true on Revoke when provided
+
+	disconnectErr error // returned by Disconnect
+	disconnected  *bool // set to true on Disconnect when provided
 }
 
 func (d fakeDrive) Connected(context.Context, docsbot.UserID) (bool, error) {
@@ -39,6 +42,13 @@ func (d fakeDrive) Revoke(context.Context, docsbot.UserID) error {
 	return d.revokeErr
 }
 
+func (d fakeDrive) Disconnect(context.Context, docsbot.UserID) error {
+	if d.disconnected != nil {
+		*d.disconnected = true
+	}
+	return d.disconnectErr
+}
+
 // fakeFiles returns a configurable download result.
 type fakeFiles struct {
 	data      []byte
@@ -57,9 +67,10 @@ func (f fakeFiles) Download(context.Context, string) ([]byte, string, error) {
 // fakeUploads records enqueued uploads and, like the real atomic enqueue, marks
 // the document pending.
 type fakeUploads struct {
-	repo    *fakeRepo
-	calls   []docsbot.DocumentID
-	cancels []docsbot.UserID
+	repo     *fakeRepo
+	calls    []docsbot.DocumentID
+	cancels  []docsbot.UserID
+	requeued []docsbot.DocumentID
 }
 
 func (u *fakeUploads) EnqueueUpload(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID) error {
@@ -67,6 +78,12 @@ func (u *fakeUploads) EnqueueUpload(_ context.Context, _ docsbot.UserID, id docs
 	d := u.repo.docs[id]
 	d.BackupStatus = docsbot.BackupPending
 	u.repo.docs[id] = d
+	return nil
+}
+
+// RequeueUpload records the call; like the real one it leaves backup_status alone.
+func (u *fakeUploads) RequeueUpload(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID) error {
+	u.requeued = append(u.requeued, id)
 	return nil
 }
 
@@ -80,7 +97,8 @@ type fakeRepo struct {
 	folders map[docsbot.Category]string // cached Drive folder ids by category
 	docs    map[docsbot.DocumentID]docsbot.Document
 	seq     int
-	deleted []docsbot.UserID // users passed to DeleteUserData
+	deleted []docsbot.UserID                 // users passed to DeleteUserData
+	updated map[docsbot.DocumentID]time.Time // last update time, set by tests for the sweeper
 }
 
 var _ docsbot.Repo = (*fakeRepo)(nil)
@@ -135,11 +153,49 @@ func (r *fakeRepo) SaveDocument(_ context.Context, _ docsbot.UserID, id docsbot.
 	return nil
 }
 
+func (r *fakeRepo) ResetPendingUploads(_ context.Context, user docsbot.UserID) error {
+	for id, d := range r.docs {
+		if d.UserID == user && d.Status == docsbot.StatusSaved &&
+			(d.BackupStatus == docsbot.BackupPending || d.BackupStatus == docsbot.BackupUploading) {
+			d.BackupStatus = docsbot.BackupNone
+			r.docs[id] = d
+		}
+	}
+	return nil
+}
+
+func (r *fakeRepo) MarkUploading(_ context.Context, id docsbot.DocumentID) error {
+	d := r.docs[id]
+	d.BackupStatus = docsbot.BackupUploading
+	r.docs[id] = d
+	return nil
+}
+
 func (r *fakeRepo) SetBackupStatus(_ context.Context, id docsbot.DocumentID, s docsbot.BackupStatus) error {
 	d := r.docs[id]
 	d.BackupStatus = s
 	r.docs[id] = d
 	return nil
+}
+
+// StuckUploads mirrors the real query, assuming every user has an active
+// integration (the join is covered by the integration tests).
+func (r *fakeRepo) StuckUploads(_ context.Context, olderThan time.Time, limit int) ([]docsbot.StuckUpload, error) {
+	var out []docsbot.StuckUpload
+	for id, d := range r.docs {
+		bs := d.BackupStatus
+		if d.Status != docsbot.StatusSaved || (bs != docsbot.BackupPending && bs != docsbot.BackupUploading) {
+			continue
+		}
+		if at, ok := r.updated[id]; ok && at.Before(olderThan) {
+			out = append(out, docsbot.StuckUpload{User: d.UserID, ID: id, UpdatedAt: at})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.Before(out[j].UpdatedAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (r *fakeRepo) SetTitle(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID, title string) error {
@@ -313,6 +369,11 @@ var _ docsbot.Folders = (*fakeRepo)(nil)
 func (r *fakeRepo) CategoryFolderID(_ context.Context, _ docsbot.UserID, cat docsbot.Category) (string, bool, error) {
 	id, ok := r.folders[cat]
 	return id, ok, nil
+}
+
+func (r *fakeRepo) DeleteAllFolders(_ context.Context, _ docsbot.UserID) error {
+	clear(r.folders)
+	return nil
 }
 
 // fakeStatus is an in-memory docsbot.StatusMessages over the fake repo's documents.

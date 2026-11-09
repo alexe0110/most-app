@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -86,6 +87,52 @@ func (r *Repo) SetBackupStatus(ctx context.Context, id docsbot.DocumentID, s doc
 	}
 	if err := r.UpdateDocumentBackupStatus(ctx, UpdateDocumentBackupStatusParams{ID: docID, BackupStatus: string(s)}); err != nil {
 		return fmt.Errorf("update backup status: %w", err)
+	}
+	return nil
+}
+
+// MarkUploading sets the status to uploading without touching updated_at, so
+// the sweeper's 24h backstop counts from enqueue time.
+func (r *Repo) MarkUploading(ctx context.Context, id docsbot.DocumentID) error {
+	docID, err := parseUUID(string(id))
+	if err != nil {
+		return err
+	}
+	if err := r.MarkDocumentUploading(ctx, docID); err != nil {
+		return fmt.Errorf("mark document uploading: %w", err)
+	}
+	return nil
+}
+
+// StuckUploads lists pending/uploading saved documents last touched before
+// olderThan, for users with an active Drive integration.
+func (r *Repo) StuckUploads(ctx context.Context, olderThan time.Time, limit int) ([]docsbot.StuckUpload, error) {
+	rows, err := r.Queries.StuckUploads(ctx, StuckUploadsParams{
+		OlderThan: pgtype.Timestamptz{Time: olderThan, Valid: true},
+		Lim:       int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("stuck uploads: %w", err)
+	}
+	out := make([]docsbot.StuckUpload, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, docsbot.StuckUpload{
+			User:      docsbot.UserID(row.UserID.String()),
+			ID:        docsbot.DocumentID(row.ID.String()),
+			UpdatedAt: row.UpdatedAt.Time,
+		})
+	}
+	return out, nil
+}
+
+// ResetPendingUploads resets the user's pending/uploading saved documents to none.
+func (r *Repo) ResetPendingUploads(ctx context.Context, user docsbot.UserID) error {
+	uid, err := parseUUID(string(user))
+	if err != nil {
+		return err
+	}
+	if err := r.Queries.ResetPendingUploads(ctx, uid); err != nil {
+		return fmt.Errorf("reset pending uploads: %w", err)
 	}
 	return nil
 }

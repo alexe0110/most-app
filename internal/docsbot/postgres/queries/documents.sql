@@ -41,6 +41,11 @@ set backup_status = @backup_status,
     updated_at    = now()
 where id = @id;
 
+-- name: MarkDocumentUploading :exec
+update documents
+set backup_status = 'uploading'
+where id = @id;
+
 -- name: UpdateDocumentTitle :exec
 update documents
 set title      = @title,
@@ -142,3 +147,25 @@ limit @lim;
 delete
 from documents
 where user_id = @user_id;
+
+-- name: ResetPendingUploads :exec
+update documents
+set backup_status = 'none',
+    updated_at    = now()
+where user_id = @user_id
+  and status = 'saved'
+  and backup_status in ('pending', 'uploading');
+
+-- name: StuckUploads :many
+select d.id, d.user_id, d.updated_at
+from documents d
+         join integrations i
+              on i.user_id = d.user_id
+                  and i.bot = 'docs'
+                  and i.provider = 'google'
+                  and i.status = 'active'
+where d.status = 'saved'
+  and d.backup_status in ('pending', 'uploading')
+  and d.updated_at < @older_than
+order by d.updated_at
+limit @lim;

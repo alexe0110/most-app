@@ -1,6 +1,9 @@
 package docsbot
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Repo stores documents. Every method is scoped by user id, so one user can
 // never reach another's documents. Declared here, at the consumer; implemented
@@ -16,6 +19,11 @@ type Repo interface {
 	// SaveDocument sets the category and marks the document saved.
 	SaveDocument(ctx context.Context, user UserID, id DocumentID, cat Category) error
 	SetBackupStatus(ctx context.Context, id DocumentID, s BackupStatus) error
+	// MarkUploading sets backup_status=uploading WITHOUT touching updated_at, so
+	// the stuck-clock keeps running from enqueue time (sweeper 24h backstop).
+	MarkUploading(ctx context.Context, id DocumentID) error
+	// ResetPendingUploads resets the user's pending/uploading saved documents back to none.
+	ResetPendingUploads(ctx context.Context, user UserID) error
 	SetTitle(ctx context.Context, user UserID, id DocumentID, title string) error
 	// TitleExistsInCategory reports whether the user already has a saved document
 	// with this exact title in the category (used to de-duplicate default names).
@@ -39,9 +47,22 @@ type Repo interface {
 	FailedIDs(ctx context.Context, user UserID) ([]DocumentID, error)
 	// SavedForExport lists up to limit of the user's saved documents, oldest first, to resend from Telegram.
 	SavedForExport(ctx context.Context, user UserID, limit int) ([]Document, error)
+	// StuckUploads lists saved documents stuck in pending/uploading since before
+	// olderThan, for users with an active Drive integration, oldest first.
+	StuckUploads(ctx context.Context, olderThan time.Time, limit int) ([]StuckUpload, error)
 	// DeleteUserData deletes the user's documents, drive_folders and integrations and
 	// soft-deletes the user (users.deleted_at), all in one transaction.
 	DeleteUserData(ctx context.Context, user UserID) error
+	// DeleteAllFolders clears the user's cached Drive folder ids.
+	DeleteAllFolders(ctx context.Context, user UserID) error
+}
+
+// StuckUpload is a saved document stuck mid-upload (pending/uploading) for a
+// user whose Drive is connected.
+type StuckUpload struct {
+	User      UserID
+	ID        DocumentID
+	UpdatedAt time.Time
 }
 
 // CategoryCount is the number of saved documents in a category.
@@ -66,6 +87,9 @@ type Drive interface {
 	// integration revoked locally. The adapter guarantees the local revoke even if
 	// Google is unreachable; an error means the local state could not be updated.
 	Revoke(ctx context.Context, user UserID) error
+	// Disconnect is a user-initiated disconnect: it marks the integration
+	// disconnected-by-user, so later uploads fall back to Telegram silently.
+	Disconnect(ctx context.Context, user UserID) error
 }
 
 // DriveUpload is a file to copy to the user's Drive.
@@ -74,6 +98,7 @@ type DriveUpload struct {
 	Name     string
 	MIME     string
 	Data     []byte
+	DocID    string // stable document id, written to Drive appProperties for idempotent re-upload
 }
 
 // DriveFile is a stored Drive file: its id and a shareable link.
@@ -97,6 +122,9 @@ type Folders interface {
 // inserting the job in one transaction.
 type Uploads interface {
 	EnqueueUpload(ctx context.Context, user UserID, id DocumentID) error
+	// RequeueUpload inserts the upload job only, unique, without touching
+	// backup_status or updated_at; a live job dedups to a no-op.
+	RequeueUpload(ctx context.Context, user UserID, id DocumentID) error
 	// CancelUploads removes the user's pending (not yet running) upload_document jobs.
 	CancelUploads(ctx context.Context, user UserID) error
 }

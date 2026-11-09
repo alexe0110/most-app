@@ -91,19 +91,42 @@ func TestBackups_folderCache(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestBackups_deleteAllFolders(t *testing.T) {
+	repo, user := domainRepo(t)
+	ctx := t.Context()
+	other := makeUser(t, repo, 701).ID.String()
+
+	for _, key := range []string{"passport", "insurance"} {
+		require.NoError(t, repo.SaveFolderID(ctx, string(user), key, "f-"+key))
+	}
+	require.NoError(t, repo.SaveFolderID(ctx, other, "passport", "other-f"))
+
+	require.NoError(t, repo.DeleteAllFolders(ctx, user))
+
+	for _, key := range []string{"passport", "insurance"} {
+		_, ok, err := repo.FolderID(ctx, string(user), key)
+		require.NoError(t, err)
+		require.False(t, ok, key)
+	}
+	id, ok, err := repo.FolderID(ctx, other, "passport")
+	require.NoError(t, err)
+	require.True(t, ok, "other user's cache is untouched")
+	require.Equal(t, "other-f", id)
+}
+
 func TestBackups_enqueueUploadTx(t *testing.T) {
 	repo, user := domainRepo(t)
 	ctx := t.Context()
 	doc := savedDoc(t, repo, user, "tx")
 
 	boom := errors.New("insert failed")
-	err := repo.EnqueueUpload(ctx, doc.ID, func(context.Context, pgx.Tx) error { return boom })
+	err := repo.EnqueueUpload(ctx, doc.ID, func(context.Context, pgx.Tx) (bool, error) { return false, boom })
 	require.ErrorIs(t, err, boom)
 	got, err := repo.DocumentByID(ctx, user, doc.ID)
 	require.NoError(t, err)
 	require.Equal(t, docsbot.BackupNone, got.BackupStatus, "rolled back")
 
-	require.NoError(t, repo.EnqueueUpload(ctx, doc.ID, func(context.Context, pgx.Tx) error { return nil }))
+	require.NoError(t, repo.EnqueueUpload(ctx, doc.ID, func(context.Context, pgx.Tx) (bool, error) { return false, nil }))
 	got, err = repo.DocumentByID(ctx, user, doc.ID)
 	require.NoError(t, err)
 	require.Equal(t, docsbot.BackupPending, got.BackupStatus)

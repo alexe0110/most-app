@@ -12,7 +12,9 @@ import (
 // EnqueueUpload marks the document backup_status=pending and runs insert inside
 // the same transaction, so the status change and the enqueued job commit or roll
 // back together. River is not imported here; the caller supplies the insert.
-func (r *Repo) EnqueueUpload(ctx context.Context, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) error) error {
+// If insert reports skip (the job is a duplicate of one already queued), the
+// transaction is rolled back and the document status stays untouched.
+func (r *Repo) EnqueueUpload(ctx context.Context, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) (skip bool, err error)) error {
 	docID, err := parseUUID(string(id))
 	if err != nil {
 		return err
@@ -30,8 +32,12 @@ func (r *Repo) EnqueueUpload(ctx context.Context, id docsbot.DocumentID, insert 
 	if err != nil {
 		return fmt.Errorf("mark backup pending: %w", err)
 	}
-	if err := insert(ctx, tx); err != nil {
+	skip, err := insert(ctx, tx)
+	if err != nil {
 		return err
+	}
+	if skip {
+		return nil // deferred Rollback also reverts the pending update
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit tx: %w", err)

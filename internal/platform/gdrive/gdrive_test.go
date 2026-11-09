@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -64,6 +65,14 @@ type fakeDrive struct {
 	uploadedBody string
 	uploadedMIME string
 	uploadParent string
+	hasAppProps  bool         // last upload carried appProperties
+	uploads      int          // number of upload POSTs
+	stored       []storedFile // files created by uploads
+	lastFileQ    string       // last appProperties query
+}
+
+type storedFile struct {
+	id, docID, parent string
 }
 
 func (d *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -81,8 +90,22 @@ func (d *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if len(d.folders) > 0 && strings.Contains(q, "mimeType='"+folderMIME+"'") {
 			d.lastOrderBy = r.URL.Query().Get("orderBy")
 			for _, f := range d.folders {
+				if f["trashed"] == "true" && strings.Contains(q, "trashed=false") {
+					continue // the query excludes trashed folders
+				}
 				if strings.Contains(q, "name='"+f["name"]+"'") {
 					files = append(files, f)
+				}
+			}
+			writeJSON(w, map[string]any{"files": files})
+			return
+		}
+		if strings.Contains(q, "appProperties has") {
+			d.lastFileQ = q
+			for _, f := range d.stored {
+				if strings.Contains(q, "value='"+f.docID+"'") && strings.Contains(q, "'"+f.parent+"' in parents") &&
+					strings.Contains(q, "trashed=false") {
+					files = append(files, map[string]string{"id": f.id})
 				}
 			}
 			writeJSON(w, map[string]any{"files": files})
@@ -102,7 +125,7 @@ func (d *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"id": "folder-" + in.Name})
 	case r.Method == http.MethodPost && r.URL.Path == "/upload/drive/v3/files":
 		d.readUpload(r)
-		resp := map[string]string{"id": "file-1"}
+		resp := map[string]string{"id": "file-" + strconv.Itoa(len(d.stored))}
 		if d.webViewLink != "" {
 			resp["webViewLink"] = d.webViewLink
 		}
@@ -121,13 +144,19 @@ func (d *fakeDrive) readUpload(r *http.Request) {
 	meta, err := mr.NextPart()
 	require.NoError(d.t, err)
 	var m struct {
-		Name    string   `json:"name"`
-		Parents []string `json:"parents"`
+		Name          string            `json:"name"`
+		Parents       []string          `json:"parents"`
+		AppProperties map[string]string `json:"appProperties"`
 	}
 	require.NoError(d.t, json.NewDecoder(meta).Decode(&m))
 	d.uploadedName = m.Name
 	require.Len(d.t, m.Parents, 1)
 	d.uploadParent = m.Parents[0]
+	d.uploads++
+	d.stored = append(d.stored, storedFile{
+		id: "file-" + strconv.Itoa(len(d.stored)+1), docID: m.AppProperties["most_doc_id"], parent: m.Parents[0],
+	})
+	d.hasAppProps = m.AppProperties != nil
 
 	data, err := mr.NextPart()
 	require.NoError(d.t, err)
@@ -168,6 +197,7 @@ func TestUpload_happyPath(t *testing.T) {
 	require.Equal(t, "scan.pdf", d.uploadedName)
 	require.Equal(t, "pdf-bytes", d.uploadedBody)
 	require.Equal(t, "application/pdf", d.uploadedMIME)
+	require.False(t, d.hasAppProps, "no appProperties without DocID")
 	require.Equal(t, []string{"passport"}, cache.saved)
 	require.Equal(t, "folder-Паспорт и ID", cache.ids["passport"])
 }
@@ -214,6 +244,62 @@ func TestUpload_findFolderPicksOldest(t *testing.T) {
 	require.Equal(t, "old", cache.ids["passport"])
 }
 
+// Case (a): the root is in the trash, so the trashed=false search skips it; a new
+// root is created, the category goes under it and the file is uploaded.
+// Case (c) (root deleted permanently) is indistinguishable for the search: the
+// root is simply absent, which TestUpload_happyPath already covers.
+func TestUpload_trashedRootIsIgnored(t *testing.T) {
+	d := &fakeDrive{folders: []map[string]string{
+		{"id": "old-root", "name": rootFolderName, "trashed": "true"},
+	}}
+	cache := newFakeCache()
+	svc := newService(t, d, fakeClients{}, cache)
+
+	_, err := svc.Upload(context.Background(), "user-1", testUpload())
+
+	require.NoError(t, err)
+	require.Equal(t, []string{rootFolderName, "Паспорт и ID"}, d.created)
+	require.Equal(t, "folder-Паспорт и ID", d.uploadParent)
+	require.Equal(t, []string{"passport"}, cache.saved, "only the category is cached, never the root")
+}
+
+// Case (b): the cached category folder is trashed while the root is alive; the
+// cache entry is dropped and the category is recreated under the same root.
+func TestUpload_trashedCategoryKeepsRoot(t *testing.T) {
+	d := &fakeDrive{
+		trashed: map[string]bool{"stale": true},
+		folders: []map[string]string{{"id": "live-root", "name": rootFolderName}},
+	}
+	cache := newFakeCache()
+	cache.ids["passport"] = "stale"
+	svc := newService(t, d, fakeClients{}, cache)
+
+	_, err := svc.Upload(context.Background(), "user-1", testUpload())
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"passport"}, cache.deleted)
+	require.Equal(t, []string{"Паспорт и ID"}, d.created, "root must not be recreated")
+	require.Equal(t, "folder-Паспорт и ID", d.uploadParent)
+}
+
+// Case (e): two roots with the same name (one restored from the trash, one
+// created later); the oldest wins and no new root is created.
+func TestUpload_findFolderPicksOldestRoot(t *testing.T) {
+	d := &fakeDrive{folders: []map[string]string{
+		{"id": "old-root", "name": rootFolderName},
+		{"id": "new-root", "name": rootFolderName},
+	}}
+	svc := newService(t, d, fakeClients{}, newFakeCache())
+
+	_, err := svc.Upload(context.Background(), "user-1", testUpload())
+
+	require.NoError(t, err)
+	require.Equal(t, "createdTime", d.lastOrderBy)
+	require.Equal(t, []string{"Паспорт и ID"}, d.created, "no new root")
+}
+
+// Case (g): the user renamed or moved the folders; the cache is keyed by id, so
+// the cached folder stays alive, no search runs and the upload goes to that id.
 func TestUpload_cachedFolderAlive(t *testing.T) {
 	d := &fakeDrive{}
 	cache := newFakeCache()
@@ -256,6 +342,168 @@ func TestUpload_linkFallback(t *testing.T) {
 	require.Equal(t, "https://drive.google.com/file/d/file-1/view", f.Link)
 }
 
+func TestUpload_idempotentByDocID(t *testing.T) {
+	d := &fakeDrive{webViewLink: "https://drive.google.com/file/d/file-1/view?usp=drivesdk"}
+	svc := newService(t, d, fakeClients{}, newFakeCache())
+	up := testUpload()
+	up.DocID = "doc-1"
+
+	first, err := svc.Upload(context.Background(), "user-1", up)
+	require.NoError(t, err)
+	require.True(t, d.hasAppProps)
+	require.Equal(t, "doc-1", d.stored[0].docID)
+
+	second, err := svc.Upload(context.Background(), "user-1", up)
+	require.NoError(t, err)
+	require.Equal(t, first.ID, second.ID)
+	require.Equal(t, "https://drive.google.com/file/d/file-1/view", second.Link)
+	require.Equal(t, 1, d.uploads)
+	require.Contains(t, d.lastFileQ, "trashed=false")
+	require.Contains(t, d.lastFileQ, "value='doc-1'")
+}
+
 func TestEscapeQuery(t *testing.T) {
 	require.Equal(t, `it\'s`, escapeQuery("it's"))
+}
+
+// racyDrive wraps fakeDrive and answers 404 to child listings and uploads
+// under a parent for which gone returns true, while GET files/{id} keeps
+// reporting the folder as alive (the check-then-use race).
+type racyDrive struct {
+	*fakeDrive
+	gone func(parent string) bool
+}
+
+func (d racyDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && r.URL.Path == "/drive/v3/files" {
+		q := r.URL.Query().Get("q")
+		for _, parent := range []string{"stale", "folder-Паспорт и ID"} {
+			if d.gone(parent) && strings.Contains(q, "'"+parent+"' in parents") {
+				http.NotFound(w, r)
+				return
+			}
+		}
+	}
+	d.fakeDrive.ServeHTTP(w, r)
+}
+
+func newRacyService(t *testing.T, d racyDrive, cache FolderCache) *Service {
+	t.Helper()
+	d.t = t
+	srv := httptest.NewServer(d)
+	t.Cleanup(srv.Close)
+	return New(fakeClients{}, cache, WithBaseURL(srv.URL))
+}
+
+func TestUpload_staleFolderRaceRetriesOnce(t *testing.T) {
+	d := racyDrive{fakeDrive: &fakeDrive{}, gone: func(p string) bool { return p == "stale" }}
+	cache := newFakeCache()
+	cache.ids["passport"] = "stale"
+	svc := newRacyService(t, d, cache)
+
+	f, err := svc.Upload(context.Background(), "user-1", testUpload())
+
+	require.NoError(t, err)
+	require.Equal(t, "file-1", f.ID)
+	require.Equal(t, []string{"passport"}, cache.deleted)
+	require.Equal(t, 1, countOf(d.created, "Паспорт и ID"), "folder recreated exactly once")
+	require.Equal(t, "folder-Паспорт и ID", d.uploadParent)
+	require.Equal(t, "folder-Паспорт и ID", cache.ids["passport"])
+	require.Equal(t, 1, d.uploads)
+}
+
+func TestUpload_staleFolderRacePersistentFails(t *testing.T) {
+	d := racyDrive{fakeDrive: &fakeDrive{}, gone: func(string) bool { return true }}
+	cache := newFakeCache()
+	cache.ids["passport"] = "stale"
+	svc := newRacyService(t, d, cache)
+
+	_, err := svc.Upload(context.Background(), "user-1", testUpload())
+
+	require.ErrorIs(t, err, errNotFound)
+	require.Equal(t, []string{"passport"}, cache.deleted, "retry must not loop")
+	require.Equal(t, 1, countOf(d.created, "Паспорт и ID"))
+	require.Zero(t, d.uploads)
+}
+
+func countOf(items []string, want string) int {
+	n := 0
+	for _, it := range items {
+		if it == want {
+			n++
+		}
+	}
+	return n
+}
+
+// An empty DocID (legacy callers) keeps the plain upload: no appProperties,
+// no lookup by property.
+func TestUpload_emptyDocIDSkipsIdempotency(t *testing.T) {
+	d := &fakeDrive{}
+	svc := newService(t, d, fakeClients{}, newFakeCache())
+
+	f, err := svc.Upload(context.Background(), "user-1", testUpload())
+
+	require.NoError(t, err)
+	require.Equal(t, "file-1", f.ID)
+	require.False(t, d.hasAppProps)
+	require.Empty(t, d.lastFileQ, "no appProperties lookup without a DocID")
+	require.Equal(t, 1, d.uploads)
+}
+
+// Files of other documents, or in another folder, are not reused.
+func TestUpload_docIDLookupIsScoped(t *testing.T) {
+	d := &fakeDrive{}
+	svc := newService(t, d, fakeClients{}, newFakeCache())
+	a, b := testUpload(), testUpload()
+	a.DocID, b.DocID = "doc-a", "doc-b"
+
+	fa, err := svc.Upload(context.Background(), "user-1", a)
+	require.NoError(t, err)
+	fb, err := svc.Upload(context.Background(), "user-1", b)
+	require.NoError(t, err)
+
+	require.NotEqual(t, fa.ID, fb.ID)
+	require.Equal(t, 2, d.uploads)
+
+	other := a
+	other.CacheKey, other.FolderName = "other", "Другое"
+	fo, err := svc.Upload(context.Background(), "user-1", other)
+	require.NoError(t, err)
+	require.NotEqual(t, fa.ID, fo.ID, "same doc in another folder is a different upload")
+}
+
+// The lookup must not match a quote in the id as query syntax.
+func TestUpload_docIDIsEscapedInQuery(t *testing.T) {
+	d := &fakeDrive{}
+	svc := newService(t, d, fakeClients{}, newFakeCache())
+	up := testUpload()
+	up.DocID = "x' or trashed=true or name='"
+
+	_, err := svc.Upload(context.Background(), "user-1", up)
+
+	require.NoError(t, err)
+	require.Contains(t, d.lastFileQ, `value='x\' or trashed=true or name=\''`)
+}
+
+func TestUpload_canceledContext(t *testing.T) {
+	d := &fakeDrive{}
+	svc := newService(t, d, fakeClients{}, newFakeCache())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := svc.Upload(ctx, "user-1", testUpload())
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, d.uploads)
+}
+
+// The user disconnect maps to its own error, never to the revoke one.
+func TestUpload_disconnectedByUser(t *testing.T) {
+	svc := newService(t, &fakeDrive{}, fakeClients{err: oauth.ErrAccessDisconnected}, newFakeCache())
+
+	_, err := svc.Upload(context.Background(), "user-1", testUpload())
+
+	require.ErrorIs(t, err, ErrAccessDisconnected)
+	require.NotErrorIs(t, err, ErrAccessRevoked)
 }

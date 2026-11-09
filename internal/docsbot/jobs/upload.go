@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
@@ -83,6 +84,10 @@ func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentAr
 		}
 		return fmt.Errorf("upload document: %w", err)
 	}
+	if res.Noop {
+		w.log.DebugContext(ctx, "upload noop", "job_id", job.ID, "attempt", job.Attempt, "user_id", user, "doc_id", id)
+		return nil
+	}
 	w.log.InfoContext(ctx, "upload finished", "user_id", user, "doc_id", id, "category", res.Doc.Category,
 		"backup_status", res.Doc.BackupStatus, "duration_ms", time.Since(start).Milliseconds())
 	// A too-large file stays in Telegram (backup_status=too_large); the outcome
@@ -112,12 +117,48 @@ func NewEnqueuer(repo *postgres.Repo, queue *pjobs.Client) *Enqueuer {
 	return &Enqueuer{repo: repo, queue: queue}
 }
 
+// uploadInsertOpts makes an upload job unique by args among live states, so a
+// repeated insert while an upload is queued or running is skipped. Finished
+// states are excluded so a retry or a post-reconnect upload still runs.
+func uploadInsertOpts() *river.InsertOpts {
+	return &river.InsertOpts{
+		Queue: UploadQueue,
+		UniqueOpts: river.UniqueOpts{
+			ByArgs: true,
+			ByState: []rivertype.JobState{
+				rivertype.JobStateAvailable,
+				rivertype.JobStatePending,
+				rivertype.JobStateRunning,
+				rivertype.JobStateScheduled,
+				rivertype.JobStateRetryable,
+			},
+		},
+	}
+}
+
 // EnqueueUpload marks the document pending and enqueues its upload in one tx.
+// The job is unique by args among live states, so a repeated call while an
+// upload is queued or running is skipped and leaves the document status as is.
+// Finished states are excluded so a retry or a post-reconnect upload still runs.
 func (e *Enqueuer) EnqueueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
-	return e.repo.EnqueueUpload(ctx, id, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := e.queue.InsertTx(ctx, tx, UploadDocumentArgs{UserID: string(user), DocumentID: string(id)}, &river.InsertOpts{Queue: UploadQueue})
-		return err
+	return e.repo.EnqueueUpload(ctx, id, func(ctx context.Context, tx pgx.Tx) (bool, error) {
+		res, err := e.queue.InsertTx(ctx, tx, UploadDocumentArgs{UserID: string(user), DocumentID: string(id)}, uploadInsertOpts())
+		if err != nil {
+			return false, err
+		}
+		return res.UniqueSkippedAsDuplicate, nil
 	})
+}
+
+// RequeueUpload inserts the upload job only, with the same uniqueness as
+// EnqueueUpload and without touching the document, so a live job dedups to a
+// no-op and the stuck-since clock (updated_at) is preserved.
+func (e *Enqueuer) RequeueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
+	_, err := e.queue.Insert(ctx, UploadDocumentArgs{UserID: string(user), DocumentID: string(id)}, uploadInsertOpts())
+	if err != nil {
+		return fmt.Errorf("requeue upload: %w", err)
+	}
+	return nil
 }
 
 // CancelUploads removes the user's pending (not yet running) upload_document jobs.

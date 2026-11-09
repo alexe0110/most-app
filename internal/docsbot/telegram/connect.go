@@ -21,8 +21,10 @@ type userLookup interface {
 	TgUserID(ctx context.Context, userID string) (int64, error)
 }
 
-// driveCounter reports how many saved documents are not yet on Drive.
+// driveCounter is the part of docsbot.Service the connect callback needs: it
+// resets the user's cached Drive folders and counts documents not yet on Drive.
 type driveCounter interface {
+	ResetDriveFolders(ctx context.Context, user docsbot.UserID) error
 	NotBackedUpCount(ctx context.Context, user docsbot.UserID) (int, error)
 }
 
@@ -34,6 +36,10 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 		if err != nil {
 			return fmt.Errorf("resolve tg user: %w", err)
 		}
+		if err := counter.ResetDriveFolders(ctx, docsbot.UserID(userID)); err != nil {
+			return fmt.Errorf("reset drive folders: %w", err)
+		}
+		log.InfoContext(ctx, "drive folder cache reset", "user_id", userID, "reason", "reconnect")
 		if err := b.Send(ctx, chatID, textDriveConnected); err != nil {
 			return err
 		}

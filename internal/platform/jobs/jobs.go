@@ -22,6 +22,9 @@ const (
 	maxWorkers  = 5
 	maxAttempts = 5
 	jobTimeout  = 5 * time.Minute
+	// rescueStuckJobsAfter must exceed jobTimeout: a job left running by a
+	// crashed worker is picked up after ~10 minutes instead of River's 1h default.
+	rescueStuckJobsAfter = 10 * time.Minute
 )
 
 // Client is a thin façade over a River client: start/stop the workers and
@@ -39,12 +42,13 @@ func New(pool *pgxpool.Pool, log *slog.Logger, workers *river.Workers, queues ma
 		qs[name] = qc
 	}
 	rc, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
-		Queues:       qs,
-		Workers:      workers,
-		PeriodicJobs: periodic,
-		MaxAttempts:  maxAttempts,
-		JobTimeout:   jobTimeout,
-		Logger:       log,
+		Queues:               qs,
+		Workers:              workers,
+		PeriodicJobs:         periodic,
+		MaxAttempts:          maxAttempts,
+		JobTimeout:           jobTimeout,
+		RescueStuckJobsAfter: rescueStuckJobsAfter,
+		Logger:               log,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("new river client: %w", err)
