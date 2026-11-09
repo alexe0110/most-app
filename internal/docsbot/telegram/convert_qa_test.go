@@ -69,7 +69,7 @@ func TestAlbumStore(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestStores_concurrent(t *testing.T) {
+func TestStores_concurrent(_ *testing.T) {
 	results := newResultStore(time.Now)
 	albums := newAlbumStore(time.Now)
 	sessions := newSessionStore(time.Now)

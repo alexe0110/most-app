@@ -47,6 +47,8 @@ type convHarness struct {
 	downloads []string
 	// files overrides what a file id downloads; the default is a small JPEG.
 	files map[string][]byte
+	// noDocument makes sendDocument answer without the stored document.
+	noDocument bool
 }
 
 // serve makes fileID download as data.
@@ -96,6 +98,10 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 			return
 		case strings.HasSuffix(path, "/sendDocument"):
 			n := h.captureDocument(t, r)
+			if h.noDocument {
+				writeJSON(w, `{"ok":true,"result":{"message_id":7}}`)
+				return
+			}
 			writeJSON(w, fmt.Sprintf(`{"ok":true,"result":{"message_id":7,"document":{"file_id":"res-%[1]d","file_unique_id":"res-uniq-%[1]d","file_size":1234,"mime_type":"image/jpeg"}}}`, n))
 			return
 		case strings.HasSuffix(path, "/editMessageReplyMarkup"):

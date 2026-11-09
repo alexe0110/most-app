@@ -56,10 +56,15 @@ func (c *converter) onPDFOp(ctx context.Context, b *bot.Bot, update *models.Upda
 	}
 
 	// keep, drop and merge need more input: check the file now, then wait for it.
-	if _, err := convert.PageCount(pctx, src); err != nil {
+	pages, err := convert.PageCount(pctx, src)
+	if err != nil {
 		c.log.ErrorContext(ctx, "convert pdf", "err", err, "user_id", user, "doc_id", doc.ID, "op", op)
 		reply(ctx, b, c.log, chatID, pdfErrorText(err))
 		return
+	}
+	c.log.InfoContext(ctx, "pdf session", "user_id", user, "doc_id", doc.ID, "op", op, "pages", pages, "in_bytes", len(src))
+	if c.sessions.end(tgUser) {
+		reply(ctx, b, c.log, chatID, textPDFPrevCancelled)
 	}
 	c.sessions.start(tgUser)
 	next, prompt, kb := stepAwaitRange, textPDFRangePrompt, cancelKeyboard()
@@ -69,37 +74,45 @@ func (c *converter) onPDFOp(ctx context.Context, b *bot.Bot, update *models.Upda
 	c.sessions.update(tgUser, func(s *session) {
 		s.step, s.pdfOp = next, op
 		s.sourceDoc, s.sourceTitle = doc.ID, doc.Title
-		s.pdfs, s.pdfBytes = [][]byte{src}, len(src)
+		s.pdfs, s.pdfBytes = []pdfPart{{fileID: doc.TgFileID, size: len(src)}}, len(src)
 	})
 	sendMarkup(ctx, b, c.log, chatID, prompt, kb)
 }
 
-// onRange applies the typed page range to the session's PDF.
+// onRange applies the typed page range to the session's PDF. The session is
+// claimed first, so two messages can't run the operation twice; it goes back
+// when the user can try again.
 func (c *converter) onRange(ctx context.Context, b *bot.Bot, update *models.Update) {
 	tgUser, _ := messageUser(update)
 	chatID := update.Message.Chat.ID
-	sess, ok := c.sessions.live(tgUser)
-	if !ok || sess.step != stepAwaitRange || len(sess.pdfs) == 0 {
+	sess, ok := c.sessions.claim(tgUser, stepAwaitRange)
+	if !ok || len(sess.pdfs) == 0 {
 		return
 	}
-	src, keep, doc, title := sess.pdfs[0], sess.pdfOp == opKeep, sess.sourceDoc, sess.sourceTitle
+	uid, _ := userID(ctx)
+	src, err := c.download(ctx, b, sess.pdfs[0].fileID)
+	if err != nil {
+		c.log.ErrorContext(ctx, "convert download pdf", "err", err, "user_id", uid, "doc_id", sess.sourceDoc)
+		c.sessions.restore(tgUser, sess)
+		reply(ctx, b, c.log, chatID, textConvertDownloadFailed)
+		return
+	}
 
 	pctx, cancel := context.WithTimeout(ctx, pdfTimeout)
 	defer cancel()
-	out, err := convert.SelectPages(pctx, src, update.Message.Text, keep)
-	uid, _ := userID(ctx)
+	out, err := convert.SelectPages(pctx, src, update.Message.Text, sess.pdfOp == opKeep)
 	if errors.Is(err, convert.ErrBadPageRange) {
-		reply(ctx, b, c.log, chatID, textPDFBadRange) // the session stays: try again
+		c.sessions.restore(tgUser, sess) // try again
+		reply(ctx, b, c.log, chatID, textPDFBadRange)
 		return
 	}
-	c.sessions.end(tgUser)
 	if err != nil {
-		c.log.ErrorContext(ctx, "convert pdf", "err", err, "user_id", uid, "doc_id", doc, "op", sess.pdfOp)
+		c.log.ErrorContext(ctx, "convert pdf", "err", err, "user_id", uid, "doc_id", sess.sourceDoc, "op", sess.pdfOp)
 		reply(ctx, b, c.log, chatID, pdfErrorText(err))
 		return
 	}
-	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", doc, "op", sess.pdfOp, "in_bytes", len(src), "out_bytes", len(out))
-	c.sendResult(ctx, b, chatID, tgUser, resultName(title, suffixEdited, "document", "pdf"), out, doc, suffixEdited)
+	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", sess.sourceDoc, "op", sess.pdfOp, "in_bytes", len(src), "out_bytes", len(out))
+	c.sendResult(ctx, b, chatID, tgUser, resultName(sess.sourceTitle, suffixEdited, "document", "pdf"), out, sess.sourceDoc, suffixEdited)
 }
 
 // onPDFPart adds a PDF the user sent to a merge in progress.
@@ -114,11 +127,13 @@ func (c *converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 		reply(ctx, b, c.log, chatID, textConvertUnsupported)
 		return
 	}
-	if int64(sess.pdfBytes)+update.Message.Document.FileSize > convert.MaxPDFBytes {
-		reply(ctx, b, c.log, chatID, textPDFTooLarge)
+	file := update.Message.Document
+	if int64(sess.pdfBytes)+file.FileSize > convert.MaxPDFBytes {
+		reply(ctx, b, c.log, chatID, pdfTooLargeText())
 		return
 	}
-	data, err := c.download(ctx, b, update.Message.Document.FileID)
+	// Download once to check the file; only its id and size are kept.
+	data, err := c.download(ctx, b, file.FileID)
 	if err != nil {
 		uid, _ := userID(ctx)
 		c.log.ErrorContext(ctx, "convert download pdf", "err", err, "user_id", uid)
@@ -141,50 +156,68 @@ func (c *converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 			tooLarge = true
 			return
 		}
-		s.pdfs = append(s.pdfs, data)
+		s.pdfs = append(s.pdfs, pdfPart{fileID: file.FileID, size: len(data)})
 		s.pdfBytes += len(data)
 		total = len(s.pdfs)
 	})
 	if tooLarge {
-		reply(ctx, b, c.log, chatID, textPDFTooLarge)
+		reply(ctx, b, c.log, chatID, pdfTooLargeText())
 		return
 	}
 	reply(ctx, b, c.log, chatID, fmt.Sprintf(textPDFMergeAdded, total))
 }
 
-// finishMerge joins the collected PDFs.
+// finishMerge joins the collected PDFs. The session is claimed first, so a
+// double «Готово» runs the merge once.
 func (c *converter) finishMerge(ctx context.Context, b *bot.Bot, tgUser, chatID int64) {
-	sess, ok := c.sessions.live(tgUser)
-	if !ok || sess.step != stepMergePDF {
+	sess, ok := c.sessions.claim(tgUser, stepMergePDF)
+	if !ok {
 		return
 	}
+	uid, _ := userID(ctx)
 	if len(sess.pdfs) < 2 {
+		c.sessions.restore(tgUser, sess)
 		reply(ctx, b, c.log, chatID, textPDFMergeNeeded)
 		return
 	}
-	pdfs, doc, title := sess.pdfs, sess.sourceDoc, sess.sourceTitle
+	files := make([][]byte, 0, len(sess.pdfs))
+	total := 0
+	for _, part := range sess.pdfs {
+		data, err := c.download(ctx, b, part.fileID)
+		if err != nil {
+			c.log.ErrorContext(ctx, "convert download pdf", "err", err, "user_id", uid, "doc_id", sess.sourceDoc)
+			c.sessions.restore(tgUser, sess)
+			reply(ctx, b, c.log, chatID, textConvertDownloadFailed)
+			return
+		}
+		if total += len(data); total > convert.MaxPDFBytes {
+			reply(ctx, b, c.log, chatID, pdfTooLargeText())
+			return
+		}
+		files = append(files, data)
+	}
 
 	pctx, cancel := context.WithTimeout(ctx, pdfTimeout)
 	defer cancel()
-	out, err := convert.MergePDF(pctx, pdfs)
-	uid, _ := userID(ctx)
-	c.sessions.end(tgUser)
+	out, err := convert.MergePDF(pctx, files)
 	if err != nil {
-		c.log.ErrorContext(ctx, "convert pdf", "err", err, "user_id", uid, "doc_id", doc, "op", opMerge, "files", len(pdfs))
+		c.log.ErrorContext(ctx, "convert pdf", "err", err, "user_id", uid, "doc_id", sess.sourceDoc, "op", opMerge, "files", len(files))
 		reply(ctx, b, c.log, chatID, pdfErrorText(err))
 		return
 	}
-	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", doc, "op", opMerge, "files", len(pdfs), "out_bytes", len(out))
-	c.sendResult(ctx, b, chatID, tgUser, resultName(title, suffixEdited, "document", "pdf"), out, doc, suffixEdited)
+	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", sess.sourceDoc, "op", opMerge, "files", len(files), "out_bytes", len(out))
+	c.sendResult(ctx, b, chatID, tgUser, resultName(sess.sourceTitle, suffixEdited, "document", "pdf"), out, sess.sourceDoc, suffixEdited)
 }
+
+func pdfTooLargeText() string { return fmt.Sprintf(textPDFTooLarge, convert.MaxPDFBytes>>20) }
 
 // pdfErrorText maps a PDF error to a user message.
 func pdfErrorText(err error) string {
 	switch {
 	case errors.Is(err, convert.ErrPDFTooLarge):
-		return textPDFTooLarge
+		return pdfTooLargeText()
 	case errors.Is(err, convert.ErrPDFTooManyPages):
-		return textPDFTooMany
+		return fmt.Sprintf(textPDFTooMany, convert.MaxPDFPages)
 	case errors.Is(err, convert.ErrPDFTimeout):
 		return textPDFTimeout
 	case errors.Is(err, convert.ErrBadPageRange):

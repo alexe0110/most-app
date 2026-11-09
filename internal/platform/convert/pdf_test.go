@@ -3,6 +3,8 @@ package convert_test
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -189,4 +191,20 @@ func TestParsePageRange(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// PDF operations must not create pdfcpu's config directory under HOME.
+func TestPDF_doesNotTouchHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+
+	_, err := convert.MergePDF(t.Context(), [][]byte{makePDF(t, 1), makePDF(t, 1)})
+	require.NoError(t, err)
+	_, err = convert.RotatePDF(t.Context(), makePDF(t, 1), 90)
+	require.NoError(t, err)
+
+	entries, err := os.ReadDir(home)
+	require.NoError(t, err)
+	require.Empty(t, entries)
 }

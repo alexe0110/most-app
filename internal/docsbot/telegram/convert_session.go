@@ -44,9 +44,17 @@ type session struct {
 	// PDF operations on a stored document (card or picker).
 	sourceDoc   docsbot.DocumentID
 	sourceTitle string
-	pdfOp       string   // opKeep, opDrop or opMerge
-	pdfs        [][]byte // keep/drop: the one source; merge: source first, then the added
-	pdfBytes    int      // total size of pdfs
+	pdfOp       string    // opKeep, opDrop or opMerge
+	pdfs        []pdfPart // keep/drop: the one source; merge: source first, then the added
+	pdfBytes    int       // total size of pdfs
+}
+
+// pdfPart is a PDF a session will work on. Only the Telegram file id and the
+// size are kept: the bytes are downloaded when the operation runs, so an idle
+// session holds no documents in memory. The file id is never logged.
+type pdfPart struct {
+	fileID string
+	size   int
 }
 
 // orderedImages returns the image bytes in arrival order.
@@ -107,6 +115,31 @@ func (s *sessionStore) start(user int64) {
 	s.byUser[user] = &session{step: stepChooseAction, updated: s.now()}
 }
 
+// claim removes the user's session if it is live and at the given step, and
+// returns it. The caller owns it: a second concurrent claim finds nothing, so an
+// operation can't run twice. restore puts it back when the user can retry.
+func (s *sessionStore) claim(user int64, at step) (session, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.liveLocked(user)
+	if !ok || sess.step != at {
+		return session{}, false
+	}
+	delete(s.byUser, user)
+	return *sess, true
+}
+
+// restore puts a claimed session back, unless the user started another one.
+func (s *sessionStore) restore(user int64, sess session) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, taken := s.byUser[user]; taken {
+		return
+	}
+	sess.updated = s.now()
+	s.byUser[user] = &sess
+}
+
 // end removes the session and reports whether one was live.
 func (s *sessionStore) end(user int64) bool {
 	s.mu.Lock()
@@ -139,21 +172,47 @@ type convResult struct {
 	file      docsbot.IncomingFile
 	sourceDoc docsbot.DocumentID // "" when the source is not a stored document
 	suffix    string             // title suffix for the saved copy
-	created   time.Time
 }
 
-// resultStore holds results by a short token that rides in the button's
-// callback data (a file id would not fit, and must not be logged). Memory only:
-// a restart or the TTL drops the choice, and the file stays in the chat.
-type resultStore struct {
+// convAlbum is an album of images offered as one PDF.
+type convAlbum struct {
+	user   docsbot.UserID
+	group  string
+	images []albumImage // ordered by message id
+}
+
+// tokenStore holds values by a short token that rides in a button's callback
+// data (a file id would not fit, and must not be logged). Each value belongs to
+// one owner and is taken at most once. Memory only: a restart or the TTL drops
+// it, and the chat message stays.
+type tokenStore[T any, O comparable] struct {
 	mu      sync.Mutex
-	byToken map[string]convResult
+	byToken map[string]tokenEntry[T]
 	ttl     time.Duration
 	now     func() time.Time
+	ownerOf func(T) O
+}
+
+type tokenEntry[T any] struct {
+	v       T
+	created time.Time
+}
+
+type (
+	resultStore = tokenStore[convResult, int64]
+	albumStore  = tokenStore[convAlbum, docsbot.UserID]
+)
+
+func newTokenStore[T any, O comparable](now func() time.Time, ownerOf func(T) O) *tokenStore[T, O] {
+	return &tokenStore[T, O]{byToken: map[string]tokenEntry[T]{}, ttl: sessionTTL, now: now, ownerOf: ownerOf}
 }
 
 func newResultStore(now func() time.Time) *resultStore {
-	return &resultStore{byToken: map[string]convResult{}, ttl: sessionTTL, now: now}
+	return newTokenStore(now, func(r convResult) int64 { return r.tgUser })
+}
+
+func newAlbumStore(now func() time.Time) *albumStore {
+	return newTokenStore(now, func(a convAlbum) docsbot.UserID { return a.user })
 }
 
 // newToken returns a random 16-character token.
@@ -163,91 +222,44 @@ func newToken() string {
 	return hex.EncodeToString(raw[:])
 }
 
-// put stores a result under token and drops expired ones.
-func (s *resultStore) put(token string, r convResult) {
+// put stores v under token (renewing its TTL) and drops expired entries.
+func (s *tokenStore[T, O]) put(token string, v T) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
-	for k, v := range s.byToken {
-		if now.Sub(v.created) > s.ttl {
+	for k, e := range s.byToken {
+		if now.Sub(e.created) > s.ttl {
 			delete(s.byToken, k)
 		}
 	}
-	r.created = now
-	s.byToken[token] = r
+	s.byToken[token] = tokenEntry[T]{v: v, created: now}
 }
 
-// take removes and returns the user's result, so a double tap acts once. A token
-// of another user, an unknown or an expired one reports false.
-func (s *resultStore) take(token string, tgUser int64) (convResult, bool) {
+// take removes and returns the owner's value, so a double tap acts once. A token
+// of another owner, an unknown or an expired one reports false; a foreign
+// attempt does not burn the owner's token.
+func (s *tokenStore[T, O]) take(token string, owner O) (T, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r, ok := s.byToken[token]
-	if !ok || r.tgUser != tgUser {
-		return convResult{}, false
+	v, ok := s.peekLocked(token, owner)
+	if ok {
+		delete(s.byToken, token)
 	}
-	delete(s.byToken, token)
-	if s.now().Sub(r.created) > s.ttl {
-		return convResult{}, false
-	}
-	return r, true
+	return v, ok
 }
 
-// convAlbum is an album of images offered as one PDF.
-type convAlbum struct {
-	user    docsbot.UserID
-	group   string
-	images  []albumImage // ordered by message id
-	created time.Time
-}
-
-// albumStore holds offered albums by token, like resultStore.
-type albumStore struct {
-	mu      sync.Mutex
-	byToken map[string]convAlbum
-	ttl     time.Duration
-	now     func() time.Time
-}
-
-func newAlbumStore(now func() time.Time) *albumStore {
-	return &albumStore{byToken: map[string]convAlbum{}, ttl: sessionTTL, now: now}
-}
-
-// put stores an album under token and drops expired ones.
-func (s *albumStore) put(token string, a convAlbum) {
+// peek returns the owner's value without removing it.
+func (s *tokenStore[T, O]) peek(token string, owner O) (T, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := s.now()
-	for k, v := range s.byToken {
-		if now.Sub(v.created) > s.ttl {
-			delete(s.byToken, k)
-		}
-	}
-	if a.created.IsZero() {
-		a.created = now
-	}
-	s.byToken[token] = a
+	return s.peekLocked(token, owner)
 }
 
-// take removes and returns the user's album, so a double tap acts once.
-func (s *albumStore) take(token string, user docsbot.UserID) (convAlbum, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	a, ok := s.byToken[token]
-	if !ok || a.user != user || s.now().Sub(a.created) > s.ttl {
-		return convAlbum{}, false
+func (s *tokenStore[T, O]) peekLocked(token string, owner O) (T, bool) {
+	var zero T
+	e, ok := s.byToken[token]
+	if !ok || s.ownerOf(e.v) != owner || s.now().Sub(e.created) > s.ttl {
+		return zero, false
 	}
-	delete(s.byToken, token)
-	return a, true
-}
-
-// peek returns the user's album without removing it.
-func (s *albumStore) peek(token string, user docsbot.UserID) (convAlbum, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	a, ok := s.byToken[token]
-	if !ok || a.user != user || s.now().Sub(a.created) > s.ttl {
-		return convAlbum{}, false
-	}
-	return a, true
+	return e.v, true
 }

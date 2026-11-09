@@ -153,6 +153,8 @@ func (c *converter) message(ctx context.Context, b *bot.Bot, update *models.Upda
 	chatID := update.Message.Chat.ID
 
 	switch {
+	case len(update.Message.Photo) > 0 && sess.step == stepMergePDF:
+		reply(ctx, b, c.log, chatID, textPDFNotPDF)
 	case len(update.Message.Photo) > 0:
 		c.onImage(ctx, b, update, largestPhoto(update.Message.Photo).FileID)
 	case update.Message.Document != nil:
@@ -169,6 +171,11 @@ func (c *converter) onDocument(ctx context.Context, b *bot.Bot, update *models.U
 	doc := update.Message.Document
 	if doc.MimeType == mimePDF {
 		c.onPDFPart(ctx, b, update)
+		return
+	}
+	user, _ := messageUser(update)
+	if sess, ok := c.sessions.live(user); ok && sess.step == stepMergePDF {
+		reply(ctx, b, c.log, update.Message.Chat.ID, textPDFNotPDF)
 		return
 	}
 	if !supportedImageMIME(doc.MimeType) {
@@ -333,7 +340,7 @@ func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, user, chatID int6
 	}
 
 	c.sessions.end(user)
-	name := "scan-" + c.now().Format("2006-01-02") + ".pdf"
+	name := scanName(c.now())
 	c.sendResult(ctx, b, chatID, user, name, pdf, "", suffixPDF)
 }
 
@@ -361,29 +368,42 @@ func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, user, chatID
 	c.sendResult(ctx, b, chatID, user, name, out, "", suffixCompressed)
 }
 
+// scanName is the file name of a PDF made from photos.
+func scanName(now time.Time) string { return "scan-" + now.Format("2006-01-02") + ".pdf" }
+
+// loadDoc reads the user's document (the domain checks ownership) and answers
+// the user itself when it can't.
+func (c *converter) loadDoc(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID) (docsbot.Document, bool) {
+	card, err := c.svc.Card(ctx, user, id)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		reply(ctx, b, c.log, chatID, textGone)
+		return docsbot.Document{}, false
+	}
+	if err != nil {
+		c.log.ErrorContext(ctx, "convert load document", "err", err, "user_id", user, "doc_id", id)
+		reply(ctx, b, c.log, chatID, textError)
+		return docsbot.Document{}, false
+	}
+	return card.Doc, true
+}
+
 // onMenu offers the operations that fit the document's type.
 func (c *converter) onMenu(ctx context.Context, b *bot.Bot, chatID int64, id docsbot.DocumentID) {
 	user, ok := userID(ctx)
 	if !ok {
 		return
 	}
-	card, err := c.svc.Card(ctx, user, id) // the domain checks ownership
-	if errors.Is(err, docsbot.ErrNotFound) {
-		reply(ctx, b, c.log, chatID, textGone)
-		return
-	}
-	if err != nil {
-		c.log.ErrorContext(ctx, "convert load document", "err", err, "user_id", user, "doc_id", id)
-		reply(ctx, b, c.log, chatID, textError)
+	doc, ok := c.loadDoc(ctx, b, chatID, user, id)
+	if !ok {
 		return
 	}
 	switch {
-	case isPDF(card.Doc):
+	case isPDF(doc):
 		sendMarkup(ctx, b, c.log, chatID, textConvertMenu, pdfMenuKeyboard(id))
-	case convertible(card.Doc):
-		sendMarkup(ctx, b, c.log, chatID, textConvertMenu, quickKeyboard(id, isWebP(card.Doc)))
+	case convertible(doc):
+		sendMarkup(ctx, b, c.log, chatID, textConvertMenu, quickKeyboard(id, isWebP(doc)))
 	default:
-		reply(ctx, b, c.log, chatID, unsupportedText(card.Doc))
+		reply(ctx, b, c.log, chatID, unsupportedText(doc))
 	}
 }
 
@@ -400,17 +420,10 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 	}
 	id := docsbot.DocumentID(rawID)
 
-	card, err := c.svc.Card(ctx, user, id) // the domain checks ownership
-	if errors.Is(err, docsbot.ErrNotFound) {
-		reply(ctx, b, c.log, chatID, textGone)
+	doc, ok := c.loadDoc(ctx, b, chatID, user, id)
+	if !ok {
 		return
 	}
-	if err != nil {
-		c.log.ErrorContext(ctx, "convert load document", "err", err, "user_id", user, "doc_id", id)
-		reply(ctx, b, c.log, chatID, textError)
-		return
-	}
-	doc := card.Doc
 	if !convertible(doc) {
 		reply(ctx, b, c.log, chatID, unsupportedText(doc))
 		return
@@ -420,7 +433,7 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 		return
 	}
 	maxBytes, known := quickLimit(op)
-	if !known && op != opPDF && !(op == opJPG && isWebP(doc)) {
+	if !known && op != opPDF && (op != opJPG || !isWebP(doc)) {
 		return
 	}
 	src, err := c.download(ctx, b, doc.TgFileID)
@@ -432,12 +445,12 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 
 	var out []byte
 	var name, suffix string
-	switch {
-	case op == opPDF:
+	switch op {
+	case opPDF:
 		suffix = suffixPDF
 		out, err = convert.ImagesToPDF([][]byte{src})
 		name = resultName(doc.Title, suffix, "scan", "pdf")
-	case op == opJPG:
+	case opJPG:
 		suffix = suffixJPG
 		out, err = convert.ToJPEG(src)
 		name = resultName(doc.Title, suffix, "photo", "jpg")
@@ -507,7 +520,7 @@ func (c *converter) registerAlbum(user docsbot.UserID, group string, images []al
 	sorted := slices.Clone(images)
 	slices.SortFunc(sorted, func(a, b albumImage) int { return a.msgID - b.msgID })
 	token := newToken()
-	c.albums.put(token, convAlbum{user: user, group: group, images: sorted, created: c.now()})
+	c.albums.put(token, convAlbum{user: user, group: group, images: sorted})
 	return token
 }
 
@@ -533,7 +546,7 @@ func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, update *models.Upda
 		reply(ctx, b, c.log, chatID, fmt.Sprintf(textAlbumTooMany, maxAlbumPages)) // the buttons stay: save one by one
 		return
 	case declared > maxAlbumBytes:
-		reply(ctx, b, c.log, chatID, textAlbumTooBig)
+		reply(ctx, b, c.log, chatID, fmt.Sprintf(textAlbumTooBig, maxAlbumBytes>>20))
 		return
 	}
 	album, ok = c.albums.take(token, user) // a double tap stops here
@@ -553,7 +566,7 @@ func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, update *models.Upda
 		}
 		if total += len(data); total > maxAlbumBytes {
 			c.albums.put(token, album)
-			reply(ctx, b, c.log, chatID, textAlbumTooBig)
+			reply(ctx, b, c.log, chatID, fmt.Sprintf(textAlbumTooBig, maxAlbumBytes>>20))
 			return
 		}
 		pages = append(pages, data)
@@ -568,7 +581,7 @@ func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, update *models.Upda
 	c.log.InfoContext(ctx, "album converted", "user_id", user, "pages", len(pages), "in_bytes", total, "out_bytes", len(pdf))
 
 	c.clearButtons(ctx, b, update, chatID)
-	name := "scan-" + c.now().Format("2006-01-02") + ".pdf"
+	name := scanName(c.now())
 	if !c.sendResult(ctx, b, chatID, update.CallbackQuery.From.ID, name, pdf, "", suffixPDF) {
 		return
 	}
@@ -612,9 +625,10 @@ func (c *converter) deleteCallbackMessage(ctx context.Context, b *bot.Bot, updat
 }
 
 // sendResult uploads the converted file with the save / just-the-file buttons
-// and reports whether Telegram accepted it.
-// The choice is remembered only if Telegram echoes the stored file back; without
-// the user's internal id or that echo the file goes out without buttons.
+// and reports whether Telegram accepted it. The choice is remembered only if
+// Telegram echoes the stored file back; if it doesn't, the buttons are removed
+// again, since they could not work. Without the user's internal id the file goes
+// out without buttons.
 func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser int64, filename string, data []byte,
 	sourceDoc docsbot.DocumentID, suffix string,
 ) bool {
@@ -632,7 +646,11 @@ func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 		c.log.ErrorContext(ctx, "send telegram document", "err", err)
 		return false
 	}
-	if !haveUser || msg == nil || msg.Document == nil {
+	if !haveUser {
+		return true
+	}
+	if msg == nil || msg.Document == nil {
+		c.removeKeyboard(ctx, b, chatID, msg)
 		return true
 	}
 	c.results.put(token, convResult{
@@ -643,6 +661,19 @@ func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 		},
 	})
 	return true
+}
+
+// removeKeyboard strips the buttons from a sent message, when there is one.
+func (c *converter) removeKeyboard(ctx context.Context, b *bot.Bot, chatID int64, msg *models.Message) {
+	if msg == nil {
+		return
+	}
+	_, err := b.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
+		ChatID: chatID, MessageID: msg.ID, ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}},
+	})
+	if err != nil {
+		c.log.ErrorContext(ctx, "clear buttons", "err", err)
+	}
 }
 
 // download fetches a Telegram file's bytes, capped at maxFileBytes.
@@ -735,6 +766,28 @@ func formatExt(f convert.Format) string {
 		return "png"
 	}
 	return "jpg"
+}
+
+// convertible reports whether the converter can work with the document: a photo,
+// a JPEG/PNG/WEBP file or a PDF.
+func convertible(doc docsbot.Document) bool {
+	if doc.Kind == docsbot.KindPhoto {
+		return true
+	}
+	return doc.Kind == docsbot.KindDocument && (supportedImageMIME(doc.MIME) || isPDF(doc))
+}
+
+// isWebP reports whether the document is a WEBP image.
+func isWebP(doc docsbot.Document) bool {
+	return doc.Kind == docsbot.KindDocument && doc.MIME == "image/webp"
+}
+
+// mimePDF is the MIME type of a PDF document.
+const mimePDF = "application/pdf"
+
+// isPDF reports whether the document is a PDF file.
+func isPDF(doc docsbot.Document) bool {
+	return doc.Kind == docsbot.KindDocument && doc.MIME == mimePDF
 }
 
 // supportedImageMIME reports whether we can decode this MIME type.

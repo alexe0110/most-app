@@ -18,8 +18,8 @@ import (
 const (
 	// MaxPDFBytes caps one input PDF, and the total of a merge.
 	MaxPDFBytes = 20 << 20
-	// maxPDFPages caps the pages of an input (and of a merge result).
-	maxPDFPages = 500
+	// MaxPDFPages caps the pages of an input (and of a merge result).
+	MaxPDFPages = 500
 	// maxConcurrentPDF is how many PDF operations run at once.
 	maxConcurrentPDF = 2
 )
@@ -71,7 +71,7 @@ func MergePDF(ctx context.Context, pdfs [][]byte) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
-			if pages += n; pages > maxPDFPages {
+			if pages += n; pages > MaxPDFPages {
 				return nil, ErrPDFTooManyPages
 			}
 			readers[i] = bytes.NewReader(p)
@@ -236,16 +236,18 @@ func pageCount(ctx context.Context, pdf []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if n > maxPDFPages {
+	if n > MaxPDFPages {
 		return 0, ErrPDFTooManyPages
 	}
 	return n, nil
 }
 
 // runPDF runs fn under the concurrency cap and ctx's deadline. pdfcpu stops on
-// the cancelled ctx by itself; the slot is freed only when fn really returns, so
-// a timed-out call can't pile up memory. Errors are mapped to this package's
-// sentinels.
+// the cancelled ctx by itself, but only at its own checkpoints: after a timeout
+// the caller gets ErrPDFTimeout at once while fn may keep running for a while,
+// and its slot stays taken until fn really returns. That is deliberate: it caps
+// the memory of the work still alive, so timed-out calls can't pile up. Errors
+// are mapped to this package's sentinels.
 func runPDF[T any](ctx context.Context, fn func(context.Context) (T, error)) (T, error) {
 	var zero T
 	select {
@@ -264,14 +266,17 @@ func runPDF[T any](ctx context.Context, fn func(context.Context) (T, error)) (T,
 	}
 	done := make(chan result, 1)
 	go func() {
-		defer func() { <-pdfSlots }()
-		defer func() {
-			if r := recover(); r != nil { // pdfcpu panics on some malformed input
-				done <- result{err: fmt.Errorf("%w: %v", ErrPDFInvalid, r)}
-			}
+		var r result
+		func() {
+			defer func() {
+				if p := recover(); p != nil { // pdfcpu panics on some malformed input
+					r = result{err: fmt.Errorf("%w: %v", ErrPDFInvalid, p)}
+				}
+			}()
+			r.v, r.err = fn(ctx)
 		}()
-		v, err := fn(ctx)
-		done <- result{v, err}
+		<-pdfSlots // free the slot before reporting
+		done <- r
 	}()
 
 	select {

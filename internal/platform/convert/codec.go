@@ -11,9 +11,11 @@ import (
 	"golang.org/x/image/draw"
 
 	// JPEG, PNG and WEBP decoders; other formats (HEIC, GIF, …) fail to decode.
-	_ "golang.org/x/image/webp"
 	_ "image/jpeg"
 	_ "image/png"
+
+	// WEBP decoder, registered for image.Decode.
+	_ "golang.org/x/image/webp"
 )
 
 const (

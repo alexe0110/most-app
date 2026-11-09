@@ -154,6 +154,10 @@ func (s *Service) SaveDerived(ctx context.Context, user UserID, sourceID Documen
 	}
 	saved, err := s.ChooseCategory(ctx, user, need.Doc.ID, src.Category)
 	if err != nil {
+		// Don't leave the copy pending: nobody will categorize it.
+		if delErr := s.repo.DeleteDocument(ctx, user, need.Doc.ID); delErr != nil && !errors.Is(delErr, ErrNotFound) {
+			return nil, errors.Join(err, fmt.Errorf("discard derived document: %w", delErr))
+		}
 		return nil, err
 	}
 	return saved, nil

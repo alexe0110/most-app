@@ -1,6 +1,7 @@
 package docsbot_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -147,4 +148,29 @@ func TestService_DiscardAlbum(t *testing.T) {
 			require.Len(t, repo.docs, tt.wantAfter)
 		})
 	}
+}
+
+func TestService_SaveDerived_failedSaveDropsTheCopy(t *testing.T) {
+	boom := errors.New("drive down")
+	repo := newFakeRepo()
+	svc, _ := edgeService(repo, fakeDrive{err: boom})
+	src := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "A", TgFileUniqueID: "u-src"})
+
+	_, err := svc.SaveDerived(t.Context(), user, src.ID, docsbot.IncomingFile{FileUniqueID: "u-new", Title: "x"}, " (PDF)")
+
+	require.ErrorIs(t, err, boom)
+	require.Len(t, repo.docs, 1, "only the source remains")
+}
+
+func TestService_SaveDerived_alreadySavedIsNotDeleted(t *testing.T) {
+	repo := newFakeRepo()
+	svc, _ := edgeService(repo, fakeDrive{})
+	src := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "A", TgFileUniqueID: "u-src"})
+	dup := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "B", TgFileUniqueID: "u-new"})
+
+	rep, err := svc.SaveDerived(t.Context(), user, src.ID, docsbot.IncomingFile{FileUniqueID: "u-new"}, " (PDF)")
+
+	require.NoError(t, err)
+	require.IsType(t, docsbot.AlreadySaved{}, rep)
+	require.Contains(t, repo.docs, dup.ID)
 }

@@ -189,3 +189,67 @@ func TestReceive_pdfPickerOffersActions(t *testing.T) {
 	require.Contains(t, sent.markups[0], "conv:doc:")
 	require.Contains(t, sent.markups[0], "Действия с PDF")
 }
+
+func TestConvertPDF_doubleDoneMergesOnce(t *testing.T) {
+	h := newConvHarness(t)
+	src := seedPDF(t, h)
+	h.serve("pdf-add", testPDF(t, 1))
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":merge"))
+	h.bot.ProcessUpdate(ctx, pdfUpdate("pdf-add", 100))
+
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
+
+	require.Len(t, h.docs, 1)
+}
+
+func TestConvertPDF_secondRangeTextRunsOnce(t *testing.T) {
+	h := newConvHarness(t)
+	src := seedPDF(t, h)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":keep"))
+
+	h.bot.ProcessUpdate(ctx, convText("1"))
+	h.bot.ProcessUpdate(ctx, convText("2"))
+
+	require.Len(t, h.docs, 1)
+}
+
+func TestConvertPDF_mergeRefusesNonPDF(t *testing.T) {
+	h := newConvHarness(t)
+	src := seedPDF(t, h)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":merge"))
+
+	h.bot.ProcessUpdate(ctx, photoUpdate(1))
+	require.Contains(t, h.lastText(), "Это не PDF")
+	h.bot.ProcessUpdate(ctx, namedDocumentUpdate("x", "image/png", "a.png"))
+	require.Contains(t, h.lastText(), "Это не PDF")
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
+	require.Contains(t, h.lastText(), "ещё хотя бы один", "the session survived")
+}
+
+func TestConvertPDF_newOperationCancelsLiveSession(t *testing.T) {
+	h := newConvHarness(t)
+	src := seedPDF(t, h)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":keep"))
+
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":merge"))
+
+	require.Contains(t, h.allTexts(), "Предыдущее преобразование отменено")
+	require.Contains(t, h.lastText(), "Пришли PDF")
+}
+
+func TestConvert_resultWithoutStoredFileLosesButtons(t *testing.T) {
+	h := newConvHarness(t)
+	h.noDocument = true
+	src := seedPDF(t, h)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":rot"))
+
+	require.Len(t, h.docs, 1)
+	require.Equal(t, 1, h.edits, "the dead buttons are removed")
+}
