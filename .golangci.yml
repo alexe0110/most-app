@@ -26,6 +26,22 @@ linters:
               desc: "domain must not depend on the database"
             - pkg: github.com/alexe0110/most-app/internal/platform/gdrive
               desc: "domain must not depend on Google Drive"
+        jobs:
+          list-mode: lax
+          files:
+            - "**/internal/docsbot/jobs/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/alexe0110/most-app/internal/docsbot/postgres
+              desc: "jobs must not import postgres adapter; use a consumer port"
+        postgres:
+          list-mode: lax
+          files:
+            - "**/internal/docsbot/postgres/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/alexe0110/most-app/internal/docsbot/jobs
+              desc: "postgres must not import jobs adapter"
         platform:
           list-mode: lax
           files:
