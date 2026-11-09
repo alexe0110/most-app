@@ -13,7 +13,6 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
-	"github.com/alexe0110/most-app/internal/docsbot/postgres"
 	pjobs "github.com/alexe0110/most-app/internal/platform/jobs"
 )
 
@@ -104,17 +103,23 @@ func RegisterUploadDocument(workers *river.Workers, log *slog.Logger) func(Backu
 	return func(svc Backuper, n Notifier) { w.svc, w.notify = svc, n }
 }
 
-// Enqueuer implements docsbot.Uploads atomically over the repo and the queue.
+// uploadStore is the part of the repo Enqueuer needs: it marks a document
+// pending and runs insert in the same tx.
+type uploadStore interface {
+	EnqueueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) (skip bool, err error)) error
+}
+
+// Enqueuer implements docsbot.Uploads atomically over the store and the queue.
 type Enqueuer struct {
-	repo  *postgres.Repo
+	store uploadStore
 	queue *pjobs.Client
 }
 
 var _ docsbot.Uploads = (*Enqueuer)(nil)
 
-// NewEnqueuer wires an Enqueuer around the repo and the job queue.
-func NewEnqueuer(repo *postgres.Repo, queue *pjobs.Client) *Enqueuer {
-	return &Enqueuer{repo: repo, queue: queue}
+// NewEnqueuer wires an Enqueuer around the store and the job queue.
+func NewEnqueuer(store uploadStore, queue *pjobs.Client) *Enqueuer {
+	return &Enqueuer{store: store, queue: queue}
 }
 
 // uploadInsertOpts makes an upload job unique by args among live states, so a
@@ -141,7 +146,7 @@ func uploadInsertOpts() *river.InsertOpts {
 // upload is queued or running is skipped and leaves the document status as is.
 // Finished states are excluded so a retry or a post-reconnect upload still runs.
 func (e *Enqueuer) EnqueueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
-	return e.repo.EnqueueUpload(ctx, user, id, func(ctx context.Context, tx pgx.Tx) (bool, error) {
+	return e.store.EnqueueUpload(ctx, user, id, func(ctx context.Context, tx pgx.Tx) (bool, error) {
 		res, err := e.queue.InsertTx(ctx, tx, UploadDocumentArgs{UserID: string(user), DocumentID: string(id)}, uploadInsertOpts())
 		if err != nil {
 			return false, err
