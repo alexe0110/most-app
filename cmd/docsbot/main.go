@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // zone database for images without /usr/share/zoneinfo
 
 	"github.com/go-telegram/bot"
 	"github.com/riverqueue/river"
@@ -197,7 +199,7 @@ func (d driveBridge) Upload(ctx context.Context, user docsbot.UserID, in docsbot
 	f, err := d.gd.Upload(ctx, string(user), gdrive.Upload{
 		CacheKey:   string(in.Category),
 		FolderName: telegram.CategoryLabel(in.Category),
-		Name:       in.Name,
+		Name:       driveName(in.Name),
 		MIME:       in.MIME,
 		Data:       in.Data,
 		DocID:      in.DocID,
@@ -213,6 +215,12 @@ func (d driveBridge) Upload(ctx context.Context, user docsbot.UserID, in docsbot
 	}
 	return docsbot.DriveFile{ID: f.ID, Link: f.Link}, nil
 }
+
+// driveFileNameReplacer swaps path separators, which Drive file names should not carry.
+var driveFileNameReplacer = strings.NewReplacer("/", "_", "\\", "_")
+
+// driveName makes a document title usable as a Drive file name.
+func driveName(title string) string { return driveFileNameReplacer.Replace(title) }
 
 // Revoke best-effort revokes the user's Drive access at Google and marks the
 // integration revoked locally even if Google is unreachable.

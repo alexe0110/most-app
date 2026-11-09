@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -362,4 +363,109 @@ func TestService_DeleteAllData_revokeFailureDoesNotBlockDeletion(t *testing.T) {
 	require.Equal(t, []docsbot.UserID{user}, uploads.cancels)
 	require.Equal(t, []docsbot.UserID{user}, repo.deleted, "data must be deleted despite the revoke failure")
 	require.Empty(t, repo.docs)
+}
+
+func TestService_Rename_normalizes(t *testing.T) {
+	repo := newFakeRepo()
+	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "old"})
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo))
+
+	_, err := svc.Rename(t.Context(), user, doc.ID, "\n\u200b \t")
+	require.ErrorIs(t, err, docsbot.ErrEmptyTitle)
+	require.Equal(t, "old", repo.docs[doc.ID].Title, "old title stays")
+
+	card, err := svc.Rename(t.Context(), user, doc.ID, "  a\nb  "+strings.Repeat("я", 500))
+	require.NoError(t, err)
+	require.Equal(t, "a b "+strings.Repeat("я", docsbot.MaxTitleRunes-4), card.Doc.Title)
+}
+
+func TestService_Receive_normalizesTitle(t *testing.T) {
+	repo := newFakeRepo()
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo))
+
+	in := incoming("norm")
+	in.Title = " a\nb\t"
+	reply, err := svc.Receive(t.Context(), in)
+	require.NoError(t, err)
+	require.Equal(t, "a b", reply.(docsbot.NeedCategory).Doc.Title)
+
+	in = incoming("blank")
+	in.Title = "\n \n"
+	reply, err = svc.Receive(t.Context(), in)
+	require.NoError(t, err)
+	require.Empty(t, reply.(docsbot.NeedCategory).Doc.Title, "blank stays empty: the default title is set on save")
+}
+
+func TestService_defaultTitle_usesLocation(t *testing.T) {
+	now := time.Date(2026, 11, 8, 23, 30, 0, 0, time.UTC) // already 9 Nov in Almaty (UTC+5)
+	tests := []struct {
+		name string
+		opts []docsbot.Option
+		want string
+	}{
+		{"default Almaty", nil, "Медицина — 09.11.2026"},
+		{"fixed UTC", []docsbot.Option{docsbot.WithLocation(time.UTC)}, "Медицина — 08.11.2026"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "u"})
+			opts := append([]docsbot.Option{
+				docsbot.WithClock(func() time.Time { return now }),
+				docsbot.WithCategoryNamer(func(docsbot.Category) string { return "Медицина" }),
+			}, tt.opts...)
+			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), opts...)
+
+			got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatMedical)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got.Doc.Title)
+		})
+	}
+}
+
+func TestService_Recategorize_driveFileStays(t *testing.T) {
+	tests := []struct {
+		name       string
+		doc        docsbot.Document
+		wantNote   bool
+		wantFolder string
+	}{
+		{"backed up: file stays, no new folder link",
+			docsbot.Document{BackupStatus: docsbot.BackupBackedUp, DriveFileID: "file-1"}, true, ""},
+		{"telegram only: plain move, folder link as usual",
+			docsbot.Document{BackupStatus: docsbot.BackupNone}, false, "folder-new"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			repo.folders = map[docsbot.Category]string{docsbot.CatAuto: "folder-new"}
+			tt.doc.UserID, tt.doc.Status, tt.doc.Category = user, docsbot.StatusSaved, docsbot.CatOther
+			doc := repo.seed(tt.doc)
+			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo))
+
+			card, err := svc.Recategorize(t.Context(), user, doc.ID, docsbot.CatAuto)
+			require.NoError(t, err)
+			require.Equal(t, docsbot.CatAuto, card.Doc.Category)
+			require.Equal(t, tt.wantNote, card.FileInOldFolder)
+			require.Equal(t, tt.wantFolder, card.CategoryFolderID)
+			require.Equal(t, tt.doc.DriveFileID, card.Doc.DriveFileID, "the Drive file id is untouched")
+		})
+	}
+}
+
+func TestService_Card_backedUpHasNoFolderLink(t *testing.T) {
+	repo := newFakeRepo()
+	repo.folders = map[docsbot.Category]string{docsbot.CatAuto: "folder-1"}
+	backed := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatAuto,
+		BackupStatus: docsbot.BackupBackedUp, DriveFileID: "file-1"})
+	tgOnly := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatAuto})
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo))
+
+	card, err := svc.Card(t.Context(), user, backed.ID)
+	require.NoError(t, err)
+	require.Empty(t, card.CategoryFolderID)
+
+	card, err = svc.Card(t.Context(), user, tgOnly.ID)
+	require.NoError(t, err)
+	require.Equal(t, "folder-1", card.CategoryFolderID)
 }

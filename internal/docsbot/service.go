@@ -52,6 +52,7 @@ type Service struct {
 	status  StatusMessages
 	now     func() time.Time
 	name    func(Category) string
+	loc     *time.Location
 }
 
 // Option tunes a Service at construction.
@@ -68,12 +69,18 @@ func WithCategoryNamer(fn func(Category) string) Option {
 	return func(s *Service) { s.name = fn }
 }
 
+// WithLocation sets the time zone used for the date in default titles.
+func WithLocation(loc *time.Location) Option {
+	return func(s *Service) { s.loc = loc }
+}
+
 // NewService wires the service around its ports.
 func NewService(repo Repo, drive Drive, files FileSource, uploads Uploads, folders Folders, status StatusMessages, opts ...Option) *Service {
 	s := &Service{
 		repo: repo, drive: drive, files: files, uploads: uploads, folders: folders, status: status,
 		now:  time.Now,
 		name: func(c Category) string { return string(c) },
+		loc:  defaultLocation(),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -84,6 +91,7 @@ func NewService(repo Repo, drive Drive, files FileSource, uploads Uploads, folde
 // Receive stores a freshly sent file as pending and asks for a category. A file
 // already saved returns AlreadySaved; a still-pending one re-asks the category.
 func (s *Service) Receive(ctx context.Context, in IncomingFile) (Reply, error) {
+	in.Title = NormalizeTitle(in.Title)
 	existing, err := s.repo.DocumentByFileUniqueID(ctx, in.UserID, in.FileUniqueID)
 	switch {
 	case err == nil && existing.Status == StatusSaved:
@@ -224,7 +232,7 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 // defaultTitle builds "<category> — dd.mm.yyyy", adding " (n)" until it is unique
 // within the user's category.
 func (s *Service) defaultTitle(ctx context.Context, user UserID, cat Category) (string, error) {
-	base := s.name(cat) + " — " + s.now().Format("02.01.2006")
+	base := s.name(cat) + " — " + s.now().In(s.loc).Format("02.01.2006")
 	title := base
 	for i := 2; i <= maxTitleSuffix; i++ {
 		exists, err := s.repo.TitleExistsInCategory(ctx, user, cat, title)
@@ -506,6 +514,11 @@ func (s *Service) Card(ctx context.Context, user UserID, id DocumentID) (Card, e
 	if err != nil {
 		return Card{}, fmt.Errorf("load document: %w", err)
 	}
+	if doc.InDrive() {
+		// The file may sit in an older category folder (it is not moved on
+		// recategorize), so link only to the file itself.
+		return Card{Doc: doc}, nil
+	}
 	folderID, _, err := s.folders.CategoryFolderID(ctx, user, doc.Category)
 	if err != nil {
 		return Card{}, fmt.Errorf("category folder: %w", err)
@@ -513,9 +526,9 @@ func (s *Service) Card(ctx context.Context, user UserID, id DocumentID) (Card, e
 	return Card{Doc: doc, CategoryFolderID: folderID}, nil
 }
 
-// Rename changes a document's title to a non-blank value.
+// Rename changes a document's title to a normalized, non-blank value.
 func (s *Service) Rename(ctx context.Context, user UserID, id DocumentID, title string) (Card, error) {
-	title = strings.TrimSpace(title)
+	title = NormalizeTitle(title)
 	if title == "" {
 		return Card{}, ErrEmptyTitle
 	}
@@ -533,8 +546,17 @@ func (s *Service) Recategorize(ctx context.Context, user UserID, id DocumentID, 
 	if err := s.repo.SetCategory(ctx, user, id, cat); err != nil {
 		return Card{}, fmt.Errorf("recategorize document: %w", err)
 	}
-	// TODO(#11): if backed up, move the file to the new Drive folder.
-	return s.Card(ctx, user, id)
+	card, err := s.Card(ctx, user, id)
+	if err != nil {
+		return Card{}, err
+	}
+	// The file is not moved on Drive (deferred to #11): it stays in its old folder.
+	// The card links to the file itself, and the new category's folder would mislead.
+	if card.Doc.InDrive() {
+		card.FileInOldFolder = true
+		card.CategoryFolderID = ""
+	}
+	return card, nil
 }
 
 // Delete removes a document, scoped to the user.
@@ -640,4 +662,13 @@ func clamp(v, lo, hi int) int {
 	default:
 		return v
 	}
+}
+
+// defaultLocation is the zone for default-title dates: Asia/Almaty, or a fixed
+// UTC+5 if the zone database is unavailable.
+func defaultLocation() *time.Location {
+	if loc, err := time.LoadLocation("Asia/Almaty"); err == nil {
+		return loc
+	}
+	return time.FixedZone("UTC+5", 5*60*60)
 }

@@ -68,6 +68,7 @@ const (
 	textStorageInDrive      = "☁️ В Google Drive"
 	textStorageFailed       = "❌ Не удалось выгрузить в Drive"
 	textStorageTooLarge     = "📥 Слишком большой для Drive"
+	textDriveFileStayed     = "В Drive файл остался в прежней папке"
 	textStorageTelegramOnly = "📥 Только в Telegram, ещё не в Drive"
 
 	// textGroupNotice is sent once to a group the bot was added to, right before it leaves.

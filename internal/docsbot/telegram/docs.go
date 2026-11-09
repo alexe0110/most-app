@@ -670,6 +670,10 @@ func (d *docs) onSetCategory(ctx context.Context, b *bot.Bot, u *models.Update, 
 	}
 	d.log.InfoContext(ctx, "document recategorized", "user_id", user, "doc_id", card.Doc.ID, "category", cat)
 	orig, _ := d.origins.get(chatID, msgID)
+	if card.FileInOldFolder {
+		d.editCardText(ctx, b, chatID, msgID, cardText(card.Doc)+"\n"+textDriveFileStayed, cardKeyboard(card.Doc, "", orig), orig)
+		return
+	}
 	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
 }
 
@@ -961,7 +965,11 @@ func (d *docs) sendCard(ctx context.Context, b *bot.Bot, chatID int64, doc docsb
 // editCard replaces a message with a document's card and remembers where the
 // card was opened from (orig) so "Назад" and returns survive later edits.
 func (d *docs) editCard(ctx context.Context, b *bot.Bot, chatID int64, msgID int, doc docsbot.Document, folderID, orig string) {
-	d.editMessage(ctx, b, chatID, msgID, cardText(doc), cardKeyboard(doc, folderID, orig))
+	d.editCardText(ctx, b, chatID, msgID, cardText(doc), cardKeyboard(doc, folderID, orig), orig)
+}
+
+func (d *docs) editCardText(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup, orig string) {
+	d.editMessage(ctx, b, chatID, msgID, text, kb)
 	d.origins.set(chatID, msgID, orig)
 }
 

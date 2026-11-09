@@ -159,7 +159,6 @@ func TestReceive_duplicateShowsFolderButton(t *testing.T) {
 	repo.seed(docsbot.Document{
 		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Category: docsbot.CatOther,
 		Title: "Паспорт", TgFileID: "f1", TgFileUniqueID: "u1",
-		BackupStatus: docsbot.BackupBackedUp, DriveFileID: "drive-1",
 	})
 	b.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
 		From:     &models.User{ID: 100},
@@ -169,6 +168,26 @@ func TestReceive_duplicateShowsFolderButton(t *testing.T) {
 
 	require.True(t, has(sent.texts, "Паспорт"), "sent %q", sent.texts)
 	require.True(t, has(sent.markups, "https://drive.google.com/drive/folders/fld-1"), "markups %q", sent.markups)
+}
+
+func TestReceive_duplicateBackedUpLinksFileOnly(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	repo.folders = map[docsbot.Category]string{docsbot.CatOther: "fld-1"}
+	repo.seed(docsbot.Document{
+		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Category: docsbot.CatOther,
+		Title: "Паспорт", TgFileID: "f1", TgFileUniqueID: "u1",
+		BackupStatus: docsbot.BackupBackedUp, DriveFileID: "drive-1",
+	})
+	b.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
+		From:     &models.User{ID: 100},
+		Chat:     models.Chat{ID: 100, Type: models.ChatTypePrivate},
+		Document: &models.Document{FileID: "f1", FileUniqueID: "u1", FileName: "Паспорт.pdf"},
+	}})
+
+	require.True(t, has(sent.markups, "https://drive.google.com/file/d/drive-1/view"), "markups %q", sent.markups)
+	require.False(t, has(sent.markups, "/drive/folders/"), "markups %q", sent.markups)
 }
 
 func TestChooseCategory_savesAndShowsCard(t *testing.T) {

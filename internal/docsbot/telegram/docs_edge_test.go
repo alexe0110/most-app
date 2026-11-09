@@ -84,3 +84,32 @@ func TestDisconnect_driveFailureStillConfirms(t *testing.T) {
 	require.True(t, has(sent.edits, "Google Drive отключён"), "edits %q texts %q", sent.edits, sent.texts)
 	require.False(t, has(sent.texts, "Что-то пошло не так"))
 }
+
+func TestSetCategory_backedUpCardLinksFileAndNotesOldFolder(t *testing.T) {
+	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: true})
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := repo.seed(docsbot.Document{
+		UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther,
+		BackupStatus: docsbot.BackupBackedUp, DriveFileID: "file-1", Title: "a",
+	})
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:sc:"+string(doc.ID)+":auto"))
+
+	require.Equal(t, docsbot.CatAuto, repo.docs[doc.ID].Category)
+	require.True(t, has(sent.edits, "В Drive файл остался в прежней папке"), "edits %q", sent.edits)
+}
+
+func TestOpenCard_backedUpShowsFileButNoFolder(t *testing.T) {
+	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: true})
+	repo.folders = map[docsbot.Category]string{docsbot.CatAuto: "folder-1"}
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := repo.seed(docsbot.Document{
+		UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatAuto,
+		BackupStatus: docsbot.BackupBackedUp, DriveFileID: "file-1", Title: "a",
+	})
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(doc.ID)+":s"))
+
+	require.NotEmpty(t, sent.edits)
+	require.False(t, has(sent.edits, "прежней папке"), "the note is one-shot")
+}

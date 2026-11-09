@@ -48,6 +48,9 @@ type Card struct {
 	// CategoryFolderID is the Drive folder id of the document's category; empty
 	// while the folder has not been created.
 	CategoryFolderID string
+	// FileInOldFolder is set right after a backed-up document changed category:
+	// the file stays in its previous Drive folder, so the card links to the file.
+	FileInOldFolder bool
 }
 
 // Catalog lists categories with their saved-document counts. NotInDrive and
