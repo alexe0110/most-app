@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -656,11 +657,11 @@ func (c *converter) download(ctx context.Context, b *bot.Bot, fileID string) ([]
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.FileDownloadLink(file), nil)
 	if err != nil {
-		return nil, fmt.Errorf("build download request: %w", err)
+		return nil, fmt.Errorf("build download request: %w", stripURL(err))
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("download file: %w", err)
+		return nil, fmt.Errorf("download file: %w", stripURL(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
@@ -675,6 +676,16 @@ func (c *converter) download(ctx context.Context, b *bot.Bot, fileID string) ([]
 		return nil, errors.New("file exceeds download limit")
 	}
 	return data, nil
+}
+
+// stripURL drops the request URL from a transport error: the download link
+// carries the bot token, and the error ends up in the logs.
+func stripURL(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return ue.Err
+	}
+	return err
 }
 
 // answer stops the button's loading spinner.
