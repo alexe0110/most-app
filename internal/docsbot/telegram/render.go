@@ -20,6 +20,7 @@ const cbPrefix = "d:"
 const (
 	actCategory      = "cat" // pick a category for a new document
 	actCategoryGroup = "ga"  // pick a category for a whole album: d:ga:<docID>:<slug>
+	actGroupPick     = "gpk" // album choice -> category picker: d:gpk:<docID>
 	actSetCategory   = "sc"  // change an existing document's category
 	actChangeCat     = "chc" // show the category picker for a card
 	actSend          = "snd" // resend the original file
@@ -89,6 +90,33 @@ func categoryKeyboard(action string, id docsbot.DocumentID) *models.InlineKeyboa
 		rows = append(rows, line)
 	}
 	return &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+// pickerKeyboard is the category picker of a single new file. A file the
+// converter can handle gets an extra row opening the convert menu.
+func pickerKeyboard(doc docsbot.Document) *models.InlineKeyboardMarkup {
+	kb := categoryKeyboard(actCategory, doc.ID)
+	if convertible(doc) {
+		label := btnConvertPicker
+		if isPDF(doc) {
+			label = btnConvertPickerPDF
+		}
+		kb.InlineKeyboard = append(kb.InlineKeyboard, convertRow(doc.ID, label))
+	}
+	return kb
+}
+
+// albumChoiceKeyboard offers an album as one PDF or saved file by file.
+func albumChoiceKeyboard(token string, pickDoc docsbot.DocumentID) *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{{Text: btnAlbumPDF, CallbackData: cbAlbumPrefix + token}},
+		{{Text: btnAlbumEach, CallbackData: cb(actGroupPick, pickDoc)}},
+	}}
+}
+
+// convertRow is a one-button row opening the convert menu of a document.
+func convertRow(id docsbot.DocumentID, label string) []models.InlineKeyboardButton {
+	return []models.InlineKeyboardButton{{Text: label, CallbackData: cbDocPrefix + string(id)}}
 }
 
 func connectKeyboard(url string) *models.InlineKeyboardMarkup {
@@ -225,6 +253,9 @@ func cardKeyboard(doc docsbot.Document, folderID, orig string) *models.InlineKey
 			{Text: btnChangeCat, CallbackData: cb(actChangeCat, doc.ID)},
 			{Text: btnDelete, CallbackData: cb(actDeleteAsk, doc.ID)},
 		},
+	}
+	if convertible(doc) {
+		rows = append(rows, convertRow(doc.ID, btnConvertCard))
 	}
 	if back := backFromOrig(orig); back != "" {
 		rows = append(rows, []models.InlineKeyboardButton{{Text: btnBack, CallbackData: back}})

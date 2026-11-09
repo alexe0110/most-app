@@ -8,6 +8,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +18,7 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 
+	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/platform/convert"
 )
 
@@ -33,6 +37,31 @@ const (
 	cbLimitCustom = callbackPrefix + "limitcustom"
 	cbFmtJPEG     = callbackPrefix + "fmtjpeg"
 	cbFmtPNG      = callbackPrefix + "fmtpng"
+	cbMenuCancel  = callbackPrefix + "x" // closes the convert menu
+)
+
+// Prefixes of the buttons that work without a /convert session.
+const (
+	cbDocPrefix   = callbackPrefix + "doc:"  // conv:doc:<docID> opens the menu
+	cbQuickPrefix = callbackPrefix + "q:"    // conv:q:<docID>:<op> converts a document
+	cbSavePrefix  = callbackPrefix + "save:" // conv:save:<token> saves the result
+	cbSkipPrefix  = callbackPrefix + "skip:" // conv:skip:<token> keeps only the file
+	cbAlbumPrefix = callbackPrefix + "alb:"  // conv:alb:<token> merges an album into a PDF
+)
+
+// Limits of an album PDF.
+const (
+	maxAlbumPages = 20
+	maxAlbumBytes = maxFileBytes // all pages together
+)
+
+// Quick operations of the menu.
+const (
+	opCompress1 = "c1"
+	opCompress2 = "c2"
+	opCompress5 = "c5"
+	opPDF       = "pdf"
+	opJPG       = "jpg" // WEBP -> JPEG, no compression
 )
 
 const (
@@ -46,16 +75,34 @@ const (
 type converter struct {
 	log      *slog.Logger
 	sessions *sessionStore
+	results  *resultStore
+	albums   *albumStore
 	now      func() time.Time
 	http     *http.Client
+
+	svc *docsbot.Service
+	// renderSaved and sendAlreadySaved show what saving a result produced; the
+	// docs adapter owns that rendering.
+	renderSaved      func(ctx context.Context, b *bot.Bot, chatID int64, msgID int, user docsbot.UserID, saved docsbot.Saved)
+	sendAlreadySaved func(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID)
 }
 
-func newConverter(log *slog.Logger) *converter {
+func newConverter(
+	log *slog.Logger,
+	svc *docsbot.Service,
+	renderSaved func(context.Context, *bot.Bot, int64, int, docsbot.UserID, docsbot.Saved),
+	sendAlreadySaved func(context.Context, *bot.Bot, int64, docsbot.UserID, docsbot.DocumentID),
+) *converter {
 	return &converter{
-		log:      log,
-		sessions: newSessionStore(time.Now),
-		now:      time.Now,
-		http:     &http.Client{Timeout: downloadWait},
+		log:              log,
+		sessions:         newSessionStore(time.Now),
+		results:          newResultStore(time.Now),
+		albums:           newAlbumStore(time.Now),
+		now:              time.Now,
+		http:             &http.Client{Timeout: downloadWait},
+		svc:              svc,
+		renderSaved:      renderSaved,
+		sendAlreadySaved: sendAlreadySaved,
 	}
 }
 
@@ -106,6 +153,8 @@ func (c *converter) message(ctx context.Context, b *bot.Bot, update *models.Upda
 	chatID := update.Message.Chat.ID
 
 	switch {
+	case len(update.Message.Photo) > 0 && sess.step == stepMergePDF:
+		reply(ctx, b, c.log, chatID, textPDFNotPDF)
 	case len(update.Message.Photo) > 0:
 		c.onImage(ctx, b, update, largestPhoto(update.Message.Photo).FileID)
 	case update.Message.Document != nil:
@@ -117,11 +166,24 @@ func (c *converter) message(ctx context.Context, b *bot.Bot, update *models.Upda
 	}
 }
 
-// onDocument accepts image documents and rejects the rest (HEIC, PDF, …).
+// onDocument accepts image documents (and PDFs while merging) and rejects the rest.
 func (c *converter) onDocument(ctx context.Context, b *bot.Bot, update *models.Update) {
 	doc := update.Message.Document
+	if doc.MimeType == mimePDF {
+		c.onPDFPart(ctx, b, update)
+		return
+	}
+	user, _ := messageUser(update)
+	if sess, ok := c.sessions.live(user); ok && sess.step == stepMergePDF {
+		reply(ctx, b, c.log, update.Message.Chat.ID, textPDFNotPDF)
+		return
+	}
 	if !supportedImageMIME(doc.MimeType) {
-		reply(ctx, b, c.log, update.Message.Chat.ID, textConvertUnsupported)
+		text := textConvertUnsupported
+		if unsupportedImage(doc.MimeType, doc.FileName) {
+			text = textConvertFormatNotSupported
+		}
+		reply(ctx, b, c.log, update.Message.Chat.ID, text)
 		return
 	}
 	c.onImage(ctx, b, update, doc.FileID)
@@ -168,6 +230,10 @@ func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Upda
 // onText reads a typed custom size; other text just nudges to tap a button.
 func (c *converter) onText(ctx context.Context, b *bot.Bot, update *models.Update, step step) {
 	chatID := update.Message.Chat.ID
+	if step == stepAwaitRange {
+		c.onRange(ctx, b, update)
+		return
+	}
 	if step != stepCustomLimit {
 		reply(ctx, b, c.log, chatID, textConvertTapButton)
 		return
@@ -194,6 +260,28 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 	if !ok {
 		return
 	}
+	data := update.CallbackQuery.Data
+	switch {
+	case strings.HasPrefix(data, cbDocPrefix):
+		c.onMenu(ctx, b, chatID, docsbot.DocumentID(strings.TrimPrefix(data, cbDocPrefix)))
+		return
+	case strings.HasPrefix(data, cbQuickPrefix):
+		c.onQuick(ctx, b, update, chatID)
+		return
+	case strings.HasPrefix(data, cbSavePrefix):
+		c.onSave(ctx, b, update, chatID)
+		return
+	case strings.HasPrefix(data, cbAlbumPrefix):
+		c.onAlbum(ctx, b, update, chatID)
+		return
+	case strings.HasPrefix(data, cbSkipPrefix):
+		c.onSkip(ctx, b, update, chatID)
+		return
+	case data == cbMenuCancel:
+		c.deleteCallbackMessage(ctx, b, update, chatID)
+		return
+	}
+
 	user := update.CallbackQuery.From.ID
 	if !c.sessions.has(user) {
 		reply(ctx, b, c.log, chatID, textConvertExpired)
@@ -208,6 +296,10 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 		c.sessions.update(user, func(s *session) { s.step = stepAwaitImage })
 		sendMarkup(ctx, b, c.log, chatID, textConvertCompressPrompt, cancelKeyboard())
 	case cbDone:
+		if sess, ok := c.sessions.live(user); ok && sess.step == stepMergePDF {
+			c.finishMerge(ctx, b, user, chatID)
+			return
+		}
 		c.finishPDF(ctx, b, user, chatID)
 	case cbCancel:
 		c.sessions.end(user)
@@ -248,8 +340,8 @@ func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, user, chatID int6
 	}
 
 	c.sessions.end(user)
-	name := "scan-" + c.now().Format("2006-01-02") + ".pdf"
-	sendDocument(ctx, b, c.log, chatID, name, pdf)
+	name := scanName(c.now())
+	c.sendResult(ctx, b, chatID, user, name, pdf, "", suffixPDF)
 }
 
 // finishCompress compresses the stored image to the chosen format.
@@ -273,7 +365,315 @@ func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, user, chatID
 		reply(ctx, b, c.log, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
 	}
 	name := "photo-compressed." + formatExt(format)
-	sendDocument(ctx, b, c.log, chatID, name, out)
+	c.sendResult(ctx, b, chatID, user, name, out, "", suffixCompressed)
+}
+
+// scanName is the file name of a PDF made from photos.
+func scanName(now time.Time) string { return "scan-" + now.Format("2006-01-02") + ".pdf" }
+
+// loadDoc reads the user's document (the domain checks ownership) and answers
+// the user itself when it can't.
+func (c *converter) loadDoc(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID) (docsbot.Document, bool) {
+	card, err := c.svc.Card(ctx, user, id)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		reply(ctx, b, c.log, chatID, textGone)
+		return docsbot.Document{}, false
+	}
+	if err != nil {
+		c.log.ErrorContext(ctx, "convert load document", "err", err, "user_id", user, "doc_id", id)
+		reply(ctx, b, c.log, chatID, textError)
+		return docsbot.Document{}, false
+	}
+	return card.Doc, true
+}
+
+// onMenu offers the operations that fit the document's type.
+func (c *converter) onMenu(ctx context.Context, b *bot.Bot, chatID int64, id docsbot.DocumentID) {
+	user, ok := userID(ctx)
+	if !ok {
+		return
+	}
+	doc, ok := c.loadDoc(ctx, b, chatID, user, id)
+	if !ok {
+		return
+	}
+	switch {
+	case isPDF(doc):
+		sendMarkup(ctx, b, c.log, chatID, textConvertMenu, pdfMenuKeyboard(id))
+	case convertible(doc):
+		sendMarkup(ctx, b, c.log, chatID, textConvertMenu, quickKeyboard(id, isWebP(doc)))
+	default:
+		reply(ctx, b, c.log, chatID, unsupportedText(doc))
+	}
+}
+
+// onQuick converts a stored document straight from the menu: conv:q:<docID>:<op>.
+func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	rest := strings.TrimPrefix(update.CallbackQuery.Data, cbQuickPrefix)
+	rawID, op, ok := strings.Cut(rest, ":")
+	if !ok || rawID == "" {
+		return
+	}
+	user, ok := userID(ctx)
+	if !ok {
+		return
+	}
+	id := docsbot.DocumentID(rawID)
+
+	doc, ok := c.loadDoc(ctx, b, chatID, user, id)
+	if !ok {
+		return
+	}
+	if !convertible(doc) {
+		reply(ctx, b, c.log, chatID, unsupportedText(doc))
+		return
+	}
+	if isPDF(doc) {
+		c.onPDFOp(ctx, b, update, chatID, user, doc, op)
+		return
+	}
+	maxBytes, known := quickLimit(op)
+	if !known && op != opPDF && (op != opJPG || !isWebP(doc)) {
+		return
+	}
+	src, err := c.download(ctx, b, doc.TgFileID)
+	if err != nil {
+		c.log.ErrorContext(ctx, "convert download document", "err", err, "user_id", user, "doc_id", id)
+		reply(ctx, b, c.log, chatID, textConvertDownloadFailed)
+		return
+	}
+
+	var out []byte
+	var name, suffix string
+	switch op {
+	case opPDF:
+		suffix = suffixPDF
+		out, err = convert.ImagesToPDF([][]byte{src})
+		name = resultName(doc.Title, suffix, "scan", "pdf")
+	case opJPG:
+		suffix = suffixJPG
+		out, err = convert.ToJPEG(src)
+		name = resultName(doc.Title, suffix, "photo", "jpg")
+	default:
+		suffix = suffixCompressed
+		out, err = convert.Compress(src, maxBytes, convert.JPEG)
+		name = resultName(doc.Title, suffix, "photo-compressed", "jpg")
+	}
+	if err != nil {
+		c.log.ErrorContext(ctx, "convert document", "err", err, "user_id", user, "doc_id", id, "op", op)
+		reply(ctx, b, c.log, chatID, convertErrorText(err))
+		return
+	}
+	c.log.InfoContext(ctx, "document converted", "user_id", user, "doc_id", id, "op", op,
+		"in_bytes", len(src), "out_bytes", len(out))
+	if known && len(out) > maxBytes {
+		reply(ctx, b, c.log, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
+	}
+	c.sendResult(ctx, b, chatID, update.CallbackQuery.From.ID, name, out, id, suffix)
+}
+
+// onSave stores the result as a document: conv:save:<token>.
+func (c *converter) onSave(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	token := strings.TrimPrefix(update.CallbackQuery.Data, cbSavePrefix)
+	res, ok := c.results.take(token, update.CallbackQuery.From.ID)
+	if !ok {
+		reply(ctx, b, c.log, chatID, textConvertResultOld)
+		return
+	}
+	c.clearButtons(ctx, b, update, chatID)
+
+	rep, err := c.svc.SaveDerived(ctx, res.user, res.sourceDoc, res.file, res.suffix)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		reply(ctx, b, c.log, chatID, textGone)
+		return
+	}
+	if err != nil {
+		c.log.ErrorContext(ctx, "save converted file", "err", err, "user_id", res.user)
+		reply(ctx, b, c.log, chatID, textError)
+		return
+	}
+
+	switch r := rep.(type) {
+	case docsbot.Saved:
+		// The result message is a file, which can't be edited into a card: the
+		// card replaces a fresh placeholder instead.
+		msg, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: textConvertSaving})
+		if err != nil {
+			c.log.ErrorContext(ctx, "send telegram message", "err", err)
+			return
+		}
+		c.renderSaved(ctx, b, chatID, msg.ID, res.user, r)
+	case docsbot.NeedCategory:
+		sendMarkup(ctx, b, c.log, chatID, textChooseCategory, categoryKeyboard(actCategory, r.Doc.ID))
+	case docsbot.AlreadySaved:
+		c.sendAlreadySaved(ctx, b, chatID, res.user, r.Doc.ID)
+	default:
+		if text, ok := rejectionText(rep); ok {
+			reply(ctx, b, c.log, chatID, text)
+		}
+	}
+}
+
+// registerAlbum remembers an album's images for the "one PDF" button and returns
+// the button's token.
+func (c *converter) registerAlbum(user docsbot.UserID, group string, images []albumImage) string {
+	sorted := slices.Clone(images)
+	slices.SortFunc(sorted, func(a, b albumImage) int { return a.msgID - b.msgID })
+	token := newToken()
+	c.albums.put(token, convAlbum{user: user, group: group, images: sorted})
+	return token
+}
+
+// onAlbum merges an album into one PDF: conv:alb:<token>. On success the album's
+// pending documents are dropped, so they don't wait for a category.
+func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	token := strings.TrimPrefix(update.CallbackQuery.Data, cbAlbumPrefix)
+	user, ok := userID(ctx)
+	if !ok {
+		return
+	}
+	album, ok := c.albums.peek(token, user)
+	if !ok {
+		reply(ctx, b, c.log, chatID, textConvertResultOld)
+		return
+	}
+	var declared int64
+	for _, img := range album.images {
+		declared += img.size
+	}
+	switch {
+	case len(album.images) > maxAlbumPages:
+		reply(ctx, b, c.log, chatID, fmt.Sprintf(textAlbumTooMany, maxAlbumPages)) // the buttons stay: save one by one
+		return
+	case declared > maxAlbumBytes:
+		reply(ctx, b, c.log, chatID, fmt.Sprintf(textAlbumTooBig, maxAlbumBytes>>20))
+		return
+	}
+	album, ok = c.albums.take(token, user) // a double tap stops here
+	if !ok {
+		return
+	}
+
+	pages := make([][]byte, 0, len(album.images))
+	var total int
+	for _, img := range album.images {
+		data, err := c.download(ctx, b, img.fileID)
+		if err != nil {
+			c.log.ErrorContext(ctx, "convert download album image", "err", err, "user_id", user)
+			c.albums.put(token, album) // let the user retry
+			reply(ctx, b, c.log, chatID, textConvertDownloadFailed)
+			return
+		}
+		if total += len(data); total > maxAlbumBytes {
+			c.albums.put(token, album)
+			reply(ctx, b, c.log, chatID, fmt.Sprintf(textAlbumTooBig, maxAlbumBytes>>20))
+			return
+		}
+		pages = append(pages, data)
+	}
+	pdf, err := convert.ImagesToPDF(pages)
+	if err != nil {
+		c.log.ErrorContext(ctx, "convert album to pdf", "err", err, "user_id", user, "pages", len(pages))
+		c.albums.put(token, album)
+		reply(ctx, b, c.log, chatID, convertErrorText(err))
+		return
+	}
+	c.log.InfoContext(ctx, "album converted", "user_id", user, "pages", len(pages), "in_bytes", total, "out_bytes", len(pdf))
+
+	c.clearButtons(ctx, b, update, chatID)
+	name := scanName(c.now())
+	if !c.sendResult(ctx, b, chatID, update.CallbackQuery.From.ID, name, pdf, "", suffixPDF) {
+		return
+	}
+	n, err := c.svc.DiscardAlbum(ctx, user, album.group)
+	if err != nil {
+		c.log.ErrorContext(ctx, "discard album", "err", err, "user_id", user)
+		return
+	}
+	c.log.InfoContext(ctx, "album discarded", "user_id", user, "count", n)
+}
+
+// onSkip keeps only the file: conv:skip:<token>.
+func (c *converter) onSkip(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	c.results.take(strings.TrimPrefix(update.CallbackQuery.Data, cbSkipPrefix), update.CallbackQuery.From.ID)
+	c.clearButtons(ctx, b, update, chatID)
+}
+
+// clearButtons removes the keyboard from the message a button was pressed on.
+func (c *converter) clearButtons(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	m := update.CallbackQuery.Message.Message
+	if m == nil {
+		return
+	}
+	_, err := b.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
+		ChatID: chatID, MessageID: m.ID, ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}},
+	})
+	if err != nil {
+		c.log.ErrorContext(ctx, "clear buttons", "err", err)
+	}
+}
+
+// deleteCallbackMessage removes the message a button was pressed on.
+func (c *converter) deleteCallbackMessage(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	m := update.CallbackQuery.Message.Message
+	if m == nil {
+		return
+	}
+	if _, err := b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: m.ID}); err != nil {
+		c.log.ErrorContext(ctx, "delete message", "err", err)
+	}
+}
+
+// sendResult uploads the converted file with the save / just-the-file buttons
+// and reports whether Telegram accepted it. The choice is remembered only if
+// Telegram echoes the stored file back; if it doesn't, the buttons are removed
+// again, since they could not work. Without the user's internal id the file goes
+// out without buttons.
+func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser int64, filename string, data []byte,
+	sourceDoc docsbot.DocumentID, suffix string,
+) bool {
+	params := &bot.SendDocumentParams{
+		ChatID:   chatID,
+		Document: &models.InputFileUpload{Filename: filename, Data: bytes.NewReader(data)},
+	}
+	user, haveUser := userID(ctx)
+	token := newToken()
+	if haveUser {
+		params.ReplyMarkup = saveKeyboard(token)
+	}
+	msg, err := b.SendDocument(ctx, params)
+	if err != nil {
+		c.log.ErrorContext(ctx, "send telegram document", "err", err)
+		return false
+	}
+	if !haveUser {
+		return true
+	}
+	if msg == nil || msg.Document == nil {
+		c.removeKeyboard(ctx, b, chatID, msg)
+		return true
+	}
+	c.results.put(token, convResult{
+		tgUser: tgUser, user: user, sourceDoc: sourceDoc, suffix: suffix,
+		file: docsbot.IncomingFile{
+			Kind: docsbot.KindDocument, FileID: msg.Document.FileID, FileUniqueID: msg.Document.FileUniqueID,
+			Title: filename, FileSize: msg.Document.FileSize, MIME: msg.Document.MimeType,
+		},
+	})
+	return true
+}
+
+// removeKeyboard strips the buttons from a sent message, when there is one.
+func (c *converter) removeKeyboard(ctx context.Context, b *bot.Bot, chatID int64, msg *models.Message) {
+	if msg == nil {
+		return
+	}
+	_, err := b.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
+		ChatID: chatID, MessageID: msg.ID, ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}},
+	})
+	if err != nil {
+		c.log.ErrorContext(ctx, "clear buttons", "err", err)
+	}
 }
 
 // download fetches a Telegram file's bytes, capped at maxFileBytes.
@@ -288,11 +688,11 @@ func (c *converter) download(ctx context.Context, b *bot.Bot, fileID string) ([]
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.FileDownloadLink(file), nil)
 	if err != nil {
-		return nil, fmt.Errorf("build download request: %w", err)
+		return nil, fmt.Errorf("build download request: %w", stripURL(err))
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("download file: %w", err)
+		return nil, fmt.Errorf("download file: %w", stripURL(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
@@ -307,6 +707,16 @@ func (c *converter) download(ctx context.Context, b *bot.Bot, fileID string) ([]
 		return nil, errors.New("file exceeds download limit")
 	}
 	return data, nil
+}
+
+// stripURL drops the request URL from a transport error: the download link
+// carries the bot token, and the error ends up in the logs.
+func stripURL(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return ue.Err
+	}
+	return err
 }
 
 // answer stops the button's loading spinner.
@@ -358,14 +768,60 @@ func formatExt(f convert.Format) string {
 	return "jpg"
 }
 
+// convertible reports whether the converter can work with the document: a photo,
+// a JPEG/PNG/WEBP file or a PDF.
+func convertible(doc docsbot.Document) bool {
+	if doc.Kind == docsbot.KindPhoto {
+		return true
+	}
+	return doc.Kind == docsbot.KindDocument && (supportedImageMIME(doc.MIME) || isPDF(doc))
+}
+
+// isWebP reports whether the document is a WEBP image.
+func isWebP(doc docsbot.Document) bool {
+	return doc.Kind == docsbot.KindDocument && doc.MIME == "image/webp"
+}
+
+// mimePDF is the MIME type of a PDF document.
+const mimePDF = "application/pdf"
+
+// isPDF reports whether the document is a PDF file.
+func isPDF(doc docsbot.Document) bool {
+	return doc.Kind == docsbot.KindDocument && doc.MIME == mimePDF
+}
+
 // supportedImageMIME reports whether we can decode this MIME type.
 func supportedImageMIME(mime string) bool {
 	switch mime {
-	case "image/jpeg", "image/jpg", "image/png":
+	case "image/jpeg", "image/jpg", "image/png", "image/webp":
 		return true
 	default:
 		return false
 	}
+}
+
+// unsupportedImage reports a modern image format we know but can't decode:
+// HEIC/HEIF/AVIF, by MIME type or, when the MIME is missing or generic, by file
+// extension.
+func unsupportedImage(mime, name string) bool {
+	switch mime {
+	case "image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence", "image/avif":
+		return true
+	case "", "application/octet-stream":
+		switch strings.ToLower(filepath.Ext(name)) {
+		case ".heic", ".heif", ".avif":
+			return true
+		}
+	}
+	return false
+}
+
+// unsupportedText is the refusal for a stored document the converter can't take.
+func unsupportedText(doc docsbot.Document) string {
+	if unsupportedImage(doc.MIME, doc.Title) {
+		return textConvertFormatNotSupported
+	}
+	return textConvertUnsupported
 }
 
 // largestPhoto returns the highest-resolution size (Telegram sorts ascending).
@@ -391,17 +847,6 @@ func callbackChat(update *models.Update) (int64, bool) {
 func sendMarkup(ctx context.Context, b *bot.Bot, log *slog.Logger, chatID int64, text string, markup models.ReplyMarkup) {
 	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ReplyMarkup: markup}); err != nil {
 		log.Error("send telegram message", "err", err)
-	}
-}
-
-// sendDocument uploads data as a file.
-func sendDocument(ctx context.Context, b *bot.Bot, log *slog.Logger, chatID int64, filename string, data []byte) {
-	_, err := b.SendDocument(ctx, &bot.SendDocumentParams{
-		ChatID:   chatID,
-		Document: &models.InputFileUpload{Filename: filename, Data: bytes.NewReader(data)},
-	})
-	if err != nil {
-		log.Error("send telegram document", "err", err)
 	}
 }
 
@@ -444,4 +889,55 @@ func cancelKeyboard() *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
 		{Text: btnCancel, CallbackData: cbCancel},
 	}}}
+}
+
+// quickKeyboard is the menu of an image; a WEBP also gets a plain conversion to JPG.
+func quickKeyboard(id docsbot.DocumentID, webp bool) *models.InlineKeyboardMarkup {
+	q := func(op string) string { return cbQuickPrefix + string(id) + ":" + op }
+	second := []models.InlineKeyboardButton{{Text: btnQuickPDF, CallbackData: q(opPDF)}}
+	if webp {
+		second = append(second, models.InlineKeyboardButton{Text: btnQuickJPG, CallbackData: q(opJPG)})
+	}
+	second = append(second, models.InlineKeyboardButton{Text: btnQuickCancel, CallbackData: cbMenuCancel})
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{
+			{Text: btnQuick1MB, CallbackData: q(opCompress1)},
+			{Text: btnQuick2MB, CallbackData: q(opCompress2)},
+			{Text: btnQuick5MB, CallbackData: q(opCompress5)},
+		},
+		second,
+	}}
+}
+
+func saveKeyboard(token string) *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{{Text: btnSaveResult, CallbackData: cbSavePrefix + token}},
+		{{Text: btnSkipResult, CallbackData: cbSkipPrefix + token}},
+	}}
+}
+
+// quickLimit maps a compress operation of the menu to its size in bytes.
+func quickLimit(op string) (int, bool) {
+	switch op {
+	case opCompress1:
+		return 1 << 20, true
+	case opCompress2:
+		return 2 << 20, true
+	case opCompress5:
+		return 5 << 20, true
+	default:
+		return 0, false
+	}
+}
+
+// resultName is the file name of a converted document: its derived title plus
+// the extension, or fallback when the document has no title. Path separators
+// are replaced so the name is a single path element.
+func resultName(title, suffix, fallback, ext string) string {
+	base := fallback
+	if strings.TrimSpace(title) != "" {
+		base = docsbot.DerivedTitle(title, suffix)
+	}
+	base = strings.NewReplacer("/", "_", "\\", "_").Replace(base)
+	return base + "." + ext
 }

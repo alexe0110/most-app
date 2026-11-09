@@ -9,6 +9,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"math/rand"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -179,4 +180,41 @@ func TestPixelBomb_rejectedBeforeDecode(t *testing.T) {
 			require.ErrorIs(t, err, ErrImageTooLarge)
 		})
 	}
+}
+
+// tinyWebP is a 1x1 lossless WEBP.
+func tinyWebP(t *testing.T) []byte {
+	t.Helper()
+	data, err := os.ReadFile("testdata/tiny.webp")
+	require.NoError(t, err)
+	return data
+}
+
+func TestToJPEG_fromWebP(t *testing.T) {
+	out, err := ToJPEG(tinyWebP(t))
+
+	require.NoError(t, err)
+	img, format, err := image.Decode(bytes.NewReader(out))
+	require.NoError(t, err)
+	require.Equal(t, "jpeg", format)
+	require.Equal(t, image.Rect(0, 0, 1, 1), img.Bounds())
+}
+
+func TestWebP_isAnInputEverywhere(t *testing.T) {
+	webp := tinyWebP(t)
+
+	compressed, err := Compress(webp, 1<<20, JPEG)
+	require.NoError(t, err)
+	_, format, err := image.Decode(bytes.NewReader(compressed))
+	require.NoError(t, err)
+	require.Equal(t, "jpeg", format)
+
+	pdf, err := ImagesToPDF([][]byte{webp, webp})
+	require.NoError(t, err)
+	require.Contains(t, string(pdf), "/Count 2")
+}
+
+func TestToJPEG_rejectsUnknownFormat(t *testing.T) {
+	_, err := ToJPEG([]byte("ftypheic not an image"))
+	require.ErrorIs(t, err, ErrUnsupportedFormat)
 }

@@ -2,6 +2,8 @@ package telegram_test
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -33,12 +35,32 @@ type convHarness struct {
 	mu      sync.Mutex
 	texts   []string
 	markups int
-	docs    []sentDocument
+	// markupBodies are the reply markups of sent messages, in order.
+	markupBodies []string
+	docs         []sentDocument
+	repo         *fakeRepo
+	// docMarkups are the reply markups of the sent documents, in order.
+	docMarkups []string
+	// edits counts editMessageReplyMarkup calls (buttons removed).
+	edits int
+	// downloads lists the file ids the bot fetched, in order.
+	downloads []string
+	// files overrides what a file id downloads; the default is a small JPEG.
+	files map[string][]byte
+	// noDocument makes sendDocument answer without the stored document.
+	noDocument bool
 }
 
-func newConvHarness(t *testing.T) *convHarness {
+// serve makes fileID download as data.
+func (h *convHarness) serve(fileID string, data []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.files[fileID] = data
+}
+
+func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 	t.Helper()
-	h := &convHarness{}
+	h := &convHarness{files: map[string][]byte{}}
 
 	// The image every file download serves — a small, decodable JPEG.
 	img := image.NewRGBA(image.Rect(0, 0, 64, 48))
@@ -54,14 +76,39 @@ func newConvHarness(t *testing.T) *convHarness {
 		path := r.URL.Path
 		switch {
 		case strings.HasPrefix(path, "/file/"):
-			_, _ = w.Write(photo.Bytes())
+			id := strings.TrimSuffix(path[strings.LastIndex(path, "/")+1:], ".jpg")
+			h.mu.Lock()
+			h.downloads = append(h.downloads, id)
+			data, ok := h.files[id]
+			h.mu.Unlock()
+			if !ok {
+				data = photo.Bytes()
+			}
+			_, _ = w.Write(data)
 			return
 		case strings.HasSuffix(path, "/getFile"):
-			writeJSON(w, `{"ok":true,"result":{"file_id":"f","file_path":"photo.jpg"}}`)
+			var req struct {
+				FileID string `json:"file_id"`
+			}
+			req.FileID = r.FormValue("file_id")
+			if req.FileID == "" {
+				_ = json.NewDecoder(r.Body).Decode(&req)
+			}
+			writeJSON(w, fmt.Sprintf(`{"ok":true,"result":{"file_id":"f","file_path":"%s.jpg"}}`, req.FileID))
 			return
 		case strings.HasSuffix(path, "/sendDocument"):
-			h.captureDocument(t, r)
-			writeJSON(w, `{"ok":true,"result":{}}`)
+			n := h.captureDocument(t, r)
+			if h.noDocument {
+				writeJSON(w, `{"ok":true,"result":{"message_id":7}}`)
+				return
+			}
+			writeJSON(w, fmt.Sprintf(`{"ok":true,"result":{"message_id":7,"document":{"file_id":"res-%[1]d","file_unique_id":"res-uniq-%[1]d","file_size":1234,"mime_type":"image/jpeg"}}}`, n))
+			return
+		case strings.HasSuffix(path, "/editMessageReplyMarkup"):
+			h.mu.Lock()
+			h.edits++
+			h.mu.Unlock()
+			writeJSON(w, `{"ok":true,"result":true}`)
 			return
 		case strings.HasSuffix(path, "/sendMessage"):
 			h.captureMessage(r)
@@ -75,10 +122,11 @@ func newConvHarness(t *testing.T) *convHarness {
 
 	b, err := bot.New("123:ABC", bot.WithServerURL(ts.URL), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
 	require.NoError(t, err)
-	svc, auth, _ := fakeDeps()
-	telegram.Register(b, slog.New(slog.DiscardHandler), svc, auth)
+	svc, auth, repo := fakeDeps()
+	telegram.Register(b, slog.New(slog.DiscardHandler), svc, auth, opts...)
 
 	h.bot = b
+	h.repo = repo
 	return h
 }
 
@@ -86,12 +134,14 @@ func (h *convHarness) captureMessage(r *http.Request) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.texts = append(h.texts, r.FormValue("text"))
+	h.markupBodies = append(h.markupBodies, r.FormValue("reply_markup"))
 	if r.FormValue("reply_markup") != "" {
 		h.markups++
 	}
 }
 
-func (h *convHarness) captureDocument(t *testing.T, r *http.Request) {
+// captureDocument records an upload and returns its 0-based index.
+func (h *convHarness) captureDocument(t *testing.T, r *http.Request) int {
 	t.Helper()
 	require.NoError(t, r.ParseMultipartForm(32<<20))
 	file, header, err := r.FormFile("document")
@@ -103,6 +153,8 @@ func (h *convHarness) captureDocument(t *testing.T, r *http.Request) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.docs = append(h.docs, sentDocument{filename: header.Filename, data: data})
+	h.docMarkups = append(h.docMarkups, r.FormValue("reply_markup"))
+	return len(h.docs) - 1
 }
 
 func (h *convHarness) lastText() string {
@@ -112,6 +164,31 @@ func (h *convHarness) lastText() string {
 		return ""
 	}
 	return h.texts[len(h.texts)-1]
+}
+
+// albumMarkup is the reply markup of the first sent message.
+func (h *convHarness) albumMarkup() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.markupBodies) == 0 {
+		return ""
+	}
+	return h.markupBodies[0]
+}
+
+func (h *convHarness) lastMarkup() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.markupBodies) == 0 {
+		return ""
+	}
+	return h.markupBodies[len(h.markupBodies)-1]
+}
+
+func (h *convHarness) allTexts() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return strings.Join(h.texts, "\n")
 }
 
 func writeJSON(w http.ResponseWriter, body string) {
@@ -181,6 +258,7 @@ func TestConvert_photosToPDF(t *testing.T) {
 	require.True(t, strings.HasSuffix(doc.filename, ".pdf"))
 	require.True(t, bytes.HasPrefix(doc.data, []byte("%PDF")))
 	require.Contains(t, string(doc.data), "/Count 3", "one page per photo")
+	require.Empty(t, h.repo.docs, "a result is not saved unless asked")
 }
 
 func TestConvert_compressPreset(t *testing.T) {
@@ -198,6 +276,7 @@ func TestConvert_compressPreset(t *testing.T) {
 	require.LessOrEqual(t, len(h.docs[0].data), 2<<20)
 	_, _, err := image.Decode(bytes.NewReader(h.docs[0].data))
 	require.NoError(t, err)
+	require.Empty(t, h.repo.docs, "a result is not saved unless asked")
 }
 
 func TestConvert_compressCustomLimit(t *testing.T) {
@@ -235,7 +314,7 @@ func TestConvert_unsupportedDocument(t *testing.T) {
 
 	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
-	h.bot.ProcessUpdate(ctx, documentUpdate("image/heic"))
+	h.bot.ProcessUpdate(ctx, documentUpdate("application/zip"))
 
 	require.Empty(t, h.docs)
 	require.Contains(t, h.lastText(), "пока не умею")

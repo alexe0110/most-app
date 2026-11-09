@@ -24,7 +24,9 @@ const (
 	textDriveConnected = "Google Drive подключён ✅ Новые документы будут попадать на твой Диск."
 
 	textChooseCategory      = "Выбери категорию:"
-	textChooseCategoryGroup = "Выбери категорию для %d %s:"                        // files in the album, plural("файл")
+	textChooseCategoryGroup = "Выбери категорию для %d %s:" // files in the album, plural("файл")
+	textChooseCategoryAlbum = "Выбери категорию для альбома:"
+	textAlbumChoice         = "Альбом: %d %s. Что сделать?"                        // count, plural("изображение")
 	textAlbumDuplicates     = "Уже были сохранены: %d"                             // %d = duplicate files
 	textGroupSaved          = "Сохранил %d %s в категории «%s»."                   // count, plural("файл"), category
 	textGroupTooLarge       = "Слишком большие для Drive, остались в Telegram: %d" // %d = files
@@ -148,14 +150,34 @@ const (
 	textConvertTapButton = "Нажми кнопку выше или /cancel, чтобы выйти."
 	textConvertNoImages  = "Сначала пришли хотя бы одно фото."
 
-	textConvertUnsupported    = "Так я пока не умею. Пришли фото в JPEG или PNG. HEIC, PDF и видео — позже."
-	textConvertDownloadFailed = "Не удалось получить файл. Попробуй ещё раз."
-	textConvertTooLarge       = "Изображение слишком большое. Пришли снимок поменьше."
-	textConvertFailed         = "Не удалось обработать изображение. Проверь, что это JPEG или PNG."
+	textConvertUnsupported        = "Так я пока не умею. Пришли фото в JPEG, PNG или WEBP. Видео и другие форматы — позже. С PDF я работаю вне /convert: отправь файл и нажми «🛠»."
+	textConvertDownloadFailed     = "Не удалось получить файл. Попробуй ещё раз."
+	textConvertTooLarge           = "Изображение слишком большое. Пришли снимок поменьше."
+	textConvertFormatNotSupported = "Этот формат пока не поддерживается. Пришли JPG, PNG или WEBP."
+	textConvertFailed             = "Не удалось обработать изображение. Проверь, что это JPEG, PNG или WEBP."
 
 	textConvertExpired   = "Сессия конвертера истекла. Начни заново: /convert."
 	textConvertCancelled = "Режим конвертера выключен."
 	textConvertNothing   = "Сейчас нечего отменять."
+
+	textConvertMenu      = "Что сделать с файлом?"
+	textConvertSaving    = "💾 Сохраняю…"
+	textConvertResultOld = "Эта кнопка устарела. Преобразуй файл ещё раз."
+
+	textAlbumTooMany = "В один PDF помещается не больше %d страниц. Сохрани фото по одному."
+	textAlbumTooBig  = "Фото в альбоме больше %d МБ вместе — в один PDF не поместятся. Сохрани их по одному."
+
+	textPDFRangePrompt   = "Какие страницы? Например: 1-3,5"
+	textPDFBadRange      = "Не понял, какие страницы. Напиши, например: 1-3,5. Нельзя оставить файл без страниц."
+	textPDFMergePrompt   = "Пришли PDF, которые нужно добавить в конец, — по одному. Когда закончишь, нажми «Готово»."
+	textPDFMergeAdded    = "Добавил. Всего файлов: %d. Пришли ещё или нажми «Готово»."
+	textPDFMergeNeeded   = "Нужен ещё хотя бы один PDF. Пришли его файлом."
+	textPDFNotPDF        = "Это не PDF. Пришли PDF-файл."
+	textPDFInvalid       = "Не получилось прочитать PDF: файл повреждён или защищён паролем."
+	textPDFTooLarge      = "PDF слишком большой: все файлы вместе не должны быть больше %d МБ."
+	textPDFTooMany       = "В PDF слишком много страниц: поддерживаю до %d."
+	textPDFPrevCancelled = "Предыдущее преобразование отменено."
+	textPDFTimeout       = "Обработка заняла слишком много времени. Попробуй файл поменьше."
 
 	// textConvertBestEffort takes the reached size in KB (target was out of reach).
 	textConvertBestEffort = "Меньше не вышло — сжал до %d КБ."
@@ -173,4 +195,37 @@ const (
 	btnLimitCustom = "Свой лимит"
 	btnJPEG        = "JPEG"
 	btnPNG         = "PNG"
+)
+
+// Inline button labels for converting from a card, a picker and a result.
+const (
+	btnConvertCard      = "🛠 Преобразовать"
+	btnConvertPicker    = "🛠 Сжать / В PDF"
+	btnConvertPickerPDF = "🛠 Действия с PDF"
+	btnQuick1MB         = "🗜 1 МБ"
+	btnQuick2MB         = "🗜 2 МБ"
+	btnQuick5MB         = "🗜 5 МБ"
+	btnQuickJPG         = "🖼 В JPG"
+	btnQuickPDF         = "📄 В PDF"
+	btnQuickCancel      = "✖️ Отмена"
+	btnPDFRotate        = "🔄 Повернуть ↻"
+	btnPDFKeep          = "✂️ Оставить стр."
+	btnPDFDrop          = "🗑 Убрать стр."
+	btnPDFMerge         = "➕ Склеить"
+	btnSaveResult       = "💾 Сохранить в документы"
+	btnSkipResult       = "⬇️ Только файл"
+)
+
+// Title suffixes of documents made by the converter.
+const (
+	suffixCompressed = " (сжатый)"
+	suffixJPG        = " (JPG)"
+	suffixPDF        = " (PDF)"
+	suffixEdited     = " (изменён)"
+)
+
+// Inline button labels for an album of images.
+const (
+	btnAlbumPDF  = "📄 Собрать в один PDF"
+	btnAlbumEach = "💾 Сохранить по одному"
 )

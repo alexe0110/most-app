@@ -1,12 +1,11 @@
-// Package convert makes a PDF from images and shrinks images under a size
-// limit. Pure: bytes in, bytes out, no I/O.
+// Package convert makes a PDF from images, shrinks images under a size limit and
+// merges, trims and rotates PDFs. Pure: bytes in, bytes out, no I/O.
 package convert
 
 import (
 	"bytes"
 	"errors"
 	"fmt"
-	"image/jpeg"
 	"math"
 	"strconv"
 
@@ -60,13 +59,14 @@ func ImagesToPDF(images [][]byte) ([]byte, error) {
 			return nil, fmt.Errorf("image %d: %w", i+1, err)
 		}
 
-		var enc bytes.Buffer
-		if err := jpeg.Encode(&enc, img, &jpeg.Options{Quality: pdfJPEGQuality}); err != nil {
+		jpg, err := encodeJPEG(img, pdfJPEGQuality)
+		if err != nil {
 			return nil, fmt.Errorf("encode image %d: %w", i+1, err)
 		}
+		enc := bytes.NewReader(jpg)
 
 		name := "img" + strconv.Itoa(i)
-		pdf.RegisterImageOptionsReader(name, fpdf.ImageOptions{ImageType: "JPG"}, &enc)
+		pdf.RegisterImageOptionsReader(name, fpdf.ImageOptions{ImageType: "JPG"}, enc)
 		pdf.AddPage()
 		w, h := fitWithin(img.Bounds().Dx(), img.Bounds().Dy(), a4WidthMM-2*marginMM, a4HeightMM-2*marginMM)
 		pdf.ImageOptions(name, (a4WidthMM-w)/2, (a4HeightMM-h)/2, w, h, false, fpdf.ImageOptions{ImageType: "JPG"}, 0, "")
@@ -83,6 +83,20 @@ func ImagesToPDF(images [][]byte) ([]byte, error) {
 func fitWithin(wPx, hPx int, availW, availH float64) (w, h float64) {
 	scale := math.Min(availW/float64(wPx), availH/float64(hPx))
 	return float64(wPx) * scale, float64(hPx) * scale
+}
+
+// toJPEGQuality is the quality of a plain format conversion: visually lossless
+// without the size of the original.
+const toJPEGQuality = 90
+
+// ToJPEG converts a JPEG, PNG or WEBP image to JPEG at fixed quality, applying
+// EXIF rotation.
+func ToJPEG(img []byte) ([]byte, error) {
+	src, err := decodeUpright(img)
+	if err != nil {
+		return nil, err
+	}
+	return encodeJPEG(src, toJPEGQuality)
 }
 
 // Compress re-encodes img to fit maxBytes in the given format. If the target is

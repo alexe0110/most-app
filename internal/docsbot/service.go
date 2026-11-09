@@ -122,6 +122,72 @@ func (s *Service) Receive(ctx context.Context, in IncomingFile) (Reply, error) {
 	return NeedCategory{Doc: doc}, nil
 }
 
+// SaveDerived stores a file made from another document (a compressed copy, a
+// PDF) as a new document. When the source is saved, the copy lands in the
+// source's category under DerivedTitle(source title, suffix) and the result is
+// Saved. A pending or absent source (empty sourceID) means ordinary intake: the
+// reply is NeedCategory and the title is in.Title. Limit replies and duplicates
+// pass through unchanged; an unknown source is ErrNotFound.
+func (s *Service) SaveDerived(ctx context.Context, user UserID, sourceID DocumentID, in IncomingFile, suffix string) (Reply, error) {
+	in.UserID = user
+	var src Document
+	fromSaved := false
+	if sourceID != "" {
+		var err error
+		src, err = s.repo.DocumentByID(ctx, user, sourceID)
+		if err != nil {
+			return nil, fmt.Errorf("load source document: %w", err)
+		}
+		fromSaved = src.Status == StatusSaved
+	}
+	if fromSaved {
+		in.Title = DerivedTitle(src.Title, suffix)
+	}
+
+	rep, err := s.Receive(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	need, ok := rep.(NeedCategory)
+	if !fromSaved || !ok {
+		return rep, nil
+	}
+	saved, err := s.ChooseCategory(ctx, user, need.Doc.ID, src.Category)
+	if err != nil {
+		// Don't leave the copy pending: nobody will categorize it.
+		if delErr := s.repo.DeleteDocument(ctx, user, need.Doc.ID); delErr != nil && !errors.Is(delErr, ErrNotFound) {
+			return nil, errors.Join(err, fmt.Errorf("discard derived document: %w", delErr))
+		}
+		return nil, err
+	}
+	return saved, nil
+}
+
+// DiscardAlbum deletes the still-pending documents of an album, e.g. after its
+// photos were merged into one PDF. Saved documents are never touched. It returns
+// how many were removed; a document purged in parallel is skipped.
+func (s *Service) DiscardAlbum(ctx context.Context, user UserID, group string) (int, error) {
+	if group == "" {
+		return 0, nil
+	}
+	pending, err := s.repo.PendingByMediaGroup(ctx, user, group)
+	if err != nil {
+		return 0, fmt.Errorf("list album: %w", err)
+	}
+	n := 0
+	for _, d := range pending {
+		err := s.repo.DeleteDocument(ctx, user, d.ID)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return n, fmt.Errorf("delete album document: %w", err)
+		}
+		n++
+	}
+	return n, nil
+}
+
 // PurgeStalePending deletes pending documents nobody categorized within the TTL
 // and returns how many were removed. It is the purge_pending job's use case.
 func (s *Service) PurgeStalePending(ctx context.Context) (int, error) {

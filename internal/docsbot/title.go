@@ -1,6 +1,7 @@
 package docsbot
 
 import (
+	"path/filepath"
 	"strings"
 	"unicode"
 )
@@ -40,4 +41,40 @@ func isInvisibleFormat(r rune) bool {
 		return true
 	}
 	return false
+}
+
+// DerivedTitle names a document made from src (a compressed copy, a PDF): the
+// file extension is dropped and suffix appended. The result fits MaxTitleRunes
+// by trimming the base, never the suffix.
+func DerivedTitle(src, suffix string) string {
+	base := NormalizeTitle(src)
+	if ext := filepath.Ext(base); looksLikeExt(strings.TrimPrefix(ext, ".")) {
+		base = strings.TrimSpace(strings.TrimSuffix(base, ext))
+	}
+	suffix = strings.TrimSpace(suffix)
+	if base == "" {
+		return suffix
+	}
+	room := MaxTitleRunes - len([]rune(suffix)) - 1
+	if r := []rune(base); len(r) > room {
+		base = strings.TrimSpace(string(r[:max(room, 0)]))
+	}
+	return NormalizeTitle(base + " " + suffix)
+}
+
+// looksLikeExt reports whether s is plausibly a file extension: 1-5 ASCII
+// letters or digits with at least one letter (so a year like "2026" is not one).
+func looksLikeExt(s string) bool {
+	if len(s) < 1 || len(s) > 5 {
+		return false
+	}
+	letter := false
+	for _, r := range s {
+		isLetter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+		if !isLetter && (r < '0' || r > '9') {
+			return false
+		}
+		letter = letter || isLetter
+	}
+	return letter
 }
