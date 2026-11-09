@@ -24,6 +24,8 @@ const (
 	sweepStaleAfter = 30 * time.Minute
 	// sweepFailAfter is how long a document may stay stuck before it is failed.
 	sweepFailAfter = 24 * time.Hour
+	// maxQueryRunes caps a search query's length.
+	maxQueryRunes = 100
 )
 
 // Service holds the Most Docs use cases. It depends only on ports, never on
@@ -186,13 +188,13 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 	}
 	// Do not bump updated_at here: a poisoned document that crashes every
 	// attempt must still age out to failed via the sweeper's 24h backstop.
-	if err := s.repo.MarkUploading(ctx, id); err != nil {
+	if err := s.repo.MarkUploading(ctx, user, id); err != nil {
 		return BackupResult{}, fmt.Errorf("mark uploading: %w", err)
 	}
 
 	data, mime, err := s.files.Download(ctx, doc.TgFileID)
 	if errors.Is(err, ErrFileTooLarge) {
-		if err := s.repo.SetBackupStatus(ctx, id, BackupTooLarge); err != nil {
+		if err := s.repo.SetBackupStatus(ctx, user, id, BackupTooLarge); err != nil {
 			return BackupResult{}, fmt.Errorf("mark too large: %w", err)
 		}
 		doc.BackupStatus = BackupTooLarge
@@ -205,7 +207,7 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 	file, err := s.drive.Upload(ctx, user, DriveUpload{Category: doc.Category, Name: doc.Title, MIME: mime, Data: data, DocID: string(id)})
 	if errors.Is(err, ErrDriveDisconnected) {
 		// User disconnected Drive mid-upload: drop back to Telegram-only, finish silently.
-		if serr := s.repo.SetBackupStatus(ctx, id, BackupNone); serr != nil {
+		if serr := s.repo.SetBackupStatus(ctx, user, id, BackupNone); serr != nil {
 			return BackupResult{}, fmt.Errorf("reset backup status: %w", serr)
 		}
 		return BackupResult{Noop: true}, nil
@@ -217,7 +219,7 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 		return BackupResult{}, fmt.Errorf("upload to drive: %w", err)
 	}
 
-	if err := s.repo.MarkBackedUp(ctx, id, file.ID); err != nil {
+	if err := s.repo.MarkBackedUp(ctx, user, id, file.ID); err != nil {
 		return BackupResult{}, fmt.Errorf("mark backed up: %w", err)
 	}
 	doc.BackupStatus = BackupBackedUp
@@ -225,10 +227,9 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 	return BackupResult{Doc: doc}, nil
 }
 
-// MarkBackupFailed records a terminal upload failure. The user is accepted for a
-// consistent, user-scoped API even though the status update is keyed by id.
-func (s *Service) MarkBackupFailed(ctx context.Context, _ UserID, id DocumentID) error {
-	if err := s.repo.SetBackupStatus(ctx, id, BackupFailed); err != nil {
+// MarkBackupFailed records a terminal upload failure.
+func (s *Service) MarkBackupFailed(ctx context.Context, user UserID, id DocumentID) error {
+	if err := s.repo.SetBackupStatus(ctx, user, id, BackupFailed); err != nil {
 		return fmt.Errorf("mark backup failed: %w", err)
 	}
 	return nil
@@ -254,7 +255,7 @@ func (s *Service) SweepStuckUploads(ctx context.Context) (SweepResult, error) {
 	res.Found = len(rows)
 	for _, r := range rows {
 		if now.Sub(r.UpdatedAt) >= sweepFailAfter {
-			if err := s.repo.SetBackupStatus(ctx, r.ID, BackupFailed); err != nil {
+			if err := s.repo.SetBackupStatus(ctx, r.User, r.ID, BackupFailed); err != nil {
 				return res, fmt.Errorf("fail stuck upload: %w", err)
 			}
 			res.Failed = append(res.Failed, r)
@@ -272,9 +273,9 @@ func (s *Service) SweepStuckUploads(ctx context.Context) (SweepResult, error) {
 // one transfer status message that takes over the given Telegram message. ok is
 // false when there is nothing to transfer.
 func (s *Service) TransferSaved(ctx context.Context, user UserID, chatID int64, messageID int) (StatusView, bool, error) {
-	ids, err := s.repo.NotBackedUpIDs(ctx, user)
+	ids, err := s.repo.ClaimTransferable(ctx, user)
 	if err != nil {
-		return StatusView{}, false, fmt.Errorf("list not backed up: %w", err)
+		return StatusView{}, false, fmt.Errorf("claim not backed up: %w", err)
 	}
 	return s.startGroupedUpload(ctx, user, chatID, messageID, ids)
 }
@@ -306,12 +307,33 @@ func (s *Service) DriveConnected(ctx context.Context, user UserID) (bool, error)
 	return ok, nil
 }
 
-// RetryBackup re-enqueues a single document's Drive upload.
+// RetryBackup re-enqueues a failed document's Drive upload. Any other state
+// (done, in flight, already retried) or a foreign document returns ErrNotRetryable.
 func (s *Service) RetryBackup(ctx context.Context, user UserID, id DocumentID) error {
-	if err := s.uploads.EnqueueUpload(ctx, user, id); err != nil {
-		return fmt.Errorf("enqueue upload: %w", err)
+	queued, err := s.claimAndRequeue(ctx, user, id)
+	if err != nil {
+		return err
+	}
+	if !queued {
+		return ErrNotRetryable
 	}
 	return nil
+}
+
+// claimAndRequeue atomically moves a failed document to pending and queues its
+// upload. queued is false when the document was not failed (nothing is done).
+func (s *Service) claimAndRequeue(ctx context.Context, user UserID, id DocumentID) (queued bool, err error) {
+	claimed, err := s.repo.ClaimFailed(ctx, user, id)
+	if err != nil {
+		return false, fmt.Errorf("claim failed upload: %w", err)
+	}
+	if !claimed {
+		return false, nil
+	}
+	if err := s.uploads.RequeueUpload(ctx, user, id); err != nil {
+		return false, fmt.Errorf("requeue upload: %w", err)
+	}
+	return true, nil
 }
 
 // Settings reports the Drive connection and the user's document counts for /settings.
@@ -338,32 +360,38 @@ func (s *Service) Settings(ctx context.Context, user UserID) (SettingsView, erro
 	return view, nil
 }
 
-// Disconnect turns Drive off at the user's request (best-effort), cancels the
-// user's pending uploads and resets stuck documents back to Telegram-only.
+// Disconnect turns Drive off at the user's request, cancels the user's pending
+// uploads and resets stuck documents back to Telegram-only. A failing Drive
+// disconnect does not stop the local work: it is reported afterwards as
+// ErrRevokeIncomplete, which callers treat as success.
 func (s *Service) Disconnect(ctx context.Context, user UserID) error {
-	if err := s.drive.Disconnect(ctx, user); err != nil {
-		return fmt.Errorf("disconnect drive: %w", err)
-	}
+	driveErr := s.drive.Disconnect(ctx, user)
 	if err := s.uploads.CancelUploads(ctx, user); err != nil {
 		return fmt.Errorf("cancel uploads: %w", err)
 	}
 	if err := s.repo.ResetPendingUploads(ctx, user); err != nil {
 		return fmt.Errorf("reset pending uploads: %w", err)
 	}
+	if driveErr != nil {
+		return fmt.Errorf("disconnect drive: %w: %w", ErrRevokeIncomplete, driveErr)
+	}
 	return nil
 }
 
-// DeleteAllData revokes Drive access, cancels pending uploads and deletes all of the
-// user's data, then soft-deletes the user.
+// DeleteAllData revokes Drive access, cancels pending uploads and deletes all of
+// the user's data, then soft-deletes the user. A failing revoke does not block
+// the deletion: it is reported afterwards as ErrRevokeIncomplete, which callers
+// treat as success.
 func (s *Service) DeleteAllData(ctx context.Context, user UserID) error {
-	if err := s.drive.Revoke(ctx, user); err != nil {
-		return fmt.Errorf("revoke drive access: %w", err)
-	}
+	revokeErr := s.drive.Revoke(ctx, user)
 	if err := s.uploads.CancelUploads(ctx, user); err != nil {
 		return fmt.Errorf("cancel uploads: %w", err)
 	}
 	if err := s.repo.DeleteUserData(ctx, user); err != nil {
 		return fmt.Errorf("delete user data: %w", err)
+	}
+	if revokeErr != nil {
+		return fmt.Errorf("revoke drive access: %w: %w", ErrRevokeIncomplete, revokeErr)
 	}
 	return nil
 }
@@ -371,9 +399,9 @@ func (s *Service) DeleteAllData(ctx context.Context, user UserID) error {
 // RetryFailed re-queues every failed Drive upload under one transfer status
 // message that takes over the given Telegram message. ok is false when nothing failed.
 func (s *Service) RetryFailed(ctx context.Context, user UserID, chatID int64, messageID int) (StatusView, bool, error) {
-	ids, err := s.repo.FailedIDs(ctx, user)
+	ids, err := s.repo.ClaimAllFailed(ctx, user)
 	if err != nil {
-		return StatusView{}, false, fmt.Errorf("list failed: %w", err)
+		return StatusView{}, false, fmt.Errorf("claim failed: %w", err)
 	}
 	return s.startGroupedUpload(ctx, user, chatID, messageID, ids)
 }
@@ -491,9 +519,16 @@ func (s *Service) CategoryPage(ctx context.Context, user UserID, cat Category, p
 	}, nil
 }
 
-// Search finds up to searchLimit saved documents matching query.
+// Search finds up to searchLimit saved documents matching query. The query is
+// trimmed and cut to maxQueryRunes; a blank one is not searched (BlankQuery).
 func (s *Service) Search(ctx context.Context, user UserID, query string) (Found, error) {
 	query = strings.TrimSpace(query)
+	if r := []rune(query); len(r) > maxQueryRunes {
+		query = strings.TrimSpace(string(r[:maxQueryRunes]))
+	}
+	if query == "" {
+		return Found{BlankQuery: true}, nil
+	}
 	docs, err := s.repo.Search(ctx, user, query, searchLimit)
 	if err != nil {
 		return Found{}, fmt.Errorf("search documents: %w", err)

@@ -59,8 +59,8 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 // batch status messages. Declared here, at the consumer.
 type statusService interface {
 	StatusView(ctx context.Context, user docsbot.UserID, doc docsbot.DocumentID) (docsbot.StatusView, error)
-	CloseStatus(ctx context.Context, id docsbot.StatusMessageID) error
-	SetStatusMessageID(ctx context.Context, id docsbot.StatusMessageID, messageID int) error
+	CloseStatus(ctx context.Context, user docsbot.UserID, id docsbot.StatusMessageID) error
+	SetStatusMessageID(ctx context.Context, user docsbot.UserID, id docsbot.StatusMessageID, messageID int) error
 }
 
 // editInterval is the minimum gap between edits of one status message, to stay
@@ -111,7 +111,7 @@ func (n *Notifier) UploadOutcome(ctx context.Context, user docsbot.UserID, doc d
 		mid, serr := n.bot.SendHTML(ctx, view.Message.ChatID, text, kb)
 		if serr != nil {
 			n.log.ErrorContext(ctx, "resend status message", "err", serr, "user_id", user)
-		} else if uerr := n.svc.SetStatusMessageID(ctx, view.Message.ID, mid); uerr != nil {
+		} else if uerr := n.svc.SetStatusMessageID(ctx, user, view.Message.ID, mid); uerr != nil {
 			n.log.ErrorContext(ctx, "save status message id", "err", uerr, "user_id", user)
 		}
 	default:
@@ -121,7 +121,7 @@ func (n *Notifier) UploadOutcome(ctx context.Context, user docsbot.UserID, doc d
 		n.mu.Lock()
 		delete(n.lastEdit, view.Message.ID)
 		n.mu.Unlock()
-		if cerr := n.svc.CloseStatus(ctx, view.Message.ID); cerr != nil {
+		if cerr := n.svc.CloseStatus(ctx, user, view.Message.ID); cerr != nil {
 			n.log.ErrorContext(ctx, "close status message", "err", cerr, "user_id", user)
 		}
 	}

@@ -141,7 +141,7 @@ func uploadInsertOpts() *river.InsertOpts {
 // upload is queued or running is skipped and leaves the document status as is.
 // Finished states are excluded so a retry or a post-reconnect upload still runs.
 func (e *Enqueuer) EnqueueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
-	return e.repo.EnqueueUpload(ctx, id, func(ctx context.Context, tx pgx.Tx) (bool, error) {
+	return e.repo.EnqueueUpload(ctx, user, id, func(ctx context.Context, tx pgx.Tx) (bool, error) {
 		res, err := e.queue.InsertTx(ctx, tx, UploadDocumentArgs{UserID: string(user), DocumentID: string(id)}, uploadInsertOpts())
 		if err != nil {
 			return false, err

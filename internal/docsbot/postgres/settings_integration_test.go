@@ -22,7 +22,7 @@ func saveDoc(t *testing.T, repo *postgres.Repo, u postgres.User, uniq, backup st
 	})
 	require.NoError(t, err)
 	require.NoError(t, repo.UpdateDocumentBackupStatus(ctx, postgres.UpdateDocumentBackupStatusParams{
-		ID: d.ID, BackupStatus: backup,
+		ID: d.ID, UserID: u.ID, BackupStatus: backup,
 	}))
 }
 

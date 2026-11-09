@@ -361,6 +361,9 @@ func paginationRow(p docsbot.CategoryPage) []models.InlineKeyboardButton {
 
 // renderFound lists search results; nil keyboard means nothing was found.
 func renderFound(f docsbot.Found) (string, *models.InlineKeyboardMarkup) {
+	if f.BlankQuery {
+		return textSearchHint, nil
+	}
 	if len(f.Docs) == 0 {
 		return textNothingFound, nil
 	}

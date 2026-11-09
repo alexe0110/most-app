@@ -365,7 +365,7 @@ func TestService_TransferSaved(t *testing.T) {
 	require.Equal(t, 50, view.Message.MessageID)
 	require.Equal(t, view.Message.ID, repo.docs[a.ID].StatusMessageID)
 	require.Equal(t, view.Message.ID, repo.docs[b.ID].StatusMessageID)
-	require.Equal(t, []docsbot.DocumentID{a.ID, b.ID}, uploads.calls)
+	require.Equal(t, []docsbot.DocumentID{a.ID, b.ID}, uploads.requeued)
 }
 
 func TestService_TransferSaved_nothingToDo(t *testing.T) {
@@ -376,7 +376,7 @@ func TestService_TransferSaved_nothingToDo(t *testing.T) {
 	_, ok, err := svc.TransferSaved(t.Context(), user, 5, 50)
 	require.NoError(t, err)
 	require.False(t, ok)
-	require.Empty(t, uploads.calls)
+	require.Empty(t, uploads.requeued)
 }
 
 func TestService_MarkBackupFailed(t *testing.T) {
@@ -434,13 +434,16 @@ func TestService_Disconnect(t *testing.T) {
 		require.Equal(t, docsbot.BackupFailed, repo.docs[failed.ID].BackupStatus)
 		require.Equal(t, docsbot.BackupPending, repo.docs[other.ID].BackupStatus, "other users untouched")
 	})
-	t.Run("disconnect failure stops before cancelling", func(t *testing.T) {
+	t.Run("drive failure still cancels and resets, reported as ErrRevokeIncomplete", func(t *testing.T) {
 		repo := newFakeRepo()
+		pending := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupPending})
 		uploads := &fakeUploads{repo: repo}
 		svc := docsbot.NewService(repo, fakeDrive{disconnectErr: errors.New("boom")}, fakeFiles{}, uploads, repo, newFakeStatus(repo))
 
-		require.Error(t, svc.Disconnect(t.Context(), user))
-		require.Empty(t, uploads.cancels)
+		err := svc.Disconnect(t.Context(), user)
+		require.ErrorIs(t, err, docsbot.ErrRevokeIncomplete)
+		require.Equal(t, []docsbot.UserID{user}, uploads.cancels)
+		require.Equal(t, docsbot.BackupNone, repo.docs[pending.ID].BackupStatus)
 	})
 	// Criterion 2: disconnect keeps stored documents — it must not delete them,
 	// clear a backed-up doc's drive_file_id or change its backup_status.
@@ -496,7 +499,7 @@ func TestService_RetryFailed(t *testing.T) {
 	require.Len(t, view.Lines, 2)
 	require.Equal(t, docsbot.StatusTransfer, view.Message.Kind)
 	require.Equal(t, view.Message.ID, repo.docs[a.ID].StatusMessageID)
-	require.Equal(t, []docsbot.DocumentID{a.ID, b.ID}, uploads.calls)
+	require.Equal(t, []docsbot.DocumentID{a.ID, b.ID}, uploads.requeued)
 
 	empty := newFakeRepo()
 	_, ok, err = docsbot.NewService(empty, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: empty}, empty, newFakeStatus(empty)).

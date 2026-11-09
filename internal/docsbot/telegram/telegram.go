@@ -41,6 +41,9 @@ func Register(b *bot.Bot, log *slog.Logger, svc *docsbot.Service, auth Authorize
 	b.RegisterHandler(bot.HandlerTypeMessageText, "", bot.MatchTypePrefix, d.onText)
 }
 
+// GroupNotice is the text sent to a group before the bot leaves it.
+func GroupNotice() string { return textGroupNotice }
+
 // Commands is the bot's command menu, published at startup via setMyCommands
 // (same for dev and prod, so BotFather is never edited by hand).
 func Commands() []models.BotCommand {

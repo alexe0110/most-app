@@ -171,7 +171,9 @@ func (d *docs) runSearch(ctx context.Context, b *bot.Bot, chatID int64, user doc
 // callback dispatches an inline-button press by its action.
 func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 	parts := strings.Split(u.CallbackQuery.Data, ":") // d:<action>[:docID[:arg]]
-	d.answerText(ctx, b, u.CallbackQuery.ID, toastFor(parts))
+	if !answersItself(parts) {
+		d.answerText(ctx, b, u.CallbackQuery.ID, toastFor(parts))
+	}
 	user, ok := userID(ctx)
 	if !ok {
 		return
@@ -224,6 +226,12 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 	}
 }
 
+// answersItself reports whether the action handler answers the callback query
+// on its own (to pick the toast from the outcome).
+func answersItself(parts []string) bool {
+	return len(parts) >= 2 && parts[1] == actRetry
+}
+
 // toastFor is the short pop-up shown for an action, "" for none.
 func toastFor(parts []string) string {
 	if len(parts) < 2 {
@@ -245,7 +253,9 @@ func (d *docs) onDisconnect(ctx context.Context, b *bot.Bot, u *models.Update, u
 	if !ok {
 		return
 	}
-	if err := d.svc.Disconnect(ctx, user); err != nil {
+	if err := d.svc.Disconnect(ctx, user); errors.Is(err, docsbot.ErrRevokeIncomplete) {
+		d.log.WarnContext(ctx, "drive disconnect incomplete", "err", err, "user_id", user)
+	} else if err != nil {
 		d.fail(ctx, b, chatID, "disconnect", err)
 		return
 	}
@@ -323,7 +333,9 @@ func (d *docs) onDeleteConfirm(ctx context.Context, b *bot.Bot, chatID int64, us
 		reply(ctx, b, d.log, chatID, textDeleteWrongWord)
 		return
 	}
-	if err := d.svc.DeleteAllData(ctx, user); err != nil {
+	if err := d.svc.DeleteAllData(ctx, user); errors.Is(err, docsbot.ErrRevokeIncomplete) {
+		d.log.WarnContext(ctx, "drive revoke incomplete", "err", err, "user_id", user)
+	} else if err != nil {
 		d.fail(ctx, b, chatID, "delete all data", err)
 		return
 	}
@@ -359,8 +371,11 @@ func (d *docs) onTransferNo(ctx context.Context, b *bot.Bot, u *models.Update) {
 	d.editText(ctx, b, chatID, msgID, textTransferDeclined)
 }
 
-// onRetry re-queues a failed backup.
+// onRetry re-queues a failed backup. It answers the callback itself: a quiet
+// toast when the document is no longer failed (double tap, stale button).
 func (d *docs) onRetry(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	toast := ""
+	defer func() { d.answerText(ctx, b, u.CallbackQuery.ID, toast) }()
 	id, ok := docID(parts)
 	if !ok {
 		return
@@ -369,7 +384,12 @@ func (d *docs) onRetry(ctx context.Context, b *bot.Bot, u *models.Update, user d
 	if !ok {
 		return
 	}
-	if err := d.svc.RetryBackup(ctx, user, id); err != nil {
+	err := d.svc.RetryBackup(ctx, user, id)
+	if errors.Is(err, docsbot.ErrNotRetryable) {
+		toast = toastNotRetryable
+		return
+	}
+	if err != nil {
 		d.fail(ctx, b, chatID, "retry backup", err)
 		return
 	}
@@ -417,7 +437,7 @@ func (d *docs) trackUpload(ctx context.Context, b *bot.Bot, chatID int64, user d
 	kind := docsbot.StatusSingle
 	switch {
 	case reuse && sm.Kind == docsbot.StatusBatch:
-		if err := d.svc.AttachStatus(ctx, doc.ID, sm.ID); err != nil {
+		if err := d.svc.AttachStatus(ctx, user, doc.ID, sm.ID); err != nil {
 			d.fail(ctx, b, chatID, "attach status", err)
 			return
 		}
@@ -466,7 +486,7 @@ func (d *docs) redrawStatus(ctx context.Context, b *bot.Bot, user docsbot.UserID
 	text, kb := renderStatusMessage(view.Message, view.Lines, view.FolderByCat)
 	d.editHTML(ctx, b, view.Message.ChatID, view.Message.MessageID, text, kb)
 	if view.AllTerminal {
-		if err := d.svc.CloseStatus(ctx, view.Message.ID); err != nil {
+		if err := d.svc.CloseStatus(ctx, user, view.Message.ID); err != nil {
 			d.log.ErrorContext(ctx, "close status message", "err", err, "user_id", user)
 		}
 	}

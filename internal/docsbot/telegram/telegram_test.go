@@ -28,6 +28,7 @@ type capture struct {
 	editMarkups []string // editMessageText reply_markup
 	files       []string // sendDocument/sendPhoto caption
 	deletes     int      // deleteMessage calls
+	answers     []string // answerCallbackQuery toast texts
 }
 
 func (c *capture) record(bucket *[]string, s string) {
@@ -78,6 +79,8 @@ func newBotWith(t *testing.T, log *slog.Logger, drive fakeDrive) (*bot.Bot, *cap
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"ok":true,"result":true}`)
 			return
+		case strings.HasSuffix(r.URL.Path, "/answerCallbackQuery"):
+			sent.record(&sent.answers, r.FormValue("text"))
 		case strings.HasSuffix(r.URL.Path, "/editMessageText"):
 			sent.record(&sent.edits, r.FormValue("text"))
 			sent.record(&sent.editMarkups, r.FormValue("reply_markup"))

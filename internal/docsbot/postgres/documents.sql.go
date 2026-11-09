@@ -11,6 +11,103 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimFailedDocuments = `-- name: ClaimFailedDocuments :many
+update documents
+set backup_status = 'pending',
+    updated_at    = now()
+where user_id = $1
+  and status = 'saved'
+  and backup_status = 'failed'
+returning id, created_at
+`
+
+type ClaimFailedDocumentsRow struct {
+	ID        pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
+// Atomically takes every failed upload of the user for retry.
+func (q *Queries) ClaimFailedDocuments(ctx context.Context, userID pgtype.UUID) ([]ClaimFailedDocumentsRow, error) {
+	rows, err := q.db.Query(ctx, claimFailedDocuments, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimFailedDocumentsRow{}
+	for rows.Next() {
+		var i ClaimFailedDocumentsRow
+		if err := rows.Scan(&i.ID, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const claimFailedForRetry = `-- name: ClaimFailedForRetry :execrows
+update documents
+set backup_status = 'pending',
+    updated_at    = now()
+where id = $1
+  and user_id = $2
+  and backup_status = 'failed'
+`
+
+type ClaimFailedForRetryParams struct {
+	ID     pgtype.UUID
+	UserID pgtype.UUID
+}
+
+// Atomically takes a failed upload for retry; 0 rows means it is not failed
+// (already retried, in flight, done) or not the user's.
+func (q *Queries) ClaimFailedForRetry(ctx context.Context, arg ClaimFailedForRetryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, claimFailedForRetry, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const claimTransferableDocuments = `-- name: ClaimTransferableDocuments :many
+update documents
+set backup_status = 'pending',
+    updated_at    = now()
+where user_id = $1
+  and status = 'saved'
+  and backup_status in ('none', 'failed')
+returning id, created_at
+`
+
+type ClaimTransferableDocumentsRow struct {
+	ID        pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
+// Atomically takes every saved document not yet on Drive (none, failed) for
+// upload; a concurrent caller gets no rows for the same documents.
+func (q *Queries) ClaimTransferableDocuments(ctx context.Context, userID pgtype.UUID) ([]ClaimTransferableDocumentsRow, error) {
+	rows, err := q.db.Query(ctx, claimTransferableDocuments, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ClaimTransferableDocumentsRow{}
+	for rows.Next() {
+		var i ClaimTransferableDocumentsRow
+		if err := rows.Scan(&i.ID, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countDocumentsNotBackedUp = `-- name: CountDocumentsNotBackedUp :one
 select count(*)
 from documents
@@ -40,7 +137,7 @@ func (q *Queries) CountSavedDocuments(ctx context.Context, userID pgtype.UUID) (
 	return count, err
 }
 
-const deleteDocumentByID = `-- name: DeleteDocumentByID :exec
+const deleteDocumentByID = `-- name: DeleteDocumentByID :execrows
 delete
 from documents
 where id = $1
@@ -52,9 +149,12 @@ type DeleteDocumentByIDParams struct {
 	UserID pgtype.UUID
 }
 
-func (q *Queries) DeleteDocumentByID(ctx context.Context, arg DeleteDocumentByIDParams) error {
-	_, err := q.db.Exec(ctx, deleteDocumentByID, arg.ID, arg.UserID)
-	return err
+func (q *Queries) DeleteDocumentByID(ctx context.Context, arg DeleteDocumentByIDParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteDocumentByID, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteUserDocuments = `-- name: DeleteUserDocuments :exec
@@ -316,64 +416,6 @@ func (q *Queries) ListDocumentsByCategory(ctx context.Context, arg ListDocuments
 	return items, nil
 }
 
-const listFailedDocumentIDs = `-- name: ListFailedDocumentIDs :many
-select id
-from documents
-where user_id = $1
-  and status = 'saved'
-  and backup_status = 'failed'
-order by created_at
-`
-
-func (q *Queries) ListFailedDocumentIDs(ctx context.Context, userID pgtype.UUID) ([]pgtype.UUID, error) {
-	rows, err := q.db.Query(ctx, listFailedDocumentIDs, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []pgtype.UUID{}
-	for rows.Next() {
-		var id pgtype.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listNotBackedUpDocumentIDs = `-- name: ListNotBackedUpDocumentIDs :many
-select id
-from documents
-where user_id = $1
-  and status = 'saved'
-  and backup_status not in ('backed_up', 'too_large')
-order by created_at
-`
-
-func (q *Queries) ListNotBackedUpDocumentIDs(ctx context.Context, userID pgtype.UUID) ([]pgtype.UUID, error) {
-	rows, err := q.db.Query(ctx, listNotBackedUpDocumentIDs, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []pgtype.UUID{}
-	for rows.Next() {
-		var id pgtype.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listSavedDocumentsForExport = `-- name: ListSavedDocumentsForExport :many
 select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type
 from documents
@@ -430,15 +472,17 @@ set backup_status = 'backed_up',
     drive_file_id = $1,
     updated_at    = now()
 where id = $2
+  and user_id = $3
 `
 
 type MarkDocumentBackedUpParams struct {
 	DriveFileID pgtype.Text
 	ID          pgtype.UUID
+	UserID      pgtype.UUID
 }
 
 func (q *Queries) MarkDocumentBackedUp(ctx context.Context, arg MarkDocumentBackedUpParams) error {
-	_, err := q.db.Exec(ctx, markDocumentBackedUp, arg.DriveFileID, arg.ID)
+	_, err := q.db.Exec(ctx, markDocumentBackedUp, arg.DriveFileID, arg.ID, arg.UserID)
 	return err
 }
 
@@ -446,10 +490,16 @@ const markDocumentUploading = `-- name: MarkDocumentUploading :exec
 update documents
 set backup_status = 'uploading'
 where id = $1
+  and user_id = $2
 `
 
-func (q *Queries) MarkDocumentUploading(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, markDocumentUploading, id)
+type MarkDocumentUploadingParams struct {
+	ID     pgtype.UUID
+	UserID pgtype.UUID
+}
+
+func (q *Queries) MarkDocumentUploading(ctx context.Context, arg MarkDocumentUploadingParams) error {
+	_, err := q.db.Exec(ctx, markDocumentUploading, arg.ID, arg.UserID)
 	return err
 }
 
@@ -492,19 +542,26 @@ select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, driv
 from documents
 where user_id = $1
   and status = 'saved'
-  and (title ilike '%' || $2 || '%' or similarity(title, $2) > 0.3)
-order by similarity(title, $2) desc, created_at desc
-limit $3
+  and (title ilike '%' || $2 || '%' escape '\' or similarity(title, $3) > 0.3)
+order by similarity(title, $3) desc, created_at desc
+limit $4
 `
 
 type SearchDocumentsParams struct {
-	UserID pgtype.UUID
-	Query  pgtype.Text
-	Lim    int32
+	UserID  pgtype.UUID
+	Pattern pgtype.Text
+	Query   string
+	Lim     int32
 }
 
+// @pattern is the query with LIKE metacharacters escaped (backslash escape); @query is raw, for trigram similarity.
 func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams) ([]Document, error) {
-	rows, err := q.db.Query(ctx, searchDocuments, arg.UserID, arg.Query, arg.Lim)
+	rows, err := q.db.Query(ctx, searchDocuments,
+		arg.UserID,
+		arg.Pattern,
+		arg.Query,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -614,19 +671,21 @@ update documents
 set backup_status = $1,
     updated_at    = now()
 where id = $2
+  and user_id = $3
 `
 
 type UpdateDocumentBackupStatusParams struct {
 	BackupStatus string
 	ID           pgtype.UUID
+	UserID       pgtype.UUID
 }
 
 func (q *Queries) UpdateDocumentBackupStatus(ctx context.Context, arg UpdateDocumentBackupStatusParams) error {
-	_, err := q.db.Exec(ctx, updateDocumentBackupStatus, arg.BackupStatus, arg.ID)
+	_, err := q.db.Exec(ctx, updateDocumentBackupStatus, arg.BackupStatus, arg.ID, arg.UserID)
 	return err
 }
 
-const updateDocumentCategory = `-- name: UpdateDocumentCategory :exec
+const updateDocumentCategory = `-- name: UpdateDocumentCategory :execrows
 update documents
 set category   = $1,
     updated_at = now()
@@ -640,12 +699,15 @@ type UpdateDocumentCategoryParams struct {
 	UserID   pgtype.UUID
 }
 
-func (q *Queries) UpdateDocumentCategory(ctx context.Context, arg UpdateDocumentCategoryParams) error {
-	_, err := q.db.Exec(ctx, updateDocumentCategory, arg.Category, arg.ID, arg.UserID)
-	return err
+func (q *Queries) UpdateDocumentCategory(ctx context.Context, arg UpdateDocumentCategoryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateDocumentCategory, arg.Category, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const updateDocumentTitle = `-- name: UpdateDocumentTitle :exec
+const updateDocumentTitle = `-- name: UpdateDocumentTitle :execrows
 update documents
 set title      = $1,
     updated_at = now()
@@ -659,7 +721,10 @@ type UpdateDocumentTitleParams struct {
 	UserID pgtype.UUID
 }
 
-func (q *Queries) UpdateDocumentTitle(ctx context.Context, arg UpdateDocumentTitleParams) error {
-	_, err := q.db.Exec(ctx, updateDocumentTitle, arg.Title, arg.ID, arg.UserID)
-	return err
+func (q *Queries) UpdateDocumentTitle(ctx context.Context, arg UpdateDocumentTitleParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateDocumentTitle, arg.Title, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

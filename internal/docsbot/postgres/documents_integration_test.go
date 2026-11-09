@@ -73,7 +73,7 @@ func TestDocuments_lifecycle(t *testing.T) {
 	require.Equal(t, docsbot.CatOther, moved.Category)
 
 	// Mark backed up: it drops out of the not-backed-up count.
-	require.NoError(t, repo.SetBackupStatus(ctx, doc.ID, docsbot.BackupBackedUp))
+	require.NoError(t, repo.SetBackupStatus(ctx, user, doc.ID, docsbot.BackupBackedUp))
 	notBacked, err = repo.CountNotBackedUp(ctx, user)
 	require.NoError(t, err)
 	require.Equal(t, 0, notBacked)
@@ -221,7 +221,7 @@ func TestDocuments_resetPendingUploads(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.NoError(t, repo.SaveDocument(ctx, user, doc.ID, docsbot.CatOther))
-		require.NoError(t, repo.SetBackupStatus(ctx, doc.ID, s))
+		require.NoError(t, repo.SetBackupStatus(ctx, user, doc.ID, s))
 		return doc.ID
 	}
 	statuses := []docsbot.BackupStatus{
@@ -269,12 +269,12 @@ func TestDocuments_markUploadingKeepsUpdatedAt(t *testing.T) {
 		return status, at
 	}
 
-	require.NoError(t, repo.MarkUploading(ctx, doc.ID))
+	require.NoError(t, repo.MarkUploading(ctx, user, doc.ID))
 	status, at := state()
 	require.Equal(t, "uploading", status)
 	require.True(t, old.Equal(at), "updated_at must not change, got %s", at)
 
-	require.NoError(t, repo.SetBackupStatus(ctx, doc.ID, docsbot.BackupFailed))
+	require.NoError(t, repo.SetBackupStatus(ctx, user, doc.ID, docsbot.BackupFailed))
 	status, at = state()
 	require.Equal(t, "failed", status)
 	require.True(t, at.After(old), "SetBackupStatus must bump updated_at")

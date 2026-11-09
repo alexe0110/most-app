@@ -105,6 +105,7 @@ func run() error {
 		Mode:          tg.Mode(cfg.TelegramMode),
 		PublicURL:     cfg.PublicURL,
 		WebhookSecret: cfg.TelegramWebhookSecret,
+		GroupNotice:   telegram.GroupNotice(),
 	}, repo, log, func(b *bot.Bot) { telegram.Register(b, log, svc, oauthSvc) })
 	if err != nil {
 		return err

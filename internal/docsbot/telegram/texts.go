@@ -37,9 +37,12 @@ const (
 	// Callback toasts.
 	toastSending = "Отправляю…"
 	toastDone    = "Готово"
+	// toastNotRetryable: the upload is no longer failed (double tap or stale button).
+	toastNotRetryable = "Уже в работе или готово"
 
 	textCatalogEmpty = "Пока пусто — пришли документ, и он появится здесь."
 	textNothingFound = "Ничего не нашёл. Загляни в /list или пришли новый документ."
+	textSearchHint   = "Напиши, что искать: часть названия документа."
 
 	textOfferDrive = "Хочешь, чтобы документы лежали на твоём Google Drive? Подключи — " +
 		"новые файлы будут попадать туда автоматически, а бот увидит только то, что сам создал."
@@ -63,9 +66,11 @@ const (
 	textStorageTooLarge     = "📥 Слишком большой для Drive"
 	textStorageTelegramOnly = "📥 Только в Telegram, ещё не в Drive"
 
-	textUnknown    = "Не понимаю эту команду. Я умею /start, /list, /convert и /help."
-	textError      = "Что-то пошло не так. Попробуй ещё раз."
-	textSendFailed = "Не удалось отправить файл. Попробуй ещё раз."
+	// textGroupNotice is sent once to a group the bot was added to, right before it leaves.
+	textGroupNotice = "Я работаю только в личных сообщениях: документы не должны попадать в общий чат. Напиши мне в личку."
+	textUnknown     = "Не понимаю эту команду. Я умею /start, /list, /convert и /help."
+	textError       = "Что-то пошло не так. Попробуй ещё раз."
+	textSendFailed  = "Не удалось отправить файл. Попробуй ещё раз."
 )
 
 // Settings, disconnect, export and delete texts (#15).

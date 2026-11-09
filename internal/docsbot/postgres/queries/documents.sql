@@ -39,28 +39,40 @@ where id = @id
 update documents
 set backup_status = @backup_status,
     updated_at    = now()
-where id = @id;
+where id = @id
+  and user_id = @user_id;
 
 -- name: MarkDocumentUploading :exec
 update documents
 set backup_status = 'uploading'
-where id = @id;
+where id = @id
+  and user_id = @user_id;
 
--- name: UpdateDocumentTitle :exec
+-- name: ClaimFailedForRetry :execrows
+-- Atomically takes a failed upload for retry; 0 rows means it is not failed
+-- (already retried, in flight, done) or not the user's.
+update documents
+set backup_status = 'pending',
+    updated_at    = now()
+where id = @id
+  and user_id = @user_id
+  and backup_status = 'failed';
+
+-- name: UpdateDocumentTitle :execrows
 update documents
 set title      = @title,
     updated_at = now()
 where id = @id
   and user_id = @user_id;
 
--- name: UpdateDocumentCategory :exec
+-- name: UpdateDocumentCategory :execrows
 update documents
 set category   = @category,
     updated_at = now()
 where id = @id
   and user_id = @user_id;
 
--- name: DeleteDocumentByID :exec
+-- name: DeleteDocumentByID :execrows
 delete
 from documents
 where id = @id
@@ -97,11 +109,12 @@ order by created_at desc
 limit @lim offset @off;
 
 -- name: SearchDocuments :many
+-- @pattern is the query with LIKE metacharacters escaped (backslash escape); @query is raw, for trigram similarity.
 select *
 from documents
 where user_id = @user_id
   and status = 'saved'
-  and (title ilike '%' || @query || '%' or similarity(title, @query) > 0.3)
+  and (title ilike '%' || @pattern || '%' escape '\' or similarity(title, @query) > 0.3)
 order by similarity(title, @query) desc, created_at desc
 limit @lim;
 
@@ -110,15 +123,19 @@ update documents
 set backup_status = 'backed_up',
     drive_file_id = @drive_file_id,
     updated_at    = now()
-where id = @id;
+where id = @id
+  and user_id = @user_id;
 
--- name: ListNotBackedUpDocumentIDs :many
-select id
-from documents
+-- name: ClaimTransferableDocuments :many
+-- Atomically takes every saved document not yet on Drive (none, failed) for
+-- upload; a concurrent caller gets no rows for the same documents.
+update documents
+set backup_status = 'pending',
+    updated_at    = now()
 where user_id = @user_id
   and status = 'saved'
-  and backup_status not in ('backed_up', 'too_large')
-order by created_at;
+  and backup_status in ('none', 'failed')
+returning id, created_at;
 
 -- name: DocumentBackupStatusCounts :many
 select backup_status, count(*) as n
@@ -127,13 +144,15 @@ where user_id = @user_id
   and status = 'saved'
 group by backup_status;
 
--- name: ListFailedDocumentIDs :many
-select id
-from documents
+-- name: ClaimFailedDocuments :many
+-- Atomically takes every failed upload of the user for retry.
+update documents
+set backup_status = 'pending',
+    updated_at    = now()
 where user_id = @user_id
   and status = 'saved'
   and backup_status = 'failed'
-order by created_at;
+returning id, created_at;
 
 -- name: ListSavedDocumentsForExport :many
 select *

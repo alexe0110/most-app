@@ -48,6 +48,70 @@ func recoverPanic(log *slog.Logger) bot.Middleware {
 	}
 }
 
+// leaveFunc tells a non-private chat the bot is private-only and leaves it.
+type leaveFunc func(ctx context.Context, b *bot.Bot, chatID int64)
+
+// privateOnly lets only private-chat updates through, so documents never leak
+// into a group. In a group or supergroup it calls leave (notice + leave the
+// chat); channel posts and updates without a chat are dropped silently. It runs
+// before ensureUser, so nothing is stored for them.
+func privateOnly(leave leaveFunc, log *slog.Logger) bot.Middleware {
+	return func(next bot.HandlerFunc) bot.HandlerFunc {
+		return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+			chat := chatOf(update)
+			switch {
+			case chat != nil && chat.Type == models.ChatTypePrivate:
+				next(ctx, b, update)
+			case chat != nil && (chat.Type == models.ChatTypeGroup || chat.Type == models.ChatTypeSupergroup):
+				log.Info("update from group chat dropped", "update_id", update.ID, "chat_type", chat.Type)
+				leave(ctx, b, chat.ID)
+			default:
+				log.Debug("non-private update dropped", "update_id", update.ID, "kind", updateKind(update))
+			}
+		}
+	}
+}
+
+// leaveGroup posts the notice (when set) and leaves the chat. Failures are only
+// logged: the update is dropped either way.
+func leaveGroup(notice string, log *slog.Logger) leaveFunc {
+	return func(ctx context.Context, b *bot.Bot, chatID int64) {
+		if notice != "" {
+			if _, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: notice}); err != nil {
+				log.Warn("send group notice", "err", err)
+			}
+		}
+		if _, err := b.LeaveChat(ctx, &bot.LeaveChatParams{ChatID: chatID}); err != nil {
+			log.Warn("leave group chat", "err", err)
+		}
+	}
+}
+
+// chatOf returns the chat an update happened in, or nil if it has none we know.
+func chatOf(update *models.Update) *models.Chat {
+	switch {
+	case update.Message != nil:
+		return &update.Message.Chat
+	case update.EditedMessage != nil:
+		return &update.EditedMessage.Chat
+	case update.ChannelPost != nil:
+		return &update.ChannelPost.Chat
+	case update.EditedChannelPost != nil:
+		return &update.EditedChannelPost.Chat
+	case update.CallbackQuery != nil:
+		m := update.CallbackQuery.Message
+		switch {
+		case m.Message != nil:
+			return &m.Message.Chat
+		case m.InaccessibleMessage != nil:
+			return &m.InaccessibleMessage.Chat
+		}
+	case update.MyChatMember != nil:
+		return &update.MyChatMember.Chat
+	}
+	return nil
+}
+
 // logUpdate records that an update arrived. It never touches message text or
 // captions, per the project's logging rules.
 func logUpdate(log *slog.Logger) bot.Middleware {

@@ -44,6 +44,7 @@ type Config struct {
 	Mode          Mode
 	PublicURL     string // base URL for the webhook, webhook mode only
 	WebhookSecret string // shared secret proving a request came from Telegram
+	GroupNotice   string // sent once when the bot is used in a group, before it leaves
 }
 
 // Bot wraps the go-telegram client. The inbound adapter adds its handlers
@@ -55,11 +56,11 @@ type Bot struct {
 	log  *slog.Logger
 }
 
-// New builds the bot, installs the common middleware (panic recovery, update
-// logging, user upsert) and lets the adapter add handlers via register.
+// New builds the bot, installs the common middleware (panic recovery, private-only
+// filter, update logging, user upsert) and lets the adapter add handlers via register.
 func New(cfg Config, users Users, log *slog.Logger, register func(*bot.Bot)) (*Bot, error) {
 	opts := []bot.Option{
-		bot.WithMiddlewares(recoverPanic(log), logUpdate(log), ensureUser(users, log)),
+		bot.WithMiddlewares(recoverPanic(log), privateOnly(leaveGroup(cfg.GroupNotice, log), log), logUpdate(log), ensureUser(users, log)),
 		// Unmatched updates are already logged by the middleware; stay silent.
 		bot.WithDefaultHandler(func(context.Context, *bot.Bot, *models.Update) {}),
 	}

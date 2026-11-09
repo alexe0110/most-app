@@ -49,10 +49,12 @@ type CategoryPage struct {
 	FolderID       string // Drive folder of the category; empty if not created yet
 }
 
-// Found holds search results for a query.
+// Found holds search results for a query. BlankQuery is set when the query was
+// empty after trimming: nothing was searched and the channel shows a hint.
 type Found struct {
-	Query string
-	Docs  []Document
+	Query      string
+	Docs       []Document
+	BlankQuery bool
 }
 
 // SettingsView is the /settings screen: Drive state and document counts.
