@@ -28,7 +28,7 @@ func TestDocuments_mediaGroupListsOnlyOwnPendingOfAlbum(t *testing.T) {
 	p1 := albumDoc(t, repo, a, "g1", "p1")
 	p2 := albumDoc(t, repo, a, "g1", "p2")
 	saved := albumDoc(t, repo, a, "g1", "p3")
-	require.NoError(t, repo.SaveDocument(ctx, a, saved.ID, docsbot.CatOther))
+	mustSave(t, ctx, repo, a, saved.ID, docsbot.CatOther)
 	albumDoc(t, repo, a, "g2", "q1")
 	albumDoc(t, repo, b, "g1", "foreign")
 	single, err := repo.CreateDocument(ctx, docsbot.IncomingFile{UserID: a, Kind: docsbot.KindPhoto, FileID: "s", FileUniqueID: "s"})
@@ -42,7 +42,7 @@ func TestDocuments_mediaGroupListsOnlyOwnPendingOfAlbum(t *testing.T) {
 	require.Len(t, got, 2)
 
 	for _, d := range got {
-		require.NoError(t, repo.SaveDocument(ctx, a, d.ID, docsbot.CatReceipts))
+		mustSave(t, ctx, repo, a, d.ID, docsbot.CatReceipts)
 	}
 	rest, err := repo.PendingByMediaGroup(ctx, a, "g1")
 	require.NoError(t, err)
@@ -66,8 +66,8 @@ func TestDocuments_intakeStats(t *testing.T) {
 	albumDoc(t, repo, a, "", "p2")
 	s1 := albumDoc(t, repo, a, "", "s1")
 	s2 := albumDoc(t, repo, a, "", "s2")
-	require.NoError(t, repo.SaveDocument(ctx, a, s1.ID, docsbot.CatOther))
-	require.NoError(t, repo.SaveDocument(ctx, a, s2.ID, docsbot.CatOther))
+	mustSave(t, ctx, repo, a, s1.ID, docsbot.CatOther)
+	mustSave(t, ctx, repo, a, s2.ID, docsbot.CatOther)
 	albumDoc(t, repo, b, "", "foreign")
 	_, err := pool.Exec(ctx, `update documents set created_at = now() - interval '5 minutes' where id in ($1::uuid, $2::uuid)`,
 		string(p1.ID), string(s2.ID))
@@ -93,7 +93,7 @@ func TestDocuments_purgeStalePending(t *testing.T) {
 	staleOther := albumDoc(t, repo, b, "", "stale-b")
 	fresh := albumDoc(t, repo, a, "", "fresh")
 	oldSaved := albumDoc(t, repo, a, "", "old-saved")
-	require.NoError(t, repo.SaveDocument(ctx, a, oldSaved.ID, docsbot.CatOther))
+	mustSave(t, ctx, repo, a, oldSaved.ID, docsbot.CatOther)
 	_, err := pool.Exec(ctx, `update documents set created_at = now() - interval '25 hours' where id in ($1::uuid, $2::uuid, $3::uuid)`,
 		string(stale.ID), string(staleOther.ID), string(oldSaved.ID))
 	require.NoError(t, err)

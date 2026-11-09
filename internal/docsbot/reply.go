@@ -16,6 +16,9 @@ type AlreadySaved struct{ Doc Document }
 type Saved struct {
 	Doc        Document
 	OfferDrive bool
+	// Already is true when the document was saved before this call (double tap,
+	// parallel tap): nothing new happened and callers must not track or redraw it.
+	Already bool
 }
 
 // TooManyPending means the user already has too many files awaiting a category;
@@ -37,9 +40,12 @@ func (QuotaExceeded) isReply()  {}
 
 // SavedGroup is the outcome of saving a whole album: every document with its
 // own Saved result. OfferDrive is true if any of them asked for the Drive nudge.
+// Docs holds only the documents this call saved; Already is true when there were
+// none (the album was saved by an earlier or parallel tap).
 type SavedGroup struct {
 	Docs       []Document
 	OfferDrive bool
+	Already    bool
 }
 
 // Card is one document's detail view.

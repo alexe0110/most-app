@@ -42,7 +42,7 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 		}
 		log.InfoContext(ctx, "drive folder cache reset", "user_id", userID, "reason", "reconnect")
 		if err := b.Send(ctx, chatID, textDriveConnected); err != nil {
-			return err
+			return ignoreBlocked(err) // a block is already logged at Warn by tg.Bot
 		}
 		log.InfoContext(ctx, "drive connected", "user_id", userID)
 		n, err := counter.NotBackedUpCount(ctx, docsbot.UserID(userID))
@@ -52,8 +52,17 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 		if n == 0 {
 			return nil
 		}
-		return b.SendMarkup(ctx, chatID, fmt.Sprintf(textTransferOffer, n), transferOfferKeyboard())
+		return ignoreBlocked(b.SendMarkup(ctx, chatID, fmt.Sprintf(textTransferOffer, n), transferOfferKeyboard()))
 	}
+}
+
+// ignoreBlocked drops tg.ErrBlocked: it is already logged at Warn by tg.Bot and
+// is not an error of the caller.
+func ignoreBlocked(err error) error {
+	if errors.Is(err, tg.ErrBlocked) {
+		return nil
+	}
+	return err
 }
 
 // statusService is the part of docsbot.Service the Notifier needs to refresh
@@ -176,7 +185,8 @@ func errString(err error) string {
 
 // Reconnect asks the user to re-link Drive after access was revoked. At most one
 // prompt is delivered per reconnectDebounce; a failed send does not count, so a
-// retry can still reach the user.
+// retry can still reach the user. A blocked bot does count: retrying on every
+// upload would not help.
 func (n *Notifier) Reconnect(ctx context.Context, user docsbot.UserID) error {
 	n.mu.Lock()
 	last := n.revokedAt[user]
@@ -198,7 +208,8 @@ func (n *Notifier) Reconnect(ctx context.Context, user docsbot.UserID) error {
 	} else {
 		err = n.bot.SendMarkup(ctx, chatID, textReconnect, reconnectKeyboard(url))
 	}
-	if err != nil {
+	blocked := errors.Is(err, tg.ErrBlocked)
+	if err != nil && !blocked {
 		return err
 	}
 	n.mu.Lock()

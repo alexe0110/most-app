@@ -63,6 +63,11 @@ func privateOnly(leave leaveFunc, log *slog.Logger) bot.Middleware {
 			case chat != nil && chat.Type == models.ChatTypePrivate:
 				next(ctx, b, update)
 			case chat != nil && (chat.Type == models.ChatTypeGroup || chat.Type == models.ChatTypeSupergroup):
+				if botRemoved(update) {
+					// Our own leave (or a kick) echoes back as my_chat_member: leaving again would 403.
+					log.Debug("bot removed from group", "update_id", update.ID, "chat_type", chat.Type)
+					return
+				}
 				log.Info("update from group chat dropped", "update_id", update.ID, "chat_type", chat.Type)
 				leave(ctx, b, chat.ID)
 			default:
@@ -70,6 +75,19 @@ func privateOnly(leave leaveFunc, log *slog.Logger) bot.Middleware {
 			}
 		}
 	}
+}
+
+// botRemoved reports a my_chat_member update saying the bot left or was kicked.
+func botRemoved(update *models.Update) bool {
+	m := update.MyChatMember
+	if m == nil {
+		return false
+	}
+	switch m.NewChatMember.Type {
+	case models.ChatMemberTypeLeft, models.ChatMemberTypeBanned:
+		return true
+	}
+	return false
 }
 
 // leaveGroup posts the notice (when set) and leaves the chat. Failures are only

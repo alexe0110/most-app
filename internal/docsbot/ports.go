@@ -23,8 +23,9 @@ type Repo interface {
 	// PurgeStalePending deletes every user's pending documents created before
 	// olderThan and returns how many were removed.
 	PurgeStalePending(ctx context.Context, olderThan time.Time) (int, error)
-	// SaveDocument sets the category and marks the document saved.
-	SaveDocument(ctx context.Context, user UserID, id DocumentID, cat Category) error
+	// SaveDocument sets the category and marks a pending document saved. saved is
+	// false when the document was not pending (already saved, or gone).
+	SaveDocument(ctx context.Context, user UserID, id DocumentID, cat Category) (saved bool, err error)
 	SetBackupStatus(ctx context.Context, user UserID, id DocumentID, s BackupStatus) error
 	// ClaimFailed atomically moves a failed document to pending. It reports
 	// false when the document is not failed or is not the user's.

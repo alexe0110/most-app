@@ -96,7 +96,7 @@ func TestAlbum_threePhotosThreeDocsOnePicker(t *testing.T) {
 	ft.fire()
 
 	require.Len(t, sent.texts, 1, "exactly one picker for the album: %q", sent.texts)
-	require.Contains(t, sent.texts[0], "3 файлов")
+	require.Contains(t, sent.texts[0], "3 файла")
 	require.Contains(t, sent.markups[0], "d:ga:")
 	require.NotContains(t, sent.texts[0], "Уже были сохранены")
 }
@@ -128,7 +128,7 @@ func TestAlbum_withDuplicateReportsCount(t *testing.T) {
 
 	require.Equal(t, 2, pendingCount(repo, "alb"), "the duplicate creates no document")
 	require.Len(t, sent.texts, 1)
-	require.Contains(t, sent.texts[0], "2 файлов")
+	require.Contains(t, sent.texts[0], "2 файла")
 	require.Contains(t, sent.texts[0], "Уже были сохранены: 1")
 }
 
@@ -150,7 +150,7 @@ func TestAlbum_pickerSavesWholeAlbum(t *testing.T) {
 
 	require.Zero(t, pendingCount(repo, "alb"))
 	require.Len(t, repo.savedFor(testUserID), 3)
-	require.True(t, has(sent.edits, "Сохранил 3 файлов"), "edits %q", sent.edits)
+	require.True(t, has(sent.edits, "Сохранил 3 файла"), "edits %q", sent.edits)
 }
 
 func TestAlbum_twoAlbumsGetTwoPickers(t *testing.T) {
@@ -313,5 +313,26 @@ func TestAlbum_pickerAfterRestartStillSavesAlbum(t *testing.T) {
 	send(dataCallback(100, "d:ga:"+string(anchor)+":"+string(docsbot.CatReceipts)))
 
 	require.Zero(t, pendingCount(repo, "alb"))
+	require.Len(t, repo.savedFor(testUserID), 2)
+}
+
+func TestAlbum_pickerDoubleTapOpensOneStatus(t *testing.T) {
+	_, send, sent, repo := albumBot(t, fakeDrive{connected: true})
+	var anchor docsbot.DocumentID
+	for _, uid := range []string{"p1", "p2"} {
+		d := repo.seed(docsbot.Document{
+			UserID: testUserID, Status: docsbot.StatusPending, Kind: docsbot.KindPhoto, MediaGroupID: "alb",
+			TgFileID: "f-" + uid, TgFileUniqueID: uid, CreatedAt: time.Now(),
+		})
+		anchor = d.ID
+	}
+	tap := dataCallback(100, "d:ga:"+string(anchor)+":"+string(docsbot.CatReceipts))
+
+	send(tap)
+	edits := len(sent.edits)
+	send(tap)
+
+	require.Len(t, repo.status.msgs, 1, "one status message for the album")
+	require.Len(t, sent.edits, edits, "the batch is not redrawn by the second tap")
 	require.Len(t, repo.savedFor(testUserID), 2)
 }

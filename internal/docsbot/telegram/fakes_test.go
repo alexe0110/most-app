@@ -129,11 +129,14 @@ func (r *fakeRepo) PurgeStalePending(_ context.Context, olderThan time.Time) (in
 	return n, nil
 }
 
-func (r *fakeRepo) SaveDocument(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) error {
-	d := r.docs[id]
+func (r *fakeRepo) SaveDocument(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (bool, error) {
+	d, ok := r.docs[id]
+	if !ok || d.Status != docsbot.StatusPending {
+		return false, nil
+	}
 	d.Category, d.Status = cat, docsbot.StatusSaved
 	r.docs[id] = d
-	return nil
+	return true, nil
 }
 
 func (*fakeRepo) StuckUploads(context.Context, time.Time, int) ([]docsbot.StuckUpload, error) {

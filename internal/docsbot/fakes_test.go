@@ -218,16 +218,16 @@ func (r *fakeRepo) PurgeStalePending(_ context.Context, olderThan time.Time) (in
 	return n, nil
 }
 
-func (r *fakeRepo) SaveDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) error {
+func (r *fakeRepo) SaveDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	d, ok := r.docs[id]
-	if !ok || d.UserID != user {
-		return nil
+	if !ok || d.UserID != user || d.Status != docsbot.StatusPending {
+		return false, nil
 	}
 	d.Category, d.Status = cat, docsbot.StatusSaved
 	r.docs[id] = d
-	return nil
+	return true, nil
 }
 
 func (r *fakeRepo) ResetPendingUploads(_ context.Context, user docsbot.UserID) error {

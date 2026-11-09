@@ -21,7 +21,7 @@ func savedDoc(t *testing.T, repo docsbot.Repo, user docsbot.UserID, unique strin
 		UserID: user, Kind: docsbot.KindDocument, Title: "t", FileID: "f-" + unique, FileUniqueID: unique,
 	})
 	require.NoError(t, err)
-	require.NoError(t, repo.SaveDocument(ctx, user, doc.ID, docsbot.CatOther))
+	mustSave(t, ctx, repo, user, doc.ID, docsbot.CatOther)
 	return doc
 }
 

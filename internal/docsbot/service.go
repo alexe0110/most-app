@@ -33,8 +33,8 @@ const (
 	maxPendingPerUser = 20
 	// maxFilesPerMinute caps how many files one user may send per minute.
 	maxFilesPerMinute = 30
-	// maxDocumentsPerUser caps one user's total documents.
-	maxDocumentsPerUser = 5000
+	// MaxDocumentsPerUser caps one user's total documents.
+	MaxDocumentsPerUser = 5000
 	// intakeWindow is the flood-check window.
 	intakeWindow = time.Minute
 	// pendingTTL is how long a document may wait for a category before it is purged.
@@ -107,7 +107,7 @@ func (s *Service) Receive(ctx context.Context, in IncomingFile) (Reply, error) {
 		return nil, fmt.Errorf("intake stats: %w", err)
 	}
 	switch {
-	case stats.Total >= maxDocumentsPerUser:
+	case stats.Total >= MaxDocumentsPerUser:
 		return QuotaExceeded{}, nil
 	case stats.Recent >= maxFilesPerMinute:
 		return RateLimited{}, nil
@@ -135,7 +135,7 @@ func (s *Service) PurgeStalePending(ctx context.Context) (int, error) {
 // ChooseCategoryGroup saves every pending document of the album that anyDocID
 // belongs to under cat. The album lives in the database, so it survives a
 // restart. A document without an album is saved alone. It is idempotent like
-// ChooseCategory: once nothing is pending the already-saved document is returned.
+// ChooseCategory: once nothing is pending the result is flagged Already.
 func (s *Service) ChooseCategoryGroup(ctx context.Context, user UserID, anyDocID DocumentID, cat Category) (SavedGroup, error) {
 	if !cat.Valid() {
 		return SavedGroup{}, ErrUnknownCategory
@@ -163,14 +163,18 @@ func (s *Service) ChooseCategoryGroup(ctx context.Context, user UserID, anyDocID
 		if err != nil {
 			return out, err
 		}
+		if saved.Already {
+			continue
+		}
 		out.Docs = append(out.Docs, saved.Doc)
 		out.OfferDrive = out.OfferDrive || saved.OfferDrive
 	}
+	out.Already = len(out.Docs) == 0
 	return out, nil
 }
 
 // ChooseCategory saves a pending document under cat. It is idempotent: a second
-// tap on an already-saved document just returns it. When Drive is connected the
+// tap on an already-saved document returns it flagged Already. When Drive is connected the
 // document is queued for upload (the upload_document worker performs it); otherwise it stays in
 // Telegram and we may offer to connect Drive.
 func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID, cat Category) (Saved, error) {
@@ -182,11 +186,20 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 		return Saved{}, fmt.Errorf("load document: %w", err)
 	}
 	if doc.Status == StatusSaved {
-		return Saved{Doc: doc}, nil
+		return Saved{Doc: doc, Already: true}, nil
 	}
 
-	if err := s.repo.SaveDocument(ctx, user, id, cat); err != nil {
+	won, err := s.repo.SaveDocument(ctx, user, id, cat)
+	if err != nil {
 		return Saved{}, fmt.Errorf("save document: %w", err)
+	}
+	if !won {
+		// Lost a race: a parallel tap saved it, or the purge job deleted it.
+		cur, err := s.repo.DocumentByID(ctx, user, id)
+		if err != nil {
+			return Saved{}, fmt.Errorf("reload document: %w", err)
+		}
+		return Saved{Doc: cur, Already: true}, nil
 	}
 	doc.Category = cat
 	doc.Status = StatusSaved
@@ -450,19 +463,19 @@ func (s *Service) Settings(ctx context.Context, user UserID) (SettingsView, erro
 }
 
 // Disconnect turns Drive off at the user's request, cancels the user's pending
-// uploads and resets stuck documents back to Telegram-only. A failing Drive
-// disconnect does not stop the local work: it is reported afterwards as
-// ErrRevokeIncomplete, which callers treat as success.
+// uploads and resets stuck documents back to Telegram-only. Google failures are
+// already swallowed below this layer, so a Drive error means the local
+// integration status was not updated (still active): it is returned before
+// anything is cancelled.
 func (s *Service) Disconnect(ctx context.Context, user UserID) error {
-	driveErr := s.drive.Disconnect(ctx, user)
+	if err := s.drive.Disconnect(ctx, user); err != nil {
+		return fmt.Errorf("disconnect drive: %w", err)
+	}
 	if err := s.uploads.CancelUploads(ctx, user); err != nil {
 		return fmt.Errorf("cancel uploads: %w", err)
 	}
 	if err := s.repo.ResetPendingUploads(ctx, user); err != nil {
 		return fmt.Errorf("reset pending uploads: %w", err)
-	}
-	if driveErr != nil {
-		return fmt.Errorf("disconnect drive: %w: %w", ErrRevokeIncomplete, driveErr)
 	}
 	return nil
 }
@@ -543,6 +556,10 @@ func (s *Service) Recategorize(ctx context.Context, user UserID, id DocumentID, 
 	if !cat.Valid() {
 		return Card{}, ErrUnknownCategory
 	}
+	old, err := s.repo.DocumentByID(ctx, user, id)
+	if err != nil {
+		return Card{}, fmt.Errorf("load document: %w", err)
+	}
 	if err := s.repo.SetCategory(ctx, user, id, cat); err != nil {
 		return Card{}, fmt.Errorf("recategorize document: %w", err)
 	}
@@ -552,7 +569,7 @@ func (s *Service) Recategorize(ctx context.Context, user UserID, id DocumentID, 
 	}
 	// The file is not moved on Drive (deferred to #11): it stays in its old folder.
 	// The card links to the file itself, and the new category's folder would mislead.
-	if card.Doc.InDrive() {
+	if card.Doc.InDrive() && old.Category != cat {
 		card.FileInOldFolder = true
 		card.CategoryFolderID = ""
 	}

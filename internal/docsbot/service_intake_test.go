@@ -91,6 +91,7 @@ func TestService_ChooseCategoryGroup_savesWholeAlbum(t *testing.T) {
 			got, err := svc.ChooseCategoryGroup(t.Context(), user, first, docsbot.CatReceipts)
 			require.NoError(t, err)
 
+			require.False(t, got.Already)
 			require.Len(t, got.Docs, 3)
 			for _, d := range got.Docs {
 				require.Equal(t, docsbot.StatusSaved, repo.docs[d.ID].Status)
@@ -100,10 +101,11 @@ func TestService_ChooseCategoryGroup_savesWholeAlbum(t *testing.T) {
 			require.Equal(t, docsbot.StatusPending, repo.docs[other.ID].Status)
 			require.Equal(t, docsbot.StatusPending, repo.docs[foreign.ID].Status)
 
-			// A second tap is a no-op.
+			// A second tap is a no-op, flagged so the handler does not redraw.
 			again, err := svc.ChooseCategoryGroup(t.Context(), user, first, docsbot.CatReceipts)
 			require.NoError(t, err)
-			require.Len(t, again.Docs, 1)
+			require.True(t, again.Already)
+			require.Empty(t, again.Docs)
 			require.Len(t, uploads.calls, tt.wantQueue)
 		})
 	}

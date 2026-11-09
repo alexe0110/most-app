@@ -531,3 +531,16 @@ func TestCardKeyboard_backedUpWithoutFolder(t *testing.T) {
 		require.NotContains(t, u, "/folders/")
 	}
 }
+
+func TestPlural(t *testing.T) {
+	tests := []struct {
+		n    int
+		want string
+	}{
+		{1, "файл"}, {2, "файла"}, {5, "файлов"}, {11, "файлов"},
+		{21, "файл"}, {22, "файла"}, {25, "файлов"}, {111, "файлов"},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.want, plural(tt.n, "файл", "файла", "файлов"), "n=%d", tt.n)
+	}
+}

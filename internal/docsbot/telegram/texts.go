@@ -24,10 +24,10 @@ const (
 	textDriveConnected = "Google Drive подключён ✅ Новые документы будут попадать на твой Диск."
 
 	textChooseCategory      = "Выбери категорию:"
-	textChooseCategoryGroup = "Выбери категорию для %d файлов:" // %d = files in the album
-	textAlbumDuplicates     = "Уже были сохранены: %d"          // %d = duplicate files
-	textGroupSaved          = "Сохранил %d файлов в категории «%s»."
-	textGroupTooLarge       = "%d из них слишком большие для Drive: остались в Telegram."
+	textChooseCategoryGroup = "Выбери категорию для %d %s:"                        // files in the album, plural("файл")
+	textAlbumDuplicates     = "Уже были сохранены: %d"                             // %d = duplicate files
+	textGroupSaved          = "Сохранил %d %s в категории «%s»."                   // count, plural("файл"), category
+	textGroupTooLarge       = "Слишком большие для Drive, остались в Telegram: %d" // %d = files
 	textAlreadySaved        = "Этот файл уже сохранён."
 
 	textRenamePrompt = "Пришли новое название документа."
@@ -78,7 +78,7 @@ const (
 	// Intake limits: a refused file is not stored.
 	textTooManyPending = "Сначала выбери категорию для предыдущих файлов"
 	textRateLimited    = "Слишком много файлов сразу. Подожди минуту и пришли остальные."
-	textQuotaExceeded  = "Достигнут лимит документов (5000). Удали ненужные, чтобы добавить новые."
+	textQuotaExceeded  = "Достигнут лимит документов (%d). Удали ненужные, чтобы добавить новые." // %d = docsbot.MaxDocumentsPerUser
 	textUnknown        = "Не понимаю эту команду. Я умею /start, /list, /convert и /help."
 	textError          = "Что-то пошло не так. Попробуй ещё раз."
 	textSendFailed     = "Не удалось отправить файл. Попробуй ещё раз."

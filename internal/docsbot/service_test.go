@@ -434,16 +434,17 @@ func TestService_Disconnect(t *testing.T) {
 		require.Equal(t, docsbot.BackupFailed, repo.docs[failed.ID].BackupStatus)
 		require.Equal(t, docsbot.BackupPending, repo.docs[other.ID].BackupStatus, "other users untouched")
 	})
-	t.Run("drive failure still cancels and resets, reported as ErrRevokeIncomplete", func(t *testing.T) {
+	t.Run("drive failure is a hard error and cancels nothing", func(t *testing.T) {
 		repo := newFakeRepo()
 		pending := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupPending})
 		uploads := &fakeUploads{repo: repo}
 		svc := docsbot.NewService(repo, fakeDrive{disconnectErr: errors.New("boom")}, fakeFiles{}, uploads, repo, newFakeStatus(repo))
 
 		err := svc.Disconnect(t.Context(), user)
-		require.ErrorIs(t, err, docsbot.ErrRevokeIncomplete)
-		require.Equal(t, []docsbot.UserID{user}, uploads.cancels)
-		require.Equal(t, docsbot.BackupNone, repo.docs[pending.ID].BackupStatus)
+		require.Error(t, err)
+		require.NotErrorIs(t, err, docsbot.ErrRevokeIncomplete)
+		require.Empty(t, uploads.cancels, "the integration is still active")
+		require.Equal(t, docsbot.BackupPending, repo.docs[pending.ID].BackupStatus)
 	})
 	// Criterion 2: disconnect keeps stored documents — it must not delete them,
 	// clear a backed-up doc's drive_file_id or change its backup_status.

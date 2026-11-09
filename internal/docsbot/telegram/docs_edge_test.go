@@ -1,6 +1,7 @@
 package telegram_test
 
 import (
+	"bytes"
 	"errors"
 	"log/slog"
 	"testing"
@@ -75,14 +76,14 @@ func TestDeleteData_revokeFailureStillConfirms(t *testing.T) {
 	require.Empty(t, repo.docs)
 }
 
-func TestDisconnect_driveFailureStillConfirms(t *testing.T) {
+func TestDisconnect_driveFailureIsShown(t *testing.T) {
 	b, sent, _ := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{revokeErr: errors.New("google down")})
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 
 	b.ProcessUpdate(ctx, dataCallback(100, "d:dc"))
 
-	require.True(t, has(sent.edits, "Google Drive отключён"), "edits %q texts %q", sent.edits, sent.texts)
-	require.False(t, has(sent.texts, "Что-то пошло не так"))
+	require.False(t, has(sent.edits, "Google Drive отключён"), "the integration is still active: %q", sent.edits)
+	require.True(t, has(sent.texts, "Что-то пошло не так"), "texts %q", sent.texts)
 }
 
 func TestSetCategory_backedUpCardLinksFileAndNotesOldFolder(t *testing.T) {
@@ -112,4 +113,46 @@ func TestOpenCard_backedUpShowsFileButNoFolder(t *testing.T) {
 
 	require.NotEmpty(t, sent.edits)
 	require.False(t, has(sent.edits, "прежней папке"), "the note is one-shot")
+}
+
+func TestRetry_earlyExitsStillAnswerCallback(t *testing.T) {
+	t.Run("no user in context", func(t *testing.T) {
+		b, sent, _ := newBot(t)
+
+		b.ProcessUpdate(t.Context(), dataCallback(100, "d:rt:doc-1"))
+
+		require.Equal(t, []string{""}, sent.answers)
+	})
+	t.Run("no document id", func(t *testing.T) {
+		b, sent, _ := newBot(t)
+		ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+		b.ProcessUpdate(ctx, dataCallback(100, "d:rt"))
+
+		require.Equal(t, []string{""}, sent.answers)
+	})
+}
+
+func TestDeleteData_revokeFailureIsWarnedAndConfirmed(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	b, sent, _ := newBotWith(t, log, fakeDrive{revokeErr: errors.New("google down")})
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:dd"))
+	b.ProcessUpdate(ctx, textUpdate(100, "УДАЛИТЬ"))
+
+	require.True(t, has(sent.texts, "Данные удалены"), "sent %q", sent.texts)
+	require.Contains(t, buf.String(), `"level":"WARN"`)
+	require.Contains(t, buf.String(), "drive revoke incomplete")
+	require.NotContains(t, buf.String(), "delete all data", "not treated as a failure")
+}
+
+func TestCategory_missingDocumentSaysGone(t *testing.T) {
+	b, sent, _ := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:cat:missing:"+string(docsbot.CatOther)))
+
+	require.Contains(t, sent.edits[len(sent.edits)-1], "Этого документа уже нет")
 }

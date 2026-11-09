@@ -592,13 +592,14 @@ func (q *Queries) ResetPendingUploads(ctx context.Context, userID pgtype.UUID) e
 	return err
 }
 
-const saveDocumentCategory = `-- name: SaveDocumentCategory :exec
+const saveDocumentCategory = `-- name: SaveDocumentCategory :execrows
 update documents
 set category   = $1,
     status     = 'saved',
     updated_at = now()
 where id = $2
   and user_id = $3
+  and status = 'pending'
 `
 
 type SaveDocumentCategoryParams struct {
@@ -607,9 +608,13 @@ type SaveDocumentCategoryParams struct {
 	UserID   pgtype.UUID
 }
 
-func (q *Queries) SaveDocumentCategory(ctx context.Context, arg SaveDocumentCategoryParams) error {
-	_, err := q.db.Exec(ctx, saveDocumentCategory, arg.Category, arg.ID, arg.UserID)
-	return err
+// Only a pending document is saved: of two concurrent taps exactly one gets 1 row.
+func (q *Queries) SaveDocumentCategory(ctx context.Context, arg SaveDocumentCategoryParams) (int64, error) {
+	result, err := q.db.Exec(ctx, saveDocumentCategory, arg.Category, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const searchDocuments = `-- name: SearchDocuments :many

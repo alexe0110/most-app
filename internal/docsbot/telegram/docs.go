@@ -221,6 +221,9 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 	}
 	user, ok := userID(ctx)
 	if !ok {
+		if answersItself(parts) {
+			d.answerText(ctx, b, u.CallbackQuery.ID, "") // never leave the button spinning
+		}
 		return
 	}
 	if len(parts) < 2 {
@@ -293,16 +296,15 @@ func toastFor(parts []string) string {
 	return ""
 }
 
-// onDisconnect revokes Drive access and stops pending uploads, leaving stored
-// documents (and any Drive links) untouched.
+// onDisconnect turns Drive off and stops pending uploads, leaving stored
+// documents (and any Drive links) untouched. A failure is shown to the user:
+// the integration is then still connected.
 func (d *docs) onDisconnect(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
 	chatID, msgID, ok := callbackMessage(u)
 	if !ok {
 		return
 	}
-	if err := d.svc.Disconnect(ctx, user); errors.Is(err, docsbot.ErrRevokeIncomplete) {
-		d.log.WarnContext(ctx, "drive disconnect incomplete", "err", err, "user_id", user)
-	} else if err != nil {
+	if err := d.svc.Disconnect(ctx, user); err != nil {
 		d.fail(ctx, b, chatID, "disconnect", err)
 		return
 	}
@@ -455,9 +457,16 @@ func (d *docs) onCategory(ctx context.Context, b *bot.Bot, u *models.Update, use
 		return
 	}
 	saved, err := d.svc.ChooseCategory(ctx, user, id, cat)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		d.gone(ctx, b, chatID, msgID)
+		return
+	}
 	if err != nil {
 		d.fail(ctx, b, chatID, "choose category", err)
 		return
+	}
+	if saved.Already {
+		return // double tap: the first tap already saved and tracked it
 	}
 	d.log.InfoContext(ctx, "document saved", "user_id", user, "doc_id", saved.Doc.ID,
 		"category", cat, "backup_status", saved.Doc.BackupStatus)
@@ -492,6 +501,9 @@ func (d *docs) onCategoryGroup(ctx context.Context, b *bot.Bot, u *models.Update
 		d.fail(ctx, b, chatID, "choose album category", err)
 		return
 	}
+	if group.Already {
+		return // double tap: the first tap already saved and tracked the album
+	}
 	d.log.InfoContext(ctx, "album saved", "user_id", user, "category", cat, "count", len(group.Docs))
 
 	var tracked []docsbot.Document // queued for upload, or kept in Telegram for size
@@ -516,7 +528,7 @@ func (d *docs) onCategoryGroup(ctx context.Context, b *bot.Bot, u *models.Update
 	case len(group.Docs) == 1:
 		d.editCard(ctx, b, chatID, msgID, group.Docs[0], "", "")
 	default:
-		text := fmt.Sprintf(textGroupSaved, len(group.Docs), categoryLabel(cat))
+		text := fmt.Sprintf(textGroupSaved, len(group.Docs), plural(len(group.Docs), "файл", "файла", "файлов"), categoryLabel(cat))
 		if tooLarge > 0 {
 			text += "\n" + fmt.Sprintf(textGroupTooLarge, tooLarge)
 		}

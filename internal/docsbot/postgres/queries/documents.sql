@@ -27,13 +27,15 @@ from documents
 where id = @id
   and user_id = @user_id;
 
--- name: SaveDocumentCategory :exec
+-- name: SaveDocumentCategory :execrows
+-- Only a pending document is saved: of two concurrent taps exactly one gets 1 row.
 update documents
 set category   = @category,
     status     = 'saved',
     updated_at = now()
 where id = @id
-  and user_id = @user_id;
+  and user_id = @user_id
+  and status = 'pending';
 
 -- name: UpdateDocumentBackupStatus :exec
 update documents

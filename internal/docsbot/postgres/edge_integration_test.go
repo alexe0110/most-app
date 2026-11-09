@@ -25,7 +25,7 @@ func titled(t *testing.T, repo *postgres.Repo, user docsbot.UserID, unique, titl
 		UserID: user, Kind: docsbot.KindDocument, Title: title, FileID: "f-" + unique, FileUniqueID: unique,
 	})
 	require.NoError(t, err)
-	require.NoError(t, repo.SaveDocument(t.Context(), user, doc.ID, docsbot.CatOther))
+	mustSave(t, t.Context(), repo, user, doc.ID, docsbot.CatOther)
 	return doc
 }
 

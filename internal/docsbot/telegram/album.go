@@ -113,7 +113,7 @@ func (d *docs) flushAlbum(ctx context.Context, b *bot.Bot, st albumState) {
 	case st.fresh > 0:
 		text := textChooseCategory
 		if st.fresh > 1 {
-			text = fmt.Sprintf(textChooseCategoryGroup, st.fresh)
+			text = fmt.Sprintf(textChooseCategoryGroup, st.fresh, plural(st.fresh, "файл", "файла", "файлов"))
 		}
 		if st.dups > 0 {
 			text += "\n\n" + fmt.Sprintf(textAlbumDuplicates, st.dups)
@@ -135,7 +135,7 @@ func rejectionText(rep docsbot.Reply) (string, bool) {
 	case docsbot.RateLimited:
 		return textRateLimited, true
 	case docsbot.QuotaExceeded:
-		return textQuotaExceeded, true
+		return fmt.Sprintf(textQuotaExceeded, docsbot.MaxDocumentsPerUser), true
 	}
 	return "", false
 }

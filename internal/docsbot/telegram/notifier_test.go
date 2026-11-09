@@ -35,6 +35,7 @@ type fakeBotAPI struct {
 	calls   []botCall
 	editErr string // when set, editMessageText fails with this description
 	nextID  int    // message_id returned by sendMessage
+	blocked bool   // when set, sendMessage fails with 403 (user blocked the bot)
 }
 
 func (f *fakeBotAPI) callsOf(method string) []botCall {
@@ -61,6 +62,9 @@ func (f *fakeBotAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case method == "editMessageText" && f.editErr != "":
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = io.WriteString(w, `{"ok":false,"error_code":400,"description":"`+f.editErr+`"}`)
+	case method == "sendMessage" && f.blocked:
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"ok":false,"error_code":403,"description":"Forbidden: bot was blocked by the user"}`)
 	case method == "sendMessage":
 		_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":`+itoa(f.nextID)+`}}`)
 	default:
@@ -347,4 +351,24 @@ func TestNotifier_Reconnect_failedPromptDoesNotArmDebounce(t *testing.T) {
 
 	require.Error(t, n.Reconnect(t.Context(), testUserID))
 	require.Error(t, n.Reconnect(t.Context(), testUserID), "the second attempt must try again, not be swallowed by the debounce")
+}
+
+// A blocked bot cannot be reached: the prompt is not retried on every upload.
+func TestNotifier_Reconnect_blockedArmsDebounce(t *testing.T) {
+	e := newNotifierEnv(t)
+	e.api.blocked = true
+
+	require.NoError(t, e.n.Reconnect(t.Context(), testUserID))
+	require.NoError(t, e.n.Reconnect(t.Context(), testUserID))
+
+	require.Len(t, e.api.callsOf("sendMessage"), 1, "the second call is debounced")
+}
+
+// tg.Bot already logs a block at Warn; NotifyConnected must not return it as an error.
+func TestNotifyConnected_blockedIsNotAnError(t *testing.T) {
+	e := newNotifierEnv(t)
+	e.api.blocked = true
+	notify := telegram.NotifyConnected(e.bot, chatLookup{}, e.svc, slog.New(slog.DiscardHandler))
+
+	require.NoError(t, notify(t.Context(), testUserID))
 }

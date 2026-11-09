@@ -469,3 +469,93 @@ func TestService_Card_backedUpHasNoFolderLink(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "folder-1", card.CategoryFolderID)
 }
+
+func TestService_Recategorize_sameCategoryHasNoOldFolderNote(t *testing.T) {
+	repo := newFakeRepo()
+	doc := repo.seed(docsbot.Document{
+		UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther,
+		BackupStatus: docsbot.BackupBackedUp, DriveFileID: "file-1",
+	})
+	svc, _ := edgeService(repo, fakeDrive{})
+
+	card, err := svc.Recategorize(t.Context(), user, doc.ID, docsbot.CatOther)
+
+	require.NoError(t, err)
+	require.False(t, card.FileInOldFolder)
+}
+
+// racingRepo runs beforeSave right before SaveDocument, to play a concurrent
+// request (parallel tap, purge job) that wins the race.
+type racingRepo struct {
+	*fakeRepo
+	beforeSave func()
+}
+
+func (r racingRepo) SaveDocument(ctx context.Context, u docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (bool, error) {
+	r.beforeSave()
+	return r.fakeRepo.SaveDocument(ctx, u, id, cat)
+}
+
+func TestService_ChooseCategory_lostRace(t *testing.T) {
+	t.Run("parallel tap saved it first: flagged Already, nothing queued", func(t *testing.T) {
+		repo := newFakeRepo()
+		doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a"})
+		uploads := &fakeUploads{repo: repo}
+		rr := racingRepo{fakeRepo: repo, beforeSave: func() {
+			d := repo.docs[doc.ID]
+			d.Status, d.Category = docsbot.StatusSaved, docsbot.CatPassport
+			repo.docs[doc.ID] = d
+		}}
+		svc := docsbot.NewService(rr, fakeDrive{connected: true}, fakeFiles{}, uploads, rr, newFakeStatus(repo))
+
+		got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatOther)
+
+		require.NoError(t, err)
+		require.True(t, got.Already)
+		require.Equal(t, docsbot.CatPassport, got.Doc.Category, "the winner's category stays")
+		require.Empty(t, uploads.calls)
+	})
+	t.Run("purged meanwhile: ErrNotFound", func(t *testing.T) {
+		repo := newFakeRepo()
+		doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a"})
+		rr := racingRepo{fakeRepo: repo, beforeSave: func() { delete(repo.docs, doc.ID) }}
+		svc := docsbot.NewService(rr, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, rr, newFakeStatus(repo))
+
+		_, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatOther)
+
+		require.ErrorIs(t, err, docsbot.ErrNotFound)
+	})
+	t.Run("fresh save is not flagged", func(t *testing.T) {
+		repo := newFakeRepo()
+		doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a"})
+		svc, _ := edgeService(repo, fakeDrive{})
+
+		got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatOther)
+
+		require.NoError(t, err)
+		require.False(t, got.Already)
+	})
+}
+
+func TestService_ChooseCategoryGroup_parallelTapsSaveOnce(t *testing.T) {
+	repo := newFakeRepo()
+	var first docsbot.DocumentID
+	for _, uid := range []string{"p1", "p2", "p3"} {
+		d := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "alb", TgFileUniqueID: uid})
+		first = d.ID
+	}
+	svc, uploads := edgeService(repo, fakeDrive{connected: true})
+
+	var mu sync.Mutex
+	saved := 0
+	runParallel(8, func(int) error {
+		got, err := svc.ChooseCategoryGroup(t.Context(), user, first, docsbot.CatReceipts)
+		mu.Lock()
+		defer mu.Unlock()
+		saved += len(got.Docs)
+		return err
+	})
+
+	require.Equal(t, 3, saved, "every document is saved by exactly one tap")
+	require.Len(t, uploads.calls, 3, "and queued once")
+}
