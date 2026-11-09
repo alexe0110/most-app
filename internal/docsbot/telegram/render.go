@@ -128,6 +128,11 @@ func convertible(doc docsbot.Document) bool {
 	return doc.Kind == docsbot.KindDocument && (supportedImageMIME(doc.MIME) || isPDF(doc))
 }
 
+// isWebP reports whether the document is a WEBP image.
+func isWebP(doc docsbot.Document) bool {
+	return doc.Kind == docsbot.KindDocument && doc.MIME == "image/webp"
+}
+
 // mimePDF is the MIME type of a PDF document.
 const mimePDF = "application/pdf"
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -59,6 +60,7 @@ const (
 	opCompress2 = "c2"
 	opCompress5 = "c5"
 	opPDF       = "pdf"
+	opJPG       = "jpg" // WEBP -> JPEG, no compression
 )
 
 const (
@@ -169,7 +171,11 @@ func (c *converter) onDocument(ctx context.Context, b *bot.Bot, update *models.U
 		return
 	}
 	if !supportedImageMIME(doc.MimeType) {
-		reply(ctx, b, c.log, update.Message.Chat.ID, textConvertUnsupported)
+		text := textConvertUnsupported
+		if unsupportedImage(doc.MimeType, doc.FileName) {
+			text = textConvertFormatNotSupported
+		}
+		reply(ctx, b, c.log, update.Message.Chat.ID, text)
 		return
 	}
 	c.onImage(ctx, b, update, doc.FileID)
@@ -374,9 +380,9 @@ func (c *converter) onMenu(ctx context.Context, b *bot.Bot, chatID int64, id doc
 	case isPDF(card.Doc):
 		sendMarkup(ctx, b, c.log, chatID, textConvertMenu, pdfMenuKeyboard(id))
 	case convertible(card.Doc):
-		sendMarkup(ctx, b, c.log, chatID, textConvertMenu, quickKeyboard(id))
+		sendMarkup(ctx, b, c.log, chatID, textConvertMenu, quickKeyboard(id, isWebP(card.Doc)))
 	default:
-		reply(ctx, b, c.log, chatID, textConvertUnsupported)
+		reply(ctx, b, c.log, chatID, unsupportedText(card.Doc))
 	}
 }
 
@@ -405,7 +411,7 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 	}
 	doc := card.Doc
 	if !convertible(doc) {
-		reply(ctx, b, c.log, chatID, textConvertUnsupported)
+		reply(ctx, b, c.log, chatID, unsupportedText(doc))
 		return
 	}
 	if isPDF(doc) {
@@ -413,7 +419,7 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 		return
 	}
 	maxBytes, known := quickLimit(op)
-	if !known && op != opPDF {
+	if !known && op != opPDF && !(op == opJPG && isWebP(doc)) {
 		return
 	}
 	src, err := c.download(ctx, b, doc.TgFileID)
@@ -425,11 +431,16 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 
 	var out []byte
 	var name, suffix string
-	if op == opPDF {
+	switch {
+	case op == opPDF:
 		suffix = suffixPDF
 		out, err = convert.ImagesToPDF([][]byte{src})
 		name = resultName(doc.Title, suffix, "scan", "pdf")
-	} else {
+	case op == opJPG:
+		suffix = suffixJPG
+		out, err = convert.ToJPEG(src)
+		name = resultName(doc.Title, suffix, "photo", "jpg")
+	default:
 		suffix = suffixCompressed
 		out, err = convert.Compress(src, maxBytes, convert.JPEG)
 		name = resultName(doc.Title, suffix, "photo-compressed", "jpg")
@@ -441,7 +452,7 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 	}
 	c.log.InfoContext(ctx, "document converted", "user_id", user, "doc_id", id, "op", op,
 		"in_bytes", len(src), "out_bytes", len(out))
-	if op != opPDF && len(out) > maxBytes {
+	if known && len(out) > maxBytes {
 		reply(ctx, b, c.log, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
 	}
 	c.sendResult(ctx, b, chatID, update.CallbackQuery.From.ID, name, out, id, suffix)
@@ -718,11 +729,35 @@ func formatExt(f convert.Format) string {
 // supportedImageMIME reports whether we can decode this MIME type.
 func supportedImageMIME(mime string) bool {
 	switch mime {
-	case "image/jpeg", "image/jpg", "image/png":
+	case "image/jpeg", "image/jpg", "image/png", "image/webp":
 		return true
 	default:
 		return false
 	}
+}
+
+// unsupportedImage reports a modern image format we know but can't decode:
+// HEIC/HEIF/AVIF, by MIME type or, when the MIME is missing or generic, by file
+// extension.
+func unsupportedImage(mime, name string) bool {
+	switch mime {
+	case "image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence", "image/avif":
+		return true
+	case "", "application/octet-stream":
+		switch strings.ToLower(filepath.Ext(name)) {
+		case ".heic", ".heif", ".avif":
+			return true
+		}
+	}
+	return false
+}
+
+// unsupportedText is the refusal for a stored document the converter can't take.
+func unsupportedText(doc docsbot.Document) string {
+	if unsupportedImage(doc.MIME, doc.Title) {
+		return textConvertFormatNotSupported
+	}
+	return textConvertUnsupported
 }
 
 // largestPhoto returns the highest-resolution size (Telegram sorts ascending).
@@ -792,18 +827,21 @@ func cancelKeyboard() *models.InlineKeyboardMarkup {
 	}}}
 }
 
-func quickKeyboard(id docsbot.DocumentID) *models.InlineKeyboardMarkup {
+// quickKeyboard is the menu of an image; a WEBP also gets a plain conversion to JPG.
+func quickKeyboard(id docsbot.DocumentID, webp bool) *models.InlineKeyboardMarkup {
 	q := func(op string) string { return cbQuickPrefix + string(id) + ":" + op }
+	second := []models.InlineKeyboardButton{{Text: btnQuickPDF, CallbackData: q(opPDF)}}
+	if webp {
+		second = append(second, models.InlineKeyboardButton{Text: btnQuickJPG, CallbackData: q(opJPG)})
+	}
+	second = append(second, models.InlineKeyboardButton{Text: btnQuickCancel, CallbackData: cbMenuCancel})
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
 		{
 			{Text: btnQuick1MB, CallbackData: q(opCompress1)},
 			{Text: btnQuick2MB, CallbackData: q(opCompress2)},
 			{Text: btnQuick5MB, CallbackData: q(opCompress5)},
 		},
-		{
-			{Text: btnQuickPDF, CallbackData: q(opPDF)},
-			{Text: btnQuickCancel, CallbackData: cbMenuCancel},
-		},
+		second,
 	}}
 }
 

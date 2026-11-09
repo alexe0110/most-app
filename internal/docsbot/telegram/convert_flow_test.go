@@ -308,7 +308,7 @@ func TestConvert_unsupportedDocument(t *testing.T) {
 
 	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
-	h.bot.ProcessUpdate(ctx, documentUpdate("image/heic"))
+	h.bot.ProcessUpdate(ctx, documentUpdate("application/zip"))
 
 	require.Empty(t, h.docs)
 	require.Contains(t, h.lastText(), "пока не умею")

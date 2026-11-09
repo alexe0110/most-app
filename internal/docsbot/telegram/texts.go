@@ -150,10 +150,11 @@ const (
 	textConvertTapButton = "Нажми кнопку выше или /cancel, чтобы выйти."
 	textConvertNoImages  = "Сначала пришли хотя бы одно фото."
 
-	textConvertUnsupported    = "Так я пока не умею. Пришли фото в JPEG или PNG. HEIC и видео — позже. С PDF я работаю вне /convert: отправь файл и нажми «🛠»."
-	textConvertDownloadFailed = "Не удалось получить файл. Попробуй ещё раз."
-	textConvertTooLarge       = "Изображение слишком большое. Пришли снимок поменьше."
-	textConvertFailed         = "Не удалось обработать изображение. Проверь, что это JPEG или PNG."
+	textConvertUnsupported        = "Так я пока не умею. Пришли фото в JPEG, PNG или WEBP. Видео и другие форматы — позже. С PDF я работаю вне /convert: отправь файл и нажми «🛠»."
+	textConvertDownloadFailed     = "Не удалось получить файл. Попробуй ещё раз."
+	textConvertTooLarge           = "Изображение слишком большое. Пришли снимок поменьше."
+	textConvertFormatNotSupported = "Этот формат пока не поддерживается. Пришли JPG, PNG или WEBP."
+	textConvertFailed             = "Не удалось обработать изображение. Проверь, что это JPEG, PNG или WEBP."
 
 	textConvertExpired   = "Сессия конвертера истекла. Начни заново: /convert."
 	textConvertCancelled = "Режим конвертера выключен."
@@ -203,6 +204,7 @@ const (
 	btnQuick1MB         = "🗜 1 МБ"
 	btnQuick2MB         = "🗜 2 МБ"
 	btnQuick5MB         = "🗜 5 МБ"
+	btnQuickJPG         = "🖼 В JPG"
 	btnQuickPDF         = "📄 В PDF"
 	btnQuickCancel      = "✖️ Отмена"
 	btnPDFRotate        = "🔄 Повернуть ↻"
@@ -216,6 +218,7 @@ const (
 // Title suffixes of documents made by the converter.
 const (
 	suffixCompressed = " (сжатый)"
+	suffixJPG        = " (JPG)"
 	suffixPDF        = " (PDF)"
 	suffixEdited     = " (изменён)"
 )

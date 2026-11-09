@@ -85,6 +85,20 @@ func fitWithin(wPx, hPx int, availW, availH float64) (w, h float64) {
 	return float64(wPx) * scale, float64(hPx) * scale
 }
 
+// toJPEGQuality is the quality of a plain format conversion: visually lossless
+// without the size of the original.
+const toJPEGQuality = 90
+
+// ToJPEG converts a JPEG, PNG or WEBP image to JPEG at fixed quality, applying
+// EXIF rotation.
+func ToJPEG(img []byte) ([]byte, error) {
+	src, err := decodeUpright(img)
+	if err != nil {
+		return nil, err
+	}
+	return encodeJPEG(src, toJPEGQuality)
+}
+
 // Compress re-encodes img to fit maxBytes in the given format. If the target is
 // out of reach it returns the smallest it could make, so the caller can check
 // the size and tell the user how far it got.
