@@ -27,6 +27,7 @@ type Authorizer interface {
 func Register(b *bot.Bot, log *slog.Logger, svc *docsbot.Service, auth Authorizer, opts ...Option) {
 	d := newDocs(svc, auth, log, opts...)
 	conv := newConverter(log, svc, d.renderSaved, d.sendAlreadySaved)
+	d.registerAlbum = conv.registerAlbum
 
 	b.RegisterHandler(bot.HandlerTypeMessageText, "start", bot.MatchTypeCommand, d.start)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "help", bot.MatchTypeCommand, d.help)

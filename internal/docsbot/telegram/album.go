@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
@@ -43,7 +44,19 @@ type albumState struct {
 	fresh        int           // documents awaiting a category
 	dups         int           // files that were already saved
 	reject       docsbot.Reply // first limit rejection, shown once
+	group        string
+	images       []albumImage // fresh image files, for the PDF offer
+	nonImage     bool         // the album holds a file the PDF can't take
 	stop         func() bool
+}
+
+// albumImage is one fresh image of an album. msgID keeps the page order: album
+// photos arrive as separate updates in any order.
+type albumImage struct {
+	msgID  int
+	fileID string
+	size   int64
+	docID  docsbot.DocumentID
 }
 
 // albumBuffer debounces albums per media_group_id.
@@ -85,13 +98,20 @@ func (a *albumBuffer) add(key string, update func(*albumState), flush func(album
 }
 
 // collectAlbum records one received album file and schedules the single picker.
-func (d *docs) collectAlbum(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, group string, rep docsbot.Reply) {
+func (d *docs) collectAlbum(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, group string, rep docsbot.Reply, msgID int, in docsbot.IncomingFile) {
 	detached := context.WithoutCancel(ctx) // the flush outlives this update's request
+	isImage := in.Kind == docsbot.KindPhoto || supportedImageMIME(in.MIME)
 	d.albums.add(fmt.Sprintf("%s:%s", user, group), func(st *albumState) {
-		st.chatID, st.user = chatID, user
+		st.chatID, st.user, st.group = chatID, user, group
+		if !isImage {
+			st.nonImage = true
+		}
 		switch r := rep.(type) {
 		case docsbot.NeedCategory:
 			st.fresh++
+			if isImage {
+				st.images = append(st.images, albumImage{msgID: msgID, fileID: in.FileID, size: in.FileSize, docID: r.Doc.ID})
+			}
 			// Prefer a document of this album: the picker saves the album of its anchor.
 			if st.pickDoc == "" || (r.Doc.MediaGroupID == group && st.pickDocGroup != group) {
 				st.pickDoc, st.pickDocGroup = r.Doc.ID, r.Doc.MediaGroupID
@@ -110,6 +130,13 @@ func (d *docs) collectAlbum(ctx context.Context, b *bot.Bot, chatID int64, user 
 // files that were already saved, and the limit notice if any file was refused.
 func (d *docs) flushAlbum(ctx context.Context, b *bot.Bot, st albumState) {
 	switch {
+	case d.offersPDF(st):
+		text := fmt.Sprintf(textAlbumChoice, st.fresh, plural(st.fresh, "изображение", "изображения", "изображений"))
+		if st.dups > 0 {
+			text += "\n\n" + fmt.Sprintf(textAlbumDuplicates, st.dups)
+		}
+		token := d.registerAlbum(st.user, st.group, st.images)
+		d.send(ctx, b, st.chatID, text, albumChoiceKeyboard(token, st.pickDoc))
 	case st.fresh > 0:
 		text := textChooseCategory
 		if st.fresh > 1 {
@@ -125,6 +152,26 @@ func (d *docs) flushAlbum(ctx context.Context, b *bot.Bot, st albumState) {
 	if text, ok := rejectionText(st.reject); ok {
 		reply(ctx, b, d.log, st.chatID, text)
 	}
+}
+
+// offersPDF reports whether the album gets the "one PDF or one by one" choice:
+// two or more fresh files, all of them images, none refused.
+func (d *docs) offersPDF(st albumState) bool {
+	return d.registerAlbum != nil && st.fresh >= 2 && len(st.images) == st.fresh && !st.nonImage && st.reject == nil
+}
+
+// onGroupPick turns the album choice into the category picker for the whole
+// album: d:gpk:<docID>.
+func (d *docs) onGroupPick(ctx context.Context, b *bot.Bot, u *models.Update, parts []string) {
+	id, ok := docID(parts)
+	if !ok {
+		return
+	}
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	d.editMessage(ctx, b, chatID, msgID, textChooseCategoryAlbum, categoryKeyboard(actCategoryGroup, id))
 }
 
 // rejectionText is the notice for an intake limit reply.

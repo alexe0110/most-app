@@ -20,6 +20,7 @@ const cbPrefix = "d:"
 const (
 	actCategory      = "cat" // pick a category for a new document
 	actCategoryGroup = "ga"  // pick a category for a whole album: d:ga:<docID>:<slug>
+	actGroupPick     = "gpk" // album choice -> category picker: d:gpk:<docID>
 	actSetCategory   = "sc"  // change an existing document's category
 	actChangeCat     = "chc" // show the category picker for a card
 	actSend          = "snd" // resend the original file
@@ -99,6 +100,14 @@ func pickerKeyboard(doc docsbot.Document) *models.InlineKeyboardMarkup {
 		kb.InlineKeyboard = append(kb.InlineKeyboard, convertRow(doc.ID, btnConvertPicker))
 	}
 	return kb
+}
+
+// albumChoiceKeyboard offers an album as one PDF or saved file by file.
+func albumChoiceKeyboard(token string, pickDoc docsbot.DocumentID) *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{{Text: btnAlbumPDF, CallbackData: cbAlbumPrefix + token}},
+		{{Text: btnAlbumEach, CallbackData: cb(actGroupPick, pickDoc)}},
+	}}
 }
 
 // convertRow is a one-button row opening the convert menu of a document.

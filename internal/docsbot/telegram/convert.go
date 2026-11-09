@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +44,13 @@ const (
 	cbQuickPrefix = callbackPrefix + "q:"    // conv:q:<docID>:<op> converts a document
 	cbSavePrefix  = callbackPrefix + "save:" // conv:save:<token> saves the result
 	cbSkipPrefix  = callbackPrefix + "skip:" // conv:skip:<token> keeps only the file
+	cbAlbumPrefix = callbackPrefix + "alb:"  // conv:alb:<token> merges an album into a PDF
+)
+
+// Limits of an album PDF.
+const (
+	maxAlbumPages = 20
+	maxAlbumBytes = maxFileBytes // all pages together
 )
 
 // Quick operations of the menu.
@@ -65,6 +73,7 @@ type converter struct {
 	log      *slog.Logger
 	sessions *sessionStore
 	results  *resultStore
+	albums   *albumStore
 	now      func() time.Time
 	http     *http.Client
 
@@ -85,6 +94,7 @@ func newConverter(
 		log:              log,
 		sessions:         newSessionStore(time.Now),
 		results:          newResultStore(time.Now),
+		albums:           newAlbumStore(time.Now),
 		now:              time.Now,
 		http:             &http.Client{Timeout: downloadWait},
 		svc:              svc,
@@ -238,6 +248,9 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 		return
 	case strings.HasPrefix(data, cbSavePrefix):
 		c.onSave(ctx, b, update, chatID)
+		return
+	case strings.HasPrefix(data, cbAlbumPrefix):
+		c.onAlbum(ctx, b, update, chatID)
 		return
 	case strings.HasPrefix(data, cbSkipPrefix):
 		c.onSkip(ctx, b, update, chatID)
@@ -434,6 +447,85 @@ func (c *converter) onSave(ctx context.Context, b *bot.Bot, update *models.Updat
 	}
 }
 
+// registerAlbum remembers an album's images for the "one PDF" button and returns
+// the button's token.
+func (c *converter) registerAlbum(user docsbot.UserID, group string, images []albumImage) string {
+	sorted := slices.Clone(images)
+	slices.SortFunc(sorted, func(a, b albumImage) int { return a.msgID - b.msgID })
+	token := newToken()
+	c.albums.put(token, convAlbum{user: user, group: group, images: sorted, created: c.now()})
+	return token
+}
+
+// onAlbum merges an album into one PDF: conv:alb:<token>. On success the album's
+// pending documents are dropped, so they don't wait for a category.
+func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	token := strings.TrimPrefix(update.CallbackQuery.Data, cbAlbumPrefix)
+	user, ok := userID(ctx)
+	if !ok {
+		return
+	}
+	album, ok := c.albums.peek(token, user)
+	if !ok {
+		reply(ctx, b, c.log, chatID, textConvertResultOld)
+		return
+	}
+	var declared int64
+	for _, img := range album.images {
+		declared += img.size
+	}
+	switch {
+	case len(album.images) > maxAlbumPages:
+		reply(ctx, b, c.log, chatID, fmt.Sprintf(textAlbumTooMany, maxAlbumPages)) // the buttons stay: save one by one
+		return
+	case declared > maxAlbumBytes:
+		reply(ctx, b, c.log, chatID, textAlbumTooBig)
+		return
+	}
+	album, ok = c.albums.take(token, user) // a double tap stops here
+	if !ok {
+		return
+	}
+
+	pages := make([][]byte, 0, len(album.images))
+	var total int
+	for _, img := range album.images {
+		data, err := c.download(ctx, b, img.fileID)
+		if err != nil {
+			c.log.ErrorContext(ctx, "convert download album image", "err", err, "user_id", user)
+			c.albums.put(token, album) // let the user retry
+			reply(ctx, b, c.log, chatID, textConvertDownloadFailed)
+			return
+		}
+		if total += len(data); total > maxAlbumBytes {
+			c.albums.put(token, album)
+			reply(ctx, b, c.log, chatID, textAlbumTooBig)
+			return
+		}
+		pages = append(pages, data)
+	}
+	pdf, err := convert.ImagesToPDF(pages)
+	if err != nil {
+		c.log.ErrorContext(ctx, "convert album to pdf", "err", err, "user_id", user, "pages", len(pages))
+		c.albums.put(token, album)
+		reply(ctx, b, c.log, chatID, convertErrorText(err))
+		return
+	}
+	c.log.InfoContext(ctx, "album converted", "user_id", user, "pages", len(pages), "in_bytes", total, "out_bytes", len(pdf))
+
+	c.clearButtons(ctx, b, update, chatID)
+	name := "scan-" + c.now().Format("2006-01-02") + ".pdf"
+	if !c.sendResult(ctx, b, chatID, update.CallbackQuery.From.ID, name, pdf, "", suffixPDF) {
+		return
+	}
+	n, err := c.svc.DiscardAlbum(ctx, user, album.group)
+	if err != nil {
+		c.log.ErrorContext(ctx, "discard album", "err", err, "user_id", user)
+		return
+	}
+	c.log.InfoContext(ctx, "album discarded", "user_id", user, "count", n)
+}
+
 // onSkip keeps only the file: conv:skip:<token>.
 func (c *converter) onSkip(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
 	c.results.take(strings.TrimPrefix(update.CallbackQuery.Data, cbSkipPrefix), update.CallbackQuery.From.ID)
@@ -465,12 +557,13 @@ func (c *converter) deleteCallbackMessage(ctx context.Context, b *bot.Bot, updat
 	}
 }
 
-// sendResult uploads the converted file with the save / just-the-file buttons.
+// sendResult uploads the converted file with the save / just-the-file buttons
+// and reports whether Telegram accepted it.
 // The choice is remembered only if Telegram echoes the stored file back; without
 // the user's internal id or that echo the file goes out without buttons.
 func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser int64, filename string, data []byte,
 	sourceDoc docsbot.DocumentID, suffix string,
-) {
+) bool {
 	params := &bot.SendDocumentParams{
 		ChatID:   chatID,
 		Document: &models.InputFileUpload{Filename: filename, Data: bytes.NewReader(data)},
@@ -483,10 +576,10 @@ func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 	msg, err := b.SendDocument(ctx, params)
 	if err != nil {
 		c.log.ErrorContext(ctx, "send telegram document", "err", err)
-		return
+		return false
 	}
 	if !haveUser || msg == nil || msg.Document == nil {
-		return
+		return true
 	}
 	c.results.put(token, convResult{
 		tgUser: tgUser, user: user, sourceDoc: sourceDoc, suffix: suffix,
@@ -495,6 +588,7 @@ func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 			Title: filename, FileSize: msg.Document.FileSize, MIME: msg.Document.MimeType,
 		},
 	})
+	return true
 }
 
 // download fetches a Telegram file's bytes, capped at maxFileBytes.

@@ -24,7 +24,9 @@ const (
 	textDriveConnected = "Google Drive подключён ✅ Новые документы будут попадать на твой Диск."
 
 	textChooseCategory      = "Выбери категорию:"
-	textChooseCategoryGroup = "Выбери категорию для %d %s:"                        // files in the album, plural("файл")
+	textChooseCategoryGroup = "Выбери категорию для %d %s:" // files in the album, plural("файл")
+	textChooseCategoryAlbum = "Выбери категорию для альбома:"
+	textAlbumChoice         = "Альбом: %d %s. Что сделать?"                        // count, plural("изображение")
 	textAlbumDuplicates     = "Уже были сохранены: %d"                             // %d = duplicate files
 	textGroupSaved          = "Сохранил %d %s в категории «%s»."                   // count, plural("файл"), category
 	textGroupTooLarge       = "Слишком большие для Drive, остались в Telegram: %d" // %d = files
@@ -161,6 +163,9 @@ const (
 	textConvertSaving    = "💾 Сохраняю…"
 	textConvertResultOld = "Эта кнопка устарела. Преобразуй файл ещё раз."
 
+	textAlbumTooMany = "В один PDF помещается не больше %d страниц. Сохрани фото по одному."
+	textAlbumTooBig  = "Фото в альбоме больше 20 МБ вместе — в один PDF не поместятся. Сохрани их по одному."
+
 	// textConvertBestEffort takes the reached size in KB (target was out of reach).
 	textConvertBestEffort = "Меньше не вышло — сжал до %d КБ."
 )
@@ -196,4 +201,10 @@ const (
 const (
 	suffixCompressed = " (сжатый)"
 	suffixPDF        = " (PDF)"
+)
+
+// Inline button labels for an album of images.
+const (
+	btnAlbumPDF  = "📄 Собрать в один PDF"
+	btnAlbumEach = "💾 Сохранить по одному"
 )

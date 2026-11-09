@@ -183,3 +183,62 @@ func (s *resultStore) take(token string, tgUser int64) (convResult, bool) {
 	}
 	return r, true
 }
+
+// convAlbum is an album of images offered as one PDF.
+type convAlbum struct {
+	user    docsbot.UserID
+	group   string
+	images  []albumImage // ordered by message id
+	created time.Time
+}
+
+// albumStore holds offered albums by token, like resultStore.
+type albumStore struct {
+	mu      sync.Mutex
+	byToken map[string]convAlbum
+	ttl     time.Duration
+	now     func() time.Time
+}
+
+func newAlbumStore(now func() time.Time) *albumStore {
+	return &albumStore{byToken: map[string]convAlbum{}, ttl: sessionTTL, now: now}
+}
+
+// put stores an album under token and drops expired ones.
+func (s *albumStore) put(token string, a convAlbum) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	for k, v := range s.byToken {
+		if now.Sub(v.created) > s.ttl {
+			delete(s.byToken, k)
+		}
+	}
+	if a.created.IsZero() {
+		a.created = now
+	}
+	s.byToken[token] = a
+}
+
+// take removes and returns the user's album, so a double tap acts once.
+func (s *albumStore) take(token string, user docsbot.UserID) (convAlbum, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.byToken[token]
+	if !ok || a.user != user || s.now().Sub(a.created) > s.ttl {
+		return convAlbum{}, false
+	}
+	delete(s.byToken, token)
+	return a, true
+}
+
+// peek returns the user's album without removing it.
+func (s *albumStore) peek(token string, user docsbot.UserID) (convAlbum, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.byToken[token]
+	if !ok || a.user != user || s.now().Sub(a.created) > s.ttl {
+		return convAlbum{}, false
+	}
+	return a, true
+}

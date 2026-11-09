@@ -159,6 +159,31 @@ func (s *Service) SaveDerived(ctx context.Context, user UserID, sourceID Documen
 	return saved, nil
 }
 
+// DiscardAlbum deletes the still-pending documents of an album, e.g. after its
+// photos were merged into one PDF. Saved documents are never touched. It returns
+// how many were removed; a document purged in parallel is skipped.
+func (s *Service) DiscardAlbum(ctx context.Context, user UserID, group string) (int, error) {
+	if group == "" {
+		return 0, nil
+	}
+	pending, err := s.repo.PendingByMediaGroup(ctx, user, group)
+	if err != nil {
+		return 0, fmt.Errorf("list album: %w", err)
+	}
+	n := 0
+	for _, d := range pending {
+		err := s.repo.DeleteDocument(ctx, user, d.ID)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return n, fmt.Errorf("delete album document: %w", err)
+		}
+		n++
+	}
+	return n, nil
+}
+
 // PurgeStalePending deletes pending documents nobody categorized within the TTL
 // and returns how many were removed. It is the purge_pending job's use case.
 func (s *Service) PurgeStalePending(ctx context.Context) (int, error) {

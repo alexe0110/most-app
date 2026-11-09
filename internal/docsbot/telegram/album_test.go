@@ -95,9 +95,12 @@ func TestAlbum_threePhotosThreeDocsOnePicker(t *testing.T) {
 
 	ft.fire()
 
-	require.Len(t, sent.texts, 1, "exactly one picker for the album: %q", sent.texts)
-	require.Contains(t, sent.texts[0], "3 файла")
-	require.Contains(t, sent.markups[0], "d:ga:")
+	// Intentionally changed by #80: an all-image album first offers one PDF or
+	// file-by-file; the category picker follows "Сохранить по одному".
+	require.Len(t, sent.texts, 1, "exactly one message for the album: %q", sent.texts)
+	require.Contains(t, sent.texts[0], "3 изображения")
+	require.Contains(t, sent.markups[0], "conv:alb:")
+	require.Contains(t, sent.markups[0], "d:gpk:")
 	require.NotContains(t, sent.texts[0], "Уже были сохранены")
 }
 
@@ -128,7 +131,7 @@ func TestAlbum_withDuplicateReportsCount(t *testing.T) {
 
 	require.Equal(t, 2, pendingCount(repo, "alb"), "the duplicate creates no document")
 	require.Len(t, sent.texts, 1)
-	require.Contains(t, sent.texts[0], "2 файла")
+	require.Contains(t, sent.texts[0], "2 изображения") // #80: the PDF choice replaces the picker
 	require.Contains(t, sent.texts[0], "Уже были сохранены: 1")
 }
 

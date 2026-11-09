@@ -32,6 +32,9 @@ type docs struct {
 	searches *searchStore
 	origins  *originStore
 	albums   *albumBuffer
+	// registerAlbum remembers an album's images for the "one PDF" button and
+	// returns its token; set by Register (the converter owns the PDF work).
+	registerAlbum func(user docsbot.UserID, group string, images []albumImage) string
 }
 
 func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Option) *docs {
@@ -138,7 +141,7 @@ func (d *docs) receive(ctx context.Context, b *bot.Bot, u *models.Update) {
 	}
 	if in.MediaGroupID != "" {
 		d.logReceived(ctx, user, rep)
-		d.collectAlbum(ctx, b, chatID, user, in.MediaGroupID, rep)
+		d.collectAlbum(ctx, b, chatID, user, in.MediaGroupID, rep, u.Message.ID, in)
 		return
 	}
 	switch r := rep.(type) {
@@ -239,6 +242,8 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.onCategory(ctx, b, u, user, parts)
 	case actCategoryGroup:
 		d.onCategoryGroup(ctx, b, u, user, parts)
+	case actGroupPick:
+		d.onGroupPick(ctx, b, u, parts)
 	case actSetCategory:
 		d.onSetCategory(ctx, b, u, user, parts)
 	case actChangeCat:

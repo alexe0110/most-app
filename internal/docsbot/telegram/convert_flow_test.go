@@ -2,6 +2,7 @@ package telegram_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
@@ -34,15 +35,19 @@ type convHarness struct {
 	mu      sync.Mutex
 	texts   []string
 	markups int
-	docs    []sentDocument
-	repo    *fakeRepo
+	// markupBodies are the reply markups of sent messages, in order.
+	markupBodies []string
+	docs         []sentDocument
+	repo         *fakeRepo
 	// docMarkups are the reply markups of the sent documents, in order.
 	docMarkups []string
 	// edits counts editMessageReplyMarkup calls (buttons removed).
 	edits int
+	// downloads lists the file ids the bot fetched, in order.
+	downloads []string
 }
 
-func newConvHarness(t *testing.T) *convHarness {
+func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 	t.Helper()
 	h := &convHarness{}
 
@@ -60,10 +65,20 @@ func newConvHarness(t *testing.T) *convHarness {
 		path := r.URL.Path
 		switch {
 		case strings.HasPrefix(path, "/file/"):
+			h.mu.Lock()
+			h.downloads = append(h.downloads, strings.TrimSuffix(path[strings.LastIndex(path, "/")+1:], ".jpg"))
+			h.mu.Unlock()
 			_, _ = w.Write(photo.Bytes())
 			return
 		case strings.HasSuffix(path, "/getFile"):
-			writeJSON(w, `{"ok":true,"result":{"file_id":"f","file_path":"photo.jpg"}}`)
+			var req struct {
+				FileID string `json:"file_id"`
+			}
+			req.FileID = r.FormValue("file_id")
+			if req.FileID == "" {
+				_ = json.NewDecoder(r.Body).Decode(&req)
+			}
+			writeJSON(w, fmt.Sprintf(`{"ok":true,"result":{"file_id":"f","file_path":"%s.jpg"}}`, req.FileID))
 			return
 		case strings.HasSuffix(path, "/sendDocument"):
 			n := h.captureDocument(t, r)
@@ -88,7 +103,7 @@ func newConvHarness(t *testing.T) *convHarness {
 	b, err := bot.New("123:ABC", bot.WithServerURL(ts.URL), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
 	require.NoError(t, err)
 	svc, auth, repo := fakeDeps()
-	telegram.Register(b, slog.New(slog.DiscardHandler), svc, auth)
+	telegram.Register(b, slog.New(slog.DiscardHandler), svc, auth, opts...)
 
 	h.bot = b
 	h.repo = repo
@@ -99,6 +114,7 @@ func (h *convHarness) captureMessage(r *http.Request) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.texts = append(h.texts, r.FormValue("text"))
+	h.markupBodies = append(h.markupBodies, r.FormValue("reply_markup"))
 	if r.FormValue("reply_markup") != "" {
 		h.markups++
 	}
@@ -128,6 +144,22 @@ func (h *convHarness) lastText() string {
 		return ""
 	}
 	return h.texts[len(h.texts)-1]
+}
+
+// albumMarkup is the reply markup of the first sent message.
+func (h *convHarness) albumMarkup() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.markupBodies) == 0 {
+		return ""
+	}
+	return h.markupBodies[0]
+}
+
+func (h *convHarness) allTexts() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return strings.Join(h.texts, "\n")
 }
 
 func writeJSON(w http.ResponseWriter, body string) {

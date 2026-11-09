@@ -117,3 +117,34 @@ func TestService_SaveDerived_unknownSource(t *testing.T) {
 	}
 	require.Len(t, repo.docs, 1, "nothing created")
 }
+
+func TestService_DiscardAlbum(t *testing.T) {
+	tests := []struct {
+		name      string
+		group     string
+		wantN     int
+		wantAfter int // documents left in the repo
+	}{
+		{"removes only pending of the album", "alb", 2, 4},
+		{"unknown album", "nope", 0, 6},
+		{"empty group", "", 0, 6},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			svc, _ := edgeService(repo, fakeDrive{})
+			repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "alb", TgFileUniqueID: "a1"})
+			repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "alb", TgFileUniqueID: "a2"})
+			repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, MediaGroupID: "alb", TgFileUniqueID: "a3", Category: docsbot.CatOther})
+			repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "other", TgFileUniqueID: "b1"})
+			repo.seed(docsbot.Document{UserID: stranger, Status: docsbot.StatusPending, MediaGroupID: "alb", TgFileUniqueID: "c1"})
+			repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "d1"})
+
+			n, err := svc.DiscardAlbum(t.Context(), user, tt.group)
+
+			require.NoError(t, err)
+			require.Equal(t, tt.wantN, n)
+			require.Len(t, repo.docs, tt.wantAfter)
+		})
+	}
+}
