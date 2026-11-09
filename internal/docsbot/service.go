@@ -122,6 +122,43 @@ func (s *Service) Receive(ctx context.Context, in IncomingFile) (Reply, error) {
 	return NeedCategory{Doc: doc}, nil
 }
 
+// SaveDerived stores a file made from another document (a compressed copy, a
+// PDF) as a new document. When the source is saved, the copy lands in the
+// source's category under DerivedTitle(source title, suffix) and the result is
+// Saved. A pending or absent source (empty sourceID) means ordinary intake: the
+// reply is NeedCategory and the title is in.Title. Limit replies and duplicates
+// pass through unchanged; an unknown source is ErrNotFound.
+func (s *Service) SaveDerived(ctx context.Context, user UserID, sourceID DocumentID, in IncomingFile, suffix string) (Reply, error) {
+	in.UserID = user
+	var src Document
+	fromSaved := false
+	if sourceID != "" {
+		var err error
+		src, err = s.repo.DocumentByID(ctx, user, sourceID)
+		if err != nil {
+			return nil, fmt.Errorf("load source document: %w", err)
+		}
+		fromSaved = src.Status == StatusSaved
+	}
+	if fromSaved {
+		in.Title = DerivedTitle(src.Title, suffix)
+	}
+
+	rep, err := s.Receive(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	need, ok := rep.(NeedCategory)
+	if !fromSaved || !ok {
+		return rep, nil
+	}
+	saved, err := s.ChooseCategory(ctx, user, need.Doc.ID, src.Category)
+	if err != nil {
+		return nil, err
+	}
+	return saved, nil
+}
+
 // PurgeStalePending deletes pending documents nobody categorized within the TTL
 // and returns how many were removed. It is the purge_pending job's use case.
 func (s *Service) PurgeStalePending(ctx context.Context) (int, error) {

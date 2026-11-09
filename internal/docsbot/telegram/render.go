@@ -91,6 +91,30 @@ func categoryKeyboard(action string, id docsbot.DocumentID) *models.InlineKeyboa
 	return &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
+// pickerKeyboard is the category picker of a single new file. A file the
+// converter can handle gets an extra row opening the convert menu.
+func pickerKeyboard(doc docsbot.Document) *models.InlineKeyboardMarkup {
+	kb := categoryKeyboard(actCategory, doc.ID)
+	if convertible(doc) {
+		kb.InlineKeyboard = append(kb.InlineKeyboard, convertRow(doc.ID, btnConvertPicker))
+	}
+	return kb
+}
+
+// convertRow is a one-button row opening the convert menu of a document.
+func convertRow(id docsbot.DocumentID, label string) []models.InlineKeyboardButton {
+	return []models.InlineKeyboardButton{{Text: label, CallbackData: cbDocPrefix + string(id)}}
+}
+
+// convertible reports whether the converter can read the document: a photo, or a
+// JPEG/PNG file.
+func convertible(doc docsbot.Document) bool {
+	if doc.Kind == docsbot.KindPhoto {
+		return true
+	}
+	return doc.Kind == docsbot.KindDocument && supportedImageMIME(doc.MIME)
+}
+
 func connectKeyboard(url string) *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
 		{Text: btnConnectDrive, URL: url},
@@ -225,6 +249,9 @@ func cardKeyboard(doc docsbot.Document, folderID, orig string) *models.InlineKey
 			{Text: btnChangeCat, CallbackData: cb(actChangeCat, doc.ID)},
 			{Text: btnDelete, CallbackData: cb(actDeleteAsk, doc.ID)},
 		},
+	}
+	if convertible(doc) {
+		rows = append(rows, convertRow(doc.ID, btnConvertCard))
 	}
 	if back := backFromOrig(orig); back != "" {
 		rows = append(rows, []models.InlineKeyboardButton{{Text: btnBack, CallbackData: back}})

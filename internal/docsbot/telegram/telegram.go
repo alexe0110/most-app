@@ -25,8 +25,8 @@ type Authorizer interface {
 // session claims its user's messages; then document callbacks, unsupported media and files; the
 // catch-all text handler (search) is last.
 func Register(b *bot.Bot, log *slog.Logger, svc *docsbot.Service, auth Authorizer, opts ...Option) {
-	conv := newConverter(log)
 	d := newDocs(svc, auth, log, opts...)
+	conv := newConverter(log, svc, d.renderSaved, d.sendAlreadySaved)
 
 	b.RegisterHandler(bot.HandlerTypeMessageText, "start", bot.MatchTypeCommand, d.start)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "help", bot.MatchTypeCommand, d.help)

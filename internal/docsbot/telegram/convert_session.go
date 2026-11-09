@@ -1,9 +1,13 @@
 package telegram
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
 // sessionTTL drops a session left idle this long. A restart drops all of them.
@@ -115,4 +119,67 @@ func (s *sessionStore) update(user int64, fn func(*session)) bool {
 	fn(sess)
 	sess.updated = s.now()
 	return true
+}
+
+// convResult is a converter output waiting for the user's "save or just the
+// file" choice. The file is already in Telegram: file holds the ids Telegram
+// returned for it, so saving needs no upload.
+type convResult struct {
+	tgUser    int64
+	user      docsbot.UserID
+	file      docsbot.IncomingFile
+	sourceDoc docsbot.DocumentID // "" when the source is not a stored document
+	suffix    string             // title suffix for the saved copy
+	created   time.Time
+}
+
+// resultStore holds results by a short token that rides in the button's
+// callback data (a file id would not fit, and must not be logged). Memory only:
+// a restart or the TTL drops the choice, and the file stays in the chat.
+type resultStore struct {
+	mu      sync.Mutex
+	byToken map[string]convResult
+	ttl     time.Duration
+	now     func() time.Time
+}
+
+func newResultStore(now func() time.Time) *resultStore {
+	return &resultStore{byToken: map[string]convResult{}, ttl: sessionTTL, now: now}
+}
+
+// newToken returns a random 16-character token.
+func newToken() string {
+	var raw [8]byte
+	_, _ = rand.Read(raw[:]) // never fails on supported platforms
+	return hex.EncodeToString(raw[:])
+}
+
+// put stores a result under token and drops expired ones.
+func (s *resultStore) put(token string, r convResult) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	for k, v := range s.byToken {
+		if now.Sub(v.created) > s.ttl {
+			delete(s.byToken, k)
+		}
+	}
+	r.created = now
+	s.byToken[token] = r
+}
+
+// take removes and returns the user's result, so a double tap acts once. A token
+// of another user, an unknown or an expired one reports false.
+func (s *resultStore) take(token string, tgUser int64) (convResult, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.byToken[token]
+	if !ok || r.tgUser != tgUser {
+		return convResult{}, false
+	}
+	delete(s.byToken, token)
+	if s.now().Sub(r.created) > s.ttl {
+		return convResult{}, false
+	}
+	return r, true
 }

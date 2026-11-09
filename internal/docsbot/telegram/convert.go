@@ -15,6 +15,7 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 
+	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/platform/convert"
 )
 
@@ -33,6 +34,23 @@ const (
 	cbLimitCustom = callbackPrefix + "limitcustom"
 	cbFmtJPEG     = callbackPrefix + "fmtjpeg"
 	cbFmtPNG      = callbackPrefix + "fmtpng"
+	cbMenuCancel  = callbackPrefix + "x" // closes the convert menu
+)
+
+// Prefixes of the buttons that work without a /convert session.
+const (
+	cbDocPrefix   = callbackPrefix + "doc:"  // conv:doc:<docID> opens the menu
+	cbQuickPrefix = callbackPrefix + "q:"    // conv:q:<docID>:<op> converts a document
+	cbSavePrefix  = callbackPrefix + "save:" // conv:save:<token> saves the result
+	cbSkipPrefix  = callbackPrefix + "skip:" // conv:skip:<token> keeps only the file
+)
+
+// Quick operations of the menu.
+const (
+	opCompress1 = "c1"
+	opCompress2 = "c2"
+	opCompress5 = "c5"
+	opPDF       = "pdf"
 )
 
 const (
@@ -46,16 +64,32 @@ const (
 type converter struct {
 	log      *slog.Logger
 	sessions *sessionStore
+	results  *resultStore
 	now      func() time.Time
 	http     *http.Client
+
+	svc *docsbot.Service
+	// renderSaved and sendAlreadySaved show what saving a result produced; the
+	// docs adapter owns that rendering.
+	renderSaved      func(ctx context.Context, b *bot.Bot, chatID int64, msgID int, user docsbot.UserID, saved docsbot.Saved)
+	sendAlreadySaved func(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID)
 }
 
-func newConverter(log *slog.Logger) *converter {
+func newConverter(
+	log *slog.Logger,
+	svc *docsbot.Service,
+	renderSaved func(context.Context, *bot.Bot, int64, int, docsbot.UserID, docsbot.Saved),
+	sendAlreadySaved func(context.Context, *bot.Bot, int64, docsbot.UserID, docsbot.DocumentID),
+) *converter {
 	return &converter{
-		log:      log,
-		sessions: newSessionStore(time.Now),
-		now:      time.Now,
-		http:     &http.Client{Timeout: downloadWait},
+		log:              log,
+		sessions:         newSessionStore(time.Now),
+		results:          newResultStore(time.Now),
+		now:              time.Now,
+		http:             &http.Client{Timeout: downloadWait},
+		svc:              svc,
+		renderSaved:      renderSaved,
+		sendAlreadySaved: sendAlreadySaved,
 	}
 }
 
@@ -194,6 +228,25 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 	if !ok {
 		return
 	}
+	data := update.CallbackQuery.Data
+	switch {
+	case strings.HasPrefix(data, cbDocPrefix):
+		sendMarkup(ctx, b, c.log, chatID, textConvertMenu, quickKeyboard(docsbot.DocumentID(strings.TrimPrefix(data, cbDocPrefix))))
+		return
+	case strings.HasPrefix(data, cbQuickPrefix):
+		c.onQuick(ctx, b, update, chatID)
+		return
+	case strings.HasPrefix(data, cbSavePrefix):
+		c.onSave(ctx, b, update, chatID)
+		return
+	case strings.HasPrefix(data, cbSkipPrefix):
+		c.onSkip(ctx, b, update, chatID)
+		return
+	case data == cbMenuCancel:
+		c.deleteCallbackMessage(ctx, b, update, chatID)
+		return
+	}
+
 	user := update.CallbackQuery.From.ID
 	if !c.sessions.has(user) {
 		reply(ctx, b, c.log, chatID, textConvertExpired)
@@ -249,7 +302,7 @@ func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, user, chatID int6
 
 	c.sessions.end(user)
 	name := "scan-" + c.now().Format("2006-01-02") + ".pdf"
-	sendDocument(ctx, b, c.log, chatID, name, pdf)
+	c.sendResult(ctx, b, chatID, user, name, pdf, "", suffixPDF)
 }
 
 // finishCompress compresses the stored image to the chosen format.
@@ -273,7 +326,175 @@ func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, user, chatID
 		reply(ctx, b, c.log, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
 	}
 	name := "photo-compressed." + formatExt(format)
-	sendDocument(ctx, b, c.log, chatID, name, out)
+	c.sendResult(ctx, b, chatID, user, name, out, "", suffixCompressed)
+}
+
+// onQuick converts a stored document straight from the menu: conv:q:<docID>:<op>.
+func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	rest := strings.TrimPrefix(update.CallbackQuery.Data, cbQuickPrefix)
+	rawID, op, ok := strings.Cut(rest, ":")
+	if !ok || rawID == "" {
+		return
+	}
+	maxBytes, known := quickLimit(op)
+	if !known && op != opPDF {
+		return
+	}
+	user, ok := userID(ctx)
+	if !ok {
+		return
+	}
+	id := docsbot.DocumentID(rawID)
+
+	card, err := c.svc.Card(ctx, user, id) // the domain checks ownership
+	if errors.Is(err, docsbot.ErrNotFound) {
+		reply(ctx, b, c.log, chatID, textGone)
+		return
+	}
+	if err != nil {
+		c.log.ErrorContext(ctx, "convert load document", "err", err, "user_id", user, "doc_id", id)
+		reply(ctx, b, c.log, chatID, textError)
+		return
+	}
+	doc := card.Doc
+	if !convertible(doc) {
+		reply(ctx, b, c.log, chatID, textConvertUnsupported)
+		return
+	}
+	src, err := c.download(ctx, b, doc.TgFileID)
+	if err != nil {
+		c.log.ErrorContext(ctx, "convert download document", "err", err, "user_id", user, "doc_id", id)
+		reply(ctx, b, c.log, chatID, textConvertDownloadFailed)
+		return
+	}
+
+	var out []byte
+	var name, suffix string
+	if op == opPDF {
+		suffix = suffixPDF
+		out, err = convert.ImagesToPDF([][]byte{src})
+		name = resultName(doc.Title, suffix, "scan", "pdf")
+	} else {
+		suffix = suffixCompressed
+		out, err = convert.Compress(src, maxBytes, convert.JPEG)
+		name = resultName(doc.Title, suffix, "photo-compressed", "jpg")
+	}
+	if err != nil {
+		c.log.ErrorContext(ctx, "convert document", "err", err, "user_id", user, "doc_id", id, "op", op)
+		reply(ctx, b, c.log, chatID, convertErrorText(err))
+		return
+	}
+	c.log.InfoContext(ctx, "document converted", "user_id", user, "doc_id", id, "op", op,
+		"in_bytes", len(src), "out_bytes", len(out))
+	if op != opPDF && len(out) > maxBytes {
+		reply(ctx, b, c.log, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
+	}
+	c.sendResult(ctx, b, chatID, update.CallbackQuery.From.ID, name, out, id, suffix)
+}
+
+// onSave stores the result as a document: conv:save:<token>.
+func (c *converter) onSave(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	token := strings.TrimPrefix(update.CallbackQuery.Data, cbSavePrefix)
+	res, ok := c.results.take(token, update.CallbackQuery.From.ID)
+	if !ok {
+		reply(ctx, b, c.log, chatID, textConvertResultOld)
+		return
+	}
+	c.clearButtons(ctx, b, update, chatID)
+
+	rep, err := c.svc.SaveDerived(ctx, res.user, res.sourceDoc, res.file, res.suffix)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		reply(ctx, b, c.log, chatID, textGone)
+		return
+	}
+	if err != nil {
+		c.log.ErrorContext(ctx, "save converted file", "err", err, "user_id", res.user)
+		reply(ctx, b, c.log, chatID, textError)
+		return
+	}
+
+	switch r := rep.(type) {
+	case docsbot.Saved:
+		// The result message is a file, which can't be edited into a card: the
+		// card replaces a fresh placeholder instead.
+		msg, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: textConvertSaving})
+		if err != nil {
+			c.log.ErrorContext(ctx, "send telegram message", "err", err)
+			return
+		}
+		c.renderSaved(ctx, b, chatID, msg.ID, res.user, r)
+	case docsbot.NeedCategory:
+		sendMarkup(ctx, b, c.log, chatID, textChooseCategory, categoryKeyboard(actCategory, r.Doc.ID))
+	case docsbot.AlreadySaved:
+		c.sendAlreadySaved(ctx, b, chatID, res.user, r.Doc.ID)
+	default:
+		if text, ok := rejectionText(rep); ok {
+			reply(ctx, b, c.log, chatID, text)
+		}
+	}
+}
+
+// onSkip keeps only the file: conv:skip:<token>.
+func (c *converter) onSkip(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	c.results.take(strings.TrimPrefix(update.CallbackQuery.Data, cbSkipPrefix), update.CallbackQuery.From.ID)
+	c.clearButtons(ctx, b, update, chatID)
+}
+
+// clearButtons removes the keyboard from the message a button was pressed on.
+func (c *converter) clearButtons(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	m := update.CallbackQuery.Message.Message
+	if m == nil {
+		return
+	}
+	_, err := b.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
+		ChatID: chatID, MessageID: m.ID, ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}},
+	})
+	if err != nil {
+		c.log.ErrorContext(ctx, "clear buttons", "err", err)
+	}
+}
+
+// deleteCallbackMessage removes the message a button was pressed on.
+func (c *converter) deleteCallbackMessage(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	m := update.CallbackQuery.Message.Message
+	if m == nil {
+		return
+	}
+	if _, err := b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: m.ID}); err != nil {
+		c.log.ErrorContext(ctx, "delete message", "err", err)
+	}
+}
+
+// sendResult uploads the converted file with the save / just-the-file buttons.
+// The choice is remembered only if Telegram echoes the stored file back; without
+// the user's internal id or that echo the file goes out without buttons.
+func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser int64, filename string, data []byte,
+	sourceDoc docsbot.DocumentID, suffix string,
+) {
+	params := &bot.SendDocumentParams{
+		ChatID:   chatID,
+		Document: &models.InputFileUpload{Filename: filename, Data: bytes.NewReader(data)},
+	}
+	user, haveUser := userID(ctx)
+	token := newToken()
+	if haveUser {
+		params.ReplyMarkup = saveKeyboard(token)
+	}
+	msg, err := b.SendDocument(ctx, params)
+	if err != nil {
+		c.log.ErrorContext(ctx, "send telegram document", "err", err)
+		return
+	}
+	if !haveUser || msg == nil || msg.Document == nil {
+		return
+	}
+	c.results.put(token, convResult{
+		tgUser: tgUser, user: user, sourceDoc: sourceDoc, suffix: suffix,
+		file: docsbot.IncomingFile{
+			Kind: docsbot.KindDocument, FileID: msg.Document.FileID, FileUniqueID: msg.Document.FileUniqueID,
+			Title: filename, FileSize: msg.Document.FileSize, MIME: msg.Document.MimeType,
+		},
+	})
 }
 
 // download fetches a Telegram file's bytes, capped at maxFileBytes.
@@ -394,17 +615,6 @@ func sendMarkup(ctx context.Context, b *bot.Bot, log *slog.Logger, chatID int64,
 	}
 }
 
-// sendDocument uploads data as a file.
-func sendDocument(ctx context.Context, b *bot.Bot, log *slog.Logger, chatID int64, filename string, data []byte) {
-	_, err := b.SendDocument(ctx, &bot.SendDocumentParams{
-		ChatID:   chatID,
-		Document: &models.InputFileUpload{Filename: filename, Data: bytes.NewReader(data)},
-	})
-	if err != nil {
-		log.Error("send telegram document", "err", err)
-	}
-}
-
 func actionKeyboard() *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
 		{Text: btnPDF, CallbackData: cbPDF},
@@ -444,4 +654,52 @@ func cancelKeyboard() *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
 		{Text: btnCancel, CallbackData: cbCancel},
 	}}}
+}
+
+func quickKeyboard(id docsbot.DocumentID) *models.InlineKeyboardMarkup {
+	q := func(op string) string { return cbQuickPrefix + string(id) + ":" + op }
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{
+			{Text: btnQuick1MB, CallbackData: q(opCompress1)},
+			{Text: btnQuick2MB, CallbackData: q(opCompress2)},
+			{Text: btnQuick5MB, CallbackData: q(opCompress5)},
+		},
+		{
+			{Text: btnQuickPDF, CallbackData: q(opPDF)},
+			{Text: btnQuickCancel, CallbackData: cbMenuCancel},
+		},
+	}}
+}
+
+func saveKeyboard(token string) *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{{Text: btnSaveResult, CallbackData: cbSavePrefix + token}},
+		{{Text: btnSkipResult, CallbackData: cbSkipPrefix + token}},
+	}}
+}
+
+// quickLimit maps a compress operation of the menu to its size in bytes.
+func quickLimit(op string) (int, bool) {
+	switch op {
+	case opCompress1:
+		return 1 << 20, true
+	case opCompress2:
+		return 2 << 20, true
+	case opCompress5:
+		return 5 << 20, true
+	default:
+		return 0, false
+	}
+}
+
+// resultName is the file name of a converted document: its derived title plus
+// the extension, or fallback when the document has no title. Path separators
+// are replaced so the name is a single path element.
+func resultName(title, suffix, fallback, ext string) string {
+	base := fallback
+	if strings.TrimSpace(title) != "" {
+		base = docsbot.DerivedTitle(title, suffix)
+	}
+	base = strings.NewReplacer("/", "_", "\\", "_").Replace(base)
+	return base + "." + ext
 }

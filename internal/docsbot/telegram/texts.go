@@ -157,6 +157,10 @@ const (
 	textConvertCancelled = "Режим конвертера выключен."
 	textConvertNothing   = "Сейчас нечего отменять."
 
+	textConvertMenu      = "Что сделать с файлом?"
+	textConvertSaving    = "💾 Сохраняю…"
+	textConvertResultOld = "Эта кнопка устарела. Преобразуй файл ещё раз."
+
 	// textConvertBestEffort takes the reached size in KB (target was out of reach).
 	textConvertBestEffort = "Меньше не вышло — сжал до %d КБ."
 )
@@ -173,4 +177,23 @@ const (
 	btnLimitCustom = "Свой лимит"
 	btnJPEG        = "JPEG"
 	btnPNG         = "PNG"
+)
+
+// Inline button labels for converting from a card, a picker and a result.
+const (
+	btnConvertCard   = "🛠 Преобразовать"
+	btnConvertPicker = "🛠 Сжать / В PDF"
+	btnQuick1MB      = "🗜 1 МБ"
+	btnQuick2MB      = "🗜 2 МБ"
+	btnQuick5MB      = "🗜 5 МБ"
+	btnQuickPDF      = "📄 В PDF"
+	btnQuickCancel   = "✖️ Отмена"
+	btnSaveResult    = "💾 Сохранить в документы"
+	btnSkipResult    = "⬇️ Только файл"
+)
+
+// Title suffixes of documents made by the converter.
+const (
+	suffixCompressed = " (сжатый)"
+	suffixPDF        = " (PDF)"
 )

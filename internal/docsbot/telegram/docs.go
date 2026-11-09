@@ -144,21 +144,26 @@ func (d *docs) receive(ctx context.Context, b *bot.Bot, u *models.Update) {
 	switch r := rep.(type) {
 	case docsbot.NeedCategory:
 		d.logReceived(ctx, user, rep)
-		d.send(ctx, b, chatID, textChooseCategory, categoryKeyboard(actCategory, r.Doc.ID))
+		d.send(ctx, b, chatID, textChooseCategory, pickerKeyboard(r.Doc))
 	case docsbot.AlreadySaved:
 		d.logReceived(ctx, user, rep)
-		card, err := d.svc.Card(ctx, user, r.Doc.ID)
-		if err != nil {
-			d.fail(ctx, b, chatID, "load card", err)
-			return
-		}
-		d.sendCard(ctx, b, chatID, card.Doc, textAlreadySaved, card.CategoryFolderID)
+		d.sendAlreadySaved(ctx, b, chatID, user, r.Doc.ID)
 	default:
 		d.log.InfoContext(ctx, "document refused", "user_id", user, "reason", fmt.Sprintf("%T", rep))
 		if text, ok := rejectionText(rep); ok {
 			reply(ctx, b, d.log, chatID, text)
 		}
 	}
+}
+
+// sendAlreadySaved shows the card of a document the user already has.
+func (d *docs) sendAlreadySaved(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID) {
+	card, err := d.svc.Card(ctx, user, id)
+	if err != nil {
+		d.fail(ctx, b, chatID, "load card", err)
+		return
+	}
+	d.sendCard(ctx, b, chatID, card.Doc, textAlreadySaved, card.CategoryFolderID)
 }
 
 // logReceived logs an accepted file: ids and kind only, never the title.
@@ -468,8 +473,14 @@ func (d *docs) onCategory(ctx context.Context, b *bot.Bot, u *models.Update, use
 	if saved.Already {
 		return // double tap: the first tap already saved and tracked it
 	}
+	d.renderSaved(ctx, b, chatID, msgID, user, saved)
+}
+
+// renderSaved turns the text message msgID into the saved document's card (Drive
+// off) or a live upload card / batch status (Drive on), then offers Drive.
+func (d *docs) renderSaved(ctx context.Context, b *bot.Bot, chatID int64, msgID int, user docsbot.UserID, saved docsbot.Saved) {
 	d.log.InfoContext(ctx, "document saved", "user_id", user, "doc_id", saved.Doc.ID,
-		"category", cat, "backup_status", saved.Doc.BackupStatus)
+		"category", saved.Doc.Category, "backup_status", saved.Doc.BackupStatus)
 	if saved.Doc.BackupStatus == docsbot.BackupPending {
 		// Drive is connected: the upload is queued and tracked in a status message.
 		d.trackUpload(ctx, b, chatID, user, saved.Doc, msgID)
