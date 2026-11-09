@@ -36,6 +36,7 @@ func (r *Repo) CreateDocument(ctx context.Context, in docsbot.IncomingFile) (doc
 		TgFileUniqueID: in.FileUniqueID,
 		FileSize:       pgtype.Int8{Int64: in.FileSize, Valid: in.FileSize > 0},
 		MimeType:       pgtype.Text{String: in.MIME, Valid: in.MIME != ""},
+		MediaGroupID:   pgtype.Text{String: in.MediaGroupID, Valid: in.MediaGroupID != ""},
 	})
 	if err != nil {
 		return docsbot.Document{}, fmt.Errorf("insert document: %w", err)
@@ -402,6 +403,7 @@ func toDocument(d Document) docsbot.Document {
 		DriveFileID:     d.DriveFileID.String,
 		FileSize:        d.FileSize.Int64,
 		MIME:            d.MimeType.String,
+		MediaGroupID:    d.MediaGroupID.String,
 		BackupStatus:    docsbot.BackupStatus(d.BackupStatus),
 		CreatedAt:       d.CreatedAt.Time,
 	}
@@ -413,4 +415,47 @@ func toDocuments(rows []Document) []docsbot.Document {
 		out = append(out, toDocument(d))
 	}
 	return out
+}
+
+// PendingByMediaGroup lists the user's pending documents of one album, oldest first.
+func (r *Repo) PendingByMediaGroup(ctx context.Context, user docsbot.UserID, group string) ([]docsbot.Document, error) {
+	uid, err := parseUUID(string(user))
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.ListPendingByMediaGroup(ctx, ListPendingByMediaGroupParams{
+		UserID:       uid,
+		MediaGroupID: pgtype.Text{String: group, Valid: true},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list pending by media group: %w", err)
+	}
+	return toDocuments(rows), nil
+}
+
+// IntakeStats returns the user's pending count, files created since `since`
+// and total documents in one query.
+func (r *Repo) IntakeStats(ctx context.Context, user docsbot.UserID, since time.Time) (docsbot.IntakeStats, error) {
+	uid, err := parseUUID(string(user))
+	if err != nil {
+		return docsbot.IntakeStats{}, err
+	}
+	row, err := r.UserIntakeStats(ctx, UserIntakeStatsParams{
+		UserID: uid,
+		Since:  pgtype.Timestamptz{Time: since, Valid: true},
+	})
+	if err != nil {
+		return docsbot.IntakeStats{}, fmt.Errorf("user intake stats: %w", err)
+	}
+	return docsbot.IntakeStats{Pending: int(row.Pending), Recent: int(row.Recent), Total: int(row.Total)}, nil
+}
+
+// PurgeStalePending deletes pending documents created before olderThan, for all
+// users, and returns how many were removed.
+func (r *Repo) PurgeStalePending(ctx context.Context, olderThan time.Time) (int, error) {
+	n, err := r.DeleteStalePending(ctx, pgtype.Timestamptz{Time: olderThan, Valid: true})
+	if err != nil {
+		return 0, fmt.Errorf("delete stale pending: %w", err)
+	}
+	return int(n), nil
 }

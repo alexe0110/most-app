@@ -31,16 +31,22 @@ type docs struct {
 	confirms *confirmStore
 	searches *searchStore
 	origins  *originStore
+	albums   *albumBuffer
 }
 
-func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger) *docs {
-	return &docs{
+func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Option) *docs {
+	d := &docs{
 		svc: svc, auth: auth, log: log,
 		renames:  newRenameStore(time.Now),
 		confirms: newConfirmStore(time.Now),
 		searches: newSearchStore(time.Now),
 		origins:  newOriginStore(time.Now),
+		albums:   newAlbumBuffer(),
 	}
+	for _, opt := range opts {
+		opt(d)
+	}
+	return d
 }
 
 // ownsCallback matches this feature's inline buttons.
@@ -51,6 +57,19 @@ func (d *docs) ownsCallback(u *models.Update) bool {
 // ownsFile matches a message carrying a photo or a document.
 func (d *docs) ownsFile(u *models.Update) bool {
 	return u.Message != nil && (len(u.Message.Photo) > 0 || u.Message.Document != nil)
+}
+
+// ownsUnsupported matches messages with media the bot does not store (and
+// would otherwise misread as a search query).
+func (d *docs) ownsUnsupported(u *models.Update) bool {
+	m := u.Message
+	return m != nil && (m.Voice != nil || m.Video != nil || m.VideoNote != nil || m.Audio != nil ||
+		m.Sticker != nil || m.Animation != nil || m.Contact != nil || m.Location != nil || m.Poll != nil)
+}
+
+// onUnsupported tells the user which media the bot takes.
+func (d *docs) onUnsupported(ctx context.Context, b *bot.Bot, u *models.Update) {
+	reply(ctx, b, d.log, u.Message.Chat.ID, textUnsupported)
 }
 
 // start greets the user. The OAuth redirect sends the user back with
@@ -117,18 +136,38 @@ func (d *docs) receive(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.fail(ctx, b, chatID, "receive document", err)
 		return
 	}
+	if in.MediaGroupID != "" {
+		d.logReceived(ctx, user, rep)
+		d.collectAlbum(ctx, b, chatID, user, in.MediaGroupID, rep)
+		return
+	}
 	switch r := rep.(type) {
 	case docsbot.NeedCategory:
-		d.log.InfoContext(ctx, "document received", "user_id", user, "doc_id", r.Doc.ID, "kind", r.Doc.Kind)
+		d.logReceived(ctx, user, rep)
 		d.send(ctx, b, chatID, textChooseCategory, categoryKeyboard(actCategory, r.Doc.ID))
 	case docsbot.AlreadySaved:
-		d.log.InfoContext(ctx, "document received", "user_id", user, "doc_id", r.Doc.ID, "kind", r.Doc.Kind, "duplicate", true)
+		d.logReceived(ctx, user, rep)
 		card, err := d.svc.Card(ctx, user, r.Doc.ID)
 		if err != nil {
 			d.fail(ctx, b, chatID, "load card", err)
 			return
 		}
 		d.sendCard(ctx, b, chatID, card.Doc, textAlreadySaved, card.CategoryFolderID)
+	default:
+		d.log.InfoContext(ctx, "document refused", "user_id", user, "reason", fmt.Sprintf("%T", rep))
+		if text, ok := rejectionText(rep); ok {
+			reply(ctx, b, d.log, chatID, text)
+		}
+	}
+}
+
+// logReceived logs an accepted file: ids and kind only, never the title.
+func (d *docs) logReceived(ctx context.Context, user docsbot.UserID, rep docsbot.Reply) {
+	switch r := rep.(type) {
+	case docsbot.NeedCategory:
+		d.log.InfoContext(ctx, "document received", "user_id", user, "doc_id", r.Doc.ID, "kind", r.Doc.Kind)
+	case docsbot.AlreadySaved:
+		d.log.InfoContext(ctx, "document received", "user_id", user, "doc_id", r.Doc.ID, "kind", r.Doc.Kind, "duplicate", true)
 	}
 }
 
@@ -184,6 +223,8 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 	switch parts[1] {
 	case actCategory:
 		d.onCategory(ctx, b, u, user, parts)
+	case actCategoryGroup:
+		d.onCategoryGroup(ctx, b, u, user, parts)
 	case actSetCategory:
 		d.onSetCategory(ctx, b, u, user, parts)
 	case actChangeCat:
@@ -422,6 +463,83 @@ func (d *docs) onCategory(ctx context.Context, b *bot.Bot, u *models.Update, use
 	d.editCard(ctx, b, chatID, msgID, saved.Doc, "", "")
 	if saved.OfferDrive {
 		d.offerDrive(ctx, b, chatID, user)
+	}
+}
+
+// onCategoryGroup saves a whole album under the chosen category. The picker
+// message becomes the card (one file), a batch status (Drive on) or a summary.
+func (d *docs) onCategoryGroup(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	id, cat, ok := docCategory(parts)
+	if !ok {
+		return
+	}
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	group, err := d.svc.ChooseCategoryGroup(ctx, user, id, cat)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		d.gone(ctx, b, chatID, msgID)
+		return
+	}
+	if err != nil {
+		d.fail(ctx, b, chatID, "choose album category", err)
+		return
+	}
+	d.log.InfoContext(ctx, "album saved", "user_id", user, "category", cat, "count", len(group.Docs))
+
+	var tracked []docsbot.Document // queued for upload, or kept in Telegram for size
+	tooLarge := 0
+	for _, doc := range group.Docs {
+		switch doc.BackupStatus {
+		case docsbot.BackupPending:
+			tracked = append(tracked, doc)
+		case docsbot.BackupTooLarge:
+			tooLarge++
+		}
+	}
+	switch {
+	case len(tracked) > 0:
+		// Show too-large files as lines of the same status message.
+		for _, doc := range group.Docs {
+			if doc.BackupStatus == docsbot.BackupTooLarge {
+				tracked = append(tracked, doc)
+			}
+		}
+		d.trackGroupUpload(ctx, b, chatID, user, tracked, msgID)
+	case len(group.Docs) == 1:
+		d.editCard(ctx, b, chatID, msgID, group.Docs[0], "", "")
+	default:
+		text := fmt.Sprintf(textGroupSaved, len(group.Docs), categoryLabel(cat))
+		if tooLarge > 0 {
+			text += "\n" + fmt.Sprintf(textGroupTooLarge, tooLarge)
+		}
+		d.editText(ctx, b, chatID, msgID, text)
+	}
+	if group.OfferDrive {
+		d.offerDrive(ctx, b, chatID, user)
+	}
+}
+
+// trackGroupUpload turns the album picker into one status message holding every
+// document of the album.
+func (d *docs) trackGroupUpload(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, docs []docsbot.Document, pickerMsgID int) {
+	kind := docsbot.StatusSingle
+	if len(docs) > 1 {
+		kind = docsbot.StatusBatch
+	}
+	text, kb := renderStatusMessage(docsbot.StatusMessage{Kind: kind}, docs, nil)
+	d.editHTML(ctx, b, chatID, pickerMsgID, text, kb)
+	sm, err := d.svc.OpenStatus(ctx, user, chatID, pickerMsgID, docs[0].ID, kind)
+	if err != nil {
+		d.fail(ctx, b, chatID, "open status", err)
+		return
+	}
+	for _, doc := range docs[1:] {
+		if err := d.svc.AttachStatus(ctx, user, doc.ID, sm.ID); err != nil {
+			d.fail(ctx, b, chatID, "attach status", err)
+			return
+		}
 	}
 }
 

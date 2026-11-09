@@ -1,8 +1,8 @@
 -- name: InsertDocument :one
 -- A received file starts as pending with no category; the category and 'saved'
 -- status are set once the user picks one (SaveDocumentCategory).
-insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, file_size, mime_type)
-values (@user_id, @status, @kind, @category, @title, @tg_file_id, @tg_file_unique_id, @file_size, @mime_type)
+insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, file_size, mime_type, media_group_id)
+values (@user_id, @status, @kind, @category, @title, @tg_file_id, @tg_file_unique_id, @file_size, @mime_type, @media_group_id)
 returning *;
 
 -- name: TitleExistsInCategory :one
@@ -188,3 +188,28 @@ where d.status = 'saved'
   and d.updated_at < @older_than
 order by d.updated_at
 limit @lim;
+
+-- name: ListPendingByMediaGroup :many
+-- The user's still-pending documents of one album, in arrival order.
+select *
+from documents
+where user_id = @user_id
+  and media_group_id = @media_group_id
+  and status = 'pending'
+order by created_at, id;
+
+-- name: UserIntakeStats :one
+-- One round trip for the intake guards: pending backlog, files created since
+-- @since (flood check) and the total (quota).
+select count(*) filter (where status = 'pending')::bigint as pending,
+       count(*) filter (where created_at > @since)::bigint as recent,
+       count(*)::bigint                                    as total
+from documents
+where user_id = @user_id;
+
+-- name: DeleteStalePending :execrows
+-- Global TTL purge: pending documents nobody categorized, by age only.
+delete
+from documents
+where status = 'pending'
+  and created_at < @older_than;

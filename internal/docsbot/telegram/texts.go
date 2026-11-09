@@ -23,8 +23,12 @@ const (
 
 	textDriveConnected = "Google Drive подключён ✅ Новые документы будут попадать на твой Диск."
 
-	textChooseCategory = "Выбери категорию:"
-	textAlreadySaved   = "Этот файл уже сохранён."
+	textChooseCategory      = "Выбери категорию:"
+	textChooseCategoryGroup = "Выбери категорию для %d файлов:" // %d = files in the album
+	textAlbumDuplicates     = "Уже были сохранены: %d"          // %d = duplicate files
+	textGroupSaved          = "Сохранил %d файлов в категории «%s»."
+	textGroupTooLarge       = "%d из них слишком большие для Drive: остались в Telegram."
+	textAlreadySaved        = "Этот файл уже сохранён."
 
 	textRenamePrompt = "Пришли новое название документа."
 	textRenameEmpty  = "Название пустое. Нажми «Имя» и пришли название ещё раз."
@@ -68,9 +72,14 @@ const (
 
 	// textGroupNotice is sent once to a group the bot was added to, right before it leaves.
 	textGroupNotice = "Я работаю только в личных сообщениях: документы не должны попадать в общий чат. Напиши мне в личку."
-	textUnknown     = "Не понимаю эту команду. Я умею /start, /list, /convert и /help."
-	textError       = "Что-то пошло не так. Попробуй ещё раз."
-	textSendFailed  = "Не удалось отправить файл. Попробуй ещё раз."
+	textUnsupported = "Пока принимаю фото и файлы. Видео/голосовые — отправь как файл"
+	// Intake limits: a refused file is not stored.
+	textTooManyPending = "Сначала выбери категорию для предыдущих файлов"
+	textRateLimited    = "Слишком много файлов сразу. Подожди минуту и пришли остальные."
+	textQuotaExceeded  = "Достигнут лимит документов (5000). Удали ненужные, чтобы добавить новые."
+	textUnknown        = "Не понимаю эту команду. Я умею /start, /list, /convert и /help."
+	textError          = "Что-то пошло не так. Попробуй ещё раз."
+	textSendFailed     = "Не удалось отправить файл. Попробуй ещё раз."
 )
 
 // Settings, disconnect, export and delete texts (#15).

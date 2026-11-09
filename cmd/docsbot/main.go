@@ -67,7 +67,8 @@ func run() error {
 	purge := jobs.RegisterPurgeUsers(workers, pool, log)
 	bindUpload := docjobs.RegisterUploadDocument(workers, log)
 	bindSweep, sweepPeriodic := docjobs.RegisterSweepUploads(workers, log)
-	queue, err := jobs.New(pool, log, workers, map[string]river.QueueConfig{docjobs.UploadQueue: {MaxWorkers: 1}}, purge, sweepPeriodic) // started below, once wired
+	bindPurgePending, purgePendingPeriodic := docjobs.RegisterPurgePending(workers, log)
+	queue, err := jobs.New(pool, log, workers, map[string]river.QueueConfig{docjobs.UploadQueue: {MaxWorkers: 1}}, purge, sweepPeriodic, purgePendingPeriodic) // started below, once wired
 	if err != nil {
 		return err
 	}
@@ -114,6 +115,7 @@ func run() error {
 	notifier := telegram.NewNotifier(tgbot, repo, oauthSvc, svc, log)
 	bindUpload(svc, notifier)
 	bindSweep(svc, notifier)
+	bindPurgePending(svc)
 	if err := tgbot.SetCommands(ctx, telegram.Commands()); err != nil {
 		log.Error("set bot commands", "err", err) // not fatal
 	}

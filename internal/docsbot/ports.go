@@ -16,6 +16,13 @@ type Repo interface {
 	DocumentByFileUniqueID(ctx context.Context, user UserID, uniqueID string) (Document, error)
 	// DocumentByID returns the user's document, or ErrNotFound.
 	DocumentByID(ctx context.Context, user UserID, id DocumentID) (Document, error)
+	// PendingByMediaGroup lists the user's still-pending documents of one album, oldest first.
+	PendingByMediaGroup(ctx context.Context, user UserID, group string) ([]Document, error)
+	// IntakeStats reports the user's pending count, files created after since, and total, in one query.
+	IntakeStats(ctx context.Context, user UserID, since time.Time) (IntakeStats, error)
+	// PurgeStalePending deletes every user's pending documents created before
+	// olderThan and returns how many were removed.
+	PurgeStalePending(ctx context.Context, olderThan time.Time) (int, error)
 	// SaveDocument sets the category and marks the document saved.
 	SaveDocument(ctx context.Context, user UserID, id DocumentID, cat Category) error
 	SetBackupStatus(ctx context.Context, user UserID, id DocumentID, s BackupStatus) error

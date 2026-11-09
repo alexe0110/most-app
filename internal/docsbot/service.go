@@ -26,6 +26,19 @@ const (
 	sweepFailAfter = 24 * time.Hour
 	// maxQueryRunes caps a search query's length.
 	maxQueryRunes = 100
+	// MaxDriveBytes is the largest file the bot uploads to Drive; a bigger one
+	// stays in Telegram (backup_status too_large).
+	MaxDriveBytes = 20 << 20
+	// maxPendingPerUser caps files awaiting a category per user.
+	maxPendingPerUser = 20
+	// maxFilesPerMinute caps how many files one user may send per minute.
+	maxFilesPerMinute = 30
+	// maxDocumentsPerUser caps one user's total documents.
+	maxDocumentsPerUser = 5000
+	// intakeWindow is the flood-check window.
+	intakeWindow = time.Minute
+	// pendingTTL is how long a document may wait for a category before it is purged.
+	pendingTTL = 24 * time.Hour
 )
 
 // Service holds the Most Docs use cases. It depends only on ports, never on
@@ -81,11 +94,71 @@ func (s *Service) Receive(ctx context.Context, in IncomingFile) (Reply, error) {
 		return nil, fmt.Errorf("lookup document: %w", err)
 	}
 
+	stats, err := s.repo.IntakeStats(ctx, in.UserID, s.now().Add(-intakeWindow))
+	if err != nil {
+		return nil, fmt.Errorf("intake stats: %w", err)
+	}
+	switch {
+	case stats.Total >= maxDocumentsPerUser:
+		return QuotaExceeded{}, nil
+	case stats.Recent >= maxFilesPerMinute:
+		return RateLimited{}, nil
+	case stats.Pending >= maxPendingPerUser:
+		return TooManyPending{}, nil
+	}
+
 	doc, err := s.repo.CreateDocument(ctx, in)
 	if err != nil {
 		return nil, fmt.Errorf("create document: %w", err)
 	}
 	return NeedCategory{Doc: doc}, nil
+}
+
+// PurgeStalePending deletes pending documents nobody categorized within the TTL
+// and returns how many were removed. It is the purge_pending job's use case.
+func (s *Service) PurgeStalePending(ctx context.Context) (int, error) {
+	n, err := s.repo.PurgeStalePending(ctx, s.now().Add(-pendingTTL))
+	if err != nil {
+		return 0, fmt.Errorf("purge stale pending: %w", err)
+	}
+	return n, nil
+}
+
+// ChooseCategoryGroup saves every pending document of the album that anyDocID
+// belongs to under cat. The album lives in the database, so it survives a
+// restart. A document without an album is saved alone. It is idempotent like
+// ChooseCategory: once nothing is pending the already-saved document is returned.
+func (s *Service) ChooseCategoryGroup(ctx context.Context, user UserID, anyDocID DocumentID, cat Category) (SavedGroup, error) {
+	if !cat.Valid() {
+		return SavedGroup{}, ErrUnknownCategory
+	}
+	anchor, err := s.repo.DocumentByID(ctx, user, anyDocID)
+	if err != nil {
+		return SavedGroup{}, fmt.Errorf("load document: %w", err)
+	}
+	ids := []DocumentID{anchor.ID}
+	if anchor.MediaGroupID != "" {
+		pending, err := s.repo.PendingByMediaGroup(ctx, user, anchor.MediaGroupID)
+		if err != nil {
+			return SavedGroup{}, fmt.Errorf("list album: %w", err)
+		}
+		if len(pending) > 0 {
+			ids = ids[:0]
+			for _, d := range pending {
+				ids = append(ids, d.ID)
+			}
+		}
+	}
+	var out SavedGroup
+	for _, id := range ids {
+		saved, err := s.ChooseCategory(ctx, user, id, cat)
+		if err != nil {
+			return out, err
+		}
+		out.Docs = append(out.Docs, saved.Doc)
+		out.OfferDrive = out.OfferDrive || saved.OfferDrive
+	}
+	return out, nil
 }
 
 // ChooseCategory saves a pending document under cat. It is idempotent: a second
@@ -126,6 +199,14 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 		return Saved{}, fmt.Errorf("drive status: %w", err)
 	}
 	if connected {
+		if doc.FileSize > MaxDriveBytes {
+			// Known to be above the limit: skip the doomed download, keep it in Telegram.
+			if err := s.repo.SetBackupStatus(ctx, user, id, BackupTooLarge); err != nil {
+				return Saved{}, fmt.Errorf("mark too large: %w", err)
+			}
+			doc.BackupStatus = BackupTooLarge
+			return Saved{Doc: doc}, nil
+		}
 		if err := s.uploads.EnqueueUpload(ctx, user, id); err != nil {
 			return Saved{}, fmt.Errorf("enqueue upload: %w", err)
 		}

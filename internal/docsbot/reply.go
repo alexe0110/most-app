@@ -18,9 +18,29 @@ type Saved struct {
 	OfferDrive bool
 }
 
-func (NeedCategory) isReply() {}
-func (AlreadySaved) isReply() {}
-func (Saved) isReply()        {}
+// TooManyPending means the user already has too many files awaiting a category;
+// the new file was not stored.
+type TooManyPending struct{}
+
+// RateLimited means the user sent too many files within a minute; the file was not stored.
+type RateLimited struct{}
+
+// QuotaExceeded means the user reached the document limit; the file was not stored.
+type QuotaExceeded struct{}
+
+func (NeedCategory) isReply()   {}
+func (AlreadySaved) isReply()   {}
+func (Saved) isReply()          {}
+func (TooManyPending) isReply() {}
+func (RateLimited) isReply()    {}
+func (QuotaExceeded) isReply()  {}
+
+// SavedGroup is the outcome of saving a whole album: every document with its
+// own Saved result. OfferDrive is true if any of them asked for the Drive nudge.
+type SavedGroup struct {
+	Docs       []Document
+	OfferDrive bool
+}
 
 // Card is one document's detail view.
 type Card struct {

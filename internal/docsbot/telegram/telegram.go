@@ -22,11 +22,11 @@ type Authorizer interface {
 
 // Register wires the docsbot handlers onto b. Order matters: the first matching
 // handler wins. Commands come first so they always work; then the /convert
-// session claims its user's messages; then document callbacks and files; the
+// session claims its user's messages; then document callbacks, unsupported media and files; the
 // catch-all text handler (search) is last.
-func Register(b *bot.Bot, log *slog.Logger, svc *docsbot.Service, auth Authorizer) {
+func Register(b *bot.Bot, log *slog.Logger, svc *docsbot.Service, auth Authorizer, opts ...Option) {
 	conv := newConverter(log)
-	d := newDocs(svc, auth, log)
+	d := newDocs(svc, auth, log, opts...)
 
 	b.RegisterHandler(bot.HandlerTypeMessageText, "start", bot.MatchTypeCommand, d.start)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "help", bot.MatchTypeCommand, d.help)
@@ -37,6 +37,7 @@ func Register(b *bot.Bot, log *slog.Logger, svc *docsbot.Service, auth Authorize
 	b.RegisterHandlerMatchFunc(conv.ownsCallback, conv.callback)
 	b.RegisterHandlerMatchFunc(conv.ownsMessage, conv.message)
 	b.RegisterHandlerMatchFunc(d.ownsCallback, d.callback)
+	b.RegisterHandlerMatchFunc(d.ownsUnsupported, d.onUnsupported) // before files: an animation also carries a document
 	b.RegisterHandlerMatchFunc(d.ownsFile, d.receive)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "", bot.MatchTypePrefix, d.onText)
 }

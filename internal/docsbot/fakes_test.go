@@ -149,6 +149,7 @@ func (r *fakeRepo) CreateDocument(_ context.Context, in docsbot.IncomingFile) (d
 	return r.seedLocked(docsbot.Document{
 		UserID: in.UserID, Status: docsbot.StatusPending, Kind: in.Kind, Title: in.Title,
 		TgFileID: in.FileID, TgFileUniqueID: in.FileUniqueID, BackupStatus: docsbot.BackupNone,
+		MediaGroupID: in.MediaGroupID, FileSize: in.FileSize,
 	}), nil
 }
 
@@ -170,6 +171,51 @@ func (r *fakeRepo) DocumentByID(_ context.Context, user docsbot.UserID, id docsb
 		return d, nil
 	}
 	return docsbot.Document{}, docsbot.ErrNotFound
+}
+
+func (r *fakeRepo) PendingByMediaGroup(_ context.Context, user docsbot.UserID, group string) ([]docsbot.Document, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []docsbot.Document
+	for _, d := range r.docs {
+		if d.UserID == user && d.MediaGroupID == group && d.Status == docsbot.StatusPending {
+			out = append(out, d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (r *fakeRepo) IntakeStats(_ context.Context, user docsbot.UserID, since time.Time) (docsbot.IntakeStats, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var st docsbot.IntakeStats
+	for _, d := range r.docs {
+		if d.UserID != user {
+			continue
+		}
+		st.Total++
+		if d.Status == docsbot.StatusPending {
+			st.Pending++
+		}
+		if d.CreatedAt.After(since) {
+			st.Recent++
+		}
+	}
+	return st, nil
+}
+
+func (r *fakeRepo) PurgeStalePending(_ context.Context, olderThan time.Time) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for id, d := range r.docs {
+		if d.Status == docsbot.StatusPending && d.CreatedAt.Before(olderThan) {
+			delete(r.docs, id)
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (r *fakeRepo) SaveDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) error {
@@ -316,7 +362,7 @@ func (r *fakeRepo) CountNotBackedUp(_ context.Context, user docsbot.UserID) (int
 	defer r.mu.Unlock()
 	n := 0
 	for _, d := range r.savedFor(user) {
-		if !d.InDrive() {
+		if !d.InDrive() && d.BackupStatus != docsbot.BackupTooLarge { // mirrors the SQL
 			n++
 		}
 	}

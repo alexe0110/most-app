@@ -157,6 +157,22 @@ func (q *Queries) DeleteDocumentByID(ctx context.Context, arg DeleteDocumentByID
 	return result.RowsAffected(), nil
 }
 
+const deleteStalePending = `-- name: DeleteStalePending :execrows
+delete
+from documents
+where status = 'pending'
+  and created_at < $1
+`
+
+// Global TTL purge: pending documents nobody categorized, by age only.
+func (q *Queries) DeleteStalePending(ctx context.Context, olderThan pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteStalePending, olderThan)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteUserDocuments = `-- name: DeleteUserDocuments :exec
 delete
 from documents
@@ -236,7 +252,7 @@ func (q *Queries) DocumentCategoryCounts(ctx context.Context, userID pgtype.UUID
 }
 
 const getDocumentByID = `-- name: GetDocumentByID :one
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id
 from documents
 where id = $1
   and user_id = $2
@@ -266,12 +282,13 @@ func (q *Queries) GetDocumentByID(ctx context.Context, arg GetDocumentByIDParams
 		&i.StatusMessageID,
 		&i.FileSize,
 		&i.MimeType,
+		&i.MediaGroupID,
 	)
 	return i, err
 }
 
 const getDocumentByUniqueID = `-- name: GetDocumentByUniqueID :one
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id
 from documents
 where user_id = $1
   and tg_file_unique_id = $2
@@ -301,14 +318,15 @@ func (q *Queries) GetDocumentByUniqueID(ctx context.Context, arg GetDocumentByUn
 		&i.StatusMessageID,
 		&i.FileSize,
 		&i.MimeType,
+		&i.MediaGroupID,
 	)
 	return i, err
 }
 
 const insertDocument = `-- name: InsertDocument :one
-insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, file_size, mime_type)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-returning id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type
+insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, file_size, mime_type, media_group_id)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+returning id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id
 `
 
 type InsertDocumentParams struct {
@@ -321,6 +339,7 @@ type InsertDocumentParams struct {
 	TgFileUniqueID string
 	FileSize       pgtype.Int8
 	MimeType       pgtype.Text
+	MediaGroupID   pgtype.Text
 }
 
 // A received file starts as pending with no category; the category and 'saved'
@@ -336,6 +355,7 @@ func (q *Queries) InsertDocument(ctx context.Context, arg InsertDocumentParams) 
 		arg.TgFileUniqueID,
 		arg.FileSize,
 		arg.MimeType,
+		arg.MediaGroupID,
 	)
 	var i Document
 	err := row.Scan(
@@ -354,12 +374,13 @@ func (q *Queries) InsertDocument(ctx context.Context, arg InsertDocumentParams) 
 		&i.StatusMessageID,
 		&i.FileSize,
 		&i.MimeType,
+		&i.MediaGroupID,
 	)
 	return i, err
 }
 
 const listDocumentsByCategory = `-- name: ListDocumentsByCategory :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id
 from documents
 where user_id = $1
   and category = $2
@@ -405,6 +426,59 @@ func (q *Queries) ListDocumentsByCategory(ctx context.Context, arg ListDocuments
 			&i.StatusMessageID,
 			&i.FileSize,
 			&i.MimeType,
+			&i.MediaGroupID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingByMediaGroup = `-- name: ListPendingByMediaGroup :many
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id
+from documents
+where user_id = $1
+  and media_group_id = $2
+  and status = 'pending'
+order by created_at, id
+`
+
+type ListPendingByMediaGroupParams struct {
+	UserID       pgtype.UUID
+	MediaGroupID pgtype.Text
+}
+
+// The user's still-pending documents of one album, in arrival order.
+func (q *Queries) ListPendingByMediaGroup(ctx context.Context, arg ListPendingByMediaGroupParams) ([]Document, error) {
+	rows, err := q.db.Query(ctx, listPendingByMediaGroup, arg.UserID, arg.MediaGroupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Document{}
+	for rows.Next() {
+		var i Document
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Status,
+			&i.Category,
+			&i.Title,
+			&i.TgFileID,
+			&i.TgFileUniqueID,
+			&i.DriveFileID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Kind,
+			&i.BackupStatus,
+			&i.StatusMessageID,
+			&i.FileSize,
+			&i.MimeType,
+			&i.MediaGroupID,
 		); err != nil {
 			return nil, err
 		}
@@ -417,7 +491,7 @@ func (q *Queries) ListDocumentsByCategory(ctx context.Context, arg ListDocuments
 }
 
 const listSavedDocumentsForExport = `-- name: ListSavedDocumentsForExport :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id
 from documents
 where user_id = $1
   and status = 'saved'
@@ -455,6 +529,7 @@ func (q *Queries) ListSavedDocumentsForExport(ctx context.Context, arg ListSaved
 			&i.StatusMessageID,
 			&i.FileSize,
 			&i.MimeType,
+			&i.MediaGroupID,
 		); err != nil {
 			return nil, err
 		}
@@ -538,7 +613,7 @@ func (q *Queries) SaveDocumentCategory(ctx context.Context, arg SaveDocumentCate
 }
 
 const searchDocuments = `-- name: SearchDocuments :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id
 from documents
 where user_id = $1
   and status = 'saved'
@@ -585,6 +660,7 @@ func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams
 			&i.StatusMessageID,
 			&i.FileSize,
 			&i.MimeType,
+			&i.MediaGroupID,
 		); err != nil {
 			return nil, err
 		}
@@ -727,4 +803,32 @@ func (q *Queries) UpdateDocumentTitle(ctx context.Context, arg UpdateDocumentTit
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const userIntakeStats = `-- name: UserIntakeStats :one
+select count(*) filter (where status = 'pending')::bigint as pending,
+       count(*) filter (where created_at > $1)::bigint as recent,
+       count(*)::bigint                                    as total
+from documents
+where user_id = $2
+`
+
+type UserIntakeStatsParams struct {
+	Since  pgtype.Timestamptz
+	UserID pgtype.UUID
+}
+
+type UserIntakeStatsRow struct {
+	Pending int64
+	Recent  int64
+	Total   int64
+}
+
+// One round trip for the intake guards: pending backlog, files created since
+// @since (flood check) and the total (quota).
+func (q *Queries) UserIntakeStats(ctx context.Context, arg UserIntakeStatsParams) (UserIntakeStatsRow, error) {
+	row := q.db.QueryRow(ctx, userIntakeStats, arg.Since, arg.UserID)
+	var i UserIntakeStatsRow
+	err := row.Scan(&i.Pending, &i.Recent, &i.Total)
+	return i, err
 }
