@@ -3,8 +3,10 @@ package docsbot_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
@@ -67,33 +69,44 @@ func (f fakeFiles) Download(context.Context, string) ([]byte, string, error) {
 // fakeUploads records enqueued uploads and, like the real atomic enqueue, marks
 // the document pending.
 type fakeUploads struct {
+	mu       sync.Mutex
 	repo     *fakeRepo
 	calls    []docsbot.DocumentID
 	cancels  []docsbot.UserID
 	requeued []docsbot.DocumentID
 }
 
-func (u *fakeUploads) EnqueueUpload(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID) error {
+func (u *fakeUploads) EnqueueUpload(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	u.calls = append(u.calls, id)
-	d := u.repo.docs[id]
-	d.BackupStatus = docsbot.BackupPending
-	u.repo.docs[id] = d
+	u.repo.mu.Lock()
+	defer u.repo.mu.Unlock()
+	if d, ok := u.repo.docs[id]; ok && d.UserID == user {
+		d.BackupStatus = docsbot.BackupPending
+		u.repo.docs[id] = d
+	}
 	return nil
 }
 
 // RequeueUpload records the call; like the real one it leaves backup_status alone.
 func (u *fakeUploads) RequeueUpload(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	u.requeued = append(u.requeued, id)
 	return nil
 }
 
 func (u *fakeUploads) CancelUploads(_ context.Context, user docsbot.UserID) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	u.cancels = append(u.cancels, user)
 	return nil
 }
 
 // fakeRepo is an in-memory docsbot.Repo for unit tests.
 type fakeRepo struct {
+	mu      sync.Mutex                  // guards every field below; fakes are used by parallel tests
 	folders map[docsbot.Category]string // cached Drive folder ids by category
 	docs    map[docsbot.DocumentID]docsbot.Document
 	seq     int
@@ -109,6 +122,13 @@ func newFakeRepo() *fakeRepo {
 
 // seed stores a document, assigning an id and creation time if absent.
 func (r *fakeRepo) seed(d docsbot.Document) docsbot.Document {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.seedLocked(d)
+}
+
+// seedLocked is seed for callers already holding r.mu.
+func (r *fakeRepo) seedLocked(d docsbot.Document) docsbot.Document {
 	if d.ID == "" {
 		r.seq++
 		d.ID = docsbot.DocumentID(fmt.Sprintf("doc-%d", r.seq))
@@ -124,13 +144,18 @@ func (r *fakeRepo) seed(d docsbot.Document) docsbot.Document {
 }
 
 func (r *fakeRepo) CreateDocument(_ context.Context, in docsbot.IncomingFile) (docsbot.Document, error) {
-	return r.seed(docsbot.Document{
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.seedLocked(docsbot.Document{
 		UserID: in.UserID, Status: docsbot.StatusPending, Kind: in.Kind, Title: in.Title,
 		TgFileID: in.FileID, TgFileUniqueID: in.FileUniqueID, BackupStatus: docsbot.BackupNone,
+		MediaGroupID: in.MediaGroupID, FileSize: in.FileSize,
 	}), nil
 }
 
 func (r *fakeRepo) DocumentByFileUniqueID(_ context.Context, user docsbot.UserID, uid string) (docsbot.Document, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, d := range r.docs {
 		if d.UserID == user && d.TgFileUniqueID == uid {
 			return d, nil
@@ -140,20 +165,74 @@ func (r *fakeRepo) DocumentByFileUniqueID(_ context.Context, user docsbot.UserID
 }
 
 func (r *fakeRepo) DocumentByID(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) (docsbot.Document, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if d, ok := r.docs[id]; ok && d.UserID == user {
 		return d, nil
 	}
 	return docsbot.Document{}, docsbot.ErrNotFound
 }
 
-func (r *fakeRepo) SaveDocument(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) error {
-	d := r.docs[id]
+func (r *fakeRepo) PendingByMediaGroup(_ context.Context, user docsbot.UserID, group string) ([]docsbot.Document, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []docsbot.Document
+	for _, d := range r.docs {
+		if d.UserID == user && d.MediaGroupID == group && d.Status == docsbot.StatusPending {
+			out = append(out, d)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (r *fakeRepo) IntakeStats(_ context.Context, user docsbot.UserID, since time.Time) (docsbot.IntakeStats, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var st docsbot.IntakeStats
+	for _, d := range r.docs {
+		if d.UserID != user {
+			continue
+		}
+		st.Total++
+		if d.Status == docsbot.StatusPending {
+			st.Pending++
+		}
+		if d.CreatedAt.After(since) {
+			st.Recent++
+		}
+	}
+	return st, nil
+}
+
+func (r *fakeRepo) PurgeStalePending(_ context.Context, olderThan time.Time) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for id, d := range r.docs {
+		if d.Status == docsbot.StatusPending && d.CreatedAt.Before(olderThan) {
+			delete(r.docs, id)
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (r *fakeRepo) SaveDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	d, ok := r.docs[id]
+	if !ok || d.UserID != user || d.Status != docsbot.StatusPending {
+		return false, nil
+	}
 	d.Category, d.Status = cat, docsbot.StatusSaved
 	r.docs[id] = d
-	return nil
+	return true, nil
 }
 
 func (r *fakeRepo) ResetPendingUploads(_ context.Context, user docsbot.UserID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for id, d := range r.docs {
 		if d.UserID == user && d.Status == docsbot.StatusSaved &&
 			(d.BackupStatus == docsbot.BackupPending || d.BackupStatus == docsbot.BackupUploading) {
@@ -164,23 +243,44 @@ func (r *fakeRepo) ResetPendingUploads(_ context.Context, user docsbot.UserID) e
 	return nil
 }
 
-func (r *fakeRepo) MarkUploading(_ context.Context, id docsbot.DocumentID) error {
-	d := r.docs[id]
-	d.BackupStatus = docsbot.BackupUploading
-	r.docs[id] = d
+func (r *fakeRepo) MarkUploading(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
+	return r.update(user, id, func(d *docsbot.Document) { d.BackupStatus = docsbot.BackupUploading })
+}
+
+func (r *fakeRepo) SetBackupStatus(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, s docsbot.BackupStatus) error {
+	return r.update(user, id, func(d *docsbot.Document) { d.BackupStatus = s })
+}
+
+// update applies fn to the user's document under the lock. Like the real
+// user-scoped UPDATE, a missing or foreign document is a silent no-op.
+func (r *fakeRepo) update(user docsbot.UserID, id docsbot.DocumentID, fn func(*docsbot.Document)) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if d, ok := r.docs[id]; ok && d.UserID == user {
+		fn(&d)
+		r.docs[id] = d
+	}
 	return nil
 }
 
-func (r *fakeRepo) SetBackupStatus(_ context.Context, id docsbot.DocumentID, s docsbot.BackupStatus) error {
-	d := r.docs[id]
-	d.BackupStatus = s
+// ClaimFailed mirrors ClaimFailedForRetry: failed -> pending, once.
+func (r *fakeRepo) ClaimFailed(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	d, ok := r.docs[id]
+	if !ok || d.UserID != user || d.BackupStatus != docsbot.BackupFailed {
+		return false, nil
+	}
+	d.BackupStatus = docsbot.BackupPending
 	r.docs[id] = d
-	return nil
+	return true, nil
 }
 
 // StuckUploads mirrors the real query, assuming every user has an active
 // integration (the join is covered by the integration tests).
 func (r *fakeRepo) StuckUploads(_ context.Context, olderThan time.Time, limit int) ([]docsbot.StuckUpload, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	var out []docsbot.StuckUpload
 	for id, d := range r.docs {
 		bs := d.BackupStatus
@@ -198,14 +298,27 @@ func (r *fakeRepo) StuckUploads(_ context.Context, olderThan time.Time, limit in
 	return out, nil
 }
 
-func (r *fakeRepo) SetTitle(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID, title string) error {
-	d := r.docs[id]
-	d.Title = title
+func (r *fakeRepo) SetTitle(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, title string) error {
+	return r.mutate(user, id, func(d *docsbot.Document) { d.Title = title })
+}
+
+// mutate is update that reports ErrNotFound for a missing or foreign document,
+// like the :execrows queries.
+func (r *fakeRepo) mutate(user docsbot.UserID, id docsbot.DocumentID, fn func(*docsbot.Document)) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	d, ok := r.docs[id]
+	if !ok || d.UserID != user {
+		return docsbot.ErrNotFound
+	}
+	fn(&d)
 	r.docs[id] = d
 	return nil
 }
 
 func (r *fakeRepo) TitleExistsInCategory(_ context.Context, user docsbot.UserID, cat docsbot.Category, title string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, d := range r.docs {
 		if d.UserID == user && d.Category == cat && d.Status == docsbot.StatusSaved && d.Title == title {
 			return true, nil
@@ -214,14 +327,16 @@ func (r *fakeRepo) TitleExistsInCategory(_ context.Context, user docsbot.UserID,
 	return false, nil
 }
 
-func (r *fakeRepo) SetCategory(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) error {
-	d := r.docs[id]
-	d.Category = cat
-	r.docs[id] = d
-	return nil
+func (r *fakeRepo) SetCategory(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) error {
+	return r.mutate(user, id, func(d *docsbot.Document) { d.Category = cat })
 }
 
-func (r *fakeRepo) DeleteDocument(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID) error {
+func (r *fakeRepo) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if d, ok := r.docs[id]; !ok || d.UserID != user {
+		return docsbot.ErrNotFound
+	}
 	delete(r.docs, id)
 	return nil
 }
@@ -237,13 +352,17 @@ func (r *fakeRepo) savedFor(user docsbot.UserID) []docsbot.Document {
 }
 
 func (r *fakeRepo) CountSaved(_ context.Context, user docsbot.UserID) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return len(r.savedFor(user)), nil
 }
 
 func (r *fakeRepo) CountNotBackedUp(_ context.Context, user docsbot.UserID) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	n := 0
 	for _, d := range r.savedFor(user) {
-		if !d.InDrive() {
+		if !d.InDrive() && d.BackupStatus != docsbot.BackupTooLarge { // mirrors the SQL
 			n++
 		}
 	}
@@ -251,6 +370,8 @@ func (r *fakeRepo) CountNotBackedUp(_ context.Context, user docsbot.UserID) (int
 }
 
 func (r *fakeRepo) CategoryCounts(_ context.Context, user docsbot.UserID) ([]docsbot.CategoryCount, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	byCat := map[docsbot.Category]int{}
 	for _, d := range r.savedFor(user) {
 		byCat[d.Category]++
@@ -265,6 +386,8 @@ func (r *fakeRepo) CategoryCounts(_ context.Context, user docsbot.UserID) ([]doc
 }
 
 func (r *fakeRepo) ListByCategory(_ context.Context, user docsbot.UserID, cat docsbot.Category, limit, offset int) ([]docsbot.Document, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	var all []docsbot.Document
 	for _, d := range r.savedFor(user) {
 		if d.Category == cat {
@@ -283,6 +406,8 @@ func (r *fakeRepo) ListByCategory(_ context.Context, user docsbot.UserID, cat do
 }
 
 func (r *fakeRepo) Search(_ context.Context, user docsbot.UserID, q string, limit int) ([]docsbot.Document, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	q = strings.ToLower(q)
 	var out []docsbot.Document
 	for _, d := range r.savedFor(user) {
@@ -296,29 +421,46 @@ func (r *fakeRepo) Search(_ context.Context, user docsbot.UserID, q string, limi
 	return out, nil
 }
 
-func (r *fakeRepo) MarkBackedUp(_ context.Context, id docsbot.DocumentID, driveFileID string) error {
-	d := r.docs[id]
-	d.BackupStatus, d.DriveFileID = docsbot.BackupBackedUp, driveFileID
-	r.docs[id] = d
-	return nil
+func (r *fakeRepo) MarkBackedUp(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string) error {
+	return r.update(user, id, func(d *docsbot.Document) {
+		d.BackupStatus, d.DriveFileID = docsbot.BackupBackedUp, driveFileID
+	})
 }
 
-func (r *fakeRepo) NotBackedUpIDs(_ context.Context, user docsbot.UserID) ([]docsbot.DocumentID, error) {
+// ClaimTransferable mirrors ClaimTransferableDocuments: none/failed -> pending, atomically.
+func (r *fakeRepo) ClaimTransferable(_ context.Context, user docsbot.UserID) ([]docsbot.DocumentID, error) {
+	return r.claim(user, docsbot.BackupNone, docsbot.BackupFailed), nil
+}
+
+// ClaimAllFailed mirrors ClaimFailedDocuments: failed -> pending, atomically.
+func (r *fakeRepo) ClaimAllFailed(_ context.Context, user docsbot.UserID) ([]docsbot.DocumentID, error) {
+	return r.claim(user, docsbot.BackupFailed), nil
+}
+
+// claim atomically (under the lock) moves the user's saved documents in one of
+// the given states to pending and returns their ids, oldest first.
+func (r *fakeRepo) claim(user docsbot.UserID, from ...docsbot.BackupStatus) []docsbot.DocumentID {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	var docs []docsbot.Document
 	for _, d := range r.savedFor(user) {
-		if !d.InDrive() {
+		if slices.Contains(from, d.BackupStatus) {
 			docs = append(docs, d)
 		}
 	}
 	sort.Slice(docs, func(i, j int) bool { return docs[i].CreatedAt.Before(docs[j].CreatedAt) })
 	out := make([]docsbot.DocumentID, 0, len(docs))
 	for _, d := range docs {
+		d.BackupStatus = docsbot.BackupPending
+		r.docs[d.ID] = d
 		out = append(out, d.ID)
 	}
-	return out, nil
+	return out
 }
 
 func (r *fakeRepo) BackupStatusCounts(_ context.Context, user docsbot.UserID) ([]docsbot.BackupStatusCount, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	byStatus := map[docsbot.BackupStatus]int{}
 	for _, d := range r.savedFor(user) {
 		byStatus[d.BackupStatus]++
@@ -330,22 +472,9 @@ func (r *fakeRepo) BackupStatusCounts(_ context.Context, user docsbot.UserID) ([
 	return out, nil
 }
 
-func (r *fakeRepo) FailedIDs(_ context.Context, user docsbot.UserID) ([]docsbot.DocumentID, error) {
-	var docs []docsbot.Document
-	for _, d := range r.savedFor(user) {
-		if d.BackupStatus == docsbot.BackupFailed {
-			docs = append(docs, d)
-		}
-	}
-	sort.Slice(docs, func(i, j int) bool { return docs[i].CreatedAt.Before(docs[j].CreatedAt) })
-	out := make([]docsbot.DocumentID, 0, len(docs))
-	for _, d := range docs {
-		out = append(out, d.ID)
-	}
-	return out, nil
-}
-
 func (r *fakeRepo) SavedForExport(_ context.Context, user docsbot.UserID, limit int) ([]docsbot.Document, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	docs := r.savedFor(user)
 	sort.Slice(docs, func(i, j int) bool { return docs[i].CreatedAt.Before(docs[j].CreatedAt) })
 	if len(docs) > limit {
@@ -355,6 +484,8 @@ func (r *fakeRepo) SavedForExport(_ context.Context, user docsbot.UserID, limit 
 }
 
 func (r *fakeRepo) DeleteUserData(_ context.Context, user docsbot.UserID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for id, d := range r.docs {
 		if d.UserID == user {
 			delete(r.docs, id)
@@ -367,17 +498,22 @@ func (r *fakeRepo) DeleteUserData(_ context.Context, user docsbot.UserID) error 
 var _ docsbot.Folders = (*fakeRepo)(nil)
 
 func (r *fakeRepo) CategoryFolderID(_ context.Context, _ docsbot.UserID, cat docsbot.Category) (string, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	id, ok := r.folders[cat]
 	return id, ok, nil
 }
 
 func (r *fakeRepo) DeleteAllFolders(_ context.Context, _ docsbot.UserID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	clear(r.folders)
 	return nil
 }
 
 // fakeStatus is an in-memory docsbot.StatusMessages over the fake repo's documents.
 type fakeStatus struct {
+	mu   sync.Mutex // guards msgs and seq; documents are guarded by repo.mu
 	repo *fakeRepo
 	msgs map[docsbot.StatusMessageID]docsbot.StatusMessage
 	seq  int
@@ -390,6 +526,8 @@ func newFakeStatus(repo *fakeRepo) *fakeStatus {
 }
 
 func (s *fakeStatus) OpenForUser(_ context.Context, user docsbot.UserID) (docsbot.StatusMessage, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var best docsbot.StatusMessage
 	found := false
 	for _, m := range s.msgs {
@@ -401,6 +539,8 @@ func (s *fakeStatus) OpenForUser(_ context.Context, user docsbot.UserID) (docsbo
 }
 
 func (s *fakeStatus) Create(_ context.Context, user docsbot.UserID, chatID int64, messageID int, kind docsbot.StatusKind) (docsbot.StatusMessage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.seq++
 	m := docsbot.StatusMessage{
 		ID:        docsbot.StatusMessageID(fmt.Sprintf("sm-%d", s.seq)),
@@ -413,31 +553,41 @@ func (s *fakeStatus) Create(_ context.Context, user docsbot.UserID, chatID int64
 	return m, nil
 }
 
-func (s *fakeStatus) Close(_ context.Context, id docsbot.StatusMessageID) error {
-	m := s.msgs[id]
-	m.Closed = true
-	s.msgs[id] = m
+func (s *fakeStatus) Close(_ context.Context, user docsbot.UserID, id docsbot.StatusMessageID) error {
+	return s.update(user, id, func(m *docsbot.StatusMessage) { m.Closed = true })
+}
+
+// update applies fn to the user's status message; a foreign one is a silent no-op.
+func (s *fakeStatus) update(user docsbot.UserID, id docsbot.StatusMessageID, fn func(*docsbot.StatusMessage)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if m, ok := s.msgs[id]; ok && m.UserID == user {
+		fn(&m)
+		s.msgs[id] = m
+	}
 	return nil
 }
 
-func (s *fakeStatus) SetMessageID(_ context.Context, id docsbot.StatusMessageID, messageID int) error {
-	m := s.msgs[id]
-	m.MessageID = messageID
-	s.msgs[id] = m
+func (s *fakeStatus) SetMessageID(_ context.Context, user docsbot.UserID, id docsbot.StatusMessageID, messageID int) error {
+	return s.update(user, id, func(m *docsbot.StatusMessage) { m.MessageID = messageID })
+}
+
+func (s *fakeStatus) Attach(_ context.Context, user docsbot.UserID, doc docsbot.DocumentID, id docsbot.StatusMessageID) error {
+	s.repo.mu.Lock()
+	defer s.repo.mu.Unlock()
+	if d, ok := s.repo.docs[doc]; ok && d.UserID == user {
+		d.StatusMessageID = id
+		s.repo.docs[doc] = d
+	}
 	return nil
 }
 
-func (s *fakeStatus) Attach(_ context.Context, doc docsbot.DocumentID, id docsbot.StatusMessageID) error {
-	d := s.repo.docs[doc]
-	d.StatusMessageID = id
-	s.repo.docs[doc] = d
-	return nil
-}
-
-func (s *fakeStatus) DocumentsIn(_ context.Context, id docsbot.StatusMessageID) ([]docsbot.Document, error) {
+func (s *fakeStatus) DocumentsIn(_ context.Context, user docsbot.UserID, id docsbot.StatusMessageID) ([]docsbot.Document, error) {
+	s.repo.mu.Lock()
+	defer s.repo.mu.Unlock()
 	var out []docsbot.Document
 	for _, d := range s.repo.docs {
-		if d.StatusMessageID == id {
+		if d.UserID == user && d.StatusMessageID == id {
 			out = append(out, d)
 		}
 	}
@@ -445,9 +595,11 @@ func (s *fakeStatus) DocumentsIn(_ context.Context, id docsbot.StatusMessageID) 
 	return out, nil
 }
 
-func (s *fakeStatus) ByID(_ context.Context, id docsbot.StatusMessageID) (docsbot.StatusMessage, error) {
+func (s *fakeStatus) ByID(_ context.Context, user docsbot.UserID, id docsbot.StatusMessageID) (docsbot.StatusMessage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	m, ok := s.msgs[id]
-	if !ok {
+	if !ok || m.UserID != user {
 		return docsbot.StatusMessage{}, docsbot.ErrNotFound
 	}
 	return m, nil

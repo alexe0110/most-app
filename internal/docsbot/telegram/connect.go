@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -41,7 +42,7 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 		}
 		log.InfoContext(ctx, "drive folder cache reset", "user_id", userID, "reason", "reconnect")
 		if err := b.Send(ctx, chatID, textDriveConnected); err != nil {
-			return err
+			return ignoreBlocked(err) // a block is already logged at Warn by tg.Bot
 		}
 		log.InfoContext(ctx, "drive connected", "user_id", userID)
 		n, err := counter.NotBackedUpCount(ctx, docsbot.UserID(userID))
@@ -51,16 +52,25 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 		if n == 0 {
 			return nil
 		}
-		return b.SendMarkup(ctx, chatID, fmt.Sprintf(textTransferOffer, n), transferOfferKeyboard())
+		return ignoreBlocked(b.SendMarkup(ctx, chatID, fmt.Sprintf(textTransferOffer, n), transferOfferKeyboard()))
 	}
+}
+
+// ignoreBlocked drops tg.ErrBlocked: it is already logged at Warn by tg.Bot and
+// is not an error of the caller.
+func ignoreBlocked(err error) error {
+	if errors.Is(err, tg.ErrBlocked) {
+		return nil
+	}
+	return err
 }
 
 // statusService is the part of docsbot.Service the Notifier needs to refresh
 // batch status messages. Declared here, at the consumer.
 type statusService interface {
 	StatusView(ctx context.Context, user docsbot.UserID, doc docsbot.DocumentID) (docsbot.StatusView, error)
-	CloseStatus(ctx context.Context, id docsbot.StatusMessageID) error
-	SetStatusMessageID(ctx context.Context, id docsbot.StatusMessageID, messageID int) error
+	CloseStatus(ctx context.Context, user docsbot.UserID, id docsbot.StatusMessageID) error
+	SetStatusMessageID(ctx context.Context, user docsbot.UserID, id docsbot.StatusMessageID, messageID int) error
 }
 
 // editInterval is the minimum gap between edits of one status message, to stay
@@ -110,10 +120,13 @@ func (n *Notifier) UploadOutcome(ctx context.Context, user docsbot.UserID, doc d
 	case strings.Contains(msg, "message to edit not found"), strings.Contains(msg, "message can't be edited"):
 		mid, serr := n.bot.SendHTML(ctx, view.Message.ChatID, text, kb)
 		if serr != nil {
-			n.log.ErrorContext(ctx, "resend status message", "err", serr, "user_id", user)
-		} else if uerr := n.svc.SetStatusMessageID(ctx, view.Message.ID, mid); uerr != nil {
+			if !errors.Is(serr, tg.ErrBlocked) { // a block is already logged at Warn by tg.Bot
+				n.log.ErrorContext(ctx, "resend status message", "err", serr, "user_id", user)
+			}
+		} else if uerr := n.svc.SetStatusMessageID(ctx, user, view.Message.ID, mid); uerr != nil {
 			n.log.ErrorContext(ctx, "save status message id", "err", uerr, "user_id", user)
 		}
+	case errors.Is(err, tg.ErrBlocked): // already logged at Warn by tg.Bot
 	default:
 		n.log.ErrorContext(ctx, "edit status message", "err", err, "user_id", user)
 	}
@@ -121,7 +134,7 @@ func (n *Notifier) UploadOutcome(ctx context.Context, user docsbot.UserID, doc d
 		n.mu.Lock()
 		delete(n.lastEdit, view.Message.ID)
 		n.mu.Unlock()
-		if cerr := n.svc.CloseStatus(ctx, view.Message.ID); cerr != nil {
+		if cerr := n.svc.CloseStatus(ctx, user, view.Message.ID); cerr != nil {
 			n.log.ErrorContext(ctx, "close status message", "err", cerr, "user_id", user)
 		}
 	}
@@ -172,7 +185,8 @@ func errString(err error) string {
 
 // Reconnect asks the user to re-link Drive after access was revoked. At most one
 // prompt is delivered per reconnectDebounce; a failed send does not count, so a
-// retry can still reach the user.
+// retry can still reach the user. A blocked bot does count: retrying on every
+// upload would not help.
 func (n *Notifier) Reconnect(ctx context.Context, user docsbot.UserID) error {
 	n.mu.Lock()
 	last := n.revokedAt[user]
@@ -194,7 +208,8 @@ func (n *Notifier) Reconnect(ctx context.Context, user docsbot.UserID) error {
 	} else {
 		err = n.bot.SendMarkup(ctx, chatID, textReconnect, reconnectKeyboard(url))
 	}
-	if err != nil {
+	blocked := errors.Is(err, tg.ErrBlocked)
+	if err != nil && !blocked {
 		return err
 	}
 	n.mu.Lock()

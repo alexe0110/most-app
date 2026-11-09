@@ -33,7 +33,7 @@ func TestService_RetryStatusFailed(t *testing.T) {
 		n, err := svc.RetryStatusFailed(ctx, user, smID)
 		require.NoError(t, err)
 		require.Equal(t, 2, n)
-		require.ElementsMatch(t, []docsbot.DocumentID{ids["failed1"], ids["failed2"]}, up.calls)
+		require.ElementsMatch(t, []docsbot.DocumentID{ids["failed1"], ids["failed2"]}, up.requeued)
 		require.Equal(t, docsbot.BackupPending, repo.docs[ids["failed1"]].BackupStatus)
 		require.Equal(t, docsbot.BackupBackedUp, repo.docs[ids["ok"]].BackupStatus)
 		require.Equal(t, docsbot.BackupTooLarge, repo.docs[ids["big"]].BackupStatus)
@@ -73,14 +73,14 @@ func TestService_OpenAndAttachStatus(t *testing.T) {
 
 	sm, err := svc.OpenStatus(ctx, user, 9, 90, a.ID, docsbot.StatusSingle)
 	require.NoError(t, err)
-	require.NoError(t, svc.AttachStatus(ctx, b.ID, sm.ID))
+	require.NoError(t, svc.AttachStatus(ctx, user, b.ID, sm.ID))
 
 	v, err := svc.StatusViewByID(ctx, user, sm.ID)
 	require.NoError(t, err)
 	require.Len(t, v.Lines, 2)
 
-	require.NoError(t, svc.SetStatusMessageID(ctx, sm.ID, 91))
-	require.NoError(t, svc.CloseStatus(ctx, sm.ID))
+	require.NoError(t, svc.SetStatusMessageID(ctx, user, sm.ID, 91))
+	require.NoError(t, svc.CloseStatus(ctx, user, sm.ID))
 	_, ok, err := svc.StatusTarget(ctx, user)
 	require.NoError(t, err)
 	require.False(t, ok, "closed message is not reused")

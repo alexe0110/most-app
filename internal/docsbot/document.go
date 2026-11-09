@@ -102,6 +102,8 @@ type Document struct {
 	FileSize     int64
 	MIME         string
 	BackupStatus BackupStatus
+	// MediaGroupID is the Telegram album the file arrived in, "" for a single file.
+	MediaGroupID string
 	// StatusMessageID is the status-message group the document belongs to, "" if none.
 	StatusMessageID StatusMessageID
 	CreatedAt       time.Time
@@ -141,4 +143,14 @@ type IncomingFile struct {
 	// FileSize is the size in bytes, 0 if unknown.
 	FileSize int64
 	MIME     string
+	// MediaGroupID is the Telegram album the file belongs to, "" for a single file.
+	MediaGroupID string
+}
+
+// IntakeStats is what the intake guards need to know about a user, fetched in
+// one query: the pending backlog, files created in the flood window, and the total.
+type IntakeStats struct {
+	Pending int
+	Recent  int
+	Total   int
 }

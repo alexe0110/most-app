@@ -15,16 +15,22 @@ const attachDocumentToStatus = `-- name: AttachDocumentToStatus :exec
 update documents
 set status_message_id = $1,
     updated_at        = now()
-where id = $2
+where documents.id = $2
+  and documents.user_id = $3
+  and exists (select 1
+              from status_messages sm
+              where sm.id = $1
+                and sm.user_id = $3)
 `
 
 type AttachDocumentToStatusParams struct {
 	StatusMessageID pgtype.UUID
 	ID              pgtype.UUID
+	UserID          pgtype.UUID
 }
 
 func (q *Queries) AttachDocumentToStatus(ctx context.Context, arg AttachDocumentToStatusParams) error {
-	_, err := q.db.Exec(ctx, attachDocumentToStatus, arg.StatusMessageID, arg.ID)
+	_, err := q.db.Exec(ctx, attachDocumentToStatus, arg.StatusMessageID, arg.ID, arg.UserID)
 	return err
 }
 
@@ -32,10 +38,16 @@ const closeStatusMessage = `-- name: CloseStatusMessage :exec
 update status_messages
 set closed_at = now()
 where id = $1
+  and user_id = $2
 `
 
-func (q *Queries) CloseStatusMessage(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, closeStatusMessage, id)
+type CloseStatusMessageParams struct {
+	ID     pgtype.UUID
+	UserID pgtype.UUID
+}
+
+func (q *Queries) CloseStatusMessage(ctx context.Context, arg CloseStatusMessageParams) error {
+	_, err := q.db.Exec(ctx, closeStatusMessage, arg.ID, arg.UserID)
 	return err
 }
 
@@ -78,10 +90,16 @@ const getStatusMessageByID = `-- name: GetStatusMessageByID :one
 select id, user_id, chat_id, message_id, created_at, closed_at, kind
 from status_messages
 where id = $1
+  and user_id = $2
 `
 
-func (q *Queries) GetStatusMessageByID(ctx context.Context, id pgtype.UUID) (StatusMessage, error) {
-	row := q.db.QueryRow(ctx, getStatusMessageByID, id)
+type GetStatusMessageByIDParams struct {
+	ID     pgtype.UUID
+	UserID pgtype.UUID
+}
+
+func (q *Queries) GetStatusMessageByID(ctx context.Context, arg GetStatusMessageByIDParams) (StatusMessage, error) {
+	row := q.db.QueryRow(ctx, getStatusMessageByID, arg.ID, arg.UserID)
 	var i StatusMessage
 	err := row.Scan(
 		&i.ID,
@@ -129,14 +147,20 @@ func (q *Queries) InsertStatusMessage(ctx context.Context, arg InsertStatusMessa
 }
 
 const listDocumentsByStatusMessage = `-- name: ListDocumentsByStatusMessage :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id
 from documents
 where status_message_id = $1
+  and user_id = $2
 order by created_at
 `
 
-func (q *Queries) ListDocumentsByStatusMessage(ctx context.Context, statusMessageID pgtype.UUID) ([]Document, error) {
-	rows, err := q.db.Query(ctx, listDocumentsByStatusMessage, statusMessageID)
+type ListDocumentsByStatusMessageParams struct {
+	StatusMessageID pgtype.UUID
+	UserID          pgtype.UUID
+}
+
+func (q *Queries) ListDocumentsByStatusMessage(ctx context.Context, arg ListDocumentsByStatusMessageParams) ([]Document, error) {
+	rows, err := q.db.Query(ctx, listDocumentsByStatusMessage, arg.StatusMessageID, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -160,6 +184,7 @@ func (q *Queries) ListDocumentsByStatusMessage(ctx context.Context, statusMessag
 			&i.StatusMessageID,
 			&i.FileSize,
 			&i.MimeType,
+			&i.MediaGroupID,
 		); err != nil {
 			return nil, err
 		}
@@ -175,14 +200,16 @@ const updateStatusMessageMessageID = `-- name: UpdateStatusMessageMessageID :exe
 update status_messages
 set message_id = $1
 where id = $2
+  and user_id = $3
 `
 
 type UpdateStatusMessageMessageIDParams struct {
 	MessageID int64
 	ID        pgtype.UUID
+	UserID    pgtype.UUID
 }
 
 func (q *Queries) UpdateStatusMessageMessageID(ctx context.Context, arg UpdateStatusMessageMessageIDParams) error {
-	_, err := q.db.Exec(ctx, updateStatusMessageMessageID, arg.MessageID, arg.ID)
+	_, err := q.db.Exec(ctx, updateStatusMessageMessageID, arg.MessageID, arg.ID, arg.UserID)
 	return err
 }

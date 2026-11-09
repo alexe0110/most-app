@@ -21,7 +21,7 @@ func savedDoc(t *testing.T, repo docsbot.Repo, user docsbot.UserID, unique strin
 		UserID: user, Kind: docsbot.KindDocument, Title: "t", FileID: "f-" + unique, FileUniqueID: unique,
 	})
 	require.NoError(t, err)
-	require.NoError(t, repo.SaveDocument(ctx, user, doc.ID, docsbot.CatOther))
+	mustSave(t, ctx, repo, user, doc.ID, docsbot.CatOther)
 	return doc
 }
 
@@ -32,19 +32,15 @@ func TestBackups_markAndList(t *testing.T) {
 	a := savedDoc(t, repo, user, "a")
 	b := savedDoc(t, repo, user, "b")
 
-	ids, err := repo.NotBackedUpIDs(ctx, user)
-	require.NoError(t, err)
-	require.Equal(t, []docsbot.DocumentID{a.ID, b.ID}, ids)
-
-	require.NoError(t, repo.MarkBackedUp(ctx, a.ID, "drive-a"))
+	require.NoError(t, repo.MarkBackedUp(ctx, user, a.ID, "drive-a"))
 	got, err := repo.DocumentByID(ctx, user, a.ID)
 	require.NoError(t, err)
 	require.Equal(t, docsbot.BackupBackedUp, got.BackupStatus)
 	require.Equal(t, "drive-a", got.DriveFileID)
 
-	ids, err = repo.NotBackedUpIDs(ctx, user)
+	ids, err := repo.ClaimTransferable(ctx, user)
 	require.NoError(t, err)
-	require.Equal(t, []docsbot.DocumentID{b.ID}, ids)
+	require.Equal(t, []docsbot.DocumentID{b.ID}, ids, "the backed-up document is not claimed")
 }
 
 func TestBackups_excludesTooLarge(t *testing.T) {
@@ -53,16 +49,16 @@ func TestBackups_excludesTooLarge(t *testing.T) {
 
 	large := savedDoc(t, repo, user, "large")
 	failed := savedDoc(t, repo, user, "failed")
-	require.NoError(t, repo.SetBackupStatus(ctx, large.ID, docsbot.BackupTooLarge))
-	require.NoError(t, repo.SetBackupStatus(ctx, failed.ID, docsbot.BackupFailed))
-
-	ids, err := repo.NotBackedUpIDs(ctx, user)
-	require.NoError(t, err)
-	require.Equal(t, []docsbot.DocumentID{failed.ID}, ids)
+	require.NoError(t, repo.SetBackupStatus(ctx, user, large.ID, docsbot.BackupTooLarge))
+	require.NoError(t, repo.SetBackupStatus(ctx, user, failed.ID, docsbot.BackupFailed))
 
 	n, err := repo.CountNotBackedUp(ctx, user)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
+
+	ids, err := repo.ClaimTransferable(ctx, user)
+	require.NoError(t, err)
+	require.Equal(t, []docsbot.DocumentID{failed.ID}, ids)
 }
 
 func TestBackups_folderCache(t *testing.T) {
@@ -120,13 +116,13 @@ func TestBackups_enqueueUploadTx(t *testing.T) {
 	doc := savedDoc(t, repo, user, "tx")
 
 	boom := errors.New("insert failed")
-	err := repo.EnqueueUpload(ctx, doc.ID, func(context.Context, pgx.Tx) (bool, error) { return false, boom })
+	err := repo.EnqueueUpload(ctx, user, doc.ID, func(context.Context, pgx.Tx) (bool, error) { return false, boom })
 	require.ErrorIs(t, err, boom)
 	got, err := repo.DocumentByID(ctx, user, doc.ID)
 	require.NoError(t, err)
 	require.Equal(t, docsbot.BackupNone, got.BackupStatus, "rolled back")
 
-	require.NoError(t, repo.EnqueueUpload(ctx, doc.ID, func(context.Context, pgx.Tx) (bool, error) { return false, nil }))
+	require.NoError(t, repo.EnqueueUpload(ctx, user, doc.ID, func(context.Context, pgx.Tx) (bool, error) { return false, nil }))
 	got, err = repo.DocumentByID(ctx, user, doc.ID)
 	require.NoError(t, err)
 	require.Equal(t, docsbot.BackupPending, got.BackupStatus)

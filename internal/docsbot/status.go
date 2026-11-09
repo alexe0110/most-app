@@ -24,15 +24,16 @@ func (s *Service) OpenStatus(ctx context.Context, user UserID, chatID int64, mes
 	if err != nil {
 		return StatusMessage{}, fmt.Errorf("create status message: %w", err)
 	}
-	if err := s.status.Attach(ctx, doc, sm.ID); err != nil {
+	if err := s.status.Attach(ctx, user, doc, sm.ID); err != nil {
 		return StatusMessage{}, fmt.Errorf("attach document: %w", err)
 	}
 	return sm, nil
 }
 
 // startGroupedUpload opens a transfer status message on an existing Telegram
-// message, attaches every document to it, enqueues each upload, and returns the
-// view to render. No ids means nothing to do (ok=false).
+// message, attaches every already-claimed (pending) document to it, queues each
+// upload, and returns the view to render. No ids means nothing to do (ok=false).
+// If this fails midway the documents stay pending and the sweeper requeues them.
 func (s *Service) startGroupedUpload(ctx context.Context, user UserID, chatID int64, messageID int, ids []DocumentID) (StatusView, bool, error) {
 	if len(ids) == 0 {
 		return StatusView{}, false, nil
@@ -42,13 +43,13 @@ func (s *Service) startGroupedUpload(ctx context.Context, user UserID, chatID in
 		return StatusView{}, false, fmt.Errorf("create transfer status: %w", err)
 	}
 	for _, id := range ids {
-		if err := s.status.Attach(ctx, id, sm.ID); err != nil {
-			_ = s.status.Close(ctx, sm.ID) // best-effort cleanup; keep the original error
+		if err := s.status.Attach(ctx, user, id, sm.ID); err != nil {
+			_ = s.status.Close(ctx, user, sm.ID) // best-effort cleanup; keep the original error
 			return StatusView{}, false, fmt.Errorf("attach transfer doc: %w", err)
 		}
-		if err := s.uploads.EnqueueUpload(ctx, user, id); err != nil {
-			_ = s.status.Close(ctx, sm.ID) // best-effort cleanup; keep the original error
-			return StatusView{}, false, fmt.Errorf("enqueue upload: %w", err)
+		if err := s.uploads.RequeueUpload(ctx, user, id); err != nil {
+			_ = s.status.Close(ctx, user, sm.ID) // best-effort cleanup; keep the original error
+			return StatusView{}, false, fmt.Errorf("requeue upload: %w", err)
 		}
 	}
 	v, err := s.StatusViewByID(ctx, user, sm.ID)
@@ -59,16 +60,16 @@ func (s *Service) startGroupedUpload(ctx context.Context, user UserID, chatID in
 }
 
 // AttachStatus adds the document to an existing status message.
-func (s *Service) AttachStatus(ctx context.Context, doc DocumentID, id StatusMessageID) error {
-	if err := s.status.Attach(ctx, doc, id); err != nil {
+func (s *Service) AttachStatus(ctx context.Context, user UserID, doc DocumentID, id StatusMessageID) error {
+	if err := s.status.Attach(ctx, user, doc, id); err != nil {
 		return fmt.Errorf("attach document: %w", err)
 	}
 	return nil
 }
 
 // CloseStatus stops a status message from absorbing further documents.
-func (s *Service) CloseStatus(ctx context.Context, id StatusMessageID) error {
-	if err := s.status.Close(ctx, id); err != nil {
+func (s *Service) CloseStatus(ctx context.Context, user UserID, id StatusMessageID) error {
+	if err := s.status.Close(ctx, user, id); err != nil {
 		return fmt.Errorf("close status message: %w", err)
 	}
 	return nil
@@ -95,14 +96,11 @@ func (s *Service) StatusView(ctx context.Context, user UserID, doc DocumentID) (
 // StatusViewByID loads a status message with its documents. A message that
 // belongs to another user is reported as ErrNotFound.
 func (s *Service) StatusViewByID(ctx context.Context, user UserID, id StatusMessageID) (StatusView, error) {
-	sm, err := s.status.ByID(ctx, id)
+	sm, err := s.status.ByID(ctx, user, id)
 	if err != nil {
 		return StatusView{}, fmt.Errorf("load status message: %w", err)
 	}
-	if sm.UserID != user {
-		return StatusView{}, ErrNotFound
-	}
-	lines, err := s.status.DocumentsIn(ctx, id)
+	lines, err := s.status.DocumentsIn(ctx, user, id)
 	if err != nil {
 		return StatusView{}, fmt.Errorf("list status documents: %w", err)
 	}
@@ -128,8 +126,8 @@ func (s *Service) StatusViewByID(ctx context.Context, user UserID, id StatusMess
 
 // SetStatusMessageID records the new Telegram message id after the status
 // message was re-sent.
-func (s *Service) SetStatusMessageID(ctx context.Context, id StatusMessageID, messageID int) error {
-	if err := s.status.SetMessageID(ctx, id, messageID); err != nil {
+func (s *Service) SetStatusMessageID(ctx context.Context, user UserID, id StatusMessageID, messageID int) error {
+	if err := s.status.SetMessageID(ctx, user, id, messageID); err != nil {
 		return fmt.Errorf("set status message id: %w", err)
 	}
 	return nil
@@ -147,10 +145,13 @@ func (s *Service) RetryStatusFailed(ctx context.Context, user UserID, id StatusM
 		if d.BackupStatus != BackupFailed {
 			continue
 		}
-		if err := s.uploads.EnqueueUpload(ctx, user, d.ID); err != nil {
-			return n, fmt.Errorf("enqueue upload: %w", err)
+		queued, err := s.claimAndRequeue(ctx, user, d.ID)
+		if err != nil {
+			return n, err
 		}
-		n++
+		if queued {
+			n++
+		}
 	}
 	return n, nil
 }

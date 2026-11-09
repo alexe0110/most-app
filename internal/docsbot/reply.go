@@ -16,11 +16,37 @@ type AlreadySaved struct{ Doc Document }
 type Saved struct {
 	Doc        Document
 	OfferDrive bool
+	// Already is true when the document was saved before this call (double tap,
+	// parallel tap): nothing new happened and callers must not track or redraw it.
+	Already bool
 }
 
-func (NeedCategory) isReply() {}
-func (AlreadySaved) isReply() {}
-func (Saved) isReply()        {}
+// TooManyPending means the user already has too many files awaiting a category;
+// the new file was not stored.
+type TooManyPending struct{}
+
+// RateLimited means the user sent too many files within a minute; the file was not stored.
+type RateLimited struct{}
+
+// QuotaExceeded means the user reached the document limit; the file was not stored.
+type QuotaExceeded struct{}
+
+func (NeedCategory) isReply()   {}
+func (AlreadySaved) isReply()   {}
+func (Saved) isReply()          {}
+func (TooManyPending) isReply() {}
+func (RateLimited) isReply()    {}
+func (QuotaExceeded) isReply()  {}
+
+// SavedGroup is the outcome of saving a whole album: every document with its
+// own Saved result. OfferDrive is true if any of them asked for the Drive nudge.
+// Docs holds only the documents this call saved; Already is true when there were
+// none (the album was saved by an earlier or parallel tap).
+type SavedGroup struct {
+	Docs       []Document
+	OfferDrive bool
+	Already    bool
+}
 
 // Card is one document's detail view.
 type Card struct {
@@ -28,6 +54,9 @@ type Card struct {
 	// CategoryFolderID is the Drive folder id of the document's category; empty
 	// while the folder has not been created.
 	CategoryFolderID string
+	// FileInOldFolder is set right after a backed-up document changed category:
+	// the file stays in its previous Drive folder, so the card links to the file.
+	FileInOldFolder bool
 }
 
 // Catalog lists categories with their saved-document counts. NotInDrive and
@@ -49,10 +78,12 @@ type CategoryPage struct {
 	FolderID       string // Drive folder of the category; empty if not created yet
 }
 
-// Found holds search results for a query.
+// Found holds search results for a query. BlankQuery is set when the query was
+// empty after trimming: nothing was searched and the channel shows a hint.
 type Found struct {
-	Query string
-	Docs  []Document
+	Query      string
+	Docs       []Document
+	BlankQuery bool
 }
 
 // SettingsView is the /settings screen: Drive state and document counts.

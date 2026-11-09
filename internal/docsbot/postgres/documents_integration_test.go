@@ -46,7 +46,7 @@ func TestDocuments_lifecycle(t *testing.T) {
 	require.Equal(t, doc.ID, got.ID)
 
 	// Save with a category, then it shows up in the catalog.
-	require.NoError(t, repo.SaveDocument(ctx, user, doc.ID, docsbot.CatPassport))
+	mustSave(t, ctx, repo, user, doc.ID, docsbot.CatPassport)
 	saved, err := repo.DocumentByID(ctx, user, doc.ID)
 	require.NoError(t, err)
 	require.Equal(t, docsbot.StatusSaved, saved.Status)
@@ -73,7 +73,7 @@ func TestDocuments_lifecycle(t *testing.T) {
 	require.Equal(t, docsbot.CatOther, moved.Category)
 
 	// Mark backed up: it drops out of the not-backed-up count.
-	require.NoError(t, repo.SetBackupStatus(ctx, doc.ID, docsbot.BackupBackedUp))
+	require.NoError(t, repo.SetBackupStatus(ctx, user, doc.ID, docsbot.BackupBackedUp))
 	notBacked, err = repo.CountNotBackedUp(ctx, user)
 	require.NoError(t, err)
 	require.Equal(t, 0, notBacked)
@@ -121,7 +121,7 @@ func TestDocuments_titleExistsInCategory(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	require.NoError(t, repo.SaveDocument(ctx, user, d.ID, docsbot.CatMedical))
+	mustSave(t, ctx, repo, user, d.ID, docsbot.CatMedical)
 
 	tests := []struct {
 		name  string
@@ -152,7 +152,7 @@ func TestDocuments_listPagination(t *testing.T) {
 			FileID: "f", FileUniqueID: "u-" + itoa(i),
 		})
 		require.NoError(t, err)
-		require.NoError(t, repo.SaveDocument(ctx, user, d.ID, docsbot.CatReceipts))
+		mustSave(t, ctx, repo, user, d.ID, docsbot.CatReceipts)
 	}
 
 	first, err := repo.ListByCategory(ctx, user, docsbot.CatReceipts, 10, 0)
@@ -173,7 +173,7 @@ func TestDocuments_searchTypoTolerant(t *testing.T) {
 		FileID: "f", FileUniqueID: "u",
 	})
 	require.NoError(t, err)
-	require.NoError(t, repo.SaveDocument(ctx, user, d.ID, docsbot.CatPassport))
+	mustSave(t, ctx, repo, user, d.ID, docsbot.CatPassport)
 
 	for _, q := range []string{"паспорт", "Паспорт", "паспрт"} {
 		got, err := repo.Search(ctx, user, q, 10)
@@ -220,8 +220,8 @@ func TestDocuments_resetPendingUploads(t *testing.T) {
 			FileID: "f" + itoa(n), FileUniqueID: "u" + itoa(n),
 		})
 		require.NoError(t, err)
-		require.NoError(t, repo.SaveDocument(ctx, user, doc.ID, docsbot.CatOther))
-		require.NoError(t, repo.SetBackupStatus(ctx, doc.ID, s))
+		mustSave(t, ctx, repo, user, doc.ID, docsbot.CatOther)
+		require.NoError(t, repo.SetBackupStatus(ctx, user, doc.ID, s))
 		return doc.ID
 	}
 	statuses := []docsbot.BackupStatus{
@@ -256,7 +256,7 @@ func TestDocuments_markUploadingKeepsUpdatedAt(t *testing.T) {
 		UserID: user, Kind: docsbot.KindDocument, Title: "d", FileID: "f", FileUniqueID: "u",
 	})
 	require.NoError(t, err)
-	require.NoError(t, repo.SaveDocument(ctx, user, doc.ID, docsbot.CatOther))
+	mustSave(t, ctx, repo, user, doc.ID, docsbot.CatOther)
 
 	old := time.Now().Add(-25 * time.Hour).UTC().Truncate(time.Microsecond)
 	_, err = pool.Exec(ctx, `update documents set backup_status = 'pending', updated_at = $2 where id = $1::uuid`, string(doc.ID), old)
@@ -269,12 +269,12 @@ func TestDocuments_markUploadingKeepsUpdatedAt(t *testing.T) {
 		return status, at
 	}
 
-	require.NoError(t, repo.MarkUploading(ctx, doc.ID))
+	require.NoError(t, repo.MarkUploading(ctx, user, doc.ID))
 	status, at := state()
 	require.Equal(t, "uploading", status)
 	require.True(t, old.Equal(at), "updated_at must not change, got %s", at)
 
-	require.NoError(t, repo.SetBackupStatus(ctx, doc.ID, docsbot.BackupFailed))
+	require.NoError(t, repo.SetBackupStatus(ctx, user, doc.ID, docsbot.BackupFailed))
 	status, at = state()
 	require.Equal(t, "failed", status)
 	require.True(t, at.After(old), "SetBackupStatus must bump updated_at")

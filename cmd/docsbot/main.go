@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // zone database for images without /usr/share/zoneinfo
 
 	"github.com/go-telegram/bot"
 	"github.com/riverqueue/river"
@@ -65,9 +67,11 @@ func run() error {
 
 	workers := river.NewWorkers()
 	purge := jobs.RegisterPurgeUsers(workers, pool, log)
+	purgeStates := jobs.RegisterPurgeOAuthStates(workers, pool, log)
 	bindUpload := docjobs.RegisterUploadDocument(workers, log)
 	bindSweep, sweepPeriodic := docjobs.RegisterSweepUploads(workers, log)
-	queue, err := jobs.New(pool, log, workers, map[string]river.QueueConfig{docjobs.UploadQueue: {MaxWorkers: 1}}, purge, sweepPeriodic) // started below, once wired
+	bindPurgePending, purgePendingPeriodic := docjobs.RegisterPurgePending(workers, log)
+	queue, err := jobs.New(pool, log, workers, map[string]river.QueueConfig{docjobs.UploadQueue: {MaxWorkers: 1}}, purge, purgeStates, sweepPeriodic, purgePendingPeriodic) // started below, once wired
 	if err != nil {
 		return err
 	}
@@ -105,6 +109,7 @@ func run() error {
 		Mode:          tg.Mode(cfg.TelegramMode),
 		PublicURL:     cfg.PublicURL,
 		WebhookSecret: cfg.TelegramWebhookSecret,
+		GroupNotice:   telegram.GroupNotice(),
 	}, repo, log, func(b *bot.Bot) { telegram.Register(b, log, svc, oauthSvc) })
 	if err != nil {
 		return err
@@ -113,6 +118,7 @@ func run() error {
 	notifier := telegram.NewNotifier(tgbot, repo, oauthSvc, svc, log)
 	bindUpload(svc, notifier)
 	bindSweep(svc, notifier)
+	bindPurgePending(svc)
 	if err := tgbot.SetCommands(ctx, telegram.Commands()); err != nil {
 		log.Error("set bot commands", "err", err) // not fatal
 	}
@@ -194,7 +200,7 @@ func (d driveBridge) Upload(ctx context.Context, user docsbot.UserID, in docsbot
 	f, err := d.gd.Upload(ctx, string(user), gdrive.Upload{
 		CacheKey:   string(in.Category),
 		FolderName: telegram.CategoryLabel(in.Category),
-		Name:       in.Name,
+		Name:       driveName(in.Name),
 		MIME:       in.MIME,
 		Data:       in.Data,
 		DocID:      in.DocID,
@@ -210,6 +216,12 @@ func (d driveBridge) Upload(ctx context.Context, user docsbot.UserID, in docsbot
 	}
 	return docsbot.DriveFile{ID: f.ID, Link: f.Link}, nil
 }
+
+// driveFileNameReplacer swaps path separators, which Drive file names should not carry.
+var driveFileNameReplacer = strings.NewReplacer("/", "_", "\\", "_")
+
+// driveName makes a document title usable as a Drive file name.
+func driveName(title string) string { return driveFileNameReplacer.Replace(title) }
 
 // Revoke best-effort revokes the user's Drive access at Google and marks the
 // integration revoked locally even if Google is unreachable.

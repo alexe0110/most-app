@@ -18,28 +18,29 @@ const cbPrefix = "d:"
 
 // Callback actions. Data is "d:<action>" or "d:<action>:<docID>[:<arg>]".
 const (
-	actCategory    = "cat" // pick a category for a new document
-	actSetCategory = "sc"  // change an existing document's category
-	actChangeCat   = "chc" // show the category picker for a card
-	actSend        = "snd" // resend the original file
-	actRename      = "rn"  // ask for a new title (force reply)
-	actDeleteAsk   = "del" // ask to confirm deletion
-	actDeleteYes   = "dy"  // confirm deletion
-	actDeleteNo    = "dn"  // cancel deletion
-	actListCat     = "lc"  // open a category page: d:lc:<slug>:<page>
-	actListBack    = "lb"  // back to the category list
-	actTransfer    = "tr"  // transfer saved documents to Drive (#11)
-	actTransferYes = "try" // confirm the transfer offer
-	actTransferNo  = "trn" // decline the transfer offer
-	actRetry       = "rt"  // retry a failed backup: d:rt:<docID>
-	actDisconnect  = "dc"  // disconnect Google Drive
-	actRetryAll    = "rta" // retry every failed backup
-	actExport      = "exp" // resend all documents from Telegram
-	actDeleteData  = "dd"  // start the delete-all-data confirmation
-	actRetryBatch  = "rsm" // retry failed docs in a status message: d:rsm:<smID>
-	actOpenCard    = "oc"  // open a card: d:oc:<docID>:<l|s>[:<cat>:<page>]
-	actSearchBack  = "sb"  // re-run the last search
-	actNoop        = "noop"
+	actCategory      = "cat" // pick a category for a new document
+	actCategoryGroup = "ga"  // pick a category for a whole album: d:ga:<docID>:<slug>
+	actSetCategory   = "sc"  // change an existing document's category
+	actChangeCat     = "chc" // show the category picker for a card
+	actSend          = "snd" // resend the original file
+	actRename        = "rn"  // ask for a new title (force reply)
+	actDeleteAsk     = "del" // ask to confirm deletion
+	actDeleteYes     = "dy"  // confirm deletion
+	actDeleteNo      = "dn"  // cancel deletion
+	actListCat       = "lc"  // open a category page: d:lc:<slug>:<page>
+	actListBack      = "lb"  // back to the category list
+	actTransfer      = "tr"  // transfer saved documents to Drive (#11)
+	actTransferYes   = "try" // confirm the transfer offer
+	actTransferNo    = "trn" // decline the transfer offer
+	actRetry         = "rt"  // retry a failed backup: d:rt:<docID>
+	actDisconnect    = "dc"  // disconnect Google Drive
+	actRetryAll      = "rta" // retry every failed backup
+	actExport        = "exp" // resend all documents from Telegram
+	actDeleteData    = "dd"  // start the delete-all-data confirmation
+	actRetryBatch    = "rsm" // retry failed docs in a status message: d:rsm:<smID>
+	actOpenCard      = "oc"  // open a card: d:oc:<docID>:<l|s>[:<cat>:<page>]
+	actSearchBack    = "sb"  // re-run the last search
+	actNoop          = "noop"
 )
 
 // categoryLabels are the Russian names shown to the user (product.md). The
@@ -361,6 +362,9 @@ func paginationRow(p docsbot.CategoryPage) []models.InlineKeyboardButton {
 
 // renderFound lists search results; nil keyboard means nothing was found.
 func renderFound(f docsbot.Found) (string, *models.InlineKeyboardMarkup) {
+	if f.BlankQuery {
+		return textSearchHint, nil
+	}
 	if len(f.Docs) == 0 {
 		return textNothingFound, nil
 	}
@@ -382,13 +386,13 @@ func incomingFile(m *models.Message, user docsbot.UserID) (docsbot.IncomingFile,
 		return docsbot.IncomingFile{
 			UserID: user, Kind: docsbot.KindPhoto,
 			FileID: p.FileID, FileUniqueID: p.FileUniqueID, Title: photoTitle(m),
-			FileSize: int64(p.FileSize), MIME: "",
+			FileSize: int64(p.FileSize), MIME: "", MediaGroupID: m.MediaGroupID,
 		}, true
 	case m.Document != nil:
 		return docsbot.IncomingFile{
 			UserID: user, Kind: docsbot.KindDocument,
 			FileID: m.Document.FileID, FileUniqueID: m.Document.FileUniqueID, Title: documentTitle(m),
-			FileSize: m.Document.FileSize, MIME: m.Document.MimeType,
+			FileSize: m.Document.FileSize, MIME: m.Document.MimeType, MediaGroupID: m.MediaGroupID,
 		}, true
 	default:
 		return docsbot.IncomingFile{}, false
@@ -508,5 +512,23 @@ func statusLine(d docsbot.Document, folderByCat map[docsbot.Category]string) str
 		return "📥 " + name + " · слишком большой для Drive"
 	default:
 		return fmt.Sprintf("⏳ %s · %s", name, categoryLabel(d.Category))
+	}
+}
+
+// plural picks the Russian noun form for n: one (1, 21), few (2-4, 22-24) or
+// many (0, 5-20, 25-30...).
+func plural(n int, one, few, many string) string {
+	if n < 0 {
+		n = -n
+	}
+	switch {
+	case n%100 >= 11 && n%100 <= 14:
+		return many
+	case n%10 == 1:
+		return one
+	case n%10 >= 2 && n%10 <= 4:
+		return few
+	default:
+		return many
 	}
 }

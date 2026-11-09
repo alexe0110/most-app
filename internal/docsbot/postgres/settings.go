@@ -31,23 +31,6 @@ func (r *Repo) BackupStatusCounts(ctx context.Context, user docsbot.UserID) ([]d
 	return out, nil
 }
 
-// FailedIDs lists the user's saved documents whose Drive upload failed, oldest first.
-func (r *Repo) FailedIDs(ctx context.Context, user docsbot.UserID) ([]docsbot.DocumentID, error) {
-	uid, err := parseUUID(string(user))
-	if err != nil {
-		return nil, err
-	}
-	rows, err := r.ListFailedDocumentIDs(ctx, uid)
-	if err != nil {
-		return nil, fmt.Errorf("list failed documents: %w", err)
-	}
-	out := make([]docsbot.DocumentID, 0, len(rows))
-	for _, id := range rows {
-		out = append(out, docsbot.DocumentID(id.String()))
-	}
-	return out, nil
-}
-
 // SavedForExport lists up to limit of the user's saved documents, oldest first.
 func (r *Repo) SavedForExport(ctx context.Context, user docsbot.UserID, limit int) ([]docsbot.Document, error) {
 	uid, err := parseUUID(string(user))

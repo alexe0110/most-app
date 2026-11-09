@@ -57,7 +57,7 @@ func TestChooseCategory_driveOn_oneFileBecomesLiveCard(t *testing.T) {
 	require.Contains(t, sent.edits[0], "Категория:")
 	require.Contains(t, sent.edits[0], "⏳ Загружаю в Drive…")
 	require.NotEmpty(t, repo.docs[id].StatusMessageID)
-	sm, err := repo.status.ByID(t.Context(), repo.docs[id].StatusMessageID)
+	sm, err := repo.status.ByID(t.Context(), testUserID, repo.docs[id].StatusMessageID)
 	require.NoError(t, err)
 	require.Equal(t, docsbot.StatusSingle, sm.Kind)
 	require.Equal(t, 11, sm.MessageID)
@@ -75,7 +75,7 @@ func TestChooseCategory_driveOn_manyFilesShareOneBatch(t *testing.T) {
 	require.Empty(t, sent.texts, "pickers are edited or deleted, nothing new is sent")
 	require.Equal(t, 3, sent.deletes, "pickers of files 3..5 are retired")
 
-	first, err := repo.status.ByID(t.Context(), repo.docs[ids[0]].StatusMessageID)
+	first, err := repo.status.ByID(t.Context(), testUserID, repo.docs[ids[0]].StatusMessageID)
 	require.NoError(t, err)
 	require.Equal(t, docsbot.StatusSingle, first.Kind, "the first card stays a card")
 	require.False(t, has(sent.edits[:1], "Загрузка в Drive"))
@@ -143,7 +143,7 @@ func newSM(t *testing.T, repo *fakeRepo, owner docsbot.UserID) docsbot.StatusMes
 
 func closeStatus(t *testing.T, repo *fakeRepo, id docsbot.StatusMessageID) error {
 	t.Helper()
-	return repo.status.Close(t.Context(), id)
+	return repo.status.Close(t.Context(), testUserID, id)
 }
 
 func retryUpdate(smID docsbot.StatusMessageID) *models.Update {
@@ -273,7 +273,7 @@ func TestTransfer_manyDocsShareOneStatusMessage(t *testing.T) {
 		smIDs[repo.docs[id].StatusMessageID] = true
 	}
 	require.Len(t, smIDs, 1)
-	sm, err := repo.status.ByID(t.Context(), repo.docs[seeded[0]].StatusMessageID)
+	sm, err := repo.status.ByID(t.Context(), testUserID, repo.docs[seeded[0]].StatusMessageID)
 	require.NoError(t, err)
 	require.Equal(t, docsbot.StatusTransfer, sm.Kind)
 	require.Equal(t, 21, sm.MessageID)

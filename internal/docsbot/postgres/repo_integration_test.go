@@ -3,13 +3,17 @@
 package postgres_test
 
 import (
+	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
 	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 )
@@ -129,4 +133,51 @@ func TestRepo_Tx(t *testing.T) {
 	require.NoError(t, err, "committed row survives")
 	_, err = repo.GetDocumentByUniqueID(ctx, postgres.GetDocumentByUniqueIDParams{UserID: u.ID, TgFileUniqueID: "tx-2"})
 	require.ErrorIs(t, err, pgx.ErrNoRows, "rolled-back row is gone")
+}
+
+// mustSave saves a pending document and requires that this call did the saving.
+func mustSave(t *testing.T, ctx context.Context, repo docsbot.Repo, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) {
+	t.Helper()
+	saved, err := repo.SaveDocument(ctx, user, id, cat)
+	require.NoError(t, err)
+	require.True(t, saved)
+}
+
+func TestSaveDocument_parallelTapsSaveOnce(t *testing.T) {
+	repo, user := domainRepo(t)
+	ctx := t.Context()
+	doc, err := repo.CreateDocument(ctx, docsbot.IncomingFile{
+		UserID: user, Kind: docsbot.KindDocument, FileID: "f-par", FileUniqueID: "u-par",
+	})
+	require.NoError(t, err)
+
+	const taps = 8
+	var (
+		wg    sync.WaitGroup
+		mu    sync.Mutex
+		wins  int
+		start = make(chan struct{})
+	)
+	for range taps {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			saved, err := repo.SaveDocument(ctx, user, doc.ID, docsbot.CatOther)
+			assert.NoError(t, err)
+			if saved {
+				mu.Lock()
+				wins++
+				mu.Unlock()
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	require.Equal(t, 1, wins)
+
+	// A second call on the saved document and one on a missing id save nothing.
+	saved, err := repo.SaveDocument(ctx, user, doc.ID, docsbot.CatOther)
+	require.NoError(t, err)
+	require.False(t, saved)
 }

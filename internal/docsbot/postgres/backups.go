@@ -14,8 +14,8 @@ import (
 // back together. River is not imported here; the caller supplies the insert.
 // If insert reports skip (the job is a duplicate of one already queued), the
 // transaction is rolled back and the document status stays untouched.
-func (r *Repo) EnqueueUpload(ctx context.Context, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) (skip bool, err error)) error {
-	docID, err := parseUUID(string(id))
+func (r *Repo) EnqueueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) (skip bool, err error)) error {
+	docID, uid, err := ids(id, user)
 	if err != nil {
 		return err
 	}
@@ -27,6 +27,7 @@ func (r *Repo) EnqueueUpload(ctx context.Context, id docsbot.DocumentID, insert 
 
 	err = r.WithTx(tx).UpdateDocumentBackupStatus(ctx, UpdateDocumentBackupStatusParams{
 		ID:           docID,
+		UserID:       uid,
 		BackupStatus: string(docsbot.BackupPending),
 	})
 	if err != nil {

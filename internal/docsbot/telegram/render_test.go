@@ -489,3 +489,58 @@ func TestCardKeyboard_noBackWithoutOrigin(t *testing.T) {
 	require.Len(t, kb.InlineKeyboard, 2)
 	require.Contains(t, kb.InlineKeyboard[1][0].Text, "Имя")
 }
+
+// Cards, lists and search are plain text/buttons (no parse mode); only the HTML
+// status message needs escaping. A hostile title must be inert in every view.
+func TestRender_hostileTitle(t *testing.T) {
+	for _, title := range []string{"<b>x</b>", "a & b", "<script>alert(1)</script>"} {
+		t.Run(title, func(t *testing.T) {
+			doc := statusDoc(title, docsbot.BackupBackedUp)
+			doc.ID = "d1"
+			doc.CreatedAt = time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC)
+
+			require.Contains(t, cardText(doc), "📄 "+title+"\n", "card is sent without a parse mode")
+
+			listText, listKB := renderCategoryPage(docsbot.CategoryPage{Category: docsbot.CatPassport, Docs: []docsbot.Document{doc}, Page: 1, Pages: 1, Total: 1})
+			require.NotContains(t, listText, title)
+			require.Contains(t, listKB.InlineKeyboard[0][0].Text, truncate(title, 32), "buttons are plain text")
+
+			_, foundKB := renderFound(docsbot.Found{Docs: []docsbot.Document{doc}})
+			require.Contains(t, foundKB.InlineKeyboard[0][0].Text, truncate(title, 32))
+
+			status, _ := renderStatusMessage(docsbot.StatusMessage{ID: "sm"}, []docsbot.Document{doc, doc}, nil)
+			require.NotContains(t, status, title, "status message is HTML: the raw title must not appear")
+			require.Contains(t, status, html.EscapeString(truncate(title, statusNameLimit)))
+
+			single, _ := renderSingleStatus(docsbot.StatusMessage{ID: "sm"}, doc, nil)
+			require.NotContains(t, single, title)
+			require.Contains(t, single, html.EscapeString(title))
+		})
+	}
+}
+
+func TestCardKeyboard_backedUpWithoutFolder(t *testing.T) {
+	doc := docsbot.Document{ID: "d", BackupStatus: docsbot.BackupBackedUp, DriveFileID: "file-1"}
+	var urls []string
+	for _, btn := range cardKeyboard(doc, "", "").InlineKeyboard[0] {
+		urls = append(urls, btn.URL)
+	}
+	require.Contains(t, urls, driveURL("file-1"))
+	require.NotContains(t, urls, folderURL(""))
+	for _, u := range urls {
+		require.NotContains(t, u, "/folders/")
+	}
+}
+
+func TestPlural(t *testing.T) {
+	tests := []struct {
+		n    int
+		want string
+	}{
+		{1, "файл"}, {2, "файла"}, {5, "файлов"}, {11, "файлов"},
+		{21, "файл"}, {22, "файла"}, {25, "файлов"}, {111, "файлов"},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.want, plural(tt.n, "файл", "файла", "файлов"), "n=%d", tt.n)
+	}
+}

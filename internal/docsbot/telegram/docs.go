@@ -31,16 +31,22 @@ type docs struct {
 	confirms *confirmStore
 	searches *searchStore
 	origins  *originStore
+	albums   *albumBuffer
 }
 
-func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger) *docs {
-	return &docs{
+func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Option) *docs {
+	d := &docs{
 		svc: svc, auth: auth, log: log,
 		renames:  newRenameStore(time.Now),
 		confirms: newConfirmStore(time.Now),
 		searches: newSearchStore(time.Now),
 		origins:  newOriginStore(time.Now),
+		albums:   newAlbumBuffer(),
 	}
+	for _, opt := range opts {
+		opt(d)
+	}
+	return d
 }
 
 // ownsCallback matches this feature's inline buttons.
@@ -51,6 +57,19 @@ func (d *docs) ownsCallback(u *models.Update) bool {
 // ownsFile matches a message carrying a photo or a document.
 func (d *docs) ownsFile(u *models.Update) bool {
 	return u.Message != nil && (len(u.Message.Photo) > 0 || u.Message.Document != nil)
+}
+
+// ownsUnsupported matches messages with media the bot does not store (and
+// would otherwise misread as a search query).
+func (d *docs) ownsUnsupported(u *models.Update) bool {
+	m := u.Message
+	return m != nil && (m.Voice != nil || m.Video != nil || m.VideoNote != nil || m.Audio != nil ||
+		m.Sticker != nil || m.Animation != nil || m.Contact != nil || m.Location != nil || m.Poll != nil)
+}
+
+// onUnsupported tells the user which media the bot takes.
+func (d *docs) onUnsupported(ctx context.Context, b *bot.Bot, u *models.Update) {
+	reply(ctx, b, d.log, u.Message.Chat.ID, textUnsupported)
 }
 
 // start greets the user. The OAuth redirect sends the user back with
@@ -117,18 +136,38 @@ func (d *docs) receive(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.fail(ctx, b, chatID, "receive document", err)
 		return
 	}
+	if in.MediaGroupID != "" {
+		d.logReceived(ctx, user, rep)
+		d.collectAlbum(ctx, b, chatID, user, in.MediaGroupID, rep)
+		return
+	}
 	switch r := rep.(type) {
 	case docsbot.NeedCategory:
-		d.log.InfoContext(ctx, "document received", "user_id", user, "doc_id", r.Doc.ID, "kind", r.Doc.Kind)
+		d.logReceived(ctx, user, rep)
 		d.send(ctx, b, chatID, textChooseCategory, categoryKeyboard(actCategory, r.Doc.ID))
 	case docsbot.AlreadySaved:
-		d.log.InfoContext(ctx, "document received", "user_id", user, "doc_id", r.Doc.ID, "kind", r.Doc.Kind, "duplicate", true)
+		d.logReceived(ctx, user, rep)
 		card, err := d.svc.Card(ctx, user, r.Doc.ID)
 		if err != nil {
 			d.fail(ctx, b, chatID, "load card", err)
 			return
 		}
 		d.sendCard(ctx, b, chatID, card.Doc, textAlreadySaved, card.CategoryFolderID)
+	default:
+		d.log.InfoContext(ctx, "document refused", "user_id", user, "reason", fmt.Sprintf("%T", rep))
+		if text, ok := rejectionText(rep); ok {
+			reply(ctx, b, d.log, chatID, text)
+		}
+	}
+}
+
+// logReceived logs an accepted file: ids and kind only, never the title.
+func (d *docs) logReceived(ctx context.Context, user docsbot.UserID, rep docsbot.Reply) {
+	switch r := rep.(type) {
+	case docsbot.NeedCategory:
+		d.log.InfoContext(ctx, "document received", "user_id", user, "doc_id", r.Doc.ID, "kind", r.Doc.Kind)
+	case docsbot.AlreadySaved:
+		d.log.InfoContext(ctx, "document received", "user_id", user, "doc_id", r.Doc.ID, "kind", r.Doc.Kind, "duplicate", true)
 	}
 }
 
@@ -154,6 +193,12 @@ func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.applyRename(ctx, b, chatID, user, id, chat, msg, u.Message.Text)
 		return
 	}
+	// A reply to the rename prompt with no armed rename: the bot restarted or
+	// the rename expired. Don't treat the new name as a search query.
+	if rp := u.Message.ReplyToMessage; rp != nil && rp.Text == textRenamePrompt {
+		reply(ctx, b, d.log, chatID, textStale)
+		return
+	}
 	d.searches.set(u.Message.From.ID, u.Message.Text)
 	d.runSearch(ctx, b, chatID, user, u.Message.Text)
 }
@@ -171,9 +216,14 @@ func (d *docs) runSearch(ctx context.Context, b *bot.Bot, chatID int64, user doc
 // callback dispatches an inline-button press by its action.
 func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 	parts := strings.Split(u.CallbackQuery.Data, ":") // d:<action>[:docID[:arg]]
-	d.answerText(ctx, b, u.CallbackQuery.ID, toastFor(parts))
+	if !answersItself(parts) {
+		d.answerText(ctx, b, u.CallbackQuery.ID, toastFor(parts))
+	}
 	user, ok := userID(ctx)
 	if !ok {
+		if answersItself(parts) {
+			d.answerText(ctx, b, u.CallbackQuery.ID, "") // never leave the button spinning
+		}
 		return
 	}
 	if len(parts) < 2 {
@@ -182,6 +232,8 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 	switch parts[1] {
 	case actCategory:
 		d.onCategory(ctx, b, u, user, parts)
+	case actCategoryGroup:
+		d.onCategoryGroup(ctx, b, u, user, parts)
 	case actSetCategory:
 		d.onSetCategory(ctx, b, u, user, parts)
 	case actChangeCat:
@@ -224,6 +276,12 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 	}
 }
 
+// answersItself reports whether the action handler answers the callback query
+// on its own (to pick the toast from the outcome).
+func answersItself(parts []string) bool {
+	return len(parts) >= 2 && parts[1] == actRetry
+}
+
 // toastFor is the short pop-up shown for an action, "" for none.
 func toastFor(parts []string) string {
 	if len(parts) < 2 {
@@ -238,8 +296,9 @@ func toastFor(parts []string) string {
 	return ""
 }
 
-// onDisconnect revokes Drive access and stops pending uploads, leaving stored
-// documents (and any Drive links) untouched.
+// onDisconnect turns Drive off and stops pending uploads, leaving stored
+// documents (and any Drive links) untouched. A failure is shown to the user:
+// the integration is then still connected.
 func (d *docs) onDisconnect(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
 	chatID, msgID, ok := callbackMessage(u)
 	if !ok {
@@ -323,7 +382,9 @@ func (d *docs) onDeleteConfirm(ctx context.Context, b *bot.Bot, chatID int64, us
 		reply(ctx, b, d.log, chatID, textDeleteWrongWord)
 		return
 	}
-	if err := d.svc.DeleteAllData(ctx, user); err != nil {
+	if err := d.svc.DeleteAllData(ctx, user); errors.Is(err, docsbot.ErrRevokeIncomplete) {
+		d.log.WarnContext(ctx, "drive revoke incomplete", "err", err, "user_id", user)
+	} else if err != nil {
 		d.fail(ctx, b, chatID, "delete all data", err)
 		return
 	}
@@ -359,8 +420,11 @@ func (d *docs) onTransferNo(ctx context.Context, b *bot.Bot, u *models.Update) {
 	d.editText(ctx, b, chatID, msgID, textTransferDeclined)
 }
 
-// onRetry re-queues a failed backup.
+// onRetry re-queues a failed backup. It answers the callback itself: a quiet
+// toast when the document is no longer failed (double tap, stale button).
 func (d *docs) onRetry(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	toast := ""
+	defer func() { d.answerText(ctx, b, u.CallbackQuery.ID, toast) }()
 	id, ok := docID(parts)
 	if !ok {
 		return
@@ -369,7 +433,12 @@ func (d *docs) onRetry(ctx context.Context, b *bot.Bot, u *models.Update, user d
 	if !ok {
 		return
 	}
-	if err := d.svc.RetryBackup(ctx, user, id); err != nil {
+	err := d.svc.RetryBackup(ctx, user, id)
+	if errors.Is(err, docsbot.ErrNotRetryable) {
+		toast = toastNotRetryable
+		return
+	}
+	if err != nil {
 		d.fail(ctx, b, chatID, "retry backup", err)
 		return
 	}
@@ -388,9 +457,16 @@ func (d *docs) onCategory(ctx context.Context, b *bot.Bot, u *models.Update, use
 		return
 	}
 	saved, err := d.svc.ChooseCategory(ctx, user, id, cat)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		d.gone(ctx, b, chatID, msgID)
+		return
+	}
 	if err != nil {
 		d.fail(ctx, b, chatID, "choose category", err)
 		return
+	}
+	if saved.Already {
+		return // double tap: the first tap already saved and tracked it
 	}
 	d.log.InfoContext(ctx, "document saved", "user_id", user, "doc_id", saved.Doc.ID,
 		"category", cat, "backup_status", saved.Doc.BackupStatus)
@@ -402,6 +478,86 @@ func (d *docs) onCategory(ctx context.Context, b *bot.Bot, u *models.Update, use
 	d.editCard(ctx, b, chatID, msgID, saved.Doc, "", "")
 	if saved.OfferDrive {
 		d.offerDrive(ctx, b, chatID, user)
+	}
+}
+
+// onCategoryGroup saves a whole album under the chosen category. The picker
+// message becomes the card (one file), a batch status (Drive on) or a summary.
+func (d *docs) onCategoryGroup(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	id, cat, ok := docCategory(parts)
+	if !ok {
+		return
+	}
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	group, err := d.svc.ChooseCategoryGroup(ctx, user, id, cat)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		d.gone(ctx, b, chatID, msgID)
+		return
+	}
+	if err != nil {
+		d.fail(ctx, b, chatID, "choose album category", err)
+		return
+	}
+	if group.Already {
+		return // double tap: the first tap already saved and tracked the album
+	}
+	d.log.InfoContext(ctx, "album saved", "user_id", user, "category", cat, "count", len(group.Docs))
+
+	var tracked []docsbot.Document // queued for upload, or kept in Telegram for size
+	tooLarge := 0
+	for _, doc := range group.Docs {
+		switch doc.BackupStatus {
+		case docsbot.BackupPending:
+			tracked = append(tracked, doc)
+		case docsbot.BackupTooLarge:
+			tooLarge++
+		}
+	}
+	switch {
+	case len(tracked) > 0:
+		// Show too-large files as lines of the same status message.
+		for _, doc := range group.Docs {
+			if doc.BackupStatus == docsbot.BackupTooLarge {
+				tracked = append(tracked, doc)
+			}
+		}
+		d.trackGroupUpload(ctx, b, chatID, user, tracked, msgID)
+	case len(group.Docs) == 1:
+		d.editCard(ctx, b, chatID, msgID, group.Docs[0], "", "")
+	default:
+		text := fmt.Sprintf(textGroupSaved, len(group.Docs), plural(len(group.Docs), "файл", "файла", "файлов"), categoryLabel(cat))
+		if tooLarge > 0 {
+			text += "\n" + fmt.Sprintf(textGroupTooLarge, tooLarge)
+		}
+		d.editText(ctx, b, chatID, msgID, text)
+	}
+	if group.OfferDrive {
+		d.offerDrive(ctx, b, chatID, user)
+	}
+}
+
+// trackGroupUpload turns the album picker into one status message holding every
+// document of the album.
+func (d *docs) trackGroupUpload(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, docs []docsbot.Document, pickerMsgID int) {
+	kind := docsbot.StatusSingle
+	if len(docs) > 1 {
+		kind = docsbot.StatusBatch
+	}
+	text, kb := renderStatusMessage(docsbot.StatusMessage{Kind: kind}, docs, nil)
+	d.editHTML(ctx, b, chatID, pickerMsgID, text, kb)
+	sm, err := d.svc.OpenStatus(ctx, user, chatID, pickerMsgID, docs[0].ID, kind)
+	if err != nil {
+		d.fail(ctx, b, chatID, "open status", err)
+		return
+	}
+	for _, doc := range docs[1:] {
+		if err := d.svc.AttachStatus(ctx, user, doc.ID, sm.ID); err != nil {
+			d.fail(ctx, b, chatID, "attach status", err)
+			return
+		}
 	}
 }
 
@@ -417,7 +573,7 @@ func (d *docs) trackUpload(ctx context.Context, b *bot.Bot, chatID int64, user d
 	kind := docsbot.StatusSingle
 	switch {
 	case reuse && sm.Kind == docsbot.StatusBatch:
-		if err := d.svc.AttachStatus(ctx, doc.ID, sm.ID); err != nil {
+		if err := d.svc.AttachStatus(ctx, user, doc.ID, sm.ID); err != nil {
 			d.fail(ctx, b, chatID, "attach status", err)
 			return
 		}
@@ -466,7 +622,7 @@ func (d *docs) redrawStatus(ctx context.Context, b *bot.Bot, user docsbot.UserID
 	text, kb := renderStatusMessage(view.Message, view.Lines, view.FolderByCat)
 	d.editHTML(ctx, b, view.Message.ChatID, view.Message.MessageID, text, kb)
 	if view.AllTerminal {
-		if err := d.svc.CloseStatus(ctx, view.Message.ID); err != nil {
+		if err := d.svc.CloseStatus(ctx, user, view.Message.ID); err != nil {
 			d.log.ErrorContext(ctx, "close status message", "err", err, "user_id", user)
 		}
 	}
@@ -532,6 +688,10 @@ func (d *docs) onSetCategory(ctx context.Context, b *bot.Bot, u *models.Update, 
 	}
 	d.log.InfoContext(ctx, "document recategorized", "user_id", user, "doc_id", card.Doc.ID, "category", cat)
 	orig, _ := d.origins.get(chatID, msgID)
+	if card.FileInOldFolder {
+		d.editCardText(ctx, b, chatID, msgID, cardText(card.Doc)+"\n"+textDriveFileStayed, cardKeyboard(card.Doc, "", orig), orig)
+		return
+	}
 	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
 }
 
@@ -823,7 +983,11 @@ func (d *docs) sendCard(ctx context.Context, b *bot.Bot, chatID int64, doc docsb
 // editCard replaces a message with a document's card and remembers where the
 // card was opened from (orig) so "Назад" and returns survive later edits.
 func (d *docs) editCard(ctx context.Context, b *bot.Bot, chatID int64, msgID int, doc docsbot.Document, folderID, orig string) {
-	d.editMessage(ctx, b, chatID, msgID, cardText(doc), cardKeyboard(doc, folderID, orig))
+	d.editCardText(ctx, b, chatID, msgID, cardText(doc), cardKeyboard(doc, folderID, orig), orig)
+}
+
+func (d *docs) editCardText(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup, orig string) {
+	d.editMessage(ctx, b, chatID, msgID, text, kb)
 	d.origins.set(chatID, msgID, orig)
 }
 

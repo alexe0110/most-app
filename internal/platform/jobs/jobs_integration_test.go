@@ -291,3 +291,37 @@ func TestClient_extraQueueKeepsDefault(t *testing.T) {
 		}
 	}
 }
+
+// TestPurgeOAuthStates covers: purge_oauth_states removes expired states and
+// keeps fresh ones.
+func TestPurgeOAuthStates(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := t.Context()
+
+	uid := insertUser(t, pool, 10, false)
+	for state, expires := range map[string]string{"expired": "now() - interval '1 minute'", "fresh": "now() + interval '10 minutes'"} {
+		_, err := pool.Exec(ctx, fmt.Sprintf(
+			`insert into oauth_states (state, user_id, bot, verifier, expires_at) values ($1, $2::uuid, 'docs', 'v', %s)`, expires),
+			state, uid)
+		require.NoError(t, err)
+	}
+
+	workers := river.NewWorkers()
+	periodic := jobs.RegisterPurgeOAuthStates(workers, pool, discardLog())
+	queue, err := jobs.New(pool, discardLog(), workers, nil, periodic)
+	require.NoError(t, err)
+	require.NoError(t, queue.Start(ctx))
+	t.Cleanup(func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		require.NoError(t, queue.Stop(stopCtx))
+	})
+
+	_, err = queue.Insert(ctx, jobs.PurgeOAuthStatesArgs{}, nil)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return countRows(t, pool, `select count(*) from oauth_states where state = $1`, "expired") == 0
+	}, 30*time.Second, 100*time.Millisecond, "expired state must be purged")
+	require.Equal(t, 1, countRows(t, pool, `select count(*) from oauth_states where state = $1`, "fresh"), "fresh state stays")
+}

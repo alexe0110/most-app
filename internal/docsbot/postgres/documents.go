@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -34,6 +36,7 @@ func (r *Repo) CreateDocument(ctx context.Context, in docsbot.IncomingFile) (doc
 		TgFileUniqueID: in.FileUniqueID,
 		FileSize:       pgtype.Int8{Int64: in.FileSize, Valid: in.FileSize > 0},
 		MimeType:       pgtype.Text{String: in.MIME, Valid: in.MIME != ""},
+		MediaGroupID:   pgtype.Text{String: in.MediaGroupID, Valid: in.MediaGroupID != ""},
 	})
 	if err != nil {
 		return docsbot.Document{}, fmt.Errorf("insert document: %w", err)
@@ -67,38 +70,54 @@ func (r *Repo) DocumentByID(ctx context.Context, user docsbot.UserID, id docsbot
 	return toDocument(row), nil
 }
 
-// SaveDocument sets the category and marks the document saved.
-func (r *Repo) SaveDocument(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) error {
+// SaveDocument sets the category and marks a pending document saved. saved is
+// false when the document was not pending (already saved, or gone).
+func (r *Repo) SaveDocument(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (saved bool, err error) {
+	docID, uid, err := ids(id, user)
+	if err != nil {
+		return false, err
+	}
+	n, err := r.SaveDocumentCategory(ctx, SaveDocumentCategoryParams{ID: docID, UserID: uid, Category: string(cat)})
+	if err != nil {
+		return false, fmt.Errorf("save document category: %w", err)
+	}
+	return n == 1, nil
+}
+
+// SetBackupStatus updates the Drive upload status.
+func (r *Repo) SetBackupStatus(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, s docsbot.BackupStatus) error {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return err
 	}
-	if err := r.SaveDocumentCategory(ctx, SaveDocumentCategoryParams{ID: docID, UserID: uid, Category: string(cat)}); err != nil {
-		return fmt.Errorf("save document category: %w", err)
-	}
-	return nil
-}
-
-// SetBackupStatus updates the Drive upload status.
-func (r *Repo) SetBackupStatus(ctx context.Context, id docsbot.DocumentID, s docsbot.BackupStatus) error {
-	docID, err := parseUUID(string(id))
-	if err != nil {
-		return err
-	}
-	if err := r.UpdateDocumentBackupStatus(ctx, UpdateDocumentBackupStatusParams{ID: docID, BackupStatus: string(s)}); err != nil {
+	if err := r.UpdateDocumentBackupStatus(ctx, UpdateDocumentBackupStatusParams{ID: docID, UserID: uid, BackupStatus: string(s)}); err != nil {
 		return fmt.Errorf("update backup status: %w", err)
 	}
 	return nil
 }
 
+// ClaimFailed atomically moves a failed document to pending; false when it is
+// not failed or not the user's.
+func (r *Repo) ClaimFailed(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) (bool, error) {
+	docID, uid, err := ids(id, user)
+	if err != nil {
+		return false, err
+	}
+	n, err := r.ClaimFailedForRetry(ctx, ClaimFailedForRetryParams{ID: docID, UserID: uid})
+	if err != nil {
+		return false, fmt.Errorf("claim failed for retry: %w", err)
+	}
+	return n > 0, nil
+}
+
 // MarkUploading sets the status to uploading without touching updated_at, so
 // the sweeper's 24h backstop counts from enqueue time.
-func (r *Repo) MarkUploading(ctx context.Context, id docsbot.DocumentID) error {
-	docID, err := parseUUID(string(id))
+func (r *Repo) MarkUploading(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
+	docID, uid, err := ids(id, user)
 	if err != nil {
 		return err
 	}
-	if err := r.MarkDocumentUploading(ctx, docID); err != nil {
+	if err := r.MarkDocumentUploading(ctx, MarkDocumentUploadingParams{ID: docID, UserID: uid}); err != nil {
 		return fmt.Errorf("mark document uploading: %w", err)
 	}
 	return nil
@@ -143,8 +162,12 @@ func (r *Repo) SetTitle(ctx context.Context, user docsbot.UserID, id docsbot.Doc
 	if err != nil {
 		return err
 	}
-	if err := r.UpdateDocumentTitle(ctx, UpdateDocumentTitleParams{ID: docID, UserID: uid, Title: title}); err != nil {
+	n, err := r.UpdateDocumentTitle(ctx, UpdateDocumentTitleParams{ID: docID, UserID: uid, Title: title})
+	if err != nil {
 		return fmt.Errorf("update document title: %w", err)
+	}
+	if n == 0 {
+		return docsbot.ErrNotFound
 	}
 	return nil
 }
@@ -155,8 +178,12 @@ func (r *Repo) SetCategory(ctx context.Context, user docsbot.UserID, id docsbot.
 	if err != nil {
 		return err
 	}
-	if err := r.UpdateDocumentCategory(ctx, UpdateDocumentCategoryParams{ID: docID, UserID: uid, Category: string(cat)}); err != nil {
+	n, err := r.UpdateDocumentCategory(ctx, UpdateDocumentCategoryParams{ID: docID, UserID: uid, Category: string(cat)})
+	if err != nil {
 		return fmt.Errorf("update document category: %w", err)
+	}
+	if n == 0 {
+		return docsbot.ErrNotFound
 	}
 	return nil
 }
@@ -181,8 +208,12 @@ func (r *Repo) DeleteDocument(ctx context.Context, user docsbot.UserID, id docsb
 	if err != nil {
 		return err
 	}
-	if err := r.DeleteDocumentByID(ctx, DeleteDocumentByIDParams{ID: docID, UserID: uid}); err != nil {
+	n, err := r.DeleteDocumentByID(ctx, DeleteDocumentByIDParams{ID: docID, UserID: uid})
+	if err != nil {
 		return fmt.Errorf("delete document: %w", err)
+	}
+	if n == 0 {
+		return docsbot.ErrNotFound
 	}
 	return nil
 }
@@ -248,6 +279,10 @@ func (r *Repo) ListByCategory(ctx context.Context, user docsbot.UserID, cat docs
 	return toDocuments(rows), nil
 }
 
+// likeEscaper escapes the LIKE metacharacters so user input matches literally;
+// the query's ILIKE uses the default backslash escape.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
 // Search finds saved documents matching query by title (ILIKE + trigram).
 func (r *Repo) Search(ctx context.Context, user docsbot.UserID, query string, limit int) ([]docsbot.Document, error) {
 	uid, err := parseUUID(string(user))
@@ -255,9 +290,10 @@ func (r *Repo) Search(ctx context.Context, user docsbot.UserID, query string, li
 		return nil, err
 	}
 	rows, err := r.SearchDocuments(ctx, SearchDocumentsParams{
-		UserID: uid,
-		Query:  pgtype.Text{String: query, Valid: true},
-		Lim:    int32(limit),
+		UserID:  uid,
+		Pattern: pgtype.Text{String: likeEscaper.Replace(query), Valid: true},
+		Query:   query,
+		Lim:     int32(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("search documents: %w", err)
@@ -266,13 +302,14 @@ func (r *Repo) Search(ctx context.Context, user docsbot.UserID, query string, li
 }
 
 // MarkBackedUp records a successful Drive upload.
-func (r *Repo) MarkBackedUp(ctx context.Context, id docsbot.DocumentID, driveFileID string) error {
-	docID, err := parseUUID(string(id))
+func (r *Repo) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string) error {
+	docID, uid, err := ids(id, user)
 	if err != nil {
 		return err
 	}
 	err = r.MarkDocumentBackedUp(ctx, MarkDocumentBackedUpParams{
 		ID:          docID,
+		UserID:      uid,
 		DriveFileID: pgtype.Text{String: driveFileID, Valid: true},
 	})
 	if err != nil {
@@ -281,21 +318,56 @@ func (r *Repo) MarkBackedUp(ctx context.Context, id docsbot.DocumentID, driveFil
 	return nil
 }
 
-// NotBackedUpIDs lists the user's saved documents not yet on Drive, oldest first.
-func (r *Repo) NotBackedUpIDs(ctx context.Context, user docsbot.UserID) ([]docsbot.DocumentID, error) {
+// ClaimTransferable atomically moves every saved none/failed document to
+// pending and returns their ids, oldest first.
+func (r *Repo) ClaimTransferable(ctx context.Context, user docsbot.UserID) ([]docsbot.DocumentID, error) {
 	uid, err := parseUUID(string(user))
 	if err != nil {
 		return nil, err
 	}
-	rows, err := r.ListNotBackedUpDocumentIDs(ctx, uid)
+	rows, err := r.ClaimTransferableDocuments(ctx, uid)
 	if err != nil {
-		return nil, fmt.Errorf("list not backed up documents: %w", err)
+		return nil, fmt.Errorf("claim transferable documents: %w", err)
 	}
-	out := make([]docsbot.DocumentID, 0, len(rows))
-	for _, id := range rows {
-		out = append(out, docsbot.DocumentID(id.String()))
+	ids := make([]claimedID, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, claimedID{id: row.ID, createdAt: row.CreatedAt.Time})
 	}
-	return out, nil
+	return sortedIDs(ids), nil
+}
+
+// ClaimAllFailed atomically moves every failed upload to pending and returns
+// their ids, oldest first.
+func (r *Repo) ClaimAllFailed(ctx context.Context, user docsbot.UserID) ([]docsbot.DocumentID, error) {
+	uid, err := parseUUID(string(user))
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.ClaimFailedDocuments(ctx, uid)
+	if err != nil {
+		return nil, fmt.Errorf("claim failed documents: %w", err)
+	}
+	ids := make([]claimedID, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, claimedID{id: row.ID, createdAt: row.CreatedAt.Time})
+	}
+	return sortedIDs(ids), nil
+}
+
+// claimedID is a claimed document with the time to order the batch by.
+type claimedID struct {
+	id        pgtype.UUID
+	createdAt time.Time
+}
+
+// sortedIDs orders claimed documents oldest first (UPDATE ... RETURNING has no order).
+func sortedIDs(in []claimedID) []docsbot.DocumentID {
+	slices.SortFunc(in, func(a, b claimedID) int { return a.createdAt.Compare(b.createdAt) })
+	out := make([]docsbot.DocumentID, 0, len(in))
+	for _, c := range in {
+		out = append(out, docsbot.DocumentID(c.id.String()))
+	}
+	return out
 }
 
 // ids parses a (document, user) id pair in one step.
@@ -333,6 +405,7 @@ func toDocument(d Document) docsbot.Document {
 		DriveFileID:     d.DriveFileID.String,
 		FileSize:        d.FileSize.Int64,
 		MIME:            d.MimeType.String,
+		MediaGroupID:    d.MediaGroupID.String,
 		BackupStatus:    docsbot.BackupStatus(d.BackupStatus),
 		CreatedAt:       d.CreatedAt.Time,
 	}
@@ -344,4 +417,47 @@ func toDocuments(rows []Document) []docsbot.Document {
 		out = append(out, toDocument(d))
 	}
 	return out
+}
+
+// PendingByMediaGroup lists the user's pending documents of one album, oldest first.
+func (r *Repo) PendingByMediaGroup(ctx context.Context, user docsbot.UserID, group string) ([]docsbot.Document, error) {
+	uid, err := parseUUID(string(user))
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.ListPendingByMediaGroup(ctx, ListPendingByMediaGroupParams{
+		UserID:       uid,
+		MediaGroupID: pgtype.Text{String: group, Valid: true},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list pending by media group: %w", err)
+	}
+	return toDocuments(rows), nil
+}
+
+// IntakeStats returns the user's pending count, files created since `since`
+// and total documents in one query.
+func (r *Repo) IntakeStats(ctx context.Context, user docsbot.UserID, since time.Time) (docsbot.IntakeStats, error) {
+	uid, err := parseUUID(string(user))
+	if err != nil {
+		return docsbot.IntakeStats{}, err
+	}
+	row, err := r.UserIntakeStats(ctx, UserIntakeStatsParams{
+		UserID: uid,
+		Since:  pgtype.Timestamptz{Time: since, Valid: true},
+	})
+	if err != nil {
+		return docsbot.IntakeStats{}, fmt.Errorf("user intake stats: %w", err)
+	}
+	return docsbot.IntakeStats{Pending: int(row.Pending), Recent: int(row.Recent), Total: int(row.Total)}, nil
+}
+
+// PurgeStalePending deletes pending documents created before olderThan, for all
+// users, and returns how many were removed.
+func (r *Repo) PurgeStalePending(ctx context.Context, olderThan time.Time) (int, error) {
+	n, err := r.DeleteStalePending(ctx, pgtype.Timestamptz{Time: olderThan, Valid: true})
+	if err != nil {
+		return 0, fmt.Errorf("delete stale pending: %w", err)
+	}
+	return int(n), nil
 }

@@ -18,4 +18,10 @@ var (
 	// ErrDriveDisconnected means the user turned Drive off themselves; the document
 	// falls back to Telegram-only: no failure, no reconnect prompt.
 	ErrDriveDisconnected = errors.New("drive access disconnected by user")
+	// ErrNotRetryable means a retry was asked for a document that is not in the
+	// failed state (already retried, in flight, done) or is not the user's.
+	ErrNotRetryable = errors.New("backup not retryable")
+	// ErrRevokeIncomplete means the user's data was removed locally but revoking
+	// Drive access failed; callers treat it as success and only log it.
+	ErrRevokeIncomplete = errors.New("drive revoke incomplete")
 )

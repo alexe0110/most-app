@@ -16,19 +16,33 @@ type Repo interface {
 	DocumentByFileUniqueID(ctx context.Context, user UserID, uniqueID string) (Document, error)
 	// DocumentByID returns the user's document, or ErrNotFound.
 	DocumentByID(ctx context.Context, user UserID, id DocumentID) (Document, error)
-	// SaveDocument sets the category and marks the document saved.
-	SaveDocument(ctx context.Context, user UserID, id DocumentID, cat Category) error
-	SetBackupStatus(ctx context.Context, id DocumentID, s BackupStatus) error
+	// PendingByMediaGroup lists the user's still-pending documents of one album, oldest first.
+	PendingByMediaGroup(ctx context.Context, user UserID, group string) ([]Document, error)
+	// IntakeStats reports the user's pending count, files created after since, and total, in one query.
+	IntakeStats(ctx context.Context, user UserID, since time.Time) (IntakeStats, error)
+	// PurgeStalePending deletes every user's pending documents created before
+	// olderThan and returns how many were removed.
+	PurgeStalePending(ctx context.Context, olderThan time.Time) (int, error)
+	// SaveDocument sets the category and marks a pending document saved. saved is
+	// false when the document was not pending (already saved, or gone).
+	SaveDocument(ctx context.Context, user UserID, id DocumentID, cat Category) (saved bool, err error)
+	SetBackupStatus(ctx context.Context, user UserID, id DocumentID, s BackupStatus) error
+	// ClaimFailed atomically moves a failed document to pending. It reports
+	// false when the document is not failed or is not the user's.
+	ClaimFailed(ctx context.Context, user UserID, id DocumentID) (bool, error)
 	// MarkUploading sets backup_status=uploading WITHOUT touching updated_at, so
 	// the stuck-clock keeps running from enqueue time (sweeper 24h backstop).
-	MarkUploading(ctx context.Context, id DocumentID) error
+	MarkUploading(ctx context.Context, user UserID, id DocumentID) error
 	// ResetPendingUploads resets the user's pending/uploading saved documents back to none.
 	ResetPendingUploads(ctx context.Context, user UserID) error
+	// SetTitle renames the document; ErrNotFound if the user has no such document.
 	SetTitle(ctx context.Context, user UserID, id DocumentID, title string) error
 	// TitleExistsInCategory reports whether the user already has a saved document
 	// with this exact title in the category (used to de-duplicate default names).
 	TitleExistsInCategory(ctx context.Context, user UserID, cat Category, title string) (bool, error)
+	// SetCategory recategorizes the document; ErrNotFound if the user has no such document.
 	SetCategory(ctx context.Context, user UserID, id DocumentID, cat Category) error
+	// DeleteDocument removes the document; ErrNotFound if the user has no such document.
 	DeleteDocument(ctx context.Context, user UserID, id DocumentID) error
 	// CountSaved counts the user's saved documents.
 	CountSaved(ctx context.Context, user UserID) (int, error)
@@ -38,13 +52,16 @@ type Repo interface {
 	ListByCategory(ctx context.Context, user UserID, cat Category, limit, offset int) ([]Document, error)
 	Search(ctx context.Context, user UserID, query string, limit int) ([]Document, error)
 	// MarkBackedUp records a successful Drive upload: backup_status=backed_up + drive_file_id.
-	MarkBackedUp(ctx context.Context, id DocumentID, driveFileID string) error
-	// NotBackedUpIDs lists the user's saved documents not yet on Drive, oldest first.
-	NotBackedUpIDs(ctx context.Context, user UserID) ([]DocumentID, error)
+	MarkBackedUp(ctx context.Context, user UserID, id DocumentID, driveFileID string) error
+	// ClaimTransferable atomically moves every saved document that is not on Drive
+	// (none or failed) to pending and returns their ids, oldest first. Concurrent
+	// callers never receive the same document.
+	ClaimTransferable(ctx context.Context, user UserID) ([]DocumentID, error)
 	// BackupStatusCounts returns the user's saved-document counts grouped by backup_status.
 	BackupStatusCounts(ctx context.Context, user UserID) ([]BackupStatusCount, error)
-	// FailedIDs lists the user's saved documents whose Drive upload failed, oldest first.
-	FailedIDs(ctx context.Context, user UserID) ([]DocumentID, error)
+	// ClaimAllFailed atomically moves every failed upload to pending and returns
+	// their ids, oldest first.
+	ClaimAllFailed(ctx context.Context, user UserID) ([]DocumentID, error)
 	// SavedForExport lists up to limit of the user's saved documents, oldest first, to resend from Telegram.
 	SavedForExport(ctx context.Context, user UserID, limit int) ([]Document, error)
 	// StuckUploads lists saved documents stuck in pending/uploading since before
@@ -135,9 +152,10 @@ type StatusMessages interface {
 	// OpenForUser returns the user's newest unclosed status message, if any.
 	OpenForUser(ctx context.Context, user UserID) (StatusMessage, bool, error)
 	Create(ctx context.Context, user UserID, chatID int64, messageID int, kind StatusKind) (StatusMessage, error)
-	Close(ctx context.Context, id StatusMessageID) error
-	SetMessageID(ctx context.Context, id StatusMessageID, messageID int) error
-	Attach(ctx context.Context, doc DocumentID, id StatusMessageID) error
-	DocumentsIn(ctx context.Context, id StatusMessageID) ([]Document, error)
-	ByID(ctx context.Context, id StatusMessageID) (StatusMessage, error)
+	Close(ctx context.Context, user UserID, id StatusMessageID) error
+	SetMessageID(ctx context.Context, user UserID, id StatusMessageID, messageID int) error
+	Attach(ctx context.Context, user UserID, doc DocumentID, id StatusMessageID) error
+	DocumentsIn(ctx context.Context, user UserID, id StatusMessageID) ([]Document, error)
+	// ByID returns the user's status message, or ErrNotFound (also for another user's).
+	ByID(ctx context.Context, user UserID, id StatusMessageID) (StatusMessage, error)
 }

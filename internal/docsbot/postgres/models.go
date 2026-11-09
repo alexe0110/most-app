@@ -24,6 +24,7 @@ type Document struct {
 	StatusMessageID pgtype.UUID
 	FileSize        pgtype.Int8
 	MimeType        pgtype.Text
+	MediaGroupID    pgtype.Text
 }
 
 type DriveFolder struct {

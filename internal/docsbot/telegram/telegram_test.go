@@ -28,6 +28,7 @@ type capture struct {
 	editMarkups []string // editMessageText reply_markup
 	files       []string // sendDocument/sendPhoto caption
 	deletes     int      // deleteMessage calls
+	answers     []string // answerCallbackQuery toast texts
 }
 
 func (c *capture) record(bucket *[]string, s string) {
@@ -62,6 +63,12 @@ func newBotWithLog(t *testing.T, log *slog.Logger) (*bot.Bot, *capture, *fakeRep
 // newBotWith is newBotWithLog with a chosen Drive state.
 func newBotWith(t *testing.T, log *slog.Logger, drive fakeDrive) (*bot.Bot, *capture, *fakeRepo) {
 	t.Helper()
+	return newBotOpts(t, log, drive)
+}
+
+// newBotOpts is newBotWith with adapter options.
+func newBotOpts(t *testing.T, log *slog.Logger, drive fakeDrive, opts ...telegram.Option) (*bot.Bot, *capture, *fakeRepo) {
+	t.Helper()
 	sent := &capture{}
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +85,8 @@ func newBotWith(t *testing.T, log *slog.Logger, drive fakeDrive) (*bot.Bot, *cap
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"ok":true,"result":true}`)
 			return
+		case strings.HasSuffix(r.URL.Path, "/answerCallbackQuery"):
+			sent.record(&sent.answers, r.FormValue("text"))
 		case strings.HasSuffix(r.URL.Path, "/editMessageText"):
 			sent.record(&sent.edits, r.FormValue("text"))
 			sent.record(&sent.editMarkups, r.FormValue("reply_markup"))
@@ -91,7 +100,7 @@ func newBotWith(t *testing.T, log *slog.Logger, drive fakeDrive) (*bot.Bot, *cap
 	require.NoError(t, err)
 
 	svc, auth, repo := fakeDepsWith(drive)
-	telegram.Register(b, log, svc, auth)
+	telegram.Register(b, log, svc, auth, opts...)
 	return b, sent, repo
 }
 
@@ -150,7 +159,6 @@ func TestReceive_duplicateShowsFolderButton(t *testing.T) {
 	repo.seed(docsbot.Document{
 		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Category: docsbot.CatOther,
 		Title: "Паспорт", TgFileID: "f1", TgFileUniqueID: "u1",
-		BackupStatus: docsbot.BackupBackedUp, DriveFileID: "drive-1",
 	})
 	b.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
 		From:     &models.User{ID: 100},
@@ -160,6 +168,26 @@ func TestReceive_duplicateShowsFolderButton(t *testing.T) {
 
 	require.True(t, has(sent.texts, "Паспорт"), "sent %q", sent.texts)
 	require.True(t, has(sent.markups, "https://drive.google.com/drive/folders/fld-1"), "markups %q", sent.markups)
+}
+
+func TestReceive_duplicateBackedUpLinksFileOnly(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	repo.folders = map[docsbot.Category]string{docsbot.CatOther: "fld-1"}
+	repo.seed(docsbot.Document{
+		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Category: docsbot.CatOther,
+		Title: "Паспорт", TgFileID: "f1", TgFileUniqueID: "u1",
+		BackupStatus: docsbot.BackupBackedUp, DriveFileID: "drive-1",
+	})
+	b.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
+		From:     &models.User{ID: 100},
+		Chat:     models.Chat{ID: 100, Type: models.ChatTypePrivate},
+		Document: &models.Document{FileID: "f1", FileUniqueID: "u1", FileName: "Паспорт.pdf"},
+	}})
+
+	require.True(t, has(sent.markups, "https://drive.google.com/file/d/drive-1/view"), "markups %q", sent.markups)
+	require.False(t, has(sent.markups, "/drive/folders/"), "markups %q", sent.markups)
 }
 
 func TestChooseCategory_savesAndShowsCard(t *testing.T) {

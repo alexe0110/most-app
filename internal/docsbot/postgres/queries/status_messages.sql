@@ -14,28 +14,37 @@ limit 1;
 -- name: GetStatusMessageByID :one
 select *
 from status_messages
-where id = @id;
+where id = @id
+  and user_id = @user_id;
 
 -- name: CloseStatusMessage :exec
 update status_messages
 set closed_at = now()
-where id = @id;
+where id = @id
+  and user_id = @user_id;
 
 -- name: UpdateStatusMessageMessageID :exec
 update status_messages
 set message_id = @message_id
-where id = @id;
+where id = @id
+  and user_id = @user_id;
 
 -- name: AttachDocumentToStatus :exec
 update documents
 set status_message_id = @status_message_id,
     updated_at        = now()
-where id = @id;
+where documents.id = @id
+  and documents.user_id = @user_id
+  and exists (select 1
+              from status_messages sm
+              where sm.id = @status_message_id
+                and sm.user_id = @user_id);
 
 -- name: ListDocumentsByStatusMessage :many
 select *
 from documents
 where status_message_id = @status_message_id
+  and user_id = @user_id
 order by created_at;
 
 -- name: DeleteUserStatusMessages :exec

@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 
+	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
 	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 )
@@ -55,4 +56,47 @@ func TestRepo_Ensure_defaultLang(t *testing.T) {
 	u, err := repo.GetUserByTgID(ctx, 600)
 	require.NoError(t, err)
 	require.Equal(t, "ru", u.Lang, "empty Telegram lang falls back to ru")
+}
+
+// purgeSQL mirrors the purge_users job in platform/jobs.
+const purgeSQL = `delete from users where deleted_at is not null`
+
+// TestUser_deletedThenMessageAroundPurge covers D4: a message from a deleted
+// user before the purge revives the same empty account, which the purge then
+// leaves alone; after the purge the same message creates a fresh user row.
+func TestUser_deletedThenMessageAroundPurge(t *testing.T) {
+	pool := dbtest.New(t)
+	repo := postgres.NewRepo(pool)
+	ctx := t.Context()
+
+	first, err := repo.EnsureUser(ctx, postgres.EnsureUserParams{TgUserID: 800, Lang: "ru"})
+	require.NoError(t, err)
+	saveDoc(t, repo, first, "old", "none")
+	require.NoError(t, repo.DeleteUserData(ctx, docsbot.UserID(first.ID.String())))
+
+	// Before the purge: revived, same id, no old documents.
+	revived, err := repo.EnsureUser(ctx, postgres.EnsureUserParams{TgUserID: 800, Lang: "ru"})
+	require.NoError(t, err)
+	require.Equal(t, first.ID, revived.ID)
+	n, err := repo.CountSaved(ctx, docsbot.UserID(revived.ID.String()))
+	require.NoError(t, err)
+	require.Zero(t, n)
+
+	// The purge does not touch the revived user.
+	_, err = pool.Exec(ctx, purgeSQL)
+	require.NoError(t, err)
+	_, err = repo.GetUserByTgID(ctx, 800)
+	require.NoError(t, err, "revived user survives the purge")
+
+	// Delete again, purge, then message: a brand-new row with no data.
+	require.NoError(t, repo.DeleteUserData(ctx, docsbot.UserID(first.ID.String())))
+	_, err = pool.Exec(ctx, purgeSQL)
+	require.NoError(t, err)
+
+	fresh, err := repo.EnsureUser(ctx, postgres.EnsureUserParams{TgUserID: 800, Lang: "ru"})
+	require.NoError(t, err)
+	require.NotEqual(t, first.ID, fresh.ID, "purged user comes back as a new row")
+	n, err = repo.CountSaved(ctx, docsbot.UserID(fresh.ID.String()))
+	require.NoError(t, err)
+	require.Zero(t, n)
 }

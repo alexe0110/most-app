@@ -24,6 +24,21 @@ const (
 	sweepStaleAfter = 30 * time.Minute
 	// sweepFailAfter is how long a document may stay stuck before it is failed.
 	sweepFailAfter = 24 * time.Hour
+	// maxQueryRunes caps a search query's length.
+	maxQueryRunes = 100
+	// MaxDriveBytes is the largest file the bot uploads to Drive; a bigger one
+	// stays in Telegram (backup_status too_large).
+	MaxDriveBytes = 20 << 20
+	// maxPendingPerUser caps files awaiting a category per user.
+	maxPendingPerUser = 20
+	// maxFilesPerMinute caps how many files one user may send per minute.
+	maxFilesPerMinute = 30
+	// MaxDocumentsPerUser caps one user's total documents.
+	MaxDocumentsPerUser = 5000
+	// intakeWindow is the flood-check window.
+	intakeWindow = time.Minute
+	// pendingTTL is how long a document may wait for a category before it is purged.
+	pendingTTL = 24 * time.Hour
 )
 
 // Service holds the Most Docs use cases. It depends only on ports, never on
@@ -37,6 +52,7 @@ type Service struct {
 	status  StatusMessages
 	now     func() time.Time
 	name    func(Category) string
+	loc     *time.Location
 }
 
 // Option tunes a Service at construction.
@@ -53,12 +69,18 @@ func WithCategoryNamer(fn func(Category) string) Option {
 	return func(s *Service) { s.name = fn }
 }
 
+// WithLocation sets the time zone used for the date in default titles.
+func WithLocation(loc *time.Location) Option {
+	return func(s *Service) { s.loc = loc }
+}
+
 // NewService wires the service around its ports.
 func NewService(repo Repo, drive Drive, files FileSource, uploads Uploads, folders Folders, status StatusMessages, opts ...Option) *Service {
 	s := &Service{
 		repo: repo, drive: drive, files: files, uploads: uploads, folders: folders, status: status,
 		now:  time.Now,
 		name: func(c Category) string { return string(c) },
+		loc:  defaultLocation(),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -69,6 +91,7 @@ func NewService(repo Repo, drive Drive, files FileSource, uploads Uploads, folde
 // Receive stores a freshly sent file as pending and asks for a category. A file
 // already saved returns AlreadySaved; a still-pending one re-asks the category.
 func (s *Service) Receive(ctx context.Context, in IncomingFile) (Reply, error) {
+	in.Title = NormalizeTitle(in.Title)
 	existing, err := s.repo.DocumentByFileUniqueID(ctx, in.UserID, in.FileUniqueID)
 	switch {
 	case err == nil && existing.Status == StatusSaved:
@@ -79,6 +102,19 @@ func (s *Service) Receive(ctx context.Context, in IncomingFile) (Reply, error) {
 		return nil, fmt.Errorf("lookup document: %w", err)
 	}
 
+	stats, err := s.repo.IntakeStats(ctx, in.UserID, s.now().Add(-intakeWindow))
+	if err != nil {
+		return nil, fmt.Errorf("intake stats: %w", err)
+	}
+	switch {
+	case stats.Total >= MaxDocumentsPerUser:
+		return QuotaExceeded{}, nil
+	case stats.Recent >= maxFilesPerMinute:
+		return RateLimited{}, nil
+	case stats.Pending >= maxPendingPerUser:
+		return TooManyPending{}, nil
+	}
+
 	doc, err := s.repo.CreateDocument(ctx, in)
 	if err != nil {
 		return nil, fmt.Errorf("create document: %w", err)
@@ -86,8 +122,59 @@ func (s *Service) Receive(ctx context.Context, in IncomingFile) (Reply, error) {
 	return NeedCategory{Doc: doc}, nil
 }
 
+// PurgeStalePending deletes pending documents nobody categorized within the TTL
+// and returns how many were removed. It is the purge_pending job's use case.
+func (s *Service) PurgeStalePending(ctx context.Context) (int, error) {
+	n, err := s.repo.PurgeStalePending(ctx, s.now().Add(-pendingTTL))
+	if err != nil {
+		return 0, fmt.Errorf("purge stale pending: %w", err)
+	}
+	return n, nil
+}
+
+// ChooseCategoryGroup saves every pending document of the album that anyDocID
+// belongs to under cat. The album lives in the database, so it survives a
+// restart. A document without an album is saved alone. It is idempotent like
+// ChooseCategory: once nothing is pending the result is flagged Already.
+func (s *Service) ChooseCategoryGroup(ctx context.Context, user UserID, anyDocID DocumentID, cat Category) (SavedGroup, error) {
+	if !cat.Valid() {
+		return SavedGroup{}, ErrUnknownCategory
+	}
+	anchor, err := s.repo.DocumentByID(ctx, user, anyDocID)
+	if err != nil {
+		return SavedGroup{}, fmt.Errorf("load document: %w", err)
+	}
+	ids := []DocumentID{anchor.ID}
+	if anchor.MediaGroupID != "" {
+		pending, err := s.repo.PendingByMediaGroup(ctx, user, anchor.MediaGroupID)
+		if err != nil {
+			return SavedGroup{}, fmt.Errorf("list album: %w", err)
+		}
+		if len(pending) > 0 {
+			ids = ids[:0]
+			for _, d := range pending {
+				ids = append(ids, d.ID)
+			}
+		}
+	}
+	var out SavedGroup
+	for _, id := range ids {
+		saved, err := s.ChooseCategory(ctx, user, id, cat)
+		if err != nil {
+			return out, err
+		}
+		if saved.Already {
+			continue
+		}
+		out.Docs = append(out.Docs, saved.Doc)
+		out.OfferDrive = out.OfferDrive || saved.OfferDrive
+	}
+	out.Already = len(out.Docs) == 0
+	return out, nil
+}
+
 // ChooseCategory saves a pending document under cat. It is idempotent: a second
-// tap on an already-saved document just returns it. When Drive is connected the
+// tap on an already-saved document returns it flagged Already. When Drive is connected the
 // document is queued for upload (the upload_document worker performs it); otherwise it stays in
 // Telegram and we may offer to connect Drive.
 func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID, cat Category) (Saved, error) {
@@ -99,11 +186,20 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 		return Saved{}, fmt.Errorf("load document: %w", err)
 	}
 	if doc.Status == StatusSaved {
-		return Saved{Doc: doc}, nil
+		return Saved{Doc: doc, Already: true}, nil
 	}
 
-	if err := s.repo.SaveDocument(ctx, user, id, cat); err != nil {
+	won, err := s.repo.SaveDocument(ctx, user, id, cat)
+	if err != nil {
 		return Saved{}, fmt.Errorf("save document: %w", err)
+	}
+	if !won {
+		// Lost a race: a parallel tap saved it, or the purge job deleted it.
+		cur, err := s.repo.DocumentByID(ctx, user, id)
+		if err != nil {
+			return Saved{}, fmt.Errorf("reload document: %w", err)
+		}
+		return Saved{Doc: cur, Already: true}, nil
 	}
 	doc.Category = cat
 	doc.Status = StatusSaved
@@ -124,6 +220,14 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 		return Saved{}, fmt.Errorf("drive status: %w", err)
 	}
 	if connected {
+		if doc.FileSize > MaxDriveBytes {
+			// Known to be above the limit: skip the doomed download, keep it in Telegram.
+			if err := s.repo.SetBackupStatus(ctx, user, id, BackupTooLarge); err != nil {
+				return Saved{}, fmt.Errorf("mark too large: %w", err)
+			}
+			doc.BackupStatus = BackupTooLarge
+			return Saved{Doc: doc}, nil
+		}
 		if err := s.uploads.EnqueueUpload(ctx, user, id); err != nil {
 			return Saved{}, fmt.Errorf("enqueue upload: %w", err)
 		}
@@ -141,7 +245,7 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 // defaultTitle builds "<category> — dd.mm.yyyy", adding " (n)" until it is unique
 // within the user's category.
 func (s *Service) defaultTitle(ctx context.Context, user UserID, cat Category) (string, error) {
-	base := s.name(cat) + " — " + s.now().Format("02.01.2006")
+	base := s.name(cat) + " — " + s.now().In(s.loc).Format("02.01.2006")
 	title := base
 	for i := 2; i <= maxTitleSuffix; i++ {
 		exists, err := s.repo.TitleExistsInCategory(ctx, user, cat, title)
@@ -186,13 +290,13 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 	}
 	// Do not bump updated_at here: a poisoned document that crashes every
 	// attempt must still age out to failed via the sweeper's 24h backstop.
-	if err := s.repo.MarkUploading(ctx, id); err != nil {
+	if err := s.repo.MarkUploading(ctx, user, id); err != nil {
 		return BackupResult{}, fmt.Errorf("mark uploading: %w", err)
 	}
 
 	data, mime, err := s.files.Download(ctx, doc.TgFileID)
 	if errors.Is(err, ErrFileTooLarge) {
-		if err := s.repo.SetBackupStatus(ctx, id, BackupTooLarge); err != nil {
+		if err := s.repo.SetBackupStatus(ctx, user, id, BackupTooLarge); err != nil {
 			return BackupResult{}, fmt.Errorf("mark too large: %w", err)
 		}
 		doc.BackupStatus = BackupTooLarge
@@ -205,7 +309,7 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 	file, err := s.drive.Upload(ctx, user, DriveUpload{Category: doc.Category, Name: doc.Title, MIME: mime, Data: data, DocID: string(id)})
 	if errors.Is(err, ErrDriveDisconnected) {
 		// User disconnected Drive mid-upload: drop back to Telegram-only, finish silently.
-		if serr := s.repo.SetBackupStatus(ctx, id, BackupNone); serr != nil {
+		if serr := s.repo.SetBackupStatus(ctx, user, id, BackupNone); serr != nil {
 			return BackupResult{}, fmt.Errorf("reset backup status: %w", serr)
 		}
 		return BackupResult{Noop: true}, nil
@@ -217,7 +321,7 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 		return BackupResult{}, fmt.Errorf("upload to drive: %w", err)
 	}
 
-	if err := s.repo.MarkBackedUp(ctx, id, file.ID); err != nil {
+	if err := s.repo.MarkBackedUp(ctx, user, id, file.ID); err != nil {
 		return BackupResult{}, fmt.Errorf("mark backed up: %w", err)
 	}
 	doc.BackupStatus = BackupBackedUp
@@ -225,10 +329,9 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 	return BackupResult{Doc: doc}, nil
 }
 
-// MarkBackupFailed records a terminal upload failure. The user is accepted for a
-// consistent, user-scoped API even though the status update is keyed by id.
-func (s *Service) MarkBackupFailed(ctx context.Context, _ UserID, id DocumentID) error {
-	if err := s.repo.SetBackupStatus(ctx, id, BackupFailed); err != nil {
+// MarkBackupFailed records a terminal upload failure.
+func (s *Service) MarkBackupFailed(ctx context.Context, user UserID, id DocumentID) error {
+	if err := s.repo.SetBackupStatus(ctx, user, id, BackupFailed); err != nil {
 		return fmt.Errorf("mark backup failed: %w", err)
 	}
 	return nil
@@ -254,7 +357,7 @@ func (s *Service) SweepStuckUploads(ctx context.Context) (SweepResult, error) {
 	res.Found = len(rows)
 	for _, r := range rows {
 		if now.Sub(r.UpdatedAt) >= sweepFailAfter {
-			if err := s.repo.SetBackupStatus(ctx, r.ID, BackupFailed); err != nil {
+			if err := s.repo.SetBackupStatus(ctx, r.User, r.ID, BackupFailed); err != nil {
 				return res, fmt.Errorf("fail stuck upload: %w", err)
 			}
 			res.Failed = append(res.Failed, r)
@@ -272,9 +375,9 @@ func (s *Service) SweepStuckUploads(ctx context.Context) (SweepResult, error) {
 // one transfer status message that takes over the given Telegram message. ok is
 // false when there is nothing to transfer.
 func (s *Service) TransferSaved(ctx context.Context, user UserID, chatID int64, messageID int) (StatusView, bool, error) {
-	ids, err := s.repo.NotBackedUpIDs(ctx, user)
+	ids, err := s.repo.ClaimTransferable(ctx, user)
 	if err != nil {
-		return StatusView{}, false, fmt.Errorf("list not backed up: %w", err)
+		return StatusView{}, false, fmt.Errorf("claim not backed up: %w", err)
 	}
 	return s.startGroupedUpload(ctx, user, chatID, messageID, ids)
 }
@@ -306,12 +409,33 @@ func (s *Service) DriveConnected(ctx context.Context, user UserID) (bool, error)
 	return ok, nil
 }
 
-// RetryBackup re-enqueues a single document's Drive upload.
+// RetryBackup re-enqueues a failed document's Drive upload. Any other state
+// (done, in flight, already retried) or a foreign document returns ErrNotRetryable.
 func (s *Service) RetryBackup(ctx context.Context, user UserID, id DocumentID) error {
-	if err := s.uploads.EnqueueUpload(ctx, user, id); err != nil {
-		return fmt.Errorf("enqueue upload: %w", err)
+	queued, err := s.claimAndRequeue(ctx, user, id)
+	if err != nil {
+		return err
+	}
+	if !queued {
+		return ErrNotRetryable
 	}
 	return nil
+}
+
+// claimAndRequeue atomically moves a failed document to pending and queues its
+// upload. queued is false when the document was not failed (nothing is done).
+func (s *Service) claimAndRequeue(ctx context.Context, user UserID, id DocumentID) (queued bool, err error) {
+	claimed, err := s.repo.ClaimFailed(ctx, user, id)
+	if err != nil {
+		return false, fmt.Errorf("claim failed upload: %w", err)
+	}
+	if !claimed {
+		return false, nil
+	}
+	if err := s.uploads.RequeueUpload(ctx, user, id); err != nil {
+		return false, fmt.Errorf("requeue upload: %w", err)
+	}
+	return true, nil
 }
 
 // Settings reports the Drive connection and the user's document counts for /settings.
@@ -338,8 +462,11 @@ func (s *Service) Settings(ctx context.Context, user UserID) (SettingsView, erro
 	return view, nil
 }
 
-// Disconnect turns Drive off at the user's request (best-effort), cancels the
-// user's pending uploads and resets stuck documents back to Telegram-only.
+// Disconnect turns Drive off at the user's request, cancels the user's pending
+// uploads and resets stuck documents back to Telegram-only. Google failures are
+// already swallowed below this layer, so a Drive error means the local
+// integration status was not updated (still active): it is returned before
+// anything is cancelled.
 func (s *Service) Disconnect(ctx context.Context, user UserID) error {
 	if err := s.drive.Disconnect(ctx, user); err != nil {
 		return fmt.Errorf("disconnect drive: %w", err)
@@ -353,17 +480,20 @@ func (s *Service) Disconnect(ctx context.Context, user UserID) error {
 	return nil
 }
 
-// DeleteAllData revokes Drive access, cancels pending uploads and deletes all of the
-// user's data, then soft-deletes the user.
+// DeleteAllData revokes Drive access, cancels pending uploads and deletes all of
+// the user's data, then soft-deletes the user. A failing revoke does not block
+// the deletion: it is reported afterwards as ErrRevokeIncomplete, which callers
+// treat as success.
 func (s *Service) DeleteAllData(ctx context.Context, user UserID) error {
-	if err := s.drive.Revoke(ctx, user); err != nil {
-		return fmt.Errorf("revoke drive access: %w", err)
-	}
+	revokeErr := s.drive.Revoke(ctx, user)
 	if err := s.uploads.CancelUploads(ctx, user); err != nil {
 		return fmt.Errorf("cancel uploads: %w", err)
 	}
 	if err := s.repo.DeleteUserData(ctx, user); err != nil {
 		return fmt.Errorf("delete user data: %w", err)
+	}
+	if revokeErr != nil {
+		return fmt.Errorf("revoke drive access: %w: %w", ErrRevokeIncomplete, revokeErr)
 	}
 	return nil
 }
@@ -371,9 +501,9 @@ func (s *Service) DeleteAllData(ctx context.Context, user UserID) error {
 // RetryFailed re-queues every failed Drive upload under one transfer status
 // message that takes over the given Telegram message. ok is false when nothing failed.
 func (s *Service) RetryFailed(ctx context.Context, user UserID, chatID int64, messageID int) (StatusView, bool, error) {
-	ids, err := s.repo.FailedIDs(ctx, user)
+	ids, err := s.repo.ClaimAllFailed(ctx, user)
 	if err != nil {
-		return StatusView{}, false, fmt.Errorf("list failed: %w", err)
+		return StatusView{}, false, fmt.Errorf("claim failed: %w", err)
 	}
 	return s.startGroupedUpload(ctx, user, chatID, messageID, ids)
 }
@@ -397,6 +527,11 @@ func (s *Service) Card(ctx context.Context, user UserID, id DocumentID) (Card, e
 	if err != nil {
 		return Card{}, fmt.Errorf("load document: %w", err)
 	}
+	if doc.InDrive() {
+		// The file may sit in an older category folder (it is not moved on
+		// recategorize), so link only to the file itself.
+		return Card{Doc: doc}, nil
+	}
 	folderID, _, err := s.folders.CategoryFolderID(ctx, user, doc.Category)
 	if err != nil {
 		return Card{}, fmt.Errorf("category folder: %w", err)
@@ -404,9 +539,9 @@ func (s *Service) Card(ctx context.Context, user UserID, id DocumentID) (Card, e
 	return Card{Doc: doc, CategoryFolderID: folderID}, nil
 }
 
-// Rename changes a document's title to a non-blank value.
+// Rename changes a document's title to a normalized, non-blank value.
 func (s *Service) Rename(ctx context.Context, user UserID, id DocumentID, title string) (Card, error) {
-	title = strings.TrimSpace(title)
+	title = NormalizeTitle(title)
 	if title == "" {
 		return Card{}, ErrEmptyTitle
 	}
@@ -421,11 +556,24 @@ func (s *Service) Recategorize(ctx context.Context, user UserID, id DocumentID, 
 	if !cat.Valid() {
 		return Card{}, ErrUnknownCategory
 	}
+	old, err := s.repo.DocumentByID(ctx, user, id)
+	if err != nil {
+		return Card{}, fmt.Errorf("load document: %w", err)
+	}
 	if err := s.repo.SetCategory(ctx, user, id, cat); err != nil {
 		return Card{}, fmt.Errorf("recategorize document: %w", err)
 	}
-	// TODO(#11): if backed up, move the file to the new Drive folder.
-	return s.Card(ctx, user, id)
+	card, err := s.Card(ctx, user, id)
+	if err != nil {
+		return Card{}, err
+	}
+	// The file is not moved on Drive (deferred to #11): it stays in its old folder.
+	// The card links to the file itself, and the new category's folder would mislead.
+	if card.Doc.InDrive() && old.Category != cat {
+		card.FileInOldFolder = true
+		card.CategoryFolderID = ""
+	}
+	return card, nil
 }
 
 // Delete removes a document, scoped to the user.
@@ -491,9 +639,16 @@ func (s *Service) CategoryPage(ctx context.Context, user UserID, cat Category, p
 	}, nil
 }
 
-// Search finds up to searchLimit saved documents matching query.
+// Search finds up to searchLimit saved documents matching query. The query is
+// trimmed and cut to maxQueryRunes; a blank one is not searched (BlankQuery).
 func (s *Service) Search(ctx context.Context, user UserID, query string) (Found, error) {
 	query = strings.TrimSpace(query)
+	if r := []rune(query); len(r) > maxQueryRunes {
+		query = strings.TrimSpace(string(r[:maxQueryRunes]))
+	}
+	if query == "" {
+		return Found{BlankQuery: true}, nil
+	}
 	docs, err := s.repo.Search(ctx, user, query, searchLimit)
 	if err != nil {
 		return Found{}, fmt.Errorf("search documents: %w", err)
@@ -524,4 +679,13 @@ func clamp(v, lo, hi int) int {
 	default:
 		return v
 	}
+}
+
+// defaultLocation is the zone for default-title dates: Asia/Almaty, or a fixed
+// UTC+5 if the zone database is unavailable.
+func defaultLocation() *time.Location {
+	if loc, err := time.LoadLocation("Asia/Almaty"); err == nil {
+		return loc
+	}
+	return time.FixedZone("UTC+5", 5*60*60)
 }
