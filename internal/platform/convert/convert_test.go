@@ -150,3 +150,33 @@ func TestCompress_errors(t *testing.T) {
 		})
 	}
 }
+
+// jpegHeader returns SOI, a JFIF marker and a baseline SOF0 segment claiming
+// the given size and nothing else: DecodeConfig accepts it (it stops at SOF
+// only for JFIF files), a full decode cannot.
+func jpegHeader(w, h int) []byte {
+	return []byte{
+		0xFF, 0xD8, // SOI
+		0xFF, 0xE0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, // APP0
+		0xFF, 0xC0, 0x00, 0x0B, 0x08, // SOF0, length 11, 8-bit precision
+		byte(h >> 8), byte(h), byte(w >> 8), byte(w),
+		0x01, 0x01, 0x11, 0x00, // one component
+	}
+}
+
+func TestPixelBomb_rejectedBeforeDecode(t *testing.T) {
+	// Both headers declare ~2 GP (4 GB of RGBA) in a few dozen bytes.
+	bombs := map[string][]byte{
+		"png":  pngHeader(60_000, 60_000),
+		"jpeg": jpegHeader(60_000, 60_000),
+	}
+	for name, data := range bombs {
+		t.Run(name, func(t *testing.T) {
+			require.Less(t, len(data), 100)
+			_, err := ImagesToPDF([][]byte{data})
+			require.ErrorIs(t, err, ErrImageTooLarge)
+			_, err = Compress(data, 10_000, JPEG)
+			require.ErrorIs(t, err, ErrImageTooLarge)
+		})
+	}
+}

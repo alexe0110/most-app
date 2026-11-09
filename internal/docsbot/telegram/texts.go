@@ -37,6 +37,7 @@ const (
 	textDeleted         = "Документ удалён 🗑"
 	textDeleteCancelled = "Удаление отменено."
 	textGone            = "Этого документа уже нет."
+	textStale           = "Кнопка устарела, открой заново."
 
 	// Callback toasts.
 	toastSending = "Отправляю…"

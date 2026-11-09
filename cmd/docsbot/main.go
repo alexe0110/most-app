@@ -67,10 +67,11 @@ func run() error {
 
 	workers := river.NewWorkers()
 	purge := jobs.RegisterPurgeUsers(workers, pool, log)
+	purgeStates := jobs.RegisterPurgeOAuthStates(workers, pool, log)
 	bindUpload := docjobs.RegisterUploadDocument(workers, log)
 	bindSweep, sweepPeriodic := docjobs.RegisterSweepUploads(workers, log)
 	bindPurgePending, purgePendingPeriodic := docjobs.RegisterPurgePending(workers, log)
-	queue, err := jobs.New(pool, log, workers, map[string]river.QueueConfig{docjobs.UploadQueue: {MaxWorkers: 1}}, purge, sweepPeriodic, purgePendingPeriodic) // started below, once wired
+	queue, err := jobs.New(pool, log, workers, map[string]river.QueueConfig{docjobs.UploadQueue: {MaxWorkers: 1}}, purge, purgeStates, sweepPeriodic, purgePendingPeriodic) // started below, once wired
 	if err != nil {
 		return err
 	}

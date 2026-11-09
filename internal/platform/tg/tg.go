@@ -38,6 +38,10 @@ const (
 // ErrFileTooLarge means the file is above the Bot API download limit (20 MB).
 var ErrFileTooLarge = errors.New("tg: file exceeds download limit")
 
+// ErrBlocked means Telegram refused delivery with 403: the user blocked the bot
+// or deactivated their account. It is permanent, so callers must not retry.
+var ErrBlocked = errors.New("tg: bot blocked by user")
+
 // Config carries the Telegram settings resolved from the environment.
 type Config struct {
 	Token         string
@@ -111,7 +115,7 @@ func (b *Bot) Send(ctx context.Context, chatID int64, text string) error {
 	_, err := b.api.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text})
 	b.trace(ctx, "sendMessage", start, err)
 	if err != nil {
-		return fmt.Errorf("send message: %w", err)
+		return b.sendErr(ctx, "send message", err)
 	}
 	return nil
 }
@@ -123,7 +127,7 @@ func (b *Bot) SendMarkup(ctx context.Context, chatID int64, text string, markup 
 	_, err := b.api.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ReplyMarkup: markup})
 	b.trace(ctx, "sendMessage", start, err)
 	if err != nil {
-		return fmt.Errorf("send message: %w", err)
+		return b.sendErr(ctx, "send message", err)
 	}
 	return nil
 }
@@ -137,7 +141,7 @@ func (b *Bot) SendHTML(ctx context.Context, chatID int64, text string, markup mo
 	})
 	b.trace(ctx, "sendMessage", start, err)
 	if err != nil {
-		return 0, fmt.Errorf("send message: %w", err)
+		return 0, b.sendErr(ctx, "send message", err)
 	}
 	return res.ID, nil
 }
@@ -151,7 +155,7 @@ func (b *Bot) EditHTML(ctx context.Context, chatID int64, messageID int, text st
 	})
 	b.trace(ctx, "editMessageText", start, err)
 	if err != nil {
-		return fmt.Errorf("edit message: %w", err)
+		return b.sendErr(ctx, "edit message", err)
 	}
 	return nil
 }
@@ -217,6 +221,16 @@ func (b *Bot) Download(ctx context.Context, fileID string) (data []byte, mime st
 		return nil, "", ErrFileTooLarge
 	}
 	return data, resp.Header.Get("Content-Type"), nil
+}
+
+// sendErr wraps a failed outgoing call. A 403 becomes ErrBlocked and is logged
+// once here at Warn (no ids, no content); callers should not log it again.
+func (b *Bot) sendErr(ctx context.Context, what string, err error) error {
+	if errors.Is(err, bot.ErrorForbidden) {
+		b.log.WarnContext(ctx, "telegram refused delivery: bot blocked by user", "op", what)
+		return fmt.Errorf("%s: %w", what, ErrBlocked)
+	}
+	return fmt.Errorf("%s: %w", what, err)
 }
 
 // trace logs one Telegram API call at Debug: the method and timing, never

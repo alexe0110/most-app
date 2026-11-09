@@ -193,6 +193,12 @@ func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.applyRename(ctx, b, chatID, user, id, chat, msg, u.Message.Text)
 		return
 	}
+	// A reply to the rename prompt with no armed rename: the bot restarted or
+	// the rename expired. Don't treat the new name as a search query.
+	if rp := u.Message.ReplyToMessage; rp != nil && rp.Text == textRenamePrompt {
+		reply(ctx, b, d.log, chatID, textStale)
+		return
+	}
 	d.searches.set(u.Message.From.ID, u.Message.Text)
 	d.runSearch(ctx, b, chatID, user, u.Message.Text)
 }

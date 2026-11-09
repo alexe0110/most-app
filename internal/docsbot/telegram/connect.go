@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -110,10 +111,13 @@ func (n *Notifier) UploadOutcome(ctx context.Context, user docsbot.UserID, doc d
 	case strings.Contains(msg, "message to edit not found"), strings.Contains(msg, "message can't be edited"):
 		mid, serr := n.bot.SendHTML(ctx, view.Message.ChatID, text, kb)
 		if serr != nil {
-			n.log.ErrorContext(ctx, "resend status message", "err", serr, "user_id", user)
+			if !errors.Is(serr, tg.ErrBlocked) { // a block is already logged at Warn by tg.Bot
+				n.log.ErrorContext(ctx, "resend status message", "err", serr, "user_id", user)
+			}
 		} else if uerr := n.svc.SetStatusMessageID(ctx, user, view.Message.ID, mid); uerr != nil {
 			n.log.ErrorContext(ctx, "save status message id", "err", uerr, "user_id", user)
 		}
+	case errors.Is(err, tg.ErrBlocked): // already logged at Warn by tg.Bot
 	default:
 		n.log.ErrorContext(ctx, "edit status message", "err", err, "user_id", user)
 	}
