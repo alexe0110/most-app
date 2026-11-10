@@ -162,9 +162,9 @@ func TestStorageSync_renameRunsAndMarksOK(t *testing.T) {
 	require.Equal(t, []string{"Договор.pdf"}, drive.renamed())
 }
 
-// Changes made before the worker picks the job up collapse into one job, and
-// the worker applies the latest state.
-func TestStorageSync_queuedChangesCollapse(t *testing.T) {
+// Changes made before the worker picks the jobs up queue extra jobs, but the
+// worker applies the latest state once; the rest are no-ops.
+func TestStorageSync_queuedChangesApplyLatestOnce(t *testing.T) {
 	drive := &cloudDrive{fakeDrive: fakeDrive{}}
 	e := setupSync(t, drive)
 
@@ -174,7 +174,6 @@ func TestStorageSync_queuedChangesCollapse(t *testing.T) {
 	}
 	_, err := e.svc.Recategorize(t.Context(), e.user, e.id, docsbot.CatPassport)
 	require.NoError(t, err)
-	require.Equal(t, 1, e.jobCount(t, "storage_sync", "available"), "unique among queued jobs")
 
 	startQueue(t, e.queue)
 	require.Eventually(t, func() bool { return e.syncStatus(t) == "ok" }, 30*time.Second, 100*time.Millisecond)

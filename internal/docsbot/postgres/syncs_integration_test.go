@@ -5,6 +5,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,10 +28,21 @@ type syncEnv struct {
 func newSyncEnv(t *testing.T) syncEnv {
 	t.Helper()
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool)
-	a := makeUser(t, repo, 801)
-	b := makeUser(t, repo, 802)
-	return syncEnv{pool: pool, repo: repo, user: docsbot.UserID(a.ID.String()), otherUser: docsbot.UserID(b.ID.String())}
+	return syncEnv{pool: pool, repo: postgres.NewRepo(pool)}.fresh(t)
+}
+
+// userSeq gives every fresh pair of users distinct Telegram ids.
+var userSeq atomic.Int64
+
+// fresh returns the env on the same database with two new users, so table
+// subtests share one container yet never see each other's documents.
+func (e syncEnv) fresh(t *testing.T) syncEnv {
+	t.Helper()
+	n := 10_000 + 2*userSeq.Add(1)
+	a := makeUser(t, e.repo, n)
+	b := makeUser(t, e.repo, n+1)
+	e.user, e.otherUser = docsbot.UserID(a.ID.String()), docsbot.UserID(b.ID.String())
+	return e
 }
 
 // seed inserts a saved document with the given states and returns its id.
@@ -78,6 +90,9 @@ func (e syncEnv) exists(t *testing.T, id docsbot.DocumentID) bool {
 
 // marker is the "job insert": it writes a row through the same transaction so a
 // test can tell whether it committed or rolled back with the document change.
+// markerSeq keeps the marker rows of all markers unique.
+var markerSeq atomic.Int64
+
 type marker struct {
 	pool  *pgxpool.Pool
 	calls int
@@ -86,7 +101,7 @@ type marker struct {
 
 func (m *marker) insert(ctx context.Context, tx pgx.Tx) error {
 	m.calls++
-	if _, err := tx.Exec(ctx, `insert into users (tg_user_id) values (9000 + $1)`, m.calls); err != nil {
+	if _, err := tx.Exec(ctx, `insert into users (tg_user_id) values ($1)`, 9000+markerSeq.Add(1)); err != nil {
 		return err
 	}
 	return m.fail
@@ -101,7 +116,7 @@ func (m *marker) deleteDoc(ctx context.Context, repo *postgres.Repo, user docsbo
 func (m *marker) committed(t *testing.T) int {
 	t.Helper()
 	var n int
-	require.NoError(t, m.pool.QueryRow(t.Context(), `select count(*) from users where tg_user_id >= 9000`).Scan(&n))
+	require.NoError(t, m.pool.QueryRow(t.Context(), `select count(*) from users where tg_user_id between 9000 and 9999`).Scan(&n))
 	return n
 }
 
@@ -122,9 +137,10 @@ func TestSyncs_titleAndCategoryDecideSyncInSQL(t *testing.T) {
 		{"not on drive", "none", "ok", false, "ok"},
 		{"failed upload", "failed", "ok", false, "ok"},
 	}
+	shared := newSyncEnv(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := newSyncEnv(t)
+			e := shared.fresh(t)
 			ctx := t.Context()
 
 			titleDoc := e.seed(t, e.user, "t", tt.backup, tt.sync)
@@ -136,7 +152,7 @@ func TestSyncs_titleAndCategoryDecideSyncInSQL(t *testing.T) {
 			require.Equal(t, "Новое", r.Title)
 			require.Equal(t, tt.wantSync, r.Sync)
 			require.Equal(t, 1, r.Meta)
-			require.Equal(t, btoi(tt.wantQueued), m.committed(t), "job inserted exactly when queued")
+			require.Equal(t, btoi(tt.wantQueued), m.calls, "job inserted exactly when queued")
 
 			catDoc := e.seed(t, e.user, "c", tt.backup, tt.sync)
 			m2 := &marker{pool: e.pool}
@@ -185,7 +201,7 @@ func TestSyncs_failedInsertRollsBackTheChange(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 	require.Equal(t, "failed", e.row(t, failed).Sync)
 
-	in := docsbot.IncomingFile{FileID: "new", FileUniqueID: "new-u", FileSize: 5, MIME: "application/pdf"}
+	in := docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "new", FileUniqueID: "new-u", FileSize: 5, MIME: "application/pdf"}
 	replaced, err := e.repo.ReplaceContentForSync(ctx, e.user, id, in, true, m.insert)
 	require.ErrorIs(t, err, boom)
 	require.False(t, replaced)
@@ -206,9 +222,10 @@ func TestSyncs_markBackedUpComparesVersion(t *testing.T) {
 		{"renamed during upload", 1, true, "pending"},
 		{"renamed twice during upload", 2, true, "pending"},
 	}
+	shared := newSyncEnv(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := newSyncEnv(t)
+			e := shared.fresh(t)
 			ctx := t.Context()
 			id := e.seed(t, e.user, "a", "uploading", "ok")
 			start := e.row(t, id).Meta
@@ -265,7 +282,7 @@ func TestSyncs_scopedByUser(t *testing.T) {
 	queued, err := e.repo.RetrySyncJob(ctx, e.otherUser, id, m.insert)
 	require.NoError(t, err)
 	require.False(t, queued)
-	replaced, err := e.repo.ReplaceContentForSync(ctx, e.otherUser, id, docsbot.IncomingFile{FileID: "x", FileUniqueID: "xu"}, true, m.insert)
+	replaced, err := e.repo.ReplaceContentForSync(ctx, e.otherUser, id, docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "x", FileUniqueID: "xu"}, true, m.insert)
 	require.NoError(t, err)
 	require.False(t, replaced)
 	require.ErrorIs(t, m.deleteDoc(ctx, e.repo, e.otherUser, id), docsbot.ErrNotFound)
@@ -292,9 +309,10 @@ func TestSyncs_enqueueSyncGuards(t *testing.T) {
 		{"missing file", "backed_up", "missing", 0, "missing"},
 		{"not backed up", "pending", "ok", 0, "ok"},
 	}
+	shared := newSyncEnv(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := newSyncEnv(t)
+			e := shared.fresh(t)
 			id := e.seed(t, e.user, "a", tt.backup, tt.sync)
 			m := &marker{pool: e.pool}
 
@@ -305,7 +323,7 @@ func TestSyncs_enqueueSyncGuards(t *testing.T) {
 		})
 	}
 	t.Run("gone document", func(t *testing.T) {
-		e := newSyncEnv(t)
+		e := shared.fresh(t)
 		m := &marker{pool: e.pool}
 		require.NoError(t, e.repo.EnqueueSyncJob(t.Context(), e.user, "00000000-0000-0000-0000-000000000001", m.insert))
 		require.Zero(t, m.calls)
@@ -341,7 +359,7 @@ func TestSyncs_deleteAndInsert(t *testing.T) {
 }
 
 func TestSyncs_replaceContentGuards(t *testing.T) {
-	in := docsbot.IncomingFile{FileID: "new", FileUniqueID: "new-u", FileSize: 77, MIME: "application/pdf"}
+	in := docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "new", FileUniqueID: "new-u", FileSize: 77, MIME: "application/pdf"}
 	tests := []struct {
 		name, backup, sync string
 		wantReplaced       bool
@@ -359,9 +377,10 @@ func TestSyncs_replaceContentGuards(t *testing.T) {
 		{"failed upload", "failed", "ok", true, 0, false, "ok"},
 		{"too large", "too_large", "ok", true, 0, false, "ok"},
 	}
+	shared := newSyncEnv(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := newSyncEnv(t)
+			e := shared.fresh(t)
 			id := e.seed(t, e.user, "a", tt.backup, tt.sync)
 			m := &marker{pool: e.pool}
 
@@ -393,7 +412,7 @@ func TestSyncs_replaceContentDuplicateFile(t *testing.T) {
 	m := &marker{pool: e.pool}
 
 	replaced, err := e.repo.ReplaceContentForSync(t.Context(), e.user, id,
-		docsbot.IncomingFile{FileID: "x", FileUniqueID: "taken"}, true, m.insert)
+		docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "x", FileUniqueID: "taken"}, true, m.insert)
 
 	require.ErrorIs(t, err, docsbot.ErrDuplicateFile)
 	require.False(t, replaced)
@@ -403,7 +422,7 @@ func TestSyncs_replaceContentDuplicateFile(t *testing.T) {
 	// The same file id under another user is not a duplicate.
 	e.seed(t, e.otherUser, "other-user-file", "none", "ok")
 	replaced, err = e.repo.ReplaceContentForSync(t.Context(), e.user, id,
-		docsbot.IncomingFile{FileID: "y", FileUniqueID: "other-user-file"}, true, m.insert)
+		docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "y", FileUniqueID: "other-user-file"}, true, m.insert)
 	require.NoError(t, err)
 	require.True(t, replaced)
 }

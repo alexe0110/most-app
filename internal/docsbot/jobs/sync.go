@@ -9,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
-	"github.com/riverqueue/river/rivertype"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
@@ -98,25 +97,16 @@ func RegisterStorageSync(workers *river.Workers, log *slog.Logger) func(Syncer, 
 	return func(svc Syncer, n SyncNotifier) { w.svc, w.notify = svc, n }
 }
 
-// syncInsertOpts makes a sync job unique by args among queued states only. A
-// running job is excluded on purpose: a change made while it runs must queue a
-// follow-up, because the running job may already have read the old state.
+// syncInsertOpts leaves jobs non-unique on purpose. River's unique option must
+// cover the running state, which would drop a follow-up queued while a sync runs
+// (the running job may already have read the old state). The worker is
+// idempotent and exits early when the document is in sync, so a burst of changes
+// costs a few no-op jobs, not extra cloud calls.
 func syncInsertOpts() *river.InsertOpts {
-	return &river.InsertOpts{
-		Queue: UploadQueue,
-		UniqueOpts: river.UniqueOpts{
-			ByArgs: true,
-			ByState: []rivertype.JobState{
-				rivertype.JobStateAvailable,
-				rivertype.JobStatePending,
-				rivertype.JobStateScheduled,
-				rivertype.JobStateRetryable,
-			},
-		},
-	}
+	return &river.InsertOpts{Queue: UploadQueue}
 }
 
-// insertSync enqueues a sync job inside tx; a duplicate of a queued one is fine.
+// insertSync enqueues a sync job inside tx. Duplicates are fine: see syncInsertOpts.
 func (e *Enqueuer) insertSync(user docsbot.UserID, id docsbot.DocumentID) func(ctx context.Context, tx pgx.Tx) error {
 	return func(ctx context.Context, tx pgx.Tx) error {
 		_, err := e.queue.InsertTx(ctx, tx, StorageSyncArgs{UserID: string(user), DocumentID: string(id)}, syncInsertOpts())
