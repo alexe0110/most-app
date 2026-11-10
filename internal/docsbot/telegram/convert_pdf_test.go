@@ -251,5 +251,5 @@ func TestConvert_resultWithoutStoredFileLosesButtons(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":rot"))
 
 	require.Len(t, h.docs, 1)
-	require.Equal(t, 1, h.edits, "the dead buttons are removed")
+	require.Equal(t, 2, h.edits, "the menu and the dead result buttons are removed")
 }

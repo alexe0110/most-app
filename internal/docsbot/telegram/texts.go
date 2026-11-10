@@ -156,7 +156,6 @@ const (
 	textConvertFormatNotSupported = "Этот формат пока не поддерживается. Пришли JPG, PNG или WEBP."
 	textConvertFailed             = "Не удалось обработать изображение. Проверь, что это JPEG, PNG или WEBP."
 
-	textConvertExpired   = "Сессия конвертера истекла. Начни заново: /convert."
 	textConvertCancelled = "Режим конвертера выключен."
 	textConvertNothing   = "Сейчас нечего отменять."
 

@@ -51,6 +51,7 @@ func (c *converter) onPDFOp(ctx context.Context, b *bot.Bot, update *models.Upda
 			return
 		}
 		c.log.InfoContext(ctx, "pdf converted", "user_id", user, "doc_id", doc.ID, "op", op, "in_bytes", len(src), "out_bytes", len(out))
+		c.clearButtons(ctx, b, update, chatID)
 		c.sendResult(ctx, b, chatID, tgUser, resultName(doc.Title, suffixEdited, "document", "pdf"), out, doc.ID, suffixEdited)
 		return
 	}
@@ -76,7 +77,8 @@ func (c *converter) onPDFOp(ctx context.Context, b *bot.Bot, update *models.Upda
 		s.sourceDoc, s.sourceTitle = doc.ID, doc.Title
 		s.pdfs, s.pdfBytes = []pdfPart{{fileID: doc.TgFileID, size: len(src)}}, len(src)
 	})
-	sendMarkup(ctx, b, c.log, chatID, prompt, kb)
+	c.clearButtons(ctx, b, update, chatID)
+	c.sessions.setMsg(tgUser, c.send(ctx, b, chatID, prompt, kb))
 }
 
 // onRange applies the typed page range to the session's PDF. The session is
@@ -85,7 +87,7 @@ func (c *converter) onPDFOp(ctx context.Context, b *bot.Bot, update *models.Upda
 func (c *converter) onRange(ctx context.Context, b *bot.Bot, update *models.Update) {
 	tgUser, _ := messageUser(update)
 	chatID := update.Message.Chat.ID
-	sess, ok := c.sessions.claim(tgUser, stepAwaitRange)
+	sess, ok := c.sessions.claim(tgUser, 0, stepAwaitRange)
 	if !ok || len(sess.pdfs) == 0 {
 		return
 	}
@@ -112,6 +114,7 @@ func (c *converter) onRange(ctx context.Context, b *bot.Bot, update *models.Upda
 		return
 	}
 	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", sess.sourceDoc, "op", sess.pdfOp, "in_bytes", len(src), "out_bytes", len(out))
+	c.stripKeyboard(ctx, b, chatID, sess.msgID)
 	c.sendResult(ctx, b, chatID, tgUser, resultName(sess.sourceTitle, suffixEdited, "document", "pdf"), out, sess.sourceDoc, suffixEdited)
 }
 
@@ -169,9 +172,10 @@ func (c *converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 
 // finishMerge joins the collected PDFs. The session is claimed first, so a
 // double «Готово» runs the merge once.
-func (c *converter) finishMerge(ctx context.Context, b *bot.Bot, tgUser, chatID int64) {
-	sess, ok := c.sessions.claim(tgUser, stepMergePDF)
+func (c *converter) finishMerge(ctx context.Context, b *bot.Bot, update *models.Update, tgUser, chatID int64) {
+	sess, ok := c.sessions.claim(tgUser, callbackMessageID(update), stepMergePDF)
 	if !ok {
+		c.stale(ctx, b, update, chatID)
 		return
 	}
 	uid, _ := userID(ctx)
@@ -206,6 +210,7 @@ func (c *converter) finishMerge(ctx context.Context, b *bot.Bot, tgUser, chatID 
 		return
 	}
 	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", sess.sourceDoc, "op", opMerge, "files", len(files), "out_bytes", len(out))
+	c.clearButtons(ctx, b, update, chatID)
 	c.sendResult(ctx, b, chatID, tgUser, resultName(sess.sourceTitle, suffixEdited, "document", "pdf"), out, sess.sourceDoc, suffixEdited)
 }
 

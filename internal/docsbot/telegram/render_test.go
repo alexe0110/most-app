@@ -133,11 +133,11 @@ func TestHumanSize(t *testing.T) {
 
 func TestCardKeyboard_backButton(t *testing.T) {
 	doc := docsbot.Document{ID: "1"}
-	require.Len(t, cardKeyboard(doc, "", "").InlineKeyboard, 2)
+	require.Len(t, cardKeyboard(doc, "", "").InlineKeyboard, 3)
 	rows := cardKeyboard(doc, "", "s").InlineKeyboard
-	require.Len(t, rows, 3)
-	require.Equal(t, btnBack, rows[2][0].Text)
-	require.Equal(t, "d:sb", rows[2][0].CallbackData)
+	require.Len(t, rows, 4)
+	require.Equal(t, btnBack, rows[3][0].Text)
+	require.Equal(t, "d:sb", rows[3][0].CallbackData)
 }
 
 func TestBackFromOrig(t *testing.T) {
@@ -166,12 +166,13 @@ func TestCardKeyboard_folderButton(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			top := cardKeyboard(doc, tt.folderID, "").InlineKeyboard[0]
 			var found bool
-			for _, btn := range top {
-				if btn.Text == btnOpenFolder {
-					found = true
-					require.Equal(t, "https://drive.google.com/drive/folders/fld", btn.URL)
+			for _, row := range cardKeyboard(doc, tt.folderID, "").InlineKeyboard {
+				for _, btn := range row {
+					if btn.Text == btnOpenFolder {
+						found = true
+						require.Equal(t, "https://drive.google.com/drive/folders/fld", btn.URL)
+					}
 				}
 			}
 			require.Equal(t, tt.want, found)
@@ -228,7 +229,7 @@ func TestCardKeyboard_folderWithoutDrive(t *testing.T) {
 			require.NotEqual(t, btnOpenDrive, btn.Text)
 		}
 	}
-	require.Len(t, cardKeyboard(doc, "fld", "").InlineKeyboard[0], 2) // send + folder
+	require.Equal(t, btnOpenFolder, cardKeyboard(doc, "fld", "").InlineKeyboard[1][0].Text) // its own row
 }
 
 func statusDoc(title string, st docsbot.BackupStatus) docsbot.Document {
@@ -316,13 +317,13 @@ func TestRenderStatusMessage_single(t *testing.T) {
 	require.Contains(t, text, "Категория: Паспорт и ID")
 	require.Contains(t, text, "⏳ Загружаю в Drive…")
 	require.Equal(t, cb(actSend, "d"), kb.InlineKeyboard[0][0].CallbackData)
-	require.Len(t, kb.InlineKeyboard, 2, "card buttons only")
+	require.Len(t, kb.InlineKeyboard, 3, "card buttons only")
 
 	text, kb = renderStatusMessage(sm, []docsbot.Document{statusDoc("a.pdf", docsbot.BackupBackedUp)},
 		map[docsbot.Category]string{docsbot.CatPassport: "FOLD"})
 	require.Contains(t, text, "☁️ В Google Drive")
 	require.Equal(t, btnOpenDrive, kb.InlineKeyboard[0][1].Text)
-	require.Equal(t, btnOpenFolder, kb.InlineKeyboard[0][2].Text)
+	require.Equal(t, btnOpenFolder, kb.InlineKeyboard[1][0].Text)
 
 	_, kb = renderStatusMessage(sm, []docsbot.Document{statusDoc("a.pdf", docsbot.BackupFailed)}, nil)
 	last := kb.InlineKeyboard[len(kb.InlineKeyboard)-1]
@@ -486,7 +487,7 @@ func TestRender_longTitlesAreTruncated(t *testing.T) {
 
 func TestCardKeyboard_noBackWithoutOrigin(t *testing.T) {
 	kb := cardKeyboard(docsbot.Document{ID: "1"}, "", "")
-	require.Len(t, kb.InlineKeyboard, 2)
+	require.Len(t, kb.InlineKeyboard, 3)
 	require.Contains(t, kb.InlineKeyboard[1][0].Text, "Имя")
 }
 
@@ -542,5 +543,26 @@ func TestPlural(t *testing.T) {
 	}
 	for _, tt := range tests {
 		require.Equal(t, tt.want, plural(tt.n, "файл", "файла", "файлов"), "n=%d", tt.n)
+	}
+}
+
+func TestCardKeyboard_atMostTwoButtonsPerRow(t *testing.T) {
+	tests := []struct {
+		name     string
+		doc      docsbot.Document
+		folderID string
+		orig     string
+	}{
+		{"plain", docsbot.Document{ID: "1"}, "", ""},
+		{"in drive with folder", docsbot.Document{ID: "1", BackupStatus: docsbot.BackupBackedUp, DriveFileID: "f"}, "fld", ""},
+		{"convertible with back", docsbot.Document{ID: "1", Kind: docsbot.KindPhoto}, "", "s"},
+		{"everything", docsbot.Document{ID: "1", Kind: docsbot.KindPhoto, BackupStatus: docsbot.BackupBackedUp, DriveFileID: "f"}, "fld", "l:auto:1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, row := range cardKeyboard(tt.doc, tt.folderID, tt.orig).InlineKeyboard {
+				require.LessOrEqual(t, len(row), 2)
+			}
+		})
 	}
 }

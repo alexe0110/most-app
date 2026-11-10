@@ -3,6 +3,7 @@ package telegram
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -37,6 +38,7 @@ type pendingImage struct {
 // session is one user's in-progress conversion, held only in memory.
 type session struct {
 	step     step
+	msgID    int // the dialogue message whose buttons drive the session; 0 until known
 	images   []pendingImage
 	maxBytes int
 	updated  time.Time
@@ -115,14 +117,59 @@ func (s *sessionStore) start(user int64) {
 	s.byUser[user] = &session{step: stepChooseAction, updated: s.now()}
 }
 
-// claim removes the user's session if it is live and at the given step, and
-// returns it. The caller owns it: a second concurrent claim finds nothing, so an
-// operation can't run twice. restore puts it back when the user can retry.
-func (s *sessionStore) claim(user int64, at step) (session, bool) {
+// msgMatches reports whether a press on message msgID belongs to the session's
+// dialogue message. Either id being 0 means unknown, which is accepted: real
+// Telegram message ids are never 0.
+func (s *session) msgMatches(msgID int) bool {
+	return msgID == 0 || s.msgID == 0 || s.msgID == msgID
+}
+
+// atStep reports whether the session is at one of the steps; no steps means any.
+func (s *session) atStep(steps []step) bool {
+	return len(steps) == 0 || slices.Contains(steps, s.step)
+}
+
+// check returns a copy of the user's live session if a press on message msgID
+// is valid for one of the steps (none means any step).
+func (s *sessionStore) check(user int64, msgID int, steps ...step) (session, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.liveLocked(user)
-	if !ok || sess.step != at {
+	if !ok || !sess.msgMatches(msgID) || !sess.atStep(steps) {
+		return session{}, false
+	}
+	return *sess, true
+}
+
+// advance validates a button press like check and, if valid, applies fn under
+// the same lock, so a double tap moves the session once. It returns a copy of
+// the updated session.
+func (s *sessionStore) advance(user int64, msgID int, from []step, fn func(*session)) (session, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.liveLocked(user)
+	if !ok || !sess.msgMatches(msgID) || !sess.atStep(from) {
+		return session{}, false
+	}
+	fn(sess)
+	sess.updated = s.now()
+	return *sess, true
+}
+
+// setMsg records the session's dialogue message.
+func (s *sessionStore) setMsg(user int64, msgID int) {
+	s.update(user, func(sess *session) { sess.msgID = msgID })
+}
+
+// claim removes the user's session if it is live, belongs to message msgID (0
+// skips the check) and is at one of the steps (none means any), and returns it.
+// The caller owns it: a second concurrent claim finds nothing, so an operation
+// can't run twice. restore puts it back when the user can retry.
+func (s *sessionStore) claim(user int64, msgID int, at ...step) (session, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.liveLocked(user)
+	if !ok || !sess.msgMatches(msgID) || !sess.atStep(at) {
 		return session{}, false
 	}
 	delete(s.byUser, user)

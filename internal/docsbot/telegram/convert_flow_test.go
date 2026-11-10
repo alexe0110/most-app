@@ -49,6 +49,8 @@ type convHarness struct {
 	files map[string][]byte
 	// noDocument makes sendDocument answer without the stored document.
 	noDocument bool
+	// nextMsg is the id of the next sent message (sendMessage answers with it).
+	nextMsg int
 }
 
 // serve makes fileID download as data.
@@ -60,7 +62,7 @@ func (h *convHarness) serve(fileID string, data []byte) {
 
 func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 	t.Helper()
-	h := &convHarness{files: map[string][]byte{}}
+	h := &convHarness{files: map[string][]byte{}, nextMsg: 100}
 
 	// The image every file download serves — a small, decodable JPEG.
 	img := image.NewRGBA(image.Rect(0, 0, 64, 48))
@@ -112,7 +114,11 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 			return
 		case strings.HasSuffix(path, "/sendMessage"):
 			h.captureMessage(r)
-			writeJSON(w, `{"ok":true,"result":{}}`)
+			h.mu.Lock()
+			h.nextMsg++
+			id := h.nextMsg
+			h.mu.Unlock()
+			writeJSON(w, fmt.Sprintf(`{"ok":true,"result":{"message_id":%d}}`, id))
 			return
 		default: // answerCallbackQuery, etc.
 			writeJSON(w, `{"ok":true,"result":{}}`)
@@ -239,6 +245,13 @@ func callbackUpdate(data string) *models.Update {
 			Message: &models.Message{Chat: models.Chat{ID: testChat, Type: models.ChatTypePrivate}},
 		},
 	}}
+}
+
+// callbackOn is callbackUpdate for a press on the message with the given id.
+func callbackOn(data string, msgID int) *models.Update {
+	u := callbackUpdate(data)
+	u.CallbackQuery.Message.Message.ID = msgID
+	return u
 }
 
 func TestConvert_photosToPDF(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-telegram/bot"
@@ -80,6 +81,11 @@ type converter struct {
 	now      func() time.Time
 	http     *http.Client
 
+	// inflight holds the menu messages (chatID:msgID) whose operation is running,
+	// so a double tap on the same menu does the work once.
+	inflightMu sync.Mutex
+	inflight   map[string]struct{}
+
 	svc *docsbot.Service
 	// renderSaved and sendAlreadySaved show what saving a result produced; the
 	// docs adapter owns that rendering.
@@ -100,6 +106,7 @@ func newConverter(
 		albums:           newAlbumStore(time.Now),
 		now:              time.Now,
 		http:             &http.Client{Timeout: downloadWait},
+		inflight:         map[string]struct{}{},
 		svc:              svc,
 		renderSaved:      renderSaved,
 		sendAlreadySaved: sendAlreadySaved,
@@ -124,7 +131,7 @@ func (c *converter) start(ctx context.Context, b *bot.Bot, update *models.Update
 		return
 	}
 	c.sessions.start(user)
-	sendMarkup(ctx, b, c.log, update.Message.Chat.ID, textConvertStart, actionKeyboard())
+	c.sessions.setMsg(user, c.send(ctx, b, update.Message.Chat.ID, textConvertStart, actionKeyboard()))
 }
 
 // cancel leaves converter mode.
@@ -222,19 +229,19 @@ func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Upda
 		}
 	})
 	if toCompress {
-		sendMarkup(ctx, b, c.log, chatID, textConvertChooseLimit, limitKeyboard())
+		c.sessions.setMsg(user, c.send(ctx, b, chatID, textConvertChooseLimit, limitKeyboard()))
 	}
 	// PDF mode collects silently; [Готово] builds the result.
 }
 
 // onText reads a typed custom size; other text just nudges to tap a button.
-func (c *converter) onText(ctx context.Context, b *bot.Bot, update *models.Update, step step) {
+func (c *converter) onText(ctx context.Context, b *bot.Bot, update *models.Update, at step) {
 	chatID := update.Message.Chat.ID
-	if step == stepAwaitRange {
+	if at == stepAwaitRange {
 		c.onRange(ctx, b, update)
 		return
 	}
-	if step != stepCustomLimit {
+	if at != stepCustomLimit {
 		reply(ctx, b, c.log, chatID, textConvertTapButton)
 		return
 	}
@@ -245,11 +252,13 @@ func (c *converter) onText(ctx context.Context, b *bot.Bot, update *models.Updat
 		return
 	}
 	user, _ := messageUser(update)
-	c.sessions.update(user, func(s *session) {
+	if _, ok := c.sessions.advance(user, 0, []step{stepCustomLimit}, func(s *session) {
 		s.maxBytes = kb * 1_024
 		s.step = stepChooseFormat
-	})
-	sendMarkup(ctx, b, c.log, chatID, textConvertChooseFormat, formatKeyboard())
+	}); !ok {
+		return
+	}
+	c.sessions.setMsg(user, c.send(ctx, b, chatID, textConvertChooseFormat, formatKeyboard()))
 }
 
 // callback handles a button press.
@@ -283,51 +292,112 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 	}
 
 	user := update.CallbackQuery.From.ID
-	if !c.sessions.has(user) {
-		reply(ctx, b, c.log, chatID, textConvertExpired)
-		return
-	}
-
-	switch update.CallbackQuery.Data {
+	msgID := callbackMessageID(update)
+	// Every session button is valid only on the dialogue message, at its own
+	// step; anything else is a stale press with no side effects.
+	switch data {
 	case cbPDF:
-		c.sessions.update(user, func(s *session) { s.step = stepCollectPDF })
-		sendMarkup(ctx, b, c.log, chatID, textConvertPDFPrompt, pdfKeyboard())
-	case cbCompress:
-		c.sessions.update(user, func(s *session) { s.step = stepAwaitImage })
-		sendMarkup(ctx, b, c.log, chatID, textConvertCompressPrompt, cancelKeyboard())
-	case cbDone:
-		if sess, ok := c.sessions.live(user); ok && sess.step == stepMergePDF {
-			c.finishMerge(ctx, b, user, chatID)
+		if _, ok := c.sessions.advance(user, msgID, []step{stepChooseAction}, func(s *session) { s.step = stepCollectPDF }); !ok {
+			c.stale(ctx, b, update, chatID)
 			return
 		}
-		c.finishPDF(ctx, b, user, chatID)
+		c.next(ctx, b, update, chatID, user, textConvertPDFPrompt, pdfKeyboard())
+	case cbCompress:
+		if _, ok := c.sessions.advance(user, msgID, []step{stepChooseAction}, func(s *session) { s.step = stepAwaitImage }); !ok {
+			c.stale(ctx, b, update, chatID)
+			return
+		}
+		c.next(ctx, b, update, chatID, user, textConvertCompressPrompt, cancelKeyboard())
+	case cbDone:
+		sess, ok := c.sessions.check(user, msgID, stepCollectPDF, stepMergePDF)
+		if !ok {
+			c.stale(ctx, b, update, chatID)
+			return
+		}
+		if sess.step == stepMergePDF {
+			c.finishMerge(ctx, b, update, user, chatID)
+			return
+		}
+		c.finishPDF(ctx, b, update, user, chatID)
 	case cbCancel:
-		c.sessions.end(user)
+		if _, ok := c.sessions.claim(user, msgID); !ok {
+			c.stale(ctx, b, update, chatID)
+			return
+		}
+		c.clearButtons(ctx, b, update, chatID)
 		reply(ctx, b, c.log, chatID, textConvertCancelled)
 	case cbLimit1, cbLimit2, cbLimit5:
-		c.sessions.update(user, func(s *session) {
-			s.maxBytes = limitBytes(update.CallbackQuery.Data)
+		if _, ok := c.sessions.advance(user, msgID, []step{stepChooseLimit}, func(s *session) {
+			s.maxBytes = limitBytes(data)
 			s.step = stepChooseFormat
-		})
-		sendMarkup(ctx, b, c.log, chatID, textConvertChooseFormat, formatKeyboard())
+		}); !ok {
+			c.stale(ctx, b, update, chatID)
+			return
+		}
+		c.next(ctx, b, update, chatID, user, textConvertChooseFormat, formatKeyboard())
 	case cbLimitCustom:
-		c.sessions.update(user, func(s *session) { s.step = stepCustomLimit })
-		reply(ctx, b, c.log, chatID, textConvertCustomLimit)
+		if _, ok := c.sessions.advance(user, msgID, []step{stepChooseLimit}, func(s *session) { s.step = stepCustomLimit }); !ok {
+			c.stale(ctx, b, update, chatID)
+			return
+		}
+		c.next(ctx, b, update, chatID, user, textConvertCustomLimit, nil)
 	case cbFmtJPEG:
-		c.finishCompress(ctx, b, user, chatID, convert.JPEG)
+		c.finishCompress(ctx, b, update, user, chatID, convert.JPEG)
 	case cbFmtPNG:
-		c.finishCompress(ctx, b, user, chatID, convert.PNG)
+		c.finishCompress(ctx, b, update, user, chatID, convert.PNG)
+	default:
+		c.stale(ctx, b, update, chatID)
 	}
 }
 
-// finishPDF renders the collected photos into a PDF.
-func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, user, chatID int64) {
-	sess, ok := c.sessions.live(user)
-	if !ok || sess.step != stepCollectPDF {
+// stale answers a press that no longer applies (an old message, a wrong step,
+// an ended session, a double tap) and strips the message's buttons. It does
+// nothing else.
+func (c *converter) stale(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	reply(ctx, b, c.log, chatID, textStale)
+	c.clearButtons(ctx, b, update, chatID)
+}
+
+// next moves the dialogue on after a button press: the pressed message loses its
+// buttons and the next step goes out as the session's dialogue message.
+func (c *converter) next(ctx context.Context, b *bot.Bot, update *models.Update, chatID, user int64, text string, kb *models.InlineKeyboardMarkup) {
+	c.clearButtons(ctx, b, update, chatID)
+	var markup models.ReplyMarkup
+	if kb != nil {
+		markup = kb
+	}
+	c.sessions.setMsg(user, c.send(ctx, b, chatID, text, markup))
+}
+
+// claimMenu marks a menu message as being worked on; false means another tap on
+// it is already running.
+func (c *converter) claimMenu(chatID int64, msgID int) (release func(), ok bool) {
+	key := strconv.FormatInt(chatID, 10) + ":" + strconv.Itoa(msgID)
+	c.inflightMu.Lock()
+	defer c.inflightMu.Unlock()
+	if _, busy := c.inflight[key]; busy {
+		return nil, false
+	}
+	c.inflight[key] = struct{}{}
+	return func() {
+		c.inflightMu.Lock()
+		defer c.inflightMu.Unlock()
+		delete(c.inflight, key)
+	}, true
+}
+
+// finishPDF renders the collected photos into a PDF. The session is claimed
+// first, so a double «Готово» builds it once; it goes back when the user can
+// retry.
+func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, update *models.Update, user, chatID int64) {
+	sess, ok := c.sessions.claim(user, callbackMessageID(update), stepCollectPDF)
+	if !ok {
+		c.stale(ctx, b, update, chatID)
 		return
 	}
 	images := sess.orderedImages()
 	if len(images) == 0 {
+		c.sessions.restore(user, sess)
 		reply(ctx, b, c.log, chatID, textConvertNoImages)
 		return
 	}
@@ -335,19 +405,22 @@ func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, user, chatID int6
 	pdf, err := convert.ImagesToPDF(images)
 	if err != nil {
 		c.log.Error("convert images to pdf", "err", err, "pages", len(images))
+		c.sessions.restore(user, sess)
 		reply(ctx, b, c.log, chatID, convertErrorText(err))
 		return
 	}
 
-	c.sessions.end(user)
+	c.clearButtons(ctx, b, update, chatID)
 	name := scanName(c.now())
 	c.sendResult(ctx, b, chatID, user, name, pdf, "", suffixPDF)
 }
 
-// finishCompress compresses the stored image to the chosen format.
-func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, user, chatID int64, format convert.Format) {
-	sess, ok := c.sessions.live(user)
-	if !ok || sess.step != stepChooseFormat || len(sess.images) == 0 {
+// finishCompress compresses the stored image to the chosen format. The session
+// is claimed first (one run per tap); it goes back when the user can retry.
+func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, update *models.Update, user, chatID int64, format convert.Format) {
+	sess, ok := c.sessions.claim(user, callbackMessageID(update), stepChooseFormat)
+	if !ok || len(sess.images) == 0 {
+		c.stale(ctx, b, update, chatID)
 		return
 	}
 	src := sess.images[0].data
@@ -356,11 +429,12 @@ func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, user, chatID
 	out, err := convert.Compress(src, maxBytes, format)
 	if err != nil {
 		c.log.Error("convert compress", "err", err)
+		c.sessions.restore(user, sess)
 		reply(ctx, b, c.log, chatID, convertErrorText(err))
 		return
 	}
 
-	c.sessions.end(user)
+	c.clearButtons(ctx, b, update, chatID)
 	if len(out) > maxBytes {
 		reply(ctx, b, c.log, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
 	}
@@ -418,6 +492,12 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 	if !ok {
 		return
 	}
+	release, ok := c.claimMenu(chatID, callbackMessageID(update))
+	if !ok {
+		c.stale(ctx, b, update, chatID)
+		return
+	}
+	defer release()
 	id := docsbot.DocumentID(rawID)
 
 	doc, ok := c.loadDoc(ctx, b, chatID, user, id)
@@ -469,6 +549,7 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 	if known && len(out) > maxBytes {
 		reply(ctx, b, c.log, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
 	}
+	c.clearButtons(ctx, b, update, chatID)
 	c.sendResult(ctx, b, chatID, update.CallbackQuery.From.ID, name, out, id, suffix)
 }
 
@@ -601,12 +682,15 @@ func (c *converter) onSkip(ctx context.Context, b *bot.Bot, update *models.Updat
 
 // clearButtons removes the keyboard from the message a button was pressed on.
 func (c *converter) clearButtons(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
-	m := update.CallbackQuery.Message.Message
-	if m == nil {
-		return
+	if m := update.CallbackQuery.Message.Message; m != nil {
+		c.stripKeyboard(ctx, b, chatID, m.ID)
 	}
+}
+
+// stripKeyboard removes the keyboard from a message, best effort.
+func (c *converter) stripKeyboard(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
 	_, err := b.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
-		ChatID: chatID, MessageID: m.ID, ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}},
+		ChatID: chatID, MessageID: msgID, ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}},
 	})
 	if err != nil {
 		c.log.ErrorContext(ctx, "clear buttons", "err", err)
@@ -665,14 +749,8 @@ func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 
 // removeKeyboard strips the buttons from a sent message, when there is one.
 func (c *converter) removeKeyboard(ctx context.Context, b *bot.Bot, chatID int64, msg *models.Message) {
-	if msg == nil {
-		return
-	}
-	_, err := b.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
-		ChatID: chatID, MessageID: msg.ID, ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}},
-	})
-	if err != nil {
-		c.log.ErrorContext(ctx, "clear buttons", "err", err)
+	if msg != nil {
+		c.stripKeyboard(ctx, b, chatID, msg.ID)
 	}
 }
 
@@ -836,6 +914,14 @@ func messageUser(update *models.Update) (int64, bool) {
 	return update.Message.From.ID, true
 }
 
+// callbackMessageID is the id of the message a button was pressed on, 0 if unknown.
+func callbackMessageID(update *models.Update) int {
+	if m := update.CallbackQuery.Message.Message; m != nil {
+		return m.ID
+	}
+	return 0
+}
+
 func callbackChat(update *models.Update) (int64, bool) {
 	if update.CallbackQuery.Message.Message == nil {
 		return 0, false
@@ -848,6 +934,18 @@ func sendMarkup(ctx context.Context, b *bot.Bot, log *slog.Logger, chatID int64,
 	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ReplyMarkup: markup}); err != nil {
 		log.Error("send telegram message", "err", err)
 	}
+}
+
+// send is sendMarkup that returns the sent message's id (0 on failure).
+func (c *converter) send(ctx context.Context, b *bot.Bot, chatID int64, text string, markup models.ReplyMarkup) int {
+	msg, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ReplyMarkup: markup})
+	if err != nil || msg == nil {
+		if err != nil {
+			c.log.Error("send telegram message", "err", err)
+		}
+		return 0
+	}
+	return msg.ID
 }
 
 func actionKeyboard() *models.InlineKeyboardMarkup {

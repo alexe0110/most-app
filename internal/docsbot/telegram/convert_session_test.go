@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"log/slog"
 	"testing"
 	"time"
 
@@ -45,4 +46,47 @@ func TestSessionStore_endReportsLiveness(t *testing.T) {
 	store.start(5)
 	require.True(t, store.end(5), "ended a live session")
 	require.False(t, store.has(5))
+}
+
+func TestSessionStore_pressValidation(t *testing.T) {
+	now := time.Now()
+	store := newSessionStore(func() time.Time { return now })
+	store.start(1)
+	store.setMsg(1, 50)
+
+	tests := []struct {
+		name  string
+		msgID int
+		steps []step
+		want  bool
+	}{
+		{"right message and step", 50, []step{stepChooseAction}, true},
+		{"any step", 50, nil, true},
+		{"unknown message id", 0, []step{stepChooseAction}, true},
+		{"other message", 51, []step{stepChooseAction}, false},
+		{"other step", 50, []step{stepChooseFormat}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, ok := store.check(1, tt.msgID, tt.steps...)
+			require.Equal(t, tt.want, ok)
+		})
+	}
+	_, ok := store.check(2, 50)
+	require.False(t, ok, "no session")
+}
+
+func TestConverter_claimMenuOnce(t *testing.T) {
+	c := newConverter(slog.New(slog.DiscardHandler), nil, nil, nil)
+
+	release, ok := c.claimMenu(1, 10)
+	require.True(t, ok)
+	_, again := c.claimMenu(1, 10)
+	require.False(t, again, "a second tap on the same menu is refused while it runs")
+	_, other := c.claimMenu(1, 11)
+	require.True(t, other, "another message is independent")
+
+	release()
+	_, afterRelease := c.claimMenu(1, 10)
+	require.True(t, afterRelease)
 }

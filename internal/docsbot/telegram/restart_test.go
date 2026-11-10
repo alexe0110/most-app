@@ -70,7 +70,7 @@ func TestRestart_convertCallbackWithoutSession(t *testing.T) {
 
 			h.bot.ProcessUpdate(t.Context(), callbackUpdate(data))
 
-			require.Contains(t, h.lastText(), "Сессия конвертера истекла")
+			require.Equal(t, "Кнопка устарела, открой заново.", h.lastText())
 		})
 	}
 }

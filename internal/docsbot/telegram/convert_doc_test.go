@@ -71,7 +71,7 @@ func TestConvertDoc_skipSavesNothing(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok)) // the choice is gone
 
 	require.Len(t, h.repo.docs, 1)
-	require.Equal(t, 1, h.edits, "buttons removed once")
+	require.Equal(t, 2, h.edits, "the menu loses its buttons on the tap, the result on skip")
 }
 
 func TestConvertDoc_pdfFromCard(t *testing.T) {
