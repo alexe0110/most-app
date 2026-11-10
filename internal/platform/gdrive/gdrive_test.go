@@ -321,7 +321,7 @@ func TestUpload_duplicateName(t *testing.T) {
 	_, err := svc.Upload(context.Background(), "user-1", testUpload())
 
 	require.NoError(t, err)
-	require.Equal(t, "scan.pdf (1)", d.uploadedName)
+	require.Equal(t, "scan (1).pdf", d.uploadedName)
 }
 
 func TestUpload_revoked(t *testing.T) {

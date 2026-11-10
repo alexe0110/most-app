@@ -76,20 +76,20 @@ func TestSyncOps_cancelledContext(t *testing.T) {
 }
 
 func TestRename_collisionChain(t *testing.T) {
-	// "new.pdf" and "new.pdf (1)" are taken by other files: pick (2).
+	// "new.pdf" and "new (1).pdf" are taken by other files: pick (2).
 	d := &syncDrive{name: "old.pdf", parents: []string{"p1"}, taken: map[string]string{
-		"p1/new.pdf": "other1", "p1/new.pdf (1)": "other2",
+		"p1/new.pdf": "other1", "p1/new (1).pdf": "other2",
 	}}
 	require.NoError(t, newSyncSvc(t, d, fakeClients{}).Rename(context.Background(), "u1", "f1", "new.pdf"))
 	require.Len(t, d.patches, 1)
-	require.JSONEq(t, `{"name":"new.pdf (2)"}`, d.patches[0].body)
+	require.JSONEq(t, `{"name":"new (2).pdf"}`, d.patches[0].body)
 }
 
 func TestRename_alreadySuffixedIsIdempotent(t *testing.T) {
-	// The file already carries "new.pdf (1)" because "new.pdf" is another file's:
+	// The file already carries "new (1).pdf" because "new.pdf" is another file's:
 	// a repeated sync must not rename again.
-	d := &syncDrive{name: "new.pdf (1)", parents: []string{"p1"}, taken: map[string]string{
-		"p1/new.pdf": "other", "p1/new.pdf (1)": "f1",
+	d := &syncDrive{name: "new (1).pdf", parents: []string{"p1"}, taken: map[string]string{
+		"p1/new.pdf": "other", "p1/new (1).pdf": "f1",
 	}}
 	require.NoError(t, newSyncSvc(t, d, fakeClients{}).Rename(context.Background(), "u1", "f1", "new.pdf"))
 	require.Empty(t, d.patches)
@@ -159,4 +159,10 @@ func TestSyncOps_userTrashedFileIsMissing(t *testing.T) {
 			require.Empty(t, d.patches, "a trashed file is left alone")
 		})
 	}
+}
+
+func TestRename_collisionWithoutExtension(t *testing.T) {
+	d := &syncDrive{name: "old", parents: []string{"p1"}, taken: map[string]string{"p1/new": "other"}}
+	require.NoError(t, newSyncSvc(t, d, fakeClients{}).Rename(context.Background(), "u1", "f1", "new"))
+	require.JSONEq(t, `{"name":"new (1)"}`, d.patches[0].body)
 }

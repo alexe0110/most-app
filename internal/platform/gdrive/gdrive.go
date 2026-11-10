@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -264,10 +265,12 @@ func (s *Service) createFolder(ctx context.Context, httpc *http.Client, name, pa
 	return out.ID, nil
 }
 
-// uniqueName appends " (n)" until no non-trashed file in the folder has the name.
+// uniqueName inserts " (n)" before the extension ("scan (1).pdf") until no non-trashed file in the folder has the name.
 // The file excludeID (may be "") does not count as a collision with itself.
 func (s *Service) uniqueName(ctx context.Context, httpc *http.Client, folderID, name, excludeID string) (string, error) {
 	candidate := name
+	ext := path.Ext(name)
+	base := strings.TrimSuffix(name, ext)
 	for i := 1; i <= maxNameTries; i++ {
 		q := fmt.Sprintf("name='%s' and '%s' in parents and trashed=false", escapeQuery(candidate), folderID)
 		files, err := s.list(ctx, httpc, q, "")
@@ -277,7 +280,7 @@ func (s *Service) uniqueName(ctx context.Context, httpc *http.Client, folderID, 
 		if !hasOther(files, excludeID) {
 			return candidate, nil
 		}
-		candidate = name + " (" + strconv.Itoa(i) + ")"
+		candidate = base + " (" + strconv.Itoa(i) + ")" + ext
 	}
 	return candidate, nil
 }

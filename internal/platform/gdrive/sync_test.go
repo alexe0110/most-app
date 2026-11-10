@@ -98,7 +98,7 @@ func TestRename(t *testing.T) {
 	}{
 		{"renames", &syncDrive{name: "old.pdf", parents: []string{"p1"}}, nil, 1, `{"name":"new.pdf"}`},
 		{"same name is no-op", &syncDrive{name: "new.pdf", parents: []string{"p1"}}, nil, 0, ""},
-		{"collision gets suffix", &syncDrive{name: "old.pdf", parents: []string{"p1"}, taken: map[string]string{"p1/new.pdf": "other"}}, nil, 1, `{"name":"new.pdf (1)"}`},
+		{"collision gets suffix", &syncDrive{name: "old.pdf", parents: []string{"p1"}, taken: map[string]string{"p1/new.pdf": "other"}}, nil, 1, `{"name":"new (1).pdf"}`},
 		{"own name is not a collision", &syncDrive{name: "new.pdf", parents: []string{"p1"}, taken: map[string]string{"p1/new.pdf": "f1"}}, nil, 0, ""},
 		{"missing file", &syncDrive{fileStatus: http.StatusNotFound}, ErrFileNotFound, 0, ""},
 		{"revoked", &syncDrive{fileStatus: http.StatusUnauthorized}, ErrAccessRevoked, 0, ""},
