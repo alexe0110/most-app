@@ -93,7 +93,7 @@ func TestSessionStore_unknownDialogueMessageRejectsPresses(t *testing.T) {
 }
 
 func TestConverter_claimMenuOnce(t *testing.T) {
-	c := newConverter(slog.New(slog.DiscardHandler), nil, nil, nil)
+	c := newConverter(slog.New(slog.DiscardHandler), nil, nil, nil, nil)
 
 	release, ok := c.claimMenu(1, 10)
 	require.True(t, ok)

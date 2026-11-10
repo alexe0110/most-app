@@ -52,10 +52,6 @@ type Repo interface {
 	CategoryCounts(ctx context.Context, user UserID) ([]CategoryCount, error)
 	ListByCategory(ctx context.Context, user UserID, cat Category, limit, offset int) ([]Document, error)
 	Search(ctx context.Context, user UserID, query string, limit int) ([]Document, error)
-	// MarkBackedUp records a successful Drive upload: backup_status=backed_up + drive_file_id.
-	// It returns the document's meta_version at that moment; ErrNotFound if the
-	// document was deleted meanwhile.
-	MarkBackedUp(ctx context.Context, user UserID, id DocumentID, driveFileID string) (metaVersion int, err error)
 	// MarkSynced records a finished sync (sync_status ok, content_dirty cleared). It
 	// reports false when meta_version moved on or the sync is no longer pending.
 	MarkSynced(ctx context.Context, user UserID, id DocumentID, metaVersion int) (bool, error)
@@ -75,6 +71,9 @@ type Repo interface {
 	// StuckUploads lists saved documents stuck in pending/uploading since before
 	// olderThan, for users with an active Drive integration, oldest first.
 	StuckUploads(ctx context.Context, olderThan time.Time, limit int) ([]StuckUpload, error)
+	// StuckSyncs lists backed-up documents whose sync has been pending since before
+	// olderThan, for users with an active Drive integration, oldest first.
+	StuckSyncs(ctx context.Context, olderThan time.Time, limit int) ([]StuckUpload, error)
 	// DeleteUserData deletes the user's documents, drive_folders and integrations and
 	// soft-deletes the user (users.deleted_at), all in one transaction.
 	DeleteUserData(ctx context.Context, user UserID) error
@@ -179,21 +178,28 @@ type Syncs interface {
 	EnqueueSync(ctx context.Context, user UserID, id DocumentID) error
 	// RetrySync moves a failed sync back to pending and queues it; false when it was not failed.
 	RetrySync(ctx context.Context, user UserID, id DocumentID) (bool, error)
-	// MarkBackedUp records a successful Drive upload like Repo.MarkBackedUp and, in
-	// the same transaction, marks the document sync-pending and queues a sync when
+	// MarkBackedUp records a successful Drive upload (backup_status=backed_up +
+	// drive_file_id) and, in the same transaction, marks the document sync-pending and queues a sync when
 	// its meta_version differs from startVersion (title or category changed during
 	// the upload). ErrNotFound if the document was deleted meanwhile.
 	MarkBackedUp(ctx context.Context, user UserID, id DocumentID, driveFileID string, startVersion int) (queued bool, err error)
 	// ReplaceContent swaps the document's file for in (file ids, size, MIME) and
 	// bumps meta_version; a backed-up document also goes content_dirty and
-	// sync-pending with a sync queued, all in one transaction. It reports false,
+	// sync-pending with a sync queued, all in one transaction; without cloud (Drive
+	// not connected) only the row changes. It reports false,
 	// changing nothing, when the document is gone, uploading, or has a sync in
 	// flight or a missing Drive file. ErrDuplicateFile if the user already has
 	// another document with this file.
-	ReplaceContent(ctx context.Context, user UserID, id DocumentID, in IncomingFile) (replaced bool, err error)
-	// DeleteAndTrash deletes the document row and queues trashing of its remote
-	// file in one transaction. ErrNotFound if the user has no such document.
-	DeleteAndTrash(ctx context.Context, user UserID, id DocumentID, remoteID string) error
+	ReplaceContent(ctx context.Context, user UserID, id DocumentID, in IncomingFile, cloud bool) (replaced bool, err error)
+	// DeleteDocument deletes the document row. When trash is set and the deleted
+	// row had a live Drive file, trashing it is queued in the same transaction;
+	// without trash, remoteKept reports that a live Drive file stays. A document
+	// whose file is missing in Drive counts as having none. ErrNotFound if the
+	// user has no such document.
+	DeleteDocument(ctx context.Context, user UserID, id DocumentID, trash bool) (remoteKept bool, err error)
+	// RequeueSync inserts the sync job only, unique, without touching the
+	// document, so a live job dedups to a no-op and the stuck clock keeps running.
+	RequeueSync(ctx context.Context, user UserID, id DocumentID) error
 }
 
 // StatusMessages persists the per-batch upload status message and the documents

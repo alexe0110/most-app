@@ -89,6 +89,14 @@ from documents
 where id = @id
   and user_id = @user_id;
 
+-- name: DeleteDocumentReturning :one
+-- Deletes and reports what the Drive copy was, decided under the row lock.
+delete
+from documents
+where id = @id
+  and user_id = @user_id
+returning backup_status, sync_status, drive_file_id;
+
 -- name: CountSavedDocuments :one
 select count(*)
 from documents
@@ -129,17 +137,6 @@ where user_id = @user_id
 order by similarity(title, @query) desc, created_at desc
 limit @lim;
 
--- name: MarkDocumentBackedUp :one
--- Returns meta_version so the worker can tell whether the title or category
--- changed while the file was uploading.
-update documents
-set backup_status = 'backed_up',
-    drive_file_id = @drive_file_id,
-    updated_at    = now()
-where id = @id
-  and user_id = @user_id
-returning meta_version;
-
 -- name: MarkDocumentBackedUpSync :one
 -- Like MarkDocumentBackedUp, and in the same statement queues a sync when the
 -- title or category changed since the upload started (meta_version differs).
@@ -151,21 +148,23 @@ set backup_status = 'backed_up',
     updated_at    = now()
 where id = @id
   and user_id = @user_id
-returning meta_version, sync_status;
+returning meta_version;
 
 -- name: ReplaceDocumentContent :one
 -- Swaps the file of a document (id, title, category stay). A backed-up document
--- is marked content_dirty and sync-pending for the Drive copy. 0 rows: the
+-- is marked content_dirty and sync-pending for the Drive copy when @cloud (Drive
+-- is connected), otherwise only the row changes. 0 rows: the
 -- document is gone, uploading, or already has a sync in flight or a missing file.
 update documents
-set tg_file_id        = @tg_file_id,
+set kind              = @kind,
+    tg_file_id        = @tg_file_id,
     tg_file_unique_id = @tg_file_unique_id,
     file_size         = @file_size,
     mime_type         = @mime_type,
     meta_version      = meta_version + 1,
-    content_dirty     = (backup_status = 'backed_up'),
-    sync_status       = case when backup_status = 'backed_up' then 'pending' else sync_status end,
-    sync_reason       = case when backup_status = 'backed_up' then null else sync_reason end,
+    content_dirty     = (@cloud::bool and backup_status = 'backed_up'),
+    sync_status       = case when @cloud::bool and backup_status = 'backed_up' then 'pending' else sync_status end,
+    sync_reason       = case when @cloud::bool and backup_status = 'backed_up' then null else sync_reason end,
     updated_at        = now()
 where id = @id
   and user_id = @user_id
@@ -201,9 +200,12 @@ returning backup_status, sync_status;
 
 -- name: MarkSyncPending :execrows
 -- 0 rows: the document is gone, not backed up, or its Drive file is missing.
+-- meta_version moves on, so a stale parallel MarkSynced (older version) loses.
 update documents
-set sync_status = 'pending',
-    sync_reason = null
+set sync_status  = 'pending',
+    sync_reason  = null,
+    meta_version = meta_version + 1,
+    updated_at   = now()
 where id = @id
   and user_id = @user_id
   and backup_status = 'backed_up'
@@ -213,7 +215,8 @@ where id = @id
 -- Atomically takes a failed sync for retry; 0 rows means it is not failed.
 update documents
 set sync_status = 'pending',
-    sync_reason = null
+    sync_reason = null,
+    updated_at  = now()
 where id = @id
   and user_id = @user_id
   and backup_status = 'backed_up'
@@ -297,6 +300,23 @@ from documents d
                   and i.status = 'active'
 where d.status = 'saved'
   and d.backup_status in ('pending', 'uploading')
+  and d.updated_at < @older_than
+order by d.updated_at
+limit @lim;
+
+-- name: StuckSyncs :many
+-- Backed-up documents whose sync has been pending since before @older_than, for
+-- users with an active Drive integration.
+select d.id, d.user_id, d.updated_at
+from documents d
+         join integrations i
+              on i.user_id = d.user_id
+                  and i.bot = 'docs'
+                  and i.provider = 'google'
+                  and i.status = 'active'
+where d.status = 'saved'
+  and d.backup_status = 'backed_up'
+  and d.sync_status = 'pending'
   and d.updated_at < @older_than
 order by d.updated_at
 limit @lim;

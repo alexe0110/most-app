@@ -168,7 +168,6 @@ func TestConvertReplace_refusals(t *testing.T) {
 			h.repo.docs[src.ID] = d
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpy:"+tok))
 			require.Equal(t, "res-uniq-0", h.repo.docs[src.ID].TgFileUniqueID)
-			require.True(t, h.repo.docs[src.ID].ContentDirty)
 		})
 	}
 }

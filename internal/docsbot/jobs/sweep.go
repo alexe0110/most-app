@@ -45,7 +45,8 @@ func (w *sweepWorker) Work(ctx context.Context, _ *river.Job[SweepUploadsArgs]) 
 		_ = w.notify.UploadOutcome(ctx, f.User, f.ID)
 	}
 	w.log.InfoContext(ctx, "sweep uploads finished",
-		"found", res.Found, "requeued", res.Requeued, "failed", len(res.Failed))
+		"found", res.Found, "requeued", res.Requeued, "failed", len(res.Failed),
+		"syncs_requeued", res.SyncsRequeued, "syncs_failed", res.SyncsFailed)
 	return nil
 }
 

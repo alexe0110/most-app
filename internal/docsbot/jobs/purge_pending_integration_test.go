@@ -35,7 +35,7 @@ func TestPurgePendingWorker_deletesStalePendingOnly(t *testing.T) {
 	fresh := insert("pending", "fresh", "23 hours")
 	oldSaved := insert("saved", "saved", "48 hours")
 
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, nil, repo, repo)
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, nil, repo, repo, nil)
 	workers := river.NewWorkers()
 	bind, periodic := jobs.RegisterPurgePending(workers, slog.New(slog.DiscardHandler))
 	bind(svc)

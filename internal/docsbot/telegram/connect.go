@@ -177,7 +177,15 @@ func (n *Notifier) SyncOutcome(ctx context.Context, user docsbot.UserID, doc doc
 	if err != nil {
 		return fmt.Errorf("resolve tg user: %w", err)
 	}
-	return ignoreBlocked(n.bot.SendMarkup(ctx, chatID, cardText(card.Doc), cardKeyboard(card.Doc, "", "")))
+	var url string
+	if revoked(card.Doc) {
+		var uErr error
+		if url, uErr = n.auth.AuthURL(ctx, string(user), botName); uErr != nil {
+			n.log.Error("build auth url", "err", uErr)
+			url = ""
+		}
+	}
+	return ignoreBlocked(n.bot.SendMarkup(ctx, chatID, cardText(card.Doc), cardKeyboardWith(card.Doc, "", "", url)))
 }
 
 // RemoteKept tells the user a deleted document's Drive file could not be trashed.

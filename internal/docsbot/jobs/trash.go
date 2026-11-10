@@ -77,10 +77,11 @@ func RegisterStorageTrash(workers *river.Workers, log *slog.Logger) func(Trasher
 	return func(svc Trasher, n TrashNotifier) { w.svc, w.notify = svc, n }
 }
 
-// DeleteAndTrash implements docsbot.Syncs: the row is deleted and the trash job
-// queued in one transaction.
-func (e *Enqueuer) DeleteAndTrash(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, remoteID string) error {
-	return e.store.DeleteAndInsert(ctx, user, id, func(ctx context.Context, tx pgx.Tx) error {
+// DeleteDocument implements docsbot.Syncs: the row is deleted and, when the
+// document had a live Drive file and trash is wanted, the trash job queued in
+// one transaction.
+func (e *Enqueuer) DeleteDocument(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, trash bool) (bool, error) {
+	return e.store.DeleteForSync(ctx, user, id, trash, func(ctx context.Context, tx pgx.Tx, remoteID string) error {
 		args := StorageTrashArgs{UserID: string(user), RemoteID: remoteID, Provider: providerGoogle}
 		if _, err := e.queue.InsertTx(ctx, tx, args, &river.InsertOpts{Queue: UploadQueue}); err != nil {
 			return fmt.Errorf("insert trash job: %w", err)

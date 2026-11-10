@@ -210,6 +210,7 @@ func (s *fakeSyncs) EnqueueSync(_ context.Context, user docsbot.UserID, id docsb
 		return nil
 	}
 	d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
+	d.MetaVersion++ // like MarkSyncPending: a stale parallel MarkSynced must lose
 	s.repo.docs[id] = d
 	s.addJob(id)
 	return nil
@@ -239,7 +240,7 @@ func (s *fakeSyncs) MarkBackedUp(_ context.Context, user docsbot.UserID, id docs
 
 // ReplaceContent mirrors ReplaceDocumentContent: the guarded update, the unique
 // (user, file) constraint, and the sync job for a backed-up document.
-func (s *fakeSyncs) ReplaceContent(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile) (bool, error) {
+func (s *fakeSyncs) ReplaceContent(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, cloud bool) (bool, error) {
 	if s.err != nil {
 		return false, s.err
 	}
@@ -256,9 +257,9 @@ func (s *fakeSyncs) ReplaceContent(_ context.Context, user docsbot.UserID, id do
 			return false, docsbot.ErrDuplicateFile
 		}
 	}
-	d.TgFileID, d.TgFileUniqueID, d.FileSize, d.MIME = in.FileID, in.FileUniqueID, in.FileSize, in.MIME
+	d.Kind, d.TgFileID, d.TgFileUniqueID, d.FileSize, d.MIME = in.Kind, in.FileID, in.FileUniqueID, in.FileSize, in.MIME
 	d.MetaVersion++
-	backedUp := d.BackupStatus == docsbot.BackupBackedUp
+	backedUp := cloud && d.BackupStatus == docsbot.BackupBackedUp
 	d.ContentDirty = backedUp
 	if backedUp {
 		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
@@ -286,19 +287,34 @@ func (s *fakeSyncs) RetrySync(_ context.Context, user docsbot.UserID, id docsbot
 	return true, nil
 }
 
-func (s *fakeSyncs) DeleteAndTrash(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, remoteID string) error {
+func (s *fakeSyncs) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, trash bool) (bool, error) {
 	if s.err != nil {
-		return s.err
+		return false, s.err
 	}
 	s.repo.mu.Lock()
 	defer s.repo.mu.Unlock()
-	if d, ok := s.repo.docs[id]; !ok || d.UserID != user {
-		return docsbot.ErrNotFound
+	d, ok := s.repo.docs[id]
+	if !ok || d.UserID != user {
+		return false, docsbot.ErrNotFound
 	}
 	delete(s.repo.docs, id)
+	if d.BackupStatus != docsbot.BackupBackedUp || d.DriveFileID == "" || d.SyncStatus == docsbot.SyncMissing {
+		return false, nil
+	}
+	if !trash {
+		return true, nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.trashes = append(s.trashes, remoteID)
+	s.trashes = append(s.trashes, d.DriveFileID)
+	return false, nil
+}
+
+func (s *fakeSyncs) RequeueSync(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.addJob(id)
 	return nil
 }
 
@@ -500,6 +516,26 @@ func (r *fakeRepo) StuckUploads(_ context.Context, olderThan time.Time, limit in
 	return out, nil
 }
 
+// StuckSyncs mirrors the real query like StuckUploads.
+func (r *fakeRepo) StuckSyncs(_ context.Context, olderThan time.Time, limit int) ([]docsbot.StuckUpload, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []docsbot.StuckUpload
+	for id, d := range r.docs {
+		if d.Status != docsbot.StatusSaved || d.BackupStatus != docsbot.BackupBackedUp || d.SyncStatus != docsbot.SyncPending {
+			continue
+		}
+		if at, ok := r.updated[id]; ok && at.Before(olderThan) {
+			out = append(out, docsbot.StuckUpload{User: d.UserID, ID: id, UpdatedAt: at})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.Before(out[j].UpdatedAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (r *fakeRepo) SetTitle(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, title string) error {
 	return r.mutate(user, id, func(d *docsbot.Document) { d.Title = title; d.MetaVersion++ })
 }
@@ -621,18 +657,6 @@ func (r *fakeRepo) Search(_ context.Context, user docsbot.UserID, q string, limi
 		out = out[:limit]
 	}
 	return out, nil
-}
-
-func (r *fakeRepo) MarkBackedUp(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string) (int, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	d, ok := r.docs[id]
-	if !ok || d.UserID != user {
-		return 0, docsbot.ErrNotFound
-	}
-	d.BackupStatus, d.DriveFileID = docsbot.BackupBackedUp, driveFileID
-	r.docs[id] = d
-	return d.MetaVersion, nil
 }
 
 // MarkSynced mirrors MarkSynced: only a pending sync at the same meta_version.

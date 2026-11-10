@@ -17,7 +17,8 @@ import (
 )
 
 // UploadQueue is the River queue for Drive uploads. It runs one worker so
-// parallel uploads cannot race on creating the same Drive folders.
+// parallel uploads cannot race on creating the same Drive folders. Sync
+// correctness does not depend on it: meta_version guards stale syncs.
 const UploadQueue = "drive_upload"
 
 // UploadDocumentArgs is the River job that backs a saved document up to Drive.
@@ -83,6 +84,9 @@ func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentAr
 		}
 		return fmt.Errorf("upload document: %w", err)
 	}
+	if res.OrphanTrashErr != nil {
+		w.log.ErrorContext(ctx, "trash orphan drive file failed", "err", res.OrphanTrashErr, "job_id", job.ID, "user_id", user, "doc_id", id)
+	}
 	if res.Noop {
 		w.log.DebugContext(ctx, "upload noop", "job_id", job.ID, "attempt", job.Attempt, "user_id", user, "doc_id", id)
 		return nil
@@ -110,10 +114,10 @@ type enqueueStore interface {
 	SetTitleForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, title string, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
 	SetCategoryForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
 	MarkBackedUpForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion int, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
-	ReplaceContentForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
+	ReplaceContentForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, cloud bool, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
 	EnqueueSyncJob(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) error) error
 	RetrySyncJob(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
-	DeleteAndInsert(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) error) error
+	DeleteForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, queueTrash bool, insert func(ctx context.Context, tx pgx.Tx, remoteID string) error) (bool, error)
 }
 
 // Enqueuer implements docsbot.Uploads and docsbot.Syncs atomically over the

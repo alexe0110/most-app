@@ -179,6 +179,7 @@ const (
 	textConvertResultOld = "Эта кнопка устарела. Преобразуй файл ещё раз."
 
 	textReplaceConfirm = "Исходный файл будет заменён"
+	textReplacedDone   = "♻️ Исходный файл заменён"
 	textReplaceBusy    = "Подожди, файл ещё сохраняется"
 	textReplaceMissing = "Файл удалён в Drive: сначала «Выгрузить заново»"
 

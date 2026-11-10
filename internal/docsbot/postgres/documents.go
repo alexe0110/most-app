@@ -144,6 +144,27 @@ func (r *Repo) StuckUploads(ctx context.Context, olderThan time.Time, limit int)
 	return out, nil
 }
 
+// StuckSyncs lists backed-up documents whose sync has been pending since before
+// olderThan, for users with an active Drive integration.
+func (r *Repo) StuckSyncs(ctx context.Context, olderThan time.Time, limit int) ([]docsbot.StuckUpload, error) {
+	rows, err := r.Queries.StuckSyncs(ctx, StuckSyncsParams{
+		OlderThan: pgtype.Timestamptz{Time: olderThan, Valid: true},
+		Lim:       int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("stuck syncs: %w", err)
+	}
+	out := make([]docsbot.StuckUpload, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, docsbot.StuckUpload{
+			User:      docsbot.UserID(row.UserID.String()),
+			ID:        docsbot.DocumentID(row.ID.String()),
+			UpdatedAt: row.UpdatedAt.Time,
+		})
+	}
+	return out, nil
+}
+
 // ResetPendingUploads resets the user's pending/uploading saved documents to none.
 func (r *Repo) ResetPendingUploads(ctx context.Context, user docsbot.UserID) error {
 	uid, err := parseUUID(string(user))
@@ -299,23 +320,6 @@ func (r *Repo) Search(ctx context.Context, user docsbot.UserID, query string, li
 		return nil, fmt.Errorf("search documents: %w", err)
 	}
 	return toDocuments(rows), nil
-}
-
-// MarkBackedUp records a successful Drive upload.
-func (r *Repo) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string) (int, error) {
-	docID, uid, err := ids(id, user)
-	if err != nil {
-		return 0, err
-	}
-	version, err := r.MarkDocumentBackedUp(ctx, MarkDocumentBackedUpParams{
-		ID:          docID,
-		UserID:      uid,
-		DriveFileID: pgtype.Text{String: driveFileID, Valid: true},
-	})
-	if err != nil {
-		return 0, notFoundOr(err, "mark document backed up")
-	}
-	return int(version), nil
 }
 
 // MarkSynced records a finished sync if the document is unchanged since version.

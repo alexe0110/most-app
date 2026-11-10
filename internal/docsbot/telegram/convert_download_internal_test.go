@@ -39,7 +39,7 @@ func TestDownload_errorsDoNotLeakToken(t *testing.T) {
 			t.Cleanup(ts.Close)
 			b, err := bot.New("123:ABC", bot.WithServerURL(ts.URL), bot.WithSkipGetMe())
 			require.NoError(t, err)
-			c := newConverter(slog.New(slog.DiscardHandler), nil, nil, nil)
+			c := newConverter(slog.New(slog.DiscardHandler), nil, nil, nil, nil)
 
 			_, err = c.download(t.Context(), b, "f")
 

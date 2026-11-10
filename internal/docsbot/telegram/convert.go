@@ -107,6 +107,8 @@ type converter struct {
 	// docs adapter owns that rendering.
 	renderSaved      func(ctx context.Context, b *bot.Bot, chatID int64, msgID int, user docsbot.UserID, saved docsbot.Saved)
 	sendAlreadySaved func(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID)
+	// sendReplaced shows the card of a document whose file was replaced.
+	sendReplaced func(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID)
 }
 
 func newConverter(
@@ -114,6 +116,7 @@ func newConverter(
 	svc *docsbot.Service,
 	renderSaved func(context.Context, *bot.Bot, int64, int, docsbot.UserID, docsbot.Saved),
 	sendAlreadySaved func(context.Context, *bot.Bot, int64, docsbot.UserID, docsbot.DocumentID),
+	sendReplaced func(context.Context, *bot.Bot, int64, docsbot.UserID, docsbot.DocumentID),
 ) *converter {
 	return &converter{
 		log:              log,
@@ -128,6 +131,7 @@ func newConverter(
 		svc:              svc,
 		renderSaved:      renderSaved,
 		sendAlreadySaved: sendAlreadySaved,
+		sendReplaced:     sendReplaced,
 	}
 }
 
@@ -874,13 +878,7 @@ func (c *converter) onReplace(ctx context.Context, b *bot.Bot, update *models.Up
 		retry(textReplaceMissing)
 	case docsbot.Replaced:
 		c.editResultCaption(ctx, b, update, chatID, "", nil)
-		c.log.InfoContext(ctx, "original replaced", "user_id", res.user, "doc_id", r.Doc.ID)
-		msg, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: textConvertSaving})
-		if err != nil {
-			c.log.ErrorContext(ctx, "send telegram message", "err", err)
-			return
-		}
-		c.renderSaved(ctx, b, chatID, msg.ID, res.user, docsbot.Saved{Doc: r.Doc, Already: true})
+		c.sendReplaced(ctx, b, chatID, res.user, r.Doc.ID)
 	case docsbot.AlreadySaved:
 		c.editResultCaption(ctx, b, update, chatID, "", nil)
 		c.sendAlreadySaved(ctx, b, chatID, res.user, r.Doc.ID)

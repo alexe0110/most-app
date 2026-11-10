@@ -248,6 +248,19 @@ func folderURL(id string) string { return "https://drive.google.com/drive/folder
 // cardKeyboard renders a document's actions. "Открыть в Drive" appears only once
 // the file is backed up, the folder button only when the category folder exists.
 func cardKeyboard(doc docsbot.Document, folderID, orig string) *models.InlineKeyboardMarkup {
+	return cardKeyboardWith(doc, folderID, orig, "")
+}
+
+// revoked reports a failed sync caused by revoked Drive access: retrying cannot
+// help until the user reconnects.
+func revoked(doc docsbot.Document) bool {
+	return doc.InDrive() && doc.SyncStatus == docsbot.SyncFailed && doc.SyncReason == docsbot.SyncReasonRevoked
+}
+
+// cardKeyboardWith is cardKeyboard with the Google consent link, which replaces
+// "Повторить" on a card whose sync failed because access was revoked; without a
+// link such a card has no retry button.
+func cardKeyboardWith(doc docsbot.Document, folderID, orig, reconnectURL string) *models.InlineKeyboardMarkup {
 	// At most two buttons per row: more are cut off on narrow screens.
 	top := []models.InlineKeyboardButton{{Text: btnSendFile, CallbackData: cb(actSend, doc.ID)}}
 	if doc.InDrive() && doc.SyncStatus != docsbot.SyncMissing {
@@ -257,7 +270,12 @@ func cardKeyboard(doc docsbot.Document, folderID, orig string) *models.InlineKey
 	if doc.InDrive() {
 		switch doc.SyncStatus {
 		case docsbot.SyncFailed:
-			rows = append(rows, []models.InlineKeyboardButton{{Text: btnRetryBackup, CallbackData: cb(actRetrySync, doc.ID)}})
+			switch {
+			case !revoked(doc):
+				rows = append(rows, []models.InlineKeyboardButton{{Text: btnRetryBackup, CallbackData: cb(actRetrySync, doc.ID)}})
+			case reconnectURL != "":
+				rows = append(rows, []models.InlineKeyboardButton{{Text: btnReconnect, URL: reconnectURL}})
+			}
 		case docsbot.SyncMissing:
 			rows = append(rows, []models.InlineKeyboardButton{{Text: btnReupload, CallbackData: cb(actRetry, doc.ID)}})
 		}

@@ -26,8 +26,7 @@ func TestService_RetryBackup_requeueFailureLeavesPending(t *testing.T) {
 	repo := newFakeRepo()
 	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupFailed})
 	boom := errors.New("queue down")
-	svc := docsbot.NewService(repo, fakeDrive{connected: true}, fakeFiles{},
-		errRequeueUploads{&fakeUploads{repo: repo}, boom}, repo, newFakeStatus(repo))
+	svc := docsbot.NewService(repo, fakeDrive{connected: true}, fakeFiles{}, errRequeueUploads{&fakeUploads{repo: repo}, boom}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	err := svc.RetryBackup(t.Context(), user, doc.ID)
 	require.ErrorIs(t, err, boom)
@@ -42,8 +41,7 @@ func TestService_TransferSaved_requeueFailureKeepsDocsPending(t *testing.T) {
 	a := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther})
 	b := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, BackupStatus: docsbot.BackupFailed})
 	boom := errors.New("queue down")
-	svc := docsbot.NewService(repo, fakeDrive{connected: true}, fakeFiles{},
-		errRequeueUploads{&fakeUploads{repo: repo}, boom}, repo, newFakeStatus(repo))
+	svc := docsbot.NewService(repo, fakeDrive{connected: true}, fakeFiles{}, errRequeueUploads{&fakeUploads{repo: repo}, boom}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	_, ok, err := svc.TransferSaved(t.Context(), user, 5, 50)
 

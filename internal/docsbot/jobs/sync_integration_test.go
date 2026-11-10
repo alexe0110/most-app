@@ -125,10 +125,10 @@ func setupSync(t *testing.T, drive docsbot.Drive) syncEnv {
 	workers := river.NewWorkers()
 	bindSync := jobs.RegisterStorageSync(workers, log)
 	bindTrash := jobs.RegisterStorageTrash(workers, log)
-	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 2}})
+	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
 	require.NoError(t, err)
 	enq := jobs.NewEnqueuer(repo, queue)
-	svc := docsbot.NewService(repo, drive, fakeFiles{}, enq, repo, repo, docsbot.WithSyncs(enq))
+	svc := docsbot.NewService(repo, drive, fakeFiles{}, enq, repo, repo, enq)
 	spy := &syncSpy{}
 	bindSync(svc, spy)
 	bindTrash(svc, spy)

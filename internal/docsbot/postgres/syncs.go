@@ -90,7 +90,7 @@ func (r *Repo) MarkBackedUpForSync(ctx context.Context, user docsbot.UserID, id 
 		return false, err
 	}
 	err = r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
-		row, err := q.MarkDocumentBackedUpSync(ctx, MarkDocumentBackedUpSyncParams{
+		version, err := q.MarkDocumentBackedUpSync(ctx, MarkDocumentBackedUpSyncParams{
 			ID:           docID,
 			UserID:       uid,
 			DriveFileID:  pgtype.Text{String: driveFileID, Valid: true},
@@ -99,7 +99,7 @@ func (r *Repo) MarkBackedUpForSync(ctx context.Context, user docsbot.UserID, id 
 		if err != nil {
 			return notFoundOr(err, "mark document backed up")
 		}
-		queued = int(row.MetaVersion) != startVersion
+		queued = int(version) != startVersion
 		if !queued {
 			return nil
 		}
@@ -109,15 +109,17 @@ func (r *Repo) MarkBackedUpForSync(ctx context.Context, user docsbot.UserID, id 
 }
 
 // ReplaceContentForSync swaps the document's file and, for a backed-up document,
-// runs insert in the same transaction. replaced is false when the update touched
+// runs insert in the same transaction when cloud is set (Drive connected). replaced is false when the update touched
 // no row (gone, uploading, sync in flight or file missing).
-func (r *Repo) ReplaceContentForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, insert func(ctx context.Context, tx pgx.Tx) error) (replaced bool, err error) {
+func (r *Repo) ReplaceContentForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, cloud bool, insert func(ctx context.Context, tx pgx.Tx) error) (replaced bool, err error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return false, err
 	}
 	err = r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
 		backup, err := q.ReplaceDocumentContent(ctx, ReplaceDocumentContentParams{
+			Cloud:          cloud,
+			Kind:           string(in.Kind),
 			ID:             docID,
 			UserID:         uid,
 			TgFileID:       in.FileID,
@@ -136,7 +138,7 @@ func (r *Repo) ReplaceContentForSync(ctx context.Context, user docsbot.UserID, i
 			return fmt.Errorf("replace document content: %w", err)
 		}
 		replaced = true
-		if backup != string(docsbot.BackupBackedUp) {
+		if !cloud || backup != string(docsbot.BackupBackedUp) {
 			return nil
 		}
 		return insert(ctx, tx)
@@ -185,21 +187,31 @@ func (r *Repo) RetrySyncJob(ctx context.Context, user docsbot.UserID, id docsbot
 	return queued, err
 }
 
-// DeleteAndInsert deletes the document row and runs insert in the same
-// transaction; ErrNotFound if the user has no such document.
-func (r *Repo) DeleteAndInsert(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) error) error {
+// DeleteForSync deletes the document row and reports, under the row lock, what
+// its Drive copy was. When queueTrash is set and the document had a live Drive
+// file, insert runs in the same transaction with that file's id; otherwise
+// remoteKept tells that a live file stays in Drive. ErrNotFound if the user has
+// no such document.
+func (r *Repo) DeleteForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, queueTrash bool, insert func(ctx context.Context, tx pgx.Tx, remoteID string) error) (remoteKept bool, err error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
-		n, err := q.DeleteDocumentByID(ctx, DeleteDocumentByIDParams{ID: docID, UserID: uid})
+	err = r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
+		row, err := q.DeleteDocumentReturning(ctx, DeleteDocumentReturningParams{ID: docID, UserID: uid})
 		if err != nil {
-			return fmt.Errorf("delete document: %w", err)
+			return notFoundOr(err, "delete document")
 		}
-		if n == 0 {
-			return docsbot.ErrNotFound
+		live := row.BackupStatus == string(docsbot.BackupBackedUp) && row.DriveFileID.Valid &&
+			row.DriveFileID.String != "" && row.SyncStatus != string(docsbot.SyncMissing)
+		if !live {
+			return nil
 		}
-		return insert(ctx, tx)
+		if !queueTrash {
+			remoteKept = true
+			return nil
+		}
+		return insert(ctx, tx, row.DriveFileID.String)
 	})
+	return remoteKept && err == nil, err
 }

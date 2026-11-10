@@ -147,6 +147,10 @@ func (r *fakeRepo) SaveDocument(_ context.Context, _ docsbot.UserID, id docsbot.
 	return true, nil
 }
 
+func (*fakeRepo) StuckSyncs(context.Context, time.Time, int) ([]docsbot.StuckUpload, error) {
+	return nil, nil
+}
+
 func (*fakeRepo) StuckUploads(context.Context, time.Time, int) ([]docsbot.StuckUpload, error) {
 	return nil, nil
 }
@@ -362,7 +366,7 @@ func (s fakeSyncs) MarkBackedUp(_ context.Context, user docsbot.UserID, id docsb
 
 // ReplaceContent mirrors ReplaceDocumentContent: the guarded update and the
 // unique (user, file) constraint.
-func (s fakeSyncs) ReplaceContent(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile) (bool, error) {
+func (s fakeSyncs) ReplaceContent(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, cloud bool) (bool, error) {
 	d, ok := s.repo.docs[id]
 	if !ok || d.UserID != user ||
 		d.BackupStatus == docsbot.BackupPending || d.BackupStatus == docsbot.BackupUploading ||
@@ -374,9 +378,9 @@ func (s fakeSyncs) ReplaceContent(_ context.Context, user docsbot.UserID, id doc
 			return false, docsbot.ErrDuplicateFile
 		}
 	}
-	d.TgFileID, d.TgFileUniqueID, d.FileSize, d.MIME = in.FileID, in.FileUniqueID, in.FileSize, in.MIME
+	d.Kind, d.TgFileID, d.TgFileUniqueID, d.FileSize, d.MIME = in.Kind, in.FileID, in.FileUniqueID, in.FileSize, in.MIME
 	d.MetaVersion++
-	if d.BackupStatus == docsbot.BackupBackedUp {
+	if cloud && d.BackupStatus == docsbot.BackupBackedUp {
 		d.ContentDirty = true
 		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
 	}
@@ -394,13 +398,17 @@ func (s fakeSyncs) RetrySync(_ context.Context, user docsbot.UserID, id docsbot.
 	return true, nil
 }
 
-func (s fakeSyncs) DeleteAndTrash(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, _ string) error {
-	if d, ok := s.repo.docs[id]; !ok || d.UserID != user {
-		return docsbot.ErrNotFound
+func (s fakeSyncs) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, trash bool) (bool, error) {
+	d, ok := s.repo.docs[id]
+	if !ok || d.UserID != user {
+		return false, docsbot.ErrNotFound
 	}
 	delete(s.repo.docs, id)
-	return nil
+	live := d.BackupStatus == docsbot.BackupBackedUp && d.DriveFileID != "" && d.SyncStatus != docsbot.SyncMissing
+	return live && !trash, nil
 }
+
+func (fakeSyncs) RequeueSync(context.Context, docsbot.UserID, docsbot.DocumentID) error { return nil }
 
 // fakeDeps builds a Service over in-memory fakes, plus the fake authorizer.
 func fakeDeps() (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
@@ -412,17 +420,7 @@ func fakeDeps() (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
 func fakeDepsWith(drive fakeDrive) (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
 	repo := newFakeRepo()
 	repo.status = newFakeStatus(repo)
-	return docsbot.NewService(repo, drive, nil, fakeUploads{repo: repo}, repo, repo.status, docsbot.WithSyncs(fakeSyncs{repo: repo})), fakeAuth{}, repo
-}
-
-func (r *fakeRepo) MarkBackedUp(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string) (int, error) {
-	d, ok := r.docs[id]
-	if !ok || d.UserID != user {
-		return 0, docsbot.ErrNotFound
-	}
-	d.BackupStatus, d.DriveFileID = docsbot.BackupBackedUp, driveFileID
-	r.docs[id] = d
-	return d.MetaVersion, nil
+	return docsbot.NewService(repo, drive, nil, fakeUploads{repo: repo}, repo, repo.status, fakeSyncs{repo: repo}), fakeAuth{}, repo
 }
 
 func (r *fakeRepo) MarkSynced(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, version int) (bool, error) {

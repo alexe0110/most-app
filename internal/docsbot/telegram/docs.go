@@ -169,6 +169,17 @@ func (d *docs) sendAlreadySaved(ctx context.Context, b *bot.Bot, chatID int64, u
 	d.sendCard(ctx, b, chatID, card.Doc, textAlreadySaved, card.CategoryFolderID)
 }
 
+// sendReplaced shows the card of a document whose file the converter replaced.
+func (d *docs) sendReplaced(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID) {
+	card, err := d.svc.Card(ctx, user, id)
+	if err != nil {
+		d.fail(ctx, b, chatID, "load card", err)
+		return
+	}
+	d.log.InfoContext(ctx, "original replaced", "user_id", user, "doc_id", id)
+	d.sendCard(ctx, b, chatID, card.Doc, textReplacedDone, card.CategoryFolderID)
+}
+
 // logReceived logs an accepted file: ids and kind only, never the title.
 func (d *docs) logReceived(ctx context.Context, user docsbot.UserID, rep docsbot.Reply) {
 	switch r := rep.(type) {
@@ -742,7 +753,7 @@ func (d *docs) onSetCategory(ctx context.Context, b *bot.Bot, u *models.Update, 
 	d.log.InfoContext(ctx, "document recategorized", "user_id", user, "doc_id", card.Doc.ID, "category", cat)
 	orig, _ := d.origins.get(chatID, msgID)
 	if card.FileInOldFolder {
-		d.editCardText(ctx, b, chatID, msgID, cardText(card.Doc)+"\n"+textDriveFileStayed, cardKeyboard(card.Doc, "", orig), orig)
+		d.editCardText(ctx, b, chatID, msgID, cardText(card.Doc)+"\n"+textDriveFileStayed, d.cardKB(ctx, card.Doc, "", orig), orig)
 		return
 	}
 	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
@@ -1049,18 +1060,28 @@ func (d *docs) sendCard(ctx context.Context, b *bot.Bot, chatID int64, doc docsb
 	if header != "" {
 		text = header + "\n\n" + text
 	}
-	d.send(ctx, b, chatID, text, cardKeyboard(doc, folderID, ""))
+	d.send(ctx, b, chatID, text, d.cardKB(ctx, doc, folderID, ""))
 }
 
 // editCard replaces a message with a document's card and remembers where the
 // card was opened from (orig) so "Назад" and returns survive later edits.
 func (d *docs) editCard(ctx context.Context, b *bot.Bot, chatID int64, msgID int, doc docsbot.Document, folderID, orig string) {
-	d.editCardText(ctx, b, chatID, msgID, cardText(doc), cardKeyboard(doc, folderID, orig), orig)
+	d.editCardText(ctx, b, chatID, msgID, cardText(doc), d.cardKB(ctx, doc, folderID, orig), orig)
 }
 
 func (d *docs) editCardText(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup, orig string) {
 	d.editMessage(ctx, b, chatID, msgID, text, kb)
 	d.origins.set(chatID, msgID, orig)
+}
+
+// cardKB is the card keyboard; a card whose sync failed on revoked access gets a
+// reconnect link in place of "Повторить".
+func (d *docs) cardKB(ctx context.Context, doc docsbot.Document, folderID, orig string) *models.InlineKeyboardMarkup {
+	if !revoked(doc) {
+		return cardKeyboard(doc, folderID, orig)
+	}
+	url, _ := d.connectURL(ctx, doc.UserID)
+	return cardKeyboardWith(doc, folderID, orig, url)
 }
 
 // gone replaces a message about a vanished document with a way back to the catalog.

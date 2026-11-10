@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -16,6 +17,7 @@ func TestService_ReplaceContent(t *testing.T) {
 	tests := []struct {
 		name       string
 		mod        func(d *docsbot.Document)
+		noDrive    bool // Drive is not connected
 		seedOther  bool // another saved document already has the new file
 		in         docsbot.IncomingFile
 		wantReply  func(t *testing.T, rep docsbot.Reply, doc docsbot.Document)
@@ -25,11 +27,22 @@ func TestService_ReplaceContent(t *testing.T) {
 		wantDirty  bool
 		wantSync   docsbot.SyncStatus
 		wantMetaUp bool
+		wantKind   docsbot.Kind // "" skips the check
 	}{
 		{
 			name: "backed up: swapped and sync queued", in: newFile,
 			wantReply: wantReplaced, wantFile: "tg-new", wantJobs: 1, wantDirty: true,
 			wantSync: docsbot.SyncPending, wantMetaUp: true,
+		},
+		{
+			name: "backed up but drive disconnected: row only, no sync", in: newFile, noDrive: true,
+			wantReply: wantReplaced, wantFile: "tg-new", wantSync: docsbot.SyncOK, wantMetaUp: true,
+		},
+		{
+			name: "photo replaced by a pdf changes the kind", in: docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "tg-new", FileUniqueID: "uniq-new", MIME: "application/pdf"},
+			mod:       func(d *docsbot.Document) { d.Kind, d.MIME = docsbot.KindPhoto, "image/jpeg" },
+			wantReply: wantReplaced, wantFile: "tg-new", wantJobs: 1, wantDirty: true, wantSync: docsbot.SyncPending, wantMetaUp: true,
+			wantKind: docsbot.KindDocument,
 		},
 		{
 			name: "not on drive: database only", in: newFile,
@@ -94,7 +107,7 @@ func TestService_ReplaceContent(t *testing.T) {
 					UserID: user, Status: docsbot.StatusSaved, Title: "Другой", TgFileID: "o", TgFileUniqueID: tt.in.FileUniqueID,
 				})
 			}
-			svc, syncs := syncService(repo, fakeDrive{}, fakeFiles{})
+			svc, syncs := syncService(repo, fakeDrive{connected: !tt.noDrive}, fakeFiles{})
 
 			rep, err := svc.ReplaceContent(t.Context(), user, doc.ID, tt.in)
 
@@ -108,6 +121,9 @@ func TestService_ReplaceContent(t *testing.T) {
 			require.Equal(t, tt.wantFile, got.TgFileID)
 			require.Equal(t, tt.wantSync, got.SyncStatus)
 			require.Equal(t, tt.wantDirty, got.ContentDirty)
+			if tt.wantKind != "" {
+				require.Equal(t, tt.wantKind, got.Kind)
+			}
 			require.Len(t, syncs.jobs, tt.wantJobs)
 			require.Equal(t, doc.Title, got.Title, "title never changes")
 			require.Equal(t, doc.Category, got.Category, "category never changes")
@@ -140,18 +156,18 @@ type racingSyncs struct {
 	repo *fakeRepo
 }
 
-func (s racingSyncs) ReplaceContent(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile) (bool, error) {
+func (s racingSyncs) ReplaceContent(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, cloud bool) (bool, error) {
 	s.repo.seed(docsbot.Document{
 		UserID: user, Status: docsbot.StatusSaved, Title: "Параллельный", TgFileID: "r", TgFileUniqueID: in.FileUniqueID,
 	})
-	return s.fakeSyncs.ReplaceContent(ctx, user, id, in)
+	return s.fakeSyncs.ReplaceContent(ctx, user, id, in, cloud)
 }
 
 func TestService_ReplaceContent_raceBecomesAlreadySaved(t *testing.T) {
 	repo := newFakeRepo()
 	doc := backedUpDoc(repo, func(d *docsbot.Document) { d.TgFileID, d.TgFileUniqueID = "tg-cur", "uniq-cur" })
 	syncs := racingSyncs{fakeSyncs: &fakeSyncs{repo: repo}, repo: repo}
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), docsbot.WithSyncs(syncs))
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
 
 	rep, err := svc.ReplaceContent(t.Context(), user, doc.ID, docsbot.IncomingFile{FileID: "n", FileUniqueID: "uniq-new"})
 
@@ -183,4 +199,56 @@ func TestService_ReplaceContent_storageError(t *testing.T) {
 	_, err := svc.ReplaceContent(t.Context(), user, doc.ID, docsbot.IncomingFile{FileID: "n", FileUniqueID: "u"})
 
 	require.Error(t, err)
+}
+
+func TestService_SweepStuckSyncs(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name         string
+		age          time.Duration
+		wantRequeued int
+		wantFailed   int
+		wantSync     docsbot.SyncStatus
+	}{
+		{"fresh is left alone", 10 * time.Minute, 0, 0, docsbot.SyncPending},
+		{"stale is requeued", time.Hour, 1, 0, docsbot.SyncPending},
+		{"stuck for a day is failed", 24 * time.Hour, 0, 1, docsbot.SyncFailed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			doc := backedUpDoc(repo, func(d *docsbot.Document) { d.SyncStatus = docsbot.SyncPending })
+			repo.updated = map[docsbot.DocumentID]time.Time{doc.ID: now.Add(-tt.age)}
+			syncs := &fakeSyncs{repo: repo}
+			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs, docsbot.WithClock(func() time.Time { return now }))
+
+			res, err := svc.SweepStuckUploads(t.Context())
+
+			require.NoError(t, err)
+			require.Equal(t, tt.wantRequeued, res.SyncsRequeued)
+			require.Equal(t, tt.wantFailed, res.SyncsFailed)
+			require.Len(t, syncs.jobs, tt.wantRequeued)
+			require.Equal(t, tt.wantSync, repo.docs[doc.ID].SyncStatus)
+		})
+	}
+}
+
+func TestService_Backup_orphanTrashFailureIsReported(t *testing.T) {
+	repo := newFakeRepo()
+	doc := repo.seed(docsbot.Document{
+		UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "a",
+		BackupStatus: docsbot.BackupPending, TgFileID: "tg-1",
+	})
+	boom := errors.New("drive down")
+	drive := renamingDrive{
+		fakeDrive: fakeDrive{connected: true, uploadFile: docsbot.DriveFile{ID: "remote-9"}, trashErr: boom},
+		onUpload:  func() { _ = repo.DeleteDocument(t.Context(), user, doc.ID) },
+	}
+	svc := docsbot.NewService(repo, drive, fakeFiles{data: []byte("x")}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+
+	res, err := svc.Backup(t.Context(), user, doc.ID)
+
+	require.NoError(t, err)
+	require.True(t, res.Noop)
+	require.ErrorIs(t, res.OrphanTrashErr, boom)
 }

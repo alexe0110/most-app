@@ -81,7 +81,8 @@ func (q *Queries) ClaimFailedForRetry(ctx context.Context, arg ClaimFailedForRet
 const claimSyncFailed = `-- name: ClaimSyncFailed :execrows
 update documents
 set sync_status = 'pending',
-    sync_reason = null
+    sync_reason = null,
+    updated_at  = now()
 where id = $1
   and user_id = $2
   and backup_status = 'backed_up'
@@ -186,6 +187,33 @@ func (q *Queries) DeleteDocumentByID(ctx context.Context, arg DeleteDocumentByID
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteDocumentReturning = `-- name: DeleteDocumentReturning :one
+delete
+from documents
+where id = $1
+  and user_id = $2
+returning backup_status, sync_status, drive_file_id
+`
+
+type DeleteDocumentReturningParams struct {
+	ID     pgtype.UUID
+	UserID pgtype.UUID
+}
+
+type DeleteDocumentReturningRow struct {
+	BackupStatus string
+	SyncStatus   string
+	DriveFileID  pgtype.Text
+}
+
+// Deletes and reports what the Drive copy was, decided under the row lock.
+func (q *Queries) DeleteDocumentReturning(ctx context.Context, arg DeleteDocumentReturningParams) (DeleteDocumentReturningRow, error) {
+	row := q.db.QueryRow(ctx, deleteDocumentReturning, arg.ID, arg.UserID)
+	var i DeleteDocumentReturningRow
+	err := row.Scan(&i.BackupStatus, &i.SyncStatus, &i.DriveFileID)
+	return i, err
 }
 
 const deleteStalePending = `-- name: DeleteStalePending :execrows
@@ -596,31 +624,6 @@ func (q *Queries) ListSavedDocumentsForExport(ctx context.Context, arg ListSaved
 	return items, nil
 }
 
-const markDocumentBackedUp = `-- name: MarkDocumentBackedUp :one
-update documents
-set backup_status = 'backed_up',
-    drive_file_id = $1,
-    updated_at    = now()
-where id = $2
-  and user_id = $3
-returning meta_version
-`
-
-type MarkDocumentBackedUpParams struct {
-	DriveFileID pgtype.Text
-	ID          pgtype.UUID
-	UserID      pgtype.UUID
-}
-
-// Returns meta_version so the worker can tell whether the title or category
-// changed while the file was uploading.
-func (q *Queries) MarkDocumentBackedUp(ctx context.Context, arg MarkDocumentBackedUpParams) (int32, error) {
-	row := q.db.QueryRow(ctx, markDocumentBackedUp, arg.DriveFileID, arg.ID, arg.UserID)
-	var meta_version int32
-	err := row.Scan(&meta_version)
-	return meta_version, err
-}
-
 const markDocumentBackedUpSync = `-- name: MarkDocumentBackedUpSync :one
 update documents
 set backup_status = 'backed_up',
@@ -630,7 +633,7 @@ set backup_status = 'backed_up',
     updated_at    = now()
 where id = $3
   and user_id = $4
-returning meta_version, sync_status
+returning meta_version
 `
 
 type MarkDocumentBackedUpSyncParams struct {
@@ -640,23 +643,18 @@ type MarkDocumentBackedUpSyncParams struct {
 	UserID       pgtype.UUID
 }
 
-type MarkDocumentBackedUpSyncRow struct {
-	MetaVersion int32
-	SyncStatus  string
-}
-
 // Like MarkDocumentBackedUp, and in the same statement queues a sync when the
 // title or category changed since the upload started (meta_version differs).
-func (q *Queries) MarkDocumentBackedUpSync(ctx context.Context, arg MarkDocumentBackedUpSyncParams) (MarkDocumentBackedUpSyncRow, error) {
+func (q *Queries) MarkDocumentBackedUpSync(ctx context.Context, arg MarkDocumentBackedUpSyncParams) (int32, error) {
 	row := q.db.QueryRow(ctx, markDocumentBackedUpSync,
 		arg.DriveFileID,
 		arg.StartVersion,
 		arg.ID,
 		arg.UserID,
 	)
-	var i MarkDocumentBackedUpSyncRow
-	err := row.Scan(&i.MetaVersion, &i.SyncStatus)
-	return i, err
+	var meta_version int32
+	err := row.Scan(&meta_version)
+	return meta_version, err
 }
 
 const markDocumentUploading = `-- name: MarkDocumentUploading :exec
@@ -678,8 +676,10 @@ func (q *Queries) MarkDocumentUploading(ctx context.Context, arg MarkDocumentUpl
 
 const markSyncPending = `-- name: MarkSyncPending :execrows
 update documents
-set sync_status = 'pending',
-    sync_reason = null
+set sync_status  = 'pending',
+    sync_reason  = null,
+    meta_version = meta_version + 1,
+    updated_at   = now()
 where id = $1
   and user_id = $2
   and backup_status = 'backed_up'
@@ -692,6 +692,7 @@ type MarkSyncPendingParams struct {
 }
 
 // 0 rows: the document is gone, not backed up, or its Drive file is missing.
+// meta_version moves on, so a stale parallel MarkSynced (older version) loses.
 func (q *Queries) MarkSyncPending(ctx context.Context, arg MarkSyncPendingParams) (int64, error) {
 	result, err := q.db.Exec(ctx, markSyncPending, arg.ID, arg.UserID)
 	if err != nil {
@@ -729,40 +730,46 @@ func (q *Queries) MarkSynced(ctx context.Context, arg MarkSyncedParams) (int64, 
 
 const replaceDocumentContent = `-- name: ReplaceDocumentContent :one
 update documents
-set tg_file_id        = $1,
-    tg_file_unique_id = $2,
-    file_size         = $3,
-    mime_type         = $4,
+set kind              = $1,
+    tg_file_id        = $2,
+    tg_file_unique_id = $3,
+    file_size         = $4,
+    mime_type         = $5,
     meta_version      = meta_version + 1,
-    content_dirty     = (backup_status = 'backed_up'),
-    sync_status       = case when backup_status = 'backed_up' then 'pending' else sync_status end,
-    sync_reason       = case when backup_status = 'backed_up' then null else sync_reason end,
+    content_dirty     = ($6::bool and backup_status = 'backed_up'),
+    sync_status       = case when $6::bool and backup_status = 'backed_up' then 'pending' else sync_status end,
+    sync_reason       = case when $6::bool and backup_status = 'backed_up' then null else sync_reason end,
     updated_at        = now()
-where id = $5
-  and user_id = $6
+where id = $7
+  and user_id = $8
   and backup_status not in ('pending', 'uploading')
   and sync_status not in ('pending', 'missing')
 returning backup_status
 `
 
 type ReplaceDocumentContentParams struct {
+	Kind           string
 	TgFileID       string
 	TgFileUniqueID string
 	FileSize       pgtype.Int8
 	MimeType       pgtype.Text
+	Cloud          bool
 	ID             pgtype.UUID
 	UserID         pgtype.UUID
 }
 
 // Swaps the file of a document (id, title, category stay). A backed-up document
-// is marked content_dirty and sync-pending for the Drive copy. 0 rows: the
+// is marked content_dirty and sync-pending for the Drive copy when @cloud (Drive
+// is connected), otherwise only the row changes. 0 rows: the
 // document is gone, uploading, or already has a sync in flight or a missing file.
 func (q *Queries) ReplaceDocumentContent(ctx context.Context, arg ReplaceDocumentContentParams) (string, error) {
 	row := q.db.QueryRow(ctx, replaceDocumentContent,
+		arg.Kind,
 		arg.TgFileID,
 		arg.TgFileUniqueID,
 		arg.FileSize,
 		arg.MimeType,
+		arg.Cloud,
 		arg.ID,
 		arg.UserID,
 	)
@@ -897,6 +904,55 @@ func (q *Queries) SetSyncStatus(ctx context.Context, arg SetSyncStatusParams) er
 		arg.UserID,
 	)
 	return err
+}
+
+const stuckSyncs = `-- name: StuckSyncs :many
+select d.id, d.user_id, d.updated_at
+from documents d
+         join integrations i
+              on i.user_id = d.user_id
+                  and i.bot = 'docs'
+                  and i.provider = 'google'
+                  and i.status = 'active'
+where d.status = 'saved'
+  and d.backup_status = 'backed_up'
+  and d.sync_status = 'pending'
+  and d.updated_at < $1
+order by d.updated_at
+limit $2
+`
+
+type StuckSyncsParams struct {
+	OlderThan pgtype.Timestamptz
+	Lim       int32
+}
+
+type StuckSyncsRow struct {
+	ID        pgtype.UUID
+	UserID    pgtype.UUID
+	UpdatedAt pgtype.Timestamptz
+}
+
+// Backed-up documents whose sync has been pending since before @older_than, for
+// users with an active Drive integration.
+func (q *Queries) StuckSyncs(ctx context.Context, arg StuckSyncsParams) ([]StuckSyncsRow, error) {
+	rows, err := q.db.Query(ctx, stuckSyncs, arg.OlderThan, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StuckSyncsRow{}
+	for rows.Next() {
+		var i StuckSyncsRow
+		if err := rows.Scan(&i.ID, &i.UserID, &i.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const stuckUploads = `-- name: StuckUploads :many

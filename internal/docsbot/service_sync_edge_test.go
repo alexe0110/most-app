@@ -80,7 +80,7 @@ func TestService_Delete_errors(t *testing.T) {
 		require.Contains(t, repo.docs, doc.ID)
 		require.Empty(t, syncs.trashes)
 	})
-	t.Run("missing remote file still queues the trash", func(t *testing.T) {
+	t.Run("missing remote file queues nothing and keeps nothing", func(t *testing.T) {
 		repo := newFakeRepo()
 		doc := backedUpDoc(repo, func(d *docsbot.Document) { d.SyncStatus = docsbot.SyncMissing })
 		svc, syncs := syncService(repo, fakeDrive{connected: true}, fakeFiles{})
@@ -89,7 +89,7 @@ func TestService_Delete_errors(t *testing.T) {
 
 		require.NoError(t, err)
 		require.Equal(t, docsbot.Deleted{}, got)
-		require.Equal(t, []string{"remote-1"}, syncs.trashes)
+		require.Empty(t, syncs.trashes)
 	})
 }
 
@@ -249,7 +249,7 @@ func TestService_race_doubleTapDeleteTrashesOnce(t *testing.T) {
 func TestService_race_doubleTapReplaceQueuesOneSync(t *testing.T) {
 	repo := newFakeRepo()
 	doc := backedUpDoc(repo, func(d *docsbot.Document) { d.TgFileID, d.TgFileUniqueID = "tg-cur", "uniq-cur" })
-	svc, syncs := syncService(repo, fakeDrive{}, fakeFiles{})
+	svc, syncs := syncService(repo, fakeDrive{connected: true}, fakeFiles{})
 	in := docsbot.IncomingFile{FileID: "tg-new", FileUniqueID: "uniq-new", MIME: "application/pdf"}
 
 	parallel(6, func(int) {
@@ -308,7 +308,7 @@ func TestService_race_deleteDuringSync(t *testing.T) {
 	syncs := &fakeSyncs{repo: repo}
 	var svc *docsbot.Service
 	drive := deletedDuringSync{fakeDrive: fakeDrive{connected: true}, syncs: syncs, id: doc.ID, svc: func() *docsbot.Service { return svc }}
-	svc = docsbot.NewService(repo, drive, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), docsbot.WithSyncs(syncs))
+	svc = docsbot.NewService(repo, drive, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
 
 	res, err := svc.SyncRemote(t.Context(), user, doc.ID)
 
@@ -354,7 +354,7 @@ func TestService_Backup_syncQueuedExactlyWhenVersionChanged(t *testing.T) {
 				fakeDrive: fakeDrive{connected: true, uploadFile: docsbot.DriveFile{ID: "remote-1"}},
 				repo:      repo, id: doc.ID, title: tt.rename,
 			}
-			svc := docsbot.NewService(repo, drive, fakeFiles{data: []byte("x"), mime: "application/pdf"}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), docsbot.WithSyncs(syncs))
+			svc := docsbot.NewService(repo, drive, fakeFiles{data: []byte("x"), mime: "application/pdf"}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
 
 			res, err := svc.Backup(t.Context(), user, doc.ID)
 

@@ -103,7 +103,7 @@ func run() error {
 
 	gdriveSvc := gdrive.New(gdriveClients{oauth: oauthSvc}, repo, gdrive.WithLogger(log))
 	driveAdapter := driveBridge{oauth: oauthSvc, gd: gdriveSvc}
-	svc = docsbot.NewService(repo, driveAdapter, files, enq, repo, repo, docsbot.WithSyncs(enq), docsbot.WithCategoryNamer(telegram.CategoryLabel))
+	svc = docsbot.NewService(repo, driveAdapter, files, enq, repo, repo, enq, docsbot.WithCategoryNamer(telegram.CategoryLabel))
 
 	tgbot, err = tg.New(tg.Config{
 		Token:         cfg.TelegramToken,

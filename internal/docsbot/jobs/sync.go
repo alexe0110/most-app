@@ -148,8 +148,17 @@ func (e *Enqueuer) MarkBackedUp(ctx context.Context, user docsbot.UserID, id doc
 }
 
 // ReplaceContent implements docsbot.Syncs.
-func (e *Enqueuer) ReplaceContent(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile) (bool, error) {
-	return e.store.ReplaceContentForSync(ctx, user, id, in, e.insertSync(user, id))
+func (e *Enqueuer) ReplaceContent(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, cloud bool) (bool, error) {
+	return e.store.ReplaceContentForSync(ctx, user, id, in, cloud, e.insertSync(user, id))
+}
+
+// RequeueSync implements docsbot.Syncs.
+func (e *Enqueuer) RequeueSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
+	_, err := e.queue.Insert(ctx, StorageSyncArgs{UserID: string(user), DocumentID: string(id)}, syncInsertOpts())
+	if err != nil {
+		return fmt.Errorf("requeue sync: %w", err)
+	}
+	return nil
 }
 
 // RetrySync implements docsbot.Syncs.

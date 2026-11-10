@@ -24,7 +24,7 @@ func TestService_RetryStatusFailed(t *testing.T) {
 			ids[name] = repo.seed(docsbot.Document{UserID: user, BackupStatus: st, StatusMessageID: sm.ID}).ID
 		}
 		up := &fakeUploads{repo: repo}
-		return docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, up, repo, status), up, repo, sm.ID, ids
+		return docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, up, repo, status, &fakeSyncs{repo: repo}), up, repo, sm.ID, ids
 	}
 
 	t.Run("requeues only failed and flips them back to pending", func(t *testing.T) {
@@ -67,7 +67,7 @@ func TestService_OpenAndAttachStatus(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeRepo()
 	status := newFakeStatus(repo)
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, status)
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, status, &fakeSyncs{repo: repo})
 	a := repo.seed(docsbot.Document{UserID: user})
 	b := repo.seed(docsbot.Document{UserID: user})
 
