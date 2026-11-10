@@ -66,7 +66,7 @@ func TestConvertPDF_menuAndRotate(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":rot"))
 
 	require.Len(t, h.docs, 1)
-	require.Equal(t, "Договор (изменён).pdf", h.docs[0].filename)
+	require.Equal(t, "Договор-изменён.pdf", h.docs[0].filename)
 	rc, err := api.ReadContext(t.Context(), bytes.NewReader(h.docs[0].data), model.NewDefaultConfiguration())
 	require.NoError(t, err)
 	require.NoError(t, api.ValidateContext(t.Context(), rc))
@@ -149,7 +149,7 @@ func TestConvertPDF_merge(t *testing.T) {
 
 	require.Len(t, h.docs, 1)
 	require.Equal(t, 5, pdfPages(t, h.docs[0].data))
-	require.Equal(t, "Договор (изменён).pdf", h.docs[0].filename)
+	require.Equal(t, "Договор-изменён.pdf", h.docs[0].filename)
 }
 
 func TestConvertPDF_mergeRefusesOversizeAndGarbage(t *testing.T) {

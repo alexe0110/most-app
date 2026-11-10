@@ -85,7 +85,7 @@ func (c *converter) runPDFOp(ctx context.Context, b *bot.Bot, chatID, tgUser int
 			return
 		}
 		c.log.InfoContext(ctx, "pdf converted", "user_id", user, "doc_id", src.docID, "op", op, "in_bytes", len(data), "out_bytes", len(out))
-		c.sendResult(ctx, b, chatID, tgUser, resultName(src.title, suffixEdited, "document", "pdf"), out, src.docID, suffixEdited)
+		c.sendResult(ctx, b, chatID, tgUser, resultFileName(src.title, nameFallbackDocument, nameTagEdited, "pdf"), out, src.docID, suffixEdited)
 		c.finish(ctx, b, chatID, msgID)
 		return
 	}
@@ -194,7 +194,7 @@ func (c *converter) onRange(ctx context.Context, b *bot.Bot, update *models.Upda
 		return
 	}
 	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", sess.sourceDoc, "op", sess.pdfOp, "in_bytes", len(src), "out_bytes", len(out))
-	c.sendResult(ctx, b, chatID, tgUser, resultName(sess.sourceTitle, suffixEdited, "document", "pdf"), out, sess.sourceDoc, suffixEdited)
+	c.sendResult(ctx, b, chatID, tgUser, resultFileName(sess.sourceTitle, nameFallbackDocument, nameTagEdited, "pdf"), out, sess.sourceDoc, suffixEdited)
 	c.finish(ctx, b, chatID, msgID)
 }
 
@@ -303,7 +303,7 @@ func (c *converter) finishMerge(ctx context.Context, b *bot.Bot, update *models.
 		return
 	}
 	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", sess.sourceDoc, "op", opMerge, "files", len(files), "out_bytes", len(out))
-	c.sendResult(ctx, b, chatID, tgUser, resultName(sess.sourceTitle, suffixEdited, "document", "pdf"), out, sess.sourceDoc, suffixEdited)
+	c.sendResult(ctx, b, chatID, tgUser, resultFileName(sess.sourceTitle, nameFallbackDocument, nameTagEdited, "pdf"), out, sess.sourceDoc, suffixEdited)
 	c.finish(ctx, b, chatID, msgID)
 }
 

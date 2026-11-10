@@ -325,7 +325,7 @@ func TestConvert_photosToPDF(t *testing.T) {
 
 	require.Len(t, h.docs, 1)
 	doc := h.docs[0]
-	require.True(t, strings.HasPrefix(doc.filename, "scan-"), "got %q", doc.filename)
+	require.True(t, strings.HasPrefix(doc.filename, "Скан "), "got %q", doc.filename)
 	require.True(t, strings.HasSuffix(doc.filename, ".pdf"))
 	require.True(t, bytes.HasPrefix(doc.data, []byte("%PDF")))
 	require.Contains(t, string(doc.data), "/Count 3", "one page per photo")
@@ -343,7 +343,7 @@ func TestConvert_compressPreset(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:fmtjpeg"))
 
 	require.Len(t, h.docs, 1)
-	require.Equal(t, "photo-compressed.jpg", h.docs[0].filename)
+	require.Equal(t, "фото-сжатый.jpg", h.docs[0].filename)
 	require.LessOrEqual(t, len(h.docs[0].data), 2<<20)
 	_, _, err := image.Decode(bytes.NewReader(h.docs[0].data))
 	require.NoError(t, err)
@@ -363,7 +363,7 @@ func TestConvert_compressCustomLimit(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:fmtpng"))
 
 	require.Len(t, h.docs, 1)
-	require.Equal(t, "photo-compressed.png", h.docs[0].filename)
+	require.Equal(t, "фото-сжатый.png", h.docs[0].filename)
 }
 
 func TestConvert_customLimitRejectsJunk(t *testing.T) {

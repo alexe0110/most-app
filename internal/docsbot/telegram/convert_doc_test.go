@@ -40,7 +40,7 @@ func TestConvertDoc_cardCompressThenSave(t *testing.T) {
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := compressFromMenu(t, h, src.ID)
 
-	require.Equal(t, "Паспорт (сжатый).jpg", h.docs[0].filename)
+	require.Equal(t, "Паспорт-сжатый.jpg", h.docs[0].filename)
 	require.Len(t, h.repo.docs, 1, "nothing is saved before the tap")
 
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
@@ -82,7 +82,7 @@ func TestConvertDoc_pdfFromCard(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":pdf"))
 
 	require.Len(t, h.docs, 1)
-	require.Equal(t, "Паспорт (PDF).pdf", h.docs[0].filename)
+	require.Equal(t, "Паспорт-PDF.pdf", h.docs[0].filename)
 	require.True(t, strings.HasPrefix(string(h.docs[0].data), "%PDF"))
 }
 
@@ -99,7 +99,7 @@ func TestConvertDoc_pendingSourceSavedInOther(t *testing.T) {
 		if id != src.ID {
 			require.Equal(t, docsbot.StatusSaved, d.Status, "no category question")
 			require.Equal(t, docsbot.CatOther, d.Category)
-			require.Equal(t, "Паспорт (сжатый).jpg", d.Title)
+			require.Equal(t, "Паспорт-сжатый.jpg", d.Title)
 		}
 	}
 }

@@ -60,10 +60,10 @@ func TestConvertCompress_formatQuestionOnlyForPNG(t *testing.T) {
 		wantAsk  bool
 		wantFile string
 	}{
-		{"jpeg, limit button", false, false, false, "photo-compressed.jpg"},
-		{"jpeg, custom limit", false, true, false, "photo-compressed.jpg"},
-		{"png, limit button", true, false, true, "photo-compressed.png"},
-		{"png, custom limit", true, true, true, "photo-compressed.png"},
+		{"jpeg, limit button", false, false, false, "фото-сжатый.jpg"},
+		{"jpeg, custom limit", false, true, false, "фото-сжатый.jpg"},
+		{"png, limit button", true, false, true, "фото-сжатый.png"},
+		{"png, custom limit", true, true, true, "фото-сжатый.png"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -123,7 +123,7 @@ func TestConvertPDFActions_fromCommand(t *testing.T) {
 
 		require.Len(t, h.docs, 1)
 		require.Equal(t, 3, pdfPages(t, h.docs[0].data))
-		require.Equal(t, "Счёт (изменён).pdf", h.docs[0].filename)
+		require.Equal(t, "Счёт-изменён.pdf", h.docs[0].filename)
 		require.Contains(t, h.deleted, menu, "the menu is gone once the result is sent")
 	})
 
@@ -164,4 +164,59 @@ func TestConvertPDFActions_fromCommand(t *testing.T) {
 			require.Equal(t, docsbot.CatOther, d.Category)
 		}
 	})
+}
+
+func TestConvertCompress_resultNameFollowsTheSentFile(t *testing.T) {
+	tests := []struct {
+		name string
+		send func(h *convHarness)
+		want string
+	}{
+		{"compressed photo has no name", func(h *convHarness) { h.bot.ProcessUpdate(t.Context(), photoUpdate(1)) }, "фото-сжатый.jpg"},
+		{"file keeps its name", func(h *convHarness) {
+			h.bot.ProcessUpdate(t.Context(), namedDocumentUpdate("doc", "image/jpeg", "Паспорт.jpg"))
+		}, "Паспорт-сжатый.jpg"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newConvHarness(t)
+			ctx := t.Context()
+			h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+			h.bot.ProcessUpdate(ctx, callbackOn("conv:compress", h.lastMsg()))
+			tt.send(h)
+			h.bot.ProcessUpdate(ctx, callbackOn("conv:limit1", h.lastMsg()))
+
+			require.Len(t, h.docs, 1)
+			require.Equal(t, tt.want, h.docs[0].filename)
+		})
+	}
+}
+
+func TestConvertMenu_progressThenResult(t *testing.T) {
+	h := newConvHarness(t)
+	src := seedSource(h, docsbot.StatusSaved)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(src.ID)))
+	menu := h.lastMsg()
+
+	h.bot.ProcessUpdate(ctx, callbackOn("conv:q:"+string(src.ID)+":c1", menu))
+
+	require.Len(t, h.docs, 1)
+	require.Contains(t, h.editTexts, fmt.Sprintf("%d:⏳ Обрабатываю…", menu), "the menu turns into a progress note")
+	require.Contains(t, h.deleted, menu, "and is removed with the result")
+}
+
+func TestConvertMenu_errorBringsMenuBack(t *testing.T) {
+	h := newConvHarness(t)
+	src := seedSource(h, docsbot.StatusSaved)
+	h.serve("src", []byte("not an image"))
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(src.ID)))
+	menu := h.lastMsg()
+
+	h.bot.ProcessUpdate(ctx, callbackOn("conv:q:"+string(src.ID)+":c1", menu))
+
+	require.Empty(t, h.docs)
+	require.Contains(t, h.lastShown(), "Так я пока не умею")
+	require.Empty(t, h.deleted, "the menu stays so the user can pick another action")
 }

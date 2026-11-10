@@ -7,7 +7,7 @@ package telegram
 // Core flow texts (#9, #10, #12, #13, #14).
 const (
 	textStart = "Привет! Я Most Docs. Пришли документ — фото, PDF или файл, — " +
-		"я разложу его по категориям и найду по запросу.\n\n" +
+		"я разложу его по категориям и найду по запросу. А ещё сожму фото и поработаю с PDF — команда /convert.\n\n" +
 		"Цель — хранить документы на твоём Google Drive. Пока Drive не подключён, " +
 		"они лежат во входящей папке в Telegram — можно начать без настройки.\n\n" +
 		"Подключишь Drive — бот будет видеть только файлы, которые сам создал. " +
@@ -18,7 +18,7 @@ const (
 		"• Приём документов — пришли фото, PDF или файл и выбери категорию.\n" +
 		"• /list — твои документы по категориям.\n" +
 		"• Поиск — напиши слово из названия.\n" +
-		"• /convert — фото → PDF или сжать изображение.\n\n" +
+		"• /convert — фото → PDF, сжать изображение, действия с PDF: повернуть, оставить или убрать страницы, склеить.\n\n" +
 		"Цель — перенести документы на твой Google Drive; пока они хранятся в Telegram."
 
 	textDriveConnected = "Google Drive подключён ✅ Новые документы будут попадать на твой Диск."
@@ -220,6 +220,18 @@ const (
 	btnPDFMerge         = "➕ Склеить"
 	btnSaveResult       = "💾 Сохранить в документы"
 	btnSkipResult       = "⬇️ Только файл"
+)
+
+// Names of files made by the converter: "<name>-<tag>.<ext>".
+const (
+	nameTagCompressed = "сжатый"
+	nameTagPDF        = "PDF"
+	nameTagJPG        = "JPG"
+	nameTagEdited     = "изменён"
+
+	nameFallbackPhoto    = "фото"
+	nameFallbackDocument = "документ"
+	nameScan             = "Скан %s.pdf" // %s = date, 02.01.2006
 )
 
 // Title suffixes of documents made by the converter.

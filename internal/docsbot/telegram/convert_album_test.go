@@ -51,7 +51,7 @@ func TestConvertAlbum_shuffledPhotosMakeOnePDFInOrder(t *testing.T) {
 	require.Equal(t, []string{"img01", "img02", "img03", "img04"}, h.downloads, "pages follow message order")
 	require.Len(t, h.docs, 1, "one PDF")
 	require.Contains(t, string(h.docs[0].data), "/Count 4")
-	require.True(t, strings.HasPrefix(h.docs[0].filename, "scan-"))
+	require.True(t, strings.HasPrefix(h.docs[0].filename, "Скан "))
 	require.Empty(t, h.repo.docs, "the album's pending documents are dropped")
 	require.NotNil(t, saveToken.FindStringSubmatch(h.docMarkups[0]), "the PDF can be saved")
 }

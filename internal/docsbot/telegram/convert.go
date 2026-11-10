@@ -241,6 +241,10 @@ func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Upda
 			s.images = []pendingImage{{msgID: update.Message.ID, data: data}}
 			s.step = stepChooseLimit
 			s.inputPNG = isPNG(data)
+			s.sourceTitle = ""
+			if d := update.Message.Document; d != nil {
+				s.sourceTitle = d.FileName
+			}
 			toCompress = true
 		case stepCollectPDF:
 			s.images = append(s.images, pendingImage{msgID: update.Message.ID, data: data})
@@ -584,14 +588,14 @@ func (c *converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64
 	if len(out) > maxBytes {
 		reply(ctx, b, c.log, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
 	}
-	name := "photo-compressed." + formatExt(format)
+	name := resultFileName(sess.sourceTitle, nameFallbackPhoto, nameTagCompressed, formatExt(format))
 	c.sendResult(ctx, b, chatID, user, name, out, "", suffixCompressed)
 	c.finish(ctx, b, chatID, msgID)
 	return true
 }
 
-// scanName is the file name of a PDF made from photos.
-func scanName(now time.Time) string { return "scan-" + now.Format("2006-01-02") + ".pdf" }
+// scanName is the file name of a PDF made from photos: "Скан 10.11.2026.pdf".
+func scanName(now time.Time) string { return fmt.Sprintf(nameScan, now.Format("02.01.2006")) }
 
 // loadDoc reads the user's document (the domain checks ownership) and answers
 // the user itself when it can't.
@@ -679,15 +683,15 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 	case opPDF:
 		suffix = suffixPDF
 		out, err = convert.ImagesToPDF([][]byte{src})
-		name = resultName(doc.Title, suffix, "scan", "pdf")
+		name = resultFileName(doc.Title, nameFallbackPhoto, nameTagPDF, "pdf")
 	case opJPG:
 		suffix = suffixJPG
 		out, err = convert.ToJPEG(src)
-		name = resultName(doc.Title, suffix, "photo", "jpg")
+		name = resultFileName(doc.Title, nameFallbackPhoto, nameTagJPG, "jpg")
 	default:
 		suffix = suffixCompressed
 		out, err = convert.Compress(src, maxBytes, convert.JPEG)
-		name = resultName(doc.Title, suffix, "photo-compressed", "jpg")
+		name = resultFileName(doc.Title, nameFallbackPhoto, nameTagCompressed, "jpg")
 	}
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert document", "err", err, "user_id", user, "doc_id", id, "op", op)
@@ -1189,14 +1193,15 @@ func quickLimit(op string) (int, bool) {
 	}
 }
 
-// resultName is the file name of a converted document: its derived title plus
-// the extension, or fallback when the document has no title. Path separators
-// are replaced so the name is a single path element.
-func resultName(title, suffix, fallback, ext string) string {
-	base := fallback
-	if strings.TrimSpace(title) != "" {
-		base = docsbot.DerivedTitle(title, suffix)
+// resultFileName is the file name of a converted document: the title without its
+// extension (fallback when there is none), a dash, the tag and the extension:
+// "Договор-сжатый.jpg". Path separators are replaced so the name is a single path
+// element.
+func resultFileName(title, fallback, tag, ext string) string {
+	base := docsbot.DerivedTitle(title, "") // drops the extension, trims the length
+	if base == "" {
+		base = fallback
 	}
 	base = strings.NewReplacer("/", "_", "\\", "_").Replace(base)
-	return base + "." + ext
+	return base + "-" + tag + "." + ext
 }
