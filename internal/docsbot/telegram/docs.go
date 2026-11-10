@@ -169,6 +169,17 @@ func (d *docs) sendAlreadySaved(ctx context.Context, b *bot.Bot, chatID int64, u
 	d.sendCard(ctx, b, chatID, card.Doc, textAlreadySaved, card.CategoryFolderID)
 }
 
+// sendReplaced shows the card of a document whose file the converter replaced.
+func (d *docs) sendReplaced(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID) {
+	card, err := d.svc.Card(ctx, user, id)
+	if err != nil {
+		d.fail(ctx, b, chatID, "load card", err)
+		return
+	}
+	d.log.InfoContext(ctx, "original replaced", "user_id", user, "doc_id", id)
+	d.sendCard(ctx, b, chatID, card.Doc, textReplacedDone, card.CategoryFolderID)
+}
+
 // logReceived logs an accepted file: ids and kind only, never the title.
 func (d *docs) logReceived(ctx context.Context, user docsbot.UserID, rep docsbot.Reply) {
 	switch r := rep.(type) {
@@ -253,7 +264,7 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 	case actRename:
 		d.onRenamePrompt(ctx, b, u, parts)
 	case actDeleteAsk:
-		d.onDeleteAsk(ctx, b, u, parts)
+		d.onDeleteAsk(ctx, b, u, user, parts)
 	case actDeleteYes:
 		d.onDeleteYes(ctx, b, u, user, parts)
 	case actDeleteNo:
@@ -272,6 +283,8 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.onTransferNo(ctx, b, u)
 	case actRetry:
 		d.onRetry(ctx, b, u, user, parts)
+	case actRetrySync:
+		d.onRetrySync(ctx, b, u, user, parts)
 	case actDisconnect:
 		d.onDisconnect(ctx, b, u, user)
 	case actRetryAll:
@@ -289,7 +302,7 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 // answersItself reports whether the action handler answers the callback query
 // on its own (to pick the toast from the outcome).
 func answersItself(parts []string) bool {
-	return len(parts) >= 2 && parts[1] == actRetry
+	return len(parts) >= 2 && (parts[1] == actRetry || parts[1] == actRetrySync)
 }
 
 // toastFor is the short pop-up shown for an action, "" for none.
@@ -453,6 +466,41 @@ func (d *docs) onRetry(ctx context.Context, b *bot.Bot, u *models.Update, user d
 		return
 	}
 	d.editText(ctx, b, chatID, msgID, textRetryQueued)
+}
+
+// onRetrySync re-queues a failed cloud sync and redraws the card as updating. It
+// answers the callback itself, like onRetry.
+func (d *docs) onRetrySync(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	toast := ""
+	defer func() { d.answerText(ctx, b, u.CallbackQuery.ID, toast) }()
+	id, ok := docID(parts)
+	if !ok {
+		return
+	}
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	err := d.svc.RetrySync(ctx, user, id)
+	if errors.Is(err, docsbot.ErrNotRetryable) {
+		toast = toastNotRetryable
+		return
+	}
+	if err != nil {
+		d.fail(ctx, b, chatID, "retry sync", err)
+		return
+	}
+	card, err := d.svc.Card(ctx, user, id)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		d.gone(ctx, b, chatID, msgID)
+		return
+	}
+	if err != nil {
+		d.fail(ctx, b, chatID, "load card", err)
+		return
+	}
+	orig, _ := d.origins.get(chatID, msgID)
+	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
 }
 
 // onCategory saves a new document under the chosen category. The picker message
@@ -705,7 +753,7 @@ func (d *docs) onSetCategory(ctx context.Context, b *bot.Bot, u *models.Update, 
 	d.log.InfoContext(ctx, "document recategorized", "user_id", user, "doc_id", card.Doc.ID, "category", cat)
 	orig, _ := d.origins.get(chatID, msgID)
 	if card.FileInOldFolder {
-		d.editCardText(ctx, b, chatID, msgID, cardText(card.Doc)+"\n"+textDriveFileStayed, cardKeyboard(card.Doc, "", orig), orig)
+		d.editCardText(ctx, b, chatID, msgID, cardText(card.Doc)+"\n"+textDriveFileStayed, d.cardKB(ctx, card.Doc, "", orig), orig)
 		return
 	}
 	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
@@ -786,7 +834,7 @@ func (d *docs) applyRename(ctx context.Context, b *bot.Bot, chatID int64, user d
 }
 
 // onDeleteAsk asks to confirm before deleting.
-func (d *docs) onDeleteAsk(ctx context.Context, b *bot.Bot, u *models.Update, parts []string) {
+func (d *docs) onDeleteAsk(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
 	id, ok := docID(parts)
 	if !ok {
 		return
@@ -799,7 +847,20 @@ func (d *docs) onDeleteAsk(ctx context.Context, b *bot.Bot, u *models.Update, pa
 		{Text: btnDeleteYes, CallbackData: cb(actDeleteYes, id)},
 		{Text: btnDeleteNo, CallbackData: cb(actDeleteNo, id)},
 	}}}
-	d.editMessage(ctx, b, chatID, msgID, textDeleteConfirm, kb)
+	d.editMessage(ctx, b, chatID, msgID, d.deleteConfirmText(ctx, user, id), kb)
+}
+
+// deleteConfirmText warns that the Drive file goes to the trash when the document
+// is in a connected Drive. Any lookup failure falls back to the plain text.
+func (d *docs) deleteConfirmText(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) string {
+	card, err := d.svc.Card(ctx, user, id)
+	if err != nil || !card.Doc.InDrive() {
+		return textDeleteConfirm
+	}
+	if connected, err := d.svc.DriveConnected(ctx, user); err != nil || !connected {
+		return textDeleteConfirm
+	}
+	return textDeleteConfirmDrive
 }
 
 func (d *docs) onDeleteYes(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
@@ -811,11 +872,17 @@ func (d *docs) onDeleteYes(ctx context.Context, b *bot.Bot, u *models.Update, us
 	if !ok {
 		return
 	}
-	if err := d.svc.Delete(ctx, user, id); err != nil {
+	deleted, err := d.svc.Delete(ctx, user, id)
+	if err != nil {
 		d.fail(ctx, b, chatID, "delete", err)
 		return
 	}
-	d.log.InfoContext(ctx, "document deleted", "user_id", user, "doc_id", id)
+	d.log.InfoContext(ctx, "document deleted", "user_id", user, "doc_id", id, "remote_kept", deleted.RemoteKept)
+	if deleted.RemoteKept {
+		// The Drive file stays: say so on the "deleted" note instead of returning to the list.
+		d.editMessage(ctx, b, chatID, msgID, textDeletedRemoteKept, myDocsKeyboard())
+		return
+	}
 	d.returnToOrigin(ctx, b, u, user, chatID, msgID)
 }
 
@@ -993,18 +1060,28 @@ func (d *docs) sendCard(ctx context.Context, b *bot.Bot, chatID int64, doc docsb
 	if header != "" {
 		text = header + "\n\n" + text
 	}
-	d.send(ctx, b, chatID, text, cardKeyboard(doc, folderID, ""))
+	d.send(ctx, b, chatID, text, d.cardKB(ctx, doc, folderID, ""))
 }
 
 // editCard replaces a message with a document's card and remembers where the
 // card was opened from (orig) so "Назад" and returns survive later edits.
 func (d *docs) editCard(ctx context.Context, b *bot.Bot, chatID int64, msgID int, doc docsbot.Document, folderID, orig string) {
-	d.editCardText(ctx, b, chatID, msgID, cardText(doc), cardKeyboard(doc, folderID, orig), orig)
+	d.editCardText(ctx, b, chatID, msgID, cardText(doc), d.cardKB(ctx, doc, folderID, orig), orig)
 }
 
 func (d *docs) editCardText(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup, orig string) {
 	d.editMessage(ctx, b, chatID, msgID, text, kb)
 	d.origins.set(chatID, msgID, orig)
+}
+
+// cardKB is the card keyboard; a card whose sync failed on revoked access gets a
+// reconnect link in place of "Повторить".
+func (d *docs) cardKB(ctx context.Context, doc docsbot.Document, folderID, orig string) *models.InlineKeyboardMarkup {
+	if !revoked(doc) {
+		return cardKeyboard(doc, folderID, orig)
+	}
+	url, _ := d.connectURL(ctx, doc.UserID)
+	return cardKeyboardWith(doc, folderID, orig, url)
 }
 
 // gone replaces a message about a vanished document with a way back to the catalog.

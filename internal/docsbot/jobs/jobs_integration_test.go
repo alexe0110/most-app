@@ -27,6 +27,14 @@ func (fakeDrive) Connected(context.Context, docsbot.UserID) (bool, error) { retu
 func (fakeDrive) Upload(context.Context, docsbot.UserID, docsbot.DriveUpload) (docsbot.DriveFile, error) {
 	return docsbot.DriveFile{ID: "drive-1", Link: "https://drive/1"}, nil
 }
+func (fakeDrive) Rename(context.Context, docsbot.UserID, string, string) error { return nil }
+
+func (fakeDrive) Move(context.Context, docsbot.UserID, string, docsbot.Category) error { return nil }
+
+func (fakeDrive) Trash(context.Context, docsbot.UserID, string) error { return nil }
+
+func (fakeDrive) Replace(context.Context, docsbot.UserID, string, string, []byte) error { return nil }
+
 func (fakeDrive) Revoke(context.Context, docsbot.UserID) error { return nil }
 
 func (fakeDrive) Disconnect(context.Context, docsbot.UserID) error { return nil }
@@ -93,7 +101,7 @@ func setupUpload(t *testing.T, files docsbot.FileSource, drive docsbot.Drive, lo
 	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
 	require.NoError(t, err)
 	enq = jobs.NewEnqueuer(repo, queue)
-	svc := docsbot.NewService(repo, drive, files, enq, repo, repo)
+	svc := docsbot.NewService(repo, drive, files, enq, repo, repo, enq)
 	spy = &spyNotifier{}
 	bind(svc, spy)
 	return pool, user, id, spy, enq, queue

@@ -32,7 +32,8 @@ func TestBackups_markAndList(t *testing.T) {
 	a := savedDoc(t, repo, user, "a")
 	b := savedDoc(t, repo, user, "b")
 
-	require.NoError(t, repo.MarkBackedUp(ctx, user, a.ID, "drive-a"))
+	_, err := repo.MarkBackedUpForSync(ctx, user, a.ID, "drive-a", 0, noInsert)
+	require.NoError(t, err)
 	got, err := repo.DocumentByID(ctx, user, a.ID)
 	require.NoError(t, err)
 	require.Equal(t, docsbot.BackupBackedUp, got.BackupStatus)
@@ -144,3 +145,6 @@ func TestFolders_categoryFolderID(t *testing.T) {
 	require.False(t, ok)
 	require.Empty(t, id)
 }
+
+// noInsert is a job insert that must not be needed: the version did not move.
+func noInsert(context.Context, pgx.Tx) error { return errors.New("unexpected job insert") }

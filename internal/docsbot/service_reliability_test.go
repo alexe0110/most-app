@@ -11,19 +11,19 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
-// flakyMarkRepo fails the first MarkBackedUp calls, like a worker dying after
-// the Drive upload but before the result is saved.
-type flakyMarkRepo struct {
-	*fakeRepo
+// flakySyncs fails the first MarkBackedUp calls, like a worker dying after the
+// Drive upload but before the result is saved.
+type flakySyncs struct {
+	*fakeSyncs
 	failMarks int
 }
 
-func (r *flakyMarkRepo) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string) error {
-	if r.failMarks > 0 {
-		r.failMarks--
-		return errors.New("db down")
+func (s *flakySyncs) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion int) (bool, error) {
+	if s.failMarks > 0 {
+		s.failMarks--
+		return false, errors.New("db down")
 	}
-	return r.fakeRepo.MarkBackedUp(ctx, user, id, driveFileID)
+	return s.fakeSyncs.MarkBackedUp(ctx, user, id, driveFileID, startVersion)
 }
 
 // idempotentDrive emulates Drive appProperties idempotency: a repeated upload
@@ -47,12 +47,13 @@ func (d *idempotentDrive) Upload(_ context.Context, _ docsbot.UserID, up docsbot
 // Scenario: the upload reached Drive but MarkBackedUp failed; the retry must
 // send the same DocID, so Drive returns the same file (no second copy).
 func TestService_Backup_retryAfterLostResultReusesDocID(t *testing.T) {
-	repo := &flakyMarkRepo{fakeRepo: newFakeRepo(), failMarks: 1}
+	repo := newFakeRepo()
+	syncs := &flakySyncs{fakeSyncs: &fakeSyncs{repo: repo}, failMarks: 1}
 	doc := repo.seed(docsbot.Document{
 		UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatPassport, Title: "t", TgFileID: "tg",
 	})
 	drive := &idempotentDrive{files: map[string]docsbot.DriveFile{}}
-	svc := docsbot.NewService(repo, drive, fakeFiles{data: []byte("x")}, &fakeUploads{repo: repo.fakeRepo}, repo, newFakeStatus(repo.fakeRepo))
+	svc := docsbot.NewService(repo, drive, fakeFiles{data: []byte("x")}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
 
 	_, err := svc.Backup(t.Context(), user, doc.ID)
 	require.Error(t, err)
@@ -71,8 +72,7 @@ func TestService_Backup_contextCanceledIsRetryable(t *testing.T) {
 	repo := newFakeRepo()
 	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatPassport, TgFileID: "tg"})
 	var uploads int
-	svc := docsbot.NewService(repo, fakeDrive{uploads: &uploads, uploadErr: context.Canceled}, fakeFiles{data: []byte("x")},
-		&fakeUploads{repo: repo}, repo, newFakeStatus(repo))
+	svc := docsbot.NewService(repo, fakeDrive{uploads: &uploads, uploadErr: context.Canceled}, fakeFiles{data: []byte("x")}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	_, err := svc.Backup(t.Context(), user, doc.ID)
 	require.ErrorIs(t, err, context.Canceled)
@@ -97,8 +97,7 @@ func TestService_SweepStuckUploads_thresholds(t *testing.T) {
 			repo := newFakeRepo()
 			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupPending})
 			repo.updated = map[docsbot.DocumentID]time.Time{doc.ID: now.Add(-tt.age)}
-			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo),
-				docsbot.WithClock(func() time.Time { return now }))
+			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
 
 			res, err := svc.SweepStuckUploads(t.Context())
 			require.NoError(t, err)
@@ -120,8 +119,7 @@ func TestService_SweepStuckUploads_requeueErrorIsReturned(t *testing.T) {
 	repo := newFakeRepo()
 	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupUploading})
 	repo.updated = map[docsbot.DocumentID]time.Time{doc.ID: now.Add(-time.Hour)}
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, failingRequeue{&fakeUploads{repo: repo}}, repo, newFakeStatus(repo),
-		docsbot.WithClock(func() time.Time { return now }))
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, failingRequeue{&fakeUploads{repo: repo}}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
 
 	res, err := svc.SweepStuckUploads(t.Context())
 	require.Error(t, err)

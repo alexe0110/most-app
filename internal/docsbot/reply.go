@@ -21,6 +21,18 @@ type Saved struct {
 	Already bool
 }
 
+// Replaced means the document's file was swapped for a new one (id, title and
+// category are unchanged). Doc is the document as it is now.
+type Replaced struct{ Doc Document }
+
+// ReplaceBusy means the document cannot be replaced right now: it is still
+// uploading or a cloud sync is in flight.
+type ReplaceBusy struct{}
+
+// ReplaceMissing means the document's Drive file is gone; the user must re-upload
+// it before replacing.
+type ReplaceMissing struct{}
+
 // TooManyPending means the user already has too many files awaiting a category;
 // the new file was not stored.
 type TooManyPending struct{}
@@ -34,6 +46,9 @@ type QuotaExceeded struct{}
 func (NeedCategory) isReply()   {}
 func (AlreadySaved) isReply()   {}
 func (Saved) isReply()          {}
+func (Replaced) isReply()       {}
+func (ReplaceBusy) isReply()    {}
+func (ReplaceMissing) isReply() {}
 func (TooManyPending) isReply() {}
 func (RateLimited) isReply()    {}
 func (QuotaExceeded) isReply()  {}
@@ -48,14 +63,20 @@ type SavedGroup struct {
 	Already    bool
 }
 
+// Deleted is the outcome of deleting a document. RemoteKept is true when the
+// document had a file on Drive that could not be trashed (Drive not connected),
+// so the user has to remove it by hand.
+type Deleted struct{ RemoteKept bool }
+
 // Card is one document's detail view.
 type Card struct {
 	Doc Document
 	// CategoryFolderID is the Drive folder id of the document's category; empty
 	// while the folder has not been created.
 	CategoryFolderID string
-	// FileInOldFolder is set right after a backed-up document changed category:
-	// the file stays in its previous Drive folder, so the card links to the file.
+	// FileInOldFolder is set right after a backed-up document changed category
+	// while Drive is not connected: the file stays in its previous Drive folder,
+	// so the card links to the file.
 	FileInOldFolder bool
 }
 

@@ -78,3 +78,52 @@ func looksLikeExt(s string) bool {
 	}
 	return letter
 }
+
+var remoteNameReplacer = strings.NewReplacer("/", "_", "\\", "_")
+
+// mimeExt maps the content types we store to a file extension.
+var mimeExt = map[string]string{
+	"application/pdf": ".pdf",
+	"image/jpeg":      ".jpg",
+	"image/jpg":       ".jpg",
+	"image/png":       ".png",
+	"image/webp":      ".webp",
+	"image/heic":      ".heic",
+}
+
+// RemoteName is the file name a document gets in the cloud: the title without
+// path separators plus the extension that matches the content type. A title that
+// already ends with that extension is kept; one that ends with a different
+// extension-like tail (a JPG title for a PDF) gets the tail replaced. A photo
+// without a known content type is a JPEG. An unknown type leaves the title as is.
+// Upload and sync both use it, so a file is never renamed back and forth.
+func RemoteName(title, mime string, kind Kind) string {
+	name := remoteNameReplacer.Replace(title)
+	ext := mimeExt[strings.ToLower(strings.TrimSpace(strings.SplitN(mime, ";", 2)[0]))]
+	if ext == "" && kind == KindPhoto && mime == "" {
+		ext = ".jpg"
+	}
+	if ext == "" {
+		return name
+	}
+	cur := filepath.Ext(name)
+	if looksLikeExt(strings.TrimPrefix(cur, ".")) {
+		if sameExt(cur, ext) {
+			return name
+		}
+		name = strings.TrimSuffix(name, cur)
+	}
+	return name + ext
+}
+
+// sameExt compares extensions case-insensitively, treating .jpeg as .jpg.
+func sameExt(a, b string) bool {
+	norm := func(s string) string {
+		s = strings.ToLower(s)
+		if s == ".jpeg" {
+			return ".jpg"
+		}
+		return s
+	}
+	return norm(a) == norm(b)
+}

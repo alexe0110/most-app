@@ -52,6 +52,8 @@ type convHarness struct {
 	noDocument bool
 	// editTexts are the texts of editMessageText calls, in order, as "id:text".
 	editTexts []string
+	// editCaptions are the editMessageCaption calls, in order, as "id:caption|markup".
+	editCaptions []string
 	// deleted lists the message ids the bot deleted.
 	deleted []int
 	// failEdits makes editMessageText answer with an error (message can't be edited).
@@ -136,6 +138,12 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 		case strings.HasSuffix(path, "/editMessageReplyMarkup"):
 			h.mu.Lock()
 			h.edits++
+			h.mu.Unlock()
+			writeJSON(w, `{"ok":true,"result":true}`)
+			return
+		case strings.HasSuffix(path, "/editMessageCaption"):
+			h.mu.Lock()
+			h.editCaptions = append(h.editCaptions, r.FormValue("message_id")+":"+r.FormValue("caption")+"|"+r.FormValue("reply_markup"))
 			h.mu.Unlock()
 			writeJSON(w, `{"ok":true,"result":true}`)
 			return

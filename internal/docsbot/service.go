@@ -50,6 +50,7 @@ type Service struct {
 	uploads Uploads
 	folders Folders
 	status  StatusMessages
+	syncs   Syncs
 	now     func() time.Time
 	name    func(Category) string
 	loc     *time.Location
@@ -75,9 +76,9 @@ func WithLocation(loc *time.Location) Option {
 }
 
 // NewService wires the service around its ports.
-func NewService(repo Repo, drive Drive, files FileSource, uploads Uploads, folders Folders, status StatusMessages, opts ...Option) *Service {
+func NewService(repo Repo, drive Drive, files FileSource, uploads Uploads, folders Folders, status StatusMessages, syncs Syncs, opts ...Option) *Service {
 	s := &Service{
-		repo: repo, drive: drive, files: files, uploads: uploads, folders: folders, status: status,
+		repo: repo, drive: drive, files: files, uploads: uploads, folders: folders, status: status, syncs: syncs,
 		now:  time.Now,
 		name: func(c Category) string { return string(c) },
 		loc:  defaultLocation(),
@@ -341,6 +342,9 @@ type BackupResult struct {
 	// Noop true means the worker should finish silently: there is nothing to do
 	// (document gone or already backed up) and the user is not notified.
 	Noop bool
+	// OrphanTrashErr is set when the document was deleted mid-upload and trashing
+	// the uploaded file failed: the file stays in Drive as an orphan.
+	OrphanTrashErr error
 }
 
 // Backup uploads a saved document to the user's Drive. It is the upload_document
@@ -359,6 +363,7 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 	if doc.BackupStatus == BackupBackedUp {
 		return BackupResult{Doc: doc, Noop: true}, nil
 	}
+	startVersion := doc.MetaVersion
 	// Do not bump updated_at here: a poisoned document that crashes every
 	// attempt must still age out to failed via the sweeper's 24h backstop.
 	if err := s.repo.MarkUploading(ctx, user, id); err != nil {
@@ -377,7 +382,8 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 		return BackupResult{}, fmt.Errorf("download file: %w", err)
 	}
 
-	file, err := s.drive.Upload(ctx, user, DriveUpload{Category: doc.Category, Name: doc.Title, MIME: mime, Data: data, DocID: string(id)})
+	name := RemoteName(doc.Title, doc.MIME, doc.Kind)
+	file, err := s.drive.Upload(ctx, user, DriveUpload{Category: doc.Category, Name: name, MIME: mime, Data: data, DocID: string(id)})
 	if errors.Is(err, ErrDriveDisconnected) {
 		// User disconnected Drive mid-upload: drop back to Telegram-only, finish silently.
 		if serr := s.repo.SetBackupStatus(ctx, user, id, BackupNone); serr != nil {
@@ -392,12 +398,88 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 		return BackupResult{}, fmt.Errorf("upload to drive: %w", err)
 	}
 
-	if err := s.repo.MarkBackedUp(ctx, user, id, file.ID); err != nil {
+	queued, err := s.syncs.MarkBackedUp(ctx, user, id, file.ID, startVersion)
+	if errors.Is(err, ErrNotFound) {
+		// Deleted while the file was uploading: nobody references the file, so
+		// trash it (best effort; a failure leaves an orphan the user can delete
+		// and is reported to the worker to log).
+		return BackupResult{Noop: true, OrphanTrashErr: s.drive.Trash(ctx, user, file.ID)}, nil
+	}
+	if err != nil {
 		return BackupResult{}, fmt.Errorf("mark backed up: %w", err)
 	}
 	doc.BackupStatus = BackupBackedUp
 	doc.DriveFileID = file.ID
+	if queued {
+		doc.SyncStatus = SyncPending
+	}
 	return BackupResult{Doc: doc}, nil
+}
+
+// ReplaceContent swaps the file of a saved document for in (a converted copy of
+// it), keeping id, title and category. The user's other document with the same
+// file is AlreadySaved and nothing changes; the same file as the current one is
+// Replaced unchanged. A backed-up document is queued for a cloud sync; one that
+// is not on Drive changes in the database only, and its upload takes the new file.
+// A document that is uploading or syncing is ReplaceBusy, one whose Drive file is
+// gone ReplaceMissing, an unknown one ErrNotFound.
+func (s *Service) ReplaceContent(ctx context.Context, user UserID, id DocumentID, in IncomingFile) (Reply, error) {
+	in.UserID = user
+	cur, err := s.repo.DocumentByID(ctx, user, id)
+	if err != nil {
+		return nil, fmt.Errorf("load document: %w", err)
+	}
+	if cur.TgFileUniqueID == in.FileUniqueID {
+		return Replaced{Doc: cur}, nil
+	}
+	if other, err := s.repo.DocumentByFileUniqueID(ctx, user, in.FileUniqueID); err == nil {
+		if other.ID == id {
+			return Replaced{Doc: other}, nil // a parallel tap already swapped it
+		}
+		return AlreadySaved{Doc: other}, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, fmt.Errorf("lookup document: %w", err)
+	}
+
+	// Without Drive only the row changes, like a rename: the Drive file stays old.
+	connected, err := s.drive.Connected(ctx, user)
+	if err != nil {
+		return nil, fmt.Errorf("drive status: %w", err)
+	}
+	replaced, err := s.syncs.ReplaceContent(ctx, user, id, in, connected)
+	if errors.Is(err, ErrDuplicateFile) {
+		// Lost a race with a save of the same file.
+		other, lerr := s.repo.DocumentByFileUniqueID(ctx, user, in.FileUniqueID)
+		if lerr != nil {
+			return nil, fmt.Errorf("lookup duplicate: %w", lerr)
+		}
+		return AlreadySaved{Doc: other}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("replace content: %w", err)
+	}
+	if !replaced {
+		return s.replaceRefused(ctx, user, id)
+	}
+	doc, err := s.repo.DocumentByID(ctx, user, id)
+	if err != nil {
+		return nil, fmt.Errorf("reload document: %w", err)
+	}
+	return Replaced{Doc: doc}, nil
+}
+
+// replaceRefused explains why the guarded update touched no row.
+func (s *Service) replaceRefused(ctx context.Context, user UserID, id DocumentID) (Reply, error) {
+	doc, err := s.repo.DocumentByID(ctx, user, id)
+	if err != nil {
+		return nil, fmt.Errorf("reload document: %w", err)
+	}
+	if doc.SyncStatus == SyncMissing {
+		return ReplaceMissing{}, nil
+	}
+	// Uploading, or a sync in flight; if the state changed back between the two
+	// statements, a retry by the user will succeed.
+	return ReplaceBusy{}, nil
 }
 
 // MarkBackupFailed records a terminal upload failure.
@@ -408,11 +490,139 @@ func (s *Service) MarkBackupFailed(ctx context.Context, user UserID, id Document
 	return nil
 }
 
+// SyncResult is the outcome of a cloud sync attempt.
+type SyncResult struct {
+	Doc Document
+	// Noop true means there was nothing to do (document gone, not backed up, or
+	// already in sync); the worker finishes silently.
+	Noop bool
+	// Missing true means the Drive file is gone; the document is now sync_status
+	// missing and the user can re-upload it.
+	Missing bool
+}
+
+// SyncRemote makes the cloud file match the document row: content (when dirty),
+// category folder and name. It is the storage_sync worker's use case, idempotent
+// and safe to retry. A revoked grant returns ErrDriveRevoked; other errors are
+// returned for retry.
+func (s *Service) SyncRemote(ctx context.Context, user UserID, id DocumentID) (SyncResult, error) {
+	doc, err := s.repo.DocumentByID(ctx, user, id)
+	if errors.Is(err, ErrNotFound) {
+		return SyncResult{Noop: true}, nil
+	}
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("load document: %w", err)
+	}
+	if doc.BackupStatus != BackupBackedUp || doc.DriveFileID == "" || doc.SyncStatus == SyncMissing ||
+		(doc.SyncStatus == SyncOK && !doc.ContentDirty) {
+		return SyncResult{Doc: doc, Noop: true}, nil
+	}
+
+	err = s.pushToRemote(ctx, user, doc)
+	switch {
+	case errors.Is(err, ErrRemoteMissing):
+		if serr := s.repo.SetSyncStatus(ctx, user, id, SyncMissing, ""); serr != nil {
+			return SyncResult{}, fmt.Errorf("mark sync missing: %w", serr)
+		}
+		doc.SyncStatus = SyncMissing
+		return SyncResult{Doc: doc, Missing: true}, nil
+	case errors.Is(err, ErrDriveRevoked):
+		return SyncResult{}, ErrDriveRevoked
+	case errors.Is(err, ErrDriveDisconnected):
+		if serr := s.repo.SetSyncStatus(ctx, user, id, SyncFailed, ""); serr != nil {
+			return SyncResult{}, fmt.Errorf("mark sync failed: %w", serr)
+		}
+		doc.SyncStatus = SyncFailed
+		return SyncResult{Doc: doc, Noop: true}, nil
+	case err != nil:
+		return SyncResult{}, err
+	}
+
+	won, err := s.repo.MarkSynced(ctx, user, id, doc.MetaVersion)
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("mark synced: %w", err)
+	}
+	if won {
+		doc.SyncStatus, doc.ContentDirty = SyncOK, false
+		return SyncResult{Doc: doc}, nil
+	}
+	// The row changed while we worked: run again for the newer state, unless the
+	// document is gone or no longer backed up.
+	cur, err := s.repo.DocumentByID(ctx, user, id)
+	if errors.Is(err, ErrNotFound) {
+		return SyncResult{Doc: doc, Noop: true}, nil
+	}
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("reload document: %w", err)
+	}
+	if cur.BackupStatus == BackupBackedUp {
+		if err := s.syncs.EnqueueSync(ctx, user, id); err != nil {
+			return SyncResult{}, fmt.Errorf("enqueue sync: %w", err)
+		}
+	}
+	return SyncResult{Doc: cur}, nil
+}
+
+// pushToRemote applies the document's content, folder and name to the remote file.
+func (s *Service) pushToRemote(ctx context.Context, user UserID, doc Document) error {
+	if doc.ContentDirty {
+		data, mime, err := s.files.Download(ctx, doc.TgFileID)
+		if err != nil {
+			return fmt.Errorf("download file: %w", err)
+		}
+		if err := s.drive.Replace(ctx, user, doc.DriveFileID, mime, data); err != nil {
+			return fmt.Errorf("replace remote content: %w", err)
+		}
+	}
+	if err := s.drive.Move(ctx, user, doc.DriveFileID, doc.Category); err != nil {
+		return fmt.Errorf("move remote file: %w", err)
+	}
+	name := RemoteName(doc.Title, doc.MIME, doc.Kind)
+	if err := s.drive.Rename(ctx, user, doc.DriveFileID, name); err != nil {
+		return fmt.Errorf("rename remote file: %w", err)
+	}
+	return nil
+}
+
+// MarkSyncFailed records a terminal sync failure; reason is "" or SyncReasonRevoked.
+func (s *Service) MarkSyncFailed(ctx context.Context, user UserID, id DocumentID, reason string) error {
+	if err := s.repo.SetSyncStatus(ctx, user, id, SyncFailed, reason); err != nil {
+		return fmt.Errorf("mark sync failed: %w", err)
+	}
+	return nil
+}
+
+// RetrySync re-queues a failed sync. Any other state or a foreign document
+// returns ErrNotRetryable.
+func (s *Service) RetrySync(ctx context.Context, user UserID, id DocumentID) error {
+	queued, err := s.syncs.RetrySync(ctx, user, id)
+	if err != nil {
+		return fmt.Errorf("retry sync: %w", err)
+	}
+	if !queued {
+		return ErrNotRetryable
+	}
+	return nil
+}
+
+// TrashRemote moves a deleted document's cloud file to the trash. It is the
+// storage_trash worker's use case; a file that is already gone counts as done.
+func (s *Service) TrashRemote(ctx context.Context, user UserID, remoteID string) error {
+	err := s.drive.Trash(ctx, user, remoteID)
+	if err != nil && !errors.Is(err, ErrRemoteMissing) {
+		return err
+	}
+	return nil
+}
+
 // SweepResult summarizes one sweeper run.
 type SweepResult struct {
 	Found    int
 	Requeued int
 	Failed   []StuckUpload
+	// SyncsRequeued and SyncsFailed count documents whose cloud sync was stuck.
+	SyncsRequeued int
+	SyncsFailed   int
 }
 
 // SweepStuckUploads requeues uploads stuck mid-flight and fails the ones stuck
@@ -438,6 +648,30 @@ func (s *Service) SweepStuckUploads(ctx context.Context) (SweepResult, error) {
 			return res, fmt.Errorf("requeue stuck upload: %w", err)
 		}
 		res.Requeued++
+	}
+	return s.sweepStuckSyncs(ctx, now, res)
+}
+
+// sweepStuckSyncs recovers syncs left pending (a worker died, or failing the
+// sync failed on the last attempt): requeue them, and fail the ones stuck for too
+// long. Requeueing leaves updated_at alone, so the clock keeps running.
+func (s *Service) sweepStuckSyncs(ctx context.Context, now time.Time, res SweepResult) (SweepResult, error) {
+	rows, err := s.repo.StuckSyncs(ctx, now.Add(-sweepStaleAfter), sweepBatch)
+	if err != nil {
+		return res, fmt.Errorf("list stuck syncs: %w", err)
+	}
+	for _, r := range rows {
+		if now.Sub(r.UpdatedAt) >= sweepFailAfter {
+			if err := s.repo.SetSyncStatus(ctx, r.User, r.ID, SyncFailed, ""); err != nil {
+				return res, fmt.Errorf("fail stuck sync: %w", err)
+			}
+			res.SyncsFailed++
+			continue
+		}
+		if err := s.syncs.RequeueSync(ctx, r.User, r.ID); err != nil {
+			return res, fmt.Errorf("requeue stuck sync: %w", err)
+		}
+		res.SyncsRequeued++
 	}
 	return res, nil
 }
@@ -534,7 +768,8 @@ func (s *Service) Settings(ctx context.Context, user UserID) (SettingsView, erro
 }
 
 // Disconnect turns Drive off at the user's request, cancels the user's pending
-// uploads and resets stuck documents back to Telegram-only. Google failures are
+// uploads (sync and trash jobs stay: their workers see the disconnect and settle
+// the document) and resets stuck documents back to Telegram-only. Google failures are
 // already swallowed below this layer, so a Drive error means the local
 // integration status was not updated (still active): it is returned before
 // anything is cancelled.
@@ -551,14 +786,14 @@ func (s *Service) Disconnect(ctx context.Context, user UserID) error {
 	return nil
 }
 
-// DeleteAllData revokes Drive access, cancels pending uploads and deletes all of
+// DeleteAllData revokes Drive access, cancels all pending jobs and deletes all of
 // the user's data, then soft-deletes the user. A failing revoke does not block
 // the deletion: it is reported afterwards as ErrRevokeIncomplete, which callers
 // treat as success.
 func (s *Service) DeleteAllData(ctx context.Context, user UserID) error {
 	revokeErr := s.drive.Revoke(ctx, user)
-	if err := s.uploads.CancelUploads(ctx, user); err != nil {
-		return fmt.Errorf("cancel uploads: %w", err)
+	if err := s.uploads.CancelUserJobs(ctx, user); err != nil {
+		return fmt.Errorf("cancel jobs: %w", err)
 	}
 	if err := s.repo.DeleteUserData(ctx, user); err != nil {
 		return fmt.Errorf("delete user data: %w", err)
@@ -610,19 +845,31 @@ func (s *Service) Card(ctx context.Context, user UserID, id DocumentID) (Card, e
 	return Card{Doc: doc, CategoryFolderID: folderID}, nil
 }
 
-// Rename changes a document's title to a normalized, non-blank value.
+// Rename changes a document's title to a normalized, non-blank value. When Drive
+// is connected a backed-up document's file is renamed by the sync worker.
 func (s *Service) Rename(ctx context.Context, user UserID, id DocumentID, title string) (Card, error) {
 	title = NormalizeTitle(title)
 	if title == "" {
 		return Card{}, ErrEmptyTitle
 	}
-	if err := s.repo.SetTitle(ctx, user, id, title); err != nil {
+	connected, err := s.drive.Connected(ctx, user)
+	if err != nil {
+		return Card{}, fmt.Errorf("drive status: %w", err)
+	}
+	if connected {
+		_, err = s.syncs.SetTitle(ctx, user, id, title)
+	} else {
+		err = s.repo.SetTitle(ctx, user, id, title)
+	}
+	if err != nil {
 		return Card{}, fmt.Errorf("rename document: %w", err)
 	}
 	return s.Card(ctx, user, id)
 }
 
-// Recategorize moves a document to another category.
+// Recategorize moves a document to another category. When Drive is connected a
+// backed-up document's file is moved by the sync worker; otherwise it stays in
+// its old Drive folder and the card says so.
 func (s *Service) Recategorize(ctx context.Context, user UserID, id DocumentID, cat Category) (Card, error) {
 	if !cat.Valid() {
 		return Card{}, ErrUnknownCategory
@@ -631,29 +878,45 @@ func (s *Service) Recategorize(ctx context.Context, user UserID, id DocumentID, 
 	if err != nil {
 		return Card{}, fmt.Errorf("load document: %w", err)
 	}
-	if err := s.repo.SetCategory(ctx, user, id, cat); err != nil {
+	connected, err := s.drive.Connected(ctx, user)
+	if err != nil {
+		return Card{}, fmt.Errorf("drive status: %w", err)
+	}
+	if connected {
+		_, err = s.syncs.SetCategory(ctx, user, id, cat)
+	} else {
+		err = s.repo.SetCategory(ctx, user, id, cat)
+	}
+	if err != nil {
 		return Card{}, fmt.Errorf("recategorize document: %w", err)
 	}
 	card, err := s.Card(ctx, user, id)
 	if err != nil {
 		return Card{}, err
 	}
-	// The file is not moved on Drive (deferred to #11): it stays in its old folder.
+	// Without a connected cloud nothing moves the file: it stays in its old folder.
 	// The card links to the file itself, and the new category's folder would mislead.
-	if card.Doc.InDrive() && old.Category != cat {
+	if !connected && card.Doc.InDrive() && old.Category != cat {
 		card.FileInOldFolder = true
 		card.CategoryFolderID = ""
 	}
 	return card, nil
 }
 
-// Delete removes a document, scoped to the user.
-func (s *Service) Delete(ctx context.Context, user UserID, id DocumentID) error {
-	// TODO(#11): if backed up, delete the file on Drive too.
-	if err := s.repo.DeleteDocument(ctx, user, id); err != nil {
-		return fmt.Errorf("delete document: %w", err)
+// Delete removes a document, scoped to the user. A backed-up document's cloud file
+// is moved to the trash by a job queued with the row deletion; when Drive is not
+// connected the file stays and the result says so.
+func (s *Service) Delete(ctx context.Context, user UserID, id DocumentID) (Deleted, error) {
+	connected, err := s.drive.Connected(ctx, user)
+	if err != nil {
+		return Deleted{}, fmt.Errorf("drive status: %w", err)
 	}
-	return nil
+	// Whether the Drive file is trashed is decided on the deleted row itself.
+	kept, err := s.syncs.DeleteDocument(ctx, user, id, connected)
+	if err != nil {
+		return Deleted{}, fmt.Errorf("delete document: %w", err)
+	}
+	return Deleted{RemoteKept: kept}, nil
 }
 
 // Catalog lists the user's categories with counts. The 📥 banner (NotInDrive)

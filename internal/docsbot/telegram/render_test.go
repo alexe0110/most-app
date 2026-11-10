@@ -566,3 +566,33 @@ func TestCardKeyboard_atMostTwoButtonsPerRow(t *testing.T) {
 		})
 	}
 }
+
+func TestCardKeyboard_revokedSyncOffersReconnect(t *testing.T) {
+	doc := docsbot.Document{
+		ID: "1", BackupStatus: docsbot.BackupBackedUp, DriveFileID: "f",
+		SyncStatus: docsbot.SyncFailed, SyncReason: docsbot.SyncReasonRevoked,
+	}
+	buttons := func(kb *models.InlineKeyboardMarkup) (texts []string, urls []string) {
+		for _, row := range kb.InlineKeyboard {
+			for _, b := range row {
+				texts = append(texts, b.Text)
+				urls = append(urls, b.URL)
+			}
+		}
+		return texts, urls
+	}
+
+	texts, urls := buttons(cardKeyboardWith(doc, "", "", "https://consent"))
+	require.Contains(t, texts, btnReconnect)
+	require.Contains(t, urls, "https://consent")
+	require.NotContains(t, texts, btnRetryBackup)
+
+	texts, _ = buttons(cardKeyboardWith(doc, "", "", ""))
+	require.NotContains(t, texts, btnReconnect, "no link, no button")
+	require.NotContains(t, texts, btnRetryBackup, "retrying cannot help")
+
+	doc.SyncReason = ""
+	texts, _ = buttons(cardKeyboardWith(doc, "", "", "https://consent"))
+	require.Contains(t, texts, btnRetryBackup, "an ordinary failure is retried")
+	require.NotContains(t, texts, btnReconnect)
+}

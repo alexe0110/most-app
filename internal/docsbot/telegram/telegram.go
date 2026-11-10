@@ -26,7 +26,7 @@ type Authorizer interface {
 // catch-all text handler (search) is last.
 func Register(b *bot.Bot, log *slog.Logger, svc *docsbot.Service, auth Authorizer, opts ...Option) {
 	d := newDocs(svc, auth, log, opts...)
-	conv := newConverter(log, svc, d.renderSaved, d.sendAlreadySaved)
+	conv := newConverter(log, svc, d.renderSaved, d.sendAlreadySaved, d.sendReplaced)
 	d.registerAlbum = conv.registerAlbum
 
 	b.RegisterHandler(bot.HandlerTypeMessageText, "start", bot.MatchTypeCommand, d.start)

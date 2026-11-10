@@ -25,6 +25,10 @@ type Document struct {
 	FileSize        pgtype.Int8
 	MimeType        pgtype.Text
 	MediaGroupID    pgtype.Text
+	SyncStatus      string
+	SyncReason      pgtype.Text
+	MetaVersion     int32
+	ContentDirty    bool
 }
 
 type DriveFolder struct {

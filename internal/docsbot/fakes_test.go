@@ -24,15 +24,53 @@ type fakeDrive struct {
 
 	disconnectErr error // returned by Disconnect
 	disconnected  *bool // set to true on Disconnect when provided
+
+	// Cloud sync calls are appended to calls as "op:remoteID[:arg]" when set; the
+	// matching *Err is returned by that op.
+	calls      *[]string
+	renameErr  error
+	moveErr    error
+	trashErr   error
+	replaceErr error
+	uploadedAs *string // last Upload name, when set
+}
+
+func (d fakeDrive) record(op string) {
+	if d.calls != nil {
+		*d.calls = append(*d.calls, op)
+	}
+}
+
+func (d fakeDrive) Rename(_ context.Context, _ docsbot.UserID, remoteID, name string) error {
+	d.record("rename:" + remoteID + ":" + name)
+	return d.renameErr
+}
+
+func (d fakeDrive) Move(_ context.Context, _ docsbot.UserID, remoteID string, cat docsbot.Category) error {
+	d.record("move:" + remoteID + ":" + string(cat))
+	return d.moveErr
+}
+
+func (d fakeDrive) Trash(_ context.Context, _ docsbot.UserID, remoteID string) error {
+	d.record("trash:" + remoteID)
+	return d.trashErr
+}
+
+func (d fakeDrive) Replace(_ context.Context, _ docsbot.UserID, remoteID, _ string, _ []byte) error {
+	d.record("replace:" + remoteID)
+	return d.replaceErr
 }
 
 func (d fakeDrive) Connected(context.Context, docsbot.UserID) (bool, error) {
 	return d.connected, d.err
 }
 
-func (d fakeDrive) Upload(context.Context, docsbot.UserID, docsbot.DriveUpload) (docsbot.DriveFile, error) {
+func (d fakeDrive) Upload(_ context.Context, _ docsbot.UserID, in docsbot.DriveUpload) (docsbot.DriveFile, error) {
 	if d.uploads != nil {
 		*d.uploads++
+	}
+	if d.uploadedAs != nil {
+		*d.uploadedAs = in.Name
 	}
 	return d.uploadFile, d.uploadErr
 }
@@ -72,7 +110,8 @@ type fakeUploads struct {
 	mu       sync.Mutex
 	repo     *fakeRepo
 	calls    []docsbot.DocumentID
-	cancels  []docsbot.UserID
+	cancels  []docsbot.UserID // CancelUploads calls
+	allJobs  []docsbot.UserID // CancelUserJobs calls
 	requeued []docsbot.DocumentID
 }
 
@@ -97,10 +136,185 @@ func (u *fakeUploads) RequeueUpload(_ context.Context, _ docsbot.UserID, id docs
 	return nil
 }
 
+func (u *fakeUploads) CancelUserJobs(_ context.Context, user docsbot.UserID) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.allJobs = append(u.allJobs, user)
+	return nil
+}
+
 func (u *fakeUploads) CancelUploads(_ context.Context, user docsbot.UserID) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.cancels = append(u.cancels, user)
+	return nil
+}
+
+// fakeSyncs is a docsbot.Syncs over fakeRepo that mirrors the SQL decisions:
+// a backed-up document with a live file goes sync-pending and a job is recorded.
+type fakeSyncs struct {
+	mu      sync.Mutex
+	repo    *fakeRepo
+	jobs    []docsbot.DocumentID // sync jobs enqueued
+	trashes []string             // remote ids queued for trashing
+	err     error                // returned by every method when set
+}
+
+var _ docsbot.Syncs = (*fakeSyncs)(nil)
+
+func (s *fakeSyncs) change(user docsbot.UserID, id docsbot.DocumentID, fn func(*docsbot.Document)) (bool, error) {
+	if s.err != nil {
+		return false, s.err
+	}
+	s.repo.mu.Lock()
+	defer s.repo.mu.Unlock()
+	d, ok := s.repo.docs[id]
+	if !ok || d.UserID != user {
+		return false, docsbot.ErrNotFound
+	}
+	fn(&d)
+	d.MetaVersion++
+	queued := d.BackupStatus == docsbot.BackupBackedUp && d.SyncStatus != docsbot.SyncMissing
+	if queued {
+		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
+	}
+	s.repo.docs[id] = d
+	if queued {
+		s.addJob(id)
+	}
+	return queued, nil
+}
+
+func (s *fakeSyncs) addJob(id docsbot.DocumentID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.jobs = append(s.jobs, id)
+}
+
+func (s *fakeSyncs) SetTitle(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, title string) (bool, error) {
+	return s.change(user, id, func(d *docsbot.Document) { d.Title = title })
+}
+
+func (s *fakeSyncs) SetCategory(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (bool, error) {
+	return s.change(user, id, func(d *docsbot.Document) { d.Category = cat })
+}
+
+func (s *fakeSyncs) EnqueueSync(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.repo.mu.Lock()
+	defer s.repo.mu.Unlock()
+	d, ok := s.repo.docs[id]
+	if !ok || d.UserID != user || d.BackupStatus != docsbot.BackupBackedUp || d.SyncStatus == docsbot.SyncMissing {
+		return nil
+	}
+	d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
+	d.MetaVersion++ // like MarkSyncPending: a stale parallel MarkSynced must lose
+	s.repo.docs[id] = d
+	s.addJob(id)
+	return nil
+}
+
+func (s *fakeSyncs) MarkBackedUp(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion int) (bool, error) {
+	if s.err != nil {
+		return false, s.err
+	}
+	s.repo.mu.Lock()
+	defer s.repo.mu.Unlock()
+	d, ok := s.repo.docs[id]
+	if !ok || d.UserID != user {
+		return false, docsbot.ErrNotFound
+	}
+	d.BackupStatus, d.DriveFileID = docsbot.BackupBackedUp, driveFileID
+	queued := d.MetaVersion != startVersion
+	if queued {
+		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
+	}
+	s.repo.docs[id] = d
+	if queued {
+		s.addJob(id)
+	}
+	return queued, nil
+}
+
+// ReplaceContent mirrors ReplaceDocumentContent: the guarded update, the unique
+// (user, file) constraint, and the sync job for a backed-up document.
+func (s *fakeSyncs) ReplaceContent(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, cloud bool) (bool, error) {
+	if s.err != nil {
+		return false, s.err
+	}
+	s.repo.mu.Lock()
+	defer s.repo.mu.Unlock()
+	d, ok := s.repo.docs[id]
+	if !ok || d.UserID != user ||
+		d.BackupStatus == docsbot.BackupPending || d.BackupStatus == docsbot.BackupUploading ||
+		d.SyncStatus == docsbot.SyncPending || d.SyncStatus == docsbot.SyncMissing {
+		return false, nil
+	}
+	for _, o := range s.repo.docs {
+		if o.ID != id && o.UserID == user && o.TgFileUniqueID == in.FileUniqueID {
+			return false, docsbot.ErrDuplicateFile
+		}
+	}
+	d.Kind, d.TgFileID, d.TgFileUniqueID, d.FileSize, d.MIME = in.Kind, in.FileID, in.FileUniqueID, in.FileSize, in.MIME
+	d.MetaVersion++
+	backedUp := cloud && d.BackupStatus == docsbot.BackupBackedUp
+	d.ContentDirty = backedUp
+	if backedUp {
+		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
+	}
+	s.repo.docs[id] = d
+	if backedUp {
+		s.addJob(id)
+	}
+	return true, nil
+}
+
+func (s *fakeSyncs) RetrySync(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) (bool, error) {
+	if s.err != nil {
+		return false, s.err
+	}
+	s.repo.mu.Lock()
+	defer s.repo.mu.Unlock()
+	d, ok := s.repo.docs[id]
+	if !ok || d.UserID != user || d.BackupStatus != docsbot.BackupBackedUp || d.SyncStatus != docsbot.SyncFailed {
+		return false, nil
+	}
+	d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
+	s.repo.docs[id] = d
+	s.addJob(id)
+	return true, nil
+}
+
+func (s *fakeSyncs) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, trash bool) (bool, error) {
+	if s.err != nil {
+		return false, s.err
+	}
+	s.repo.mu.Lock()
+	defer s.repo.mu.Unlock()
+	d, ok := s.repo.docs[id]
+	if !ok || d.UserID != user {
+		return false, docsbot.ErrNotFound
+	}
+	delete(s.repo.docs, id)
+	if d.BackupStatus != docsbot.BackupBackedUp || d.DriveFileID == "" || d.SyncStatus == docsbot.SyncMissing {
+		return false, nil
+	}
+	if !trash {
+		return true, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.trashes = append(s.trashes, d.DriveFileID)
+	return false, nil
+}
+
+func (s *fakeSyncs) RequeueSync(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.addJob(id)
 	return nil
 }
 
@@ -263,15 +477,19 @@ func (r *fakeRepo) update(user docsbot.UserID, id docsbot.DocumentID, fn func(*d
 	return nil
 }
 
-// ClaimFailed mirrors ClaimFailedForRetry: failed -> pending, once.
+// ClaimFailed mirrors ClaimFailedForRetry: failed (or backed up and missing) -> pending, once.
 func (r *fakeRepo) ClaimFailed(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	d, ok := r.docs[id]
-	if !ok || d.UserID != user || d.BackupStatus != docsbot.BackupFailed {
+	missing := d.BackupStatus == docsbot.BackupBackedUp && d.SyncStatus == docsbot.SyncMissing
+	if !ok || d.UserID != user || (d.BackupStatus != docsbot.BackupFailed && !missing) {
 		return false, nil
 	}
-	d.BackupStatus = docsbot.BackupPending
+	if missing {
+		d.DriveFileID = ""
+	}
+	d.BackupStatus, d.SyncStatus, d.SyncReason = docsbot.BackupPending, docsbot.SyncOK, ""
 	r.docs[id] = d
 	return true, nil
 }
@@ -298,8 +516,28 @@ func (r *fakeRepo) StuckUploads(_ context.Context, olderThan time.Time, limit in
 	return out, nil
 }
 
+// StuckSyncs mirrors the real query like StuckUploads.
+func (r *fakeRepo) StuckSyncs(_ context.Context, olderThan time.Time, limit int) ([]docsbot.StuckUpload, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []docsbot.StuckUpload
+	for id, d := range r.docs {
+		if d.Status != docsbot.StatusSaved || d.BackupStatus != docsbot.BackupBackedUp || d.SyncStatus != docsbot.SyncPending {
+			continue
+		}
+		if at, ok := r.updated[id]; ok && at.Before(olderThan) {
+			out = append(out, docsbot.StuckUpload{User: d.UserID, ID: id, UpdatedAt: at})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.Before(out[j].UpdatedAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (r *fakeRepo) SetTitle(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, title string) error {
-	return r.mutate(user, id, func(d *docsbot.Document) { d.Title = title })
+	return r.mutate(user, id, func(d *docsbot.Document) { d.Title = title; d.MetaVersion++ })
 }
 
 // mutate is update that reports ErrNotFound for a missing or foreign document,
@@ -328,7 +566,7 @@ func (r *fakeRepo) TitleExistsInCategory(_ context.Context, user docsbot.UserID,
 }
 
 func (r *fakeRepo) SetCategory(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) error {
-	return r.mutate(user, id, func(d *docsbot.Document) { d.Category = cat })
+	return r.mutate(user, id, func(d *docsbot.Document) { d.Category = cat; d.MetaVersion++ })
 }
 
 func (r *fakeRepo) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
@@ -421,10 +659,21 @@ func (r *fakeRepo) Search(_ context.Context, user docsbot.UserID, q string, limi
 	return out, nil
 }
 
-func (r *fakeRepo) MarkBackedUp(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string) error {
-	return r.update(user, id, func(d *docsbot.Document) {
-		d.BackupStatus, d.DriveFileID = docsbot.BackupBackedUp, driveFileID
-	})
+// MarkSynced mirrors MarkSynced: only a pending sync at the same meta_version.
+func (r *fakeRepo) MarkSynced(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, version int) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	d, ok := r.docs[id]
+	if !ok || d.UserID != user || d.MetaVersion != version || d.SyncStatus != docsbot.SyncPending {
+		return false, nil
+	}
+	d.SyncStatus, d.SyncReason, d.ContentDirty = docsbot.SyncOK, "", false
+	r.docs[id] = d
+	return true, nil
+}
+
+func (r *fakeRepo) SetSyncStatus(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, s docsbot.SyncStatus, reason string) error {
+	return r.update(user, id, func(d *docsbot.Document) { d.SyncStatus, d.SyncReason = s, reason })
 }
 
 // ClaimTransferable mirrors ClaimTransferableDocuments: none/failed -> pending, atomically.

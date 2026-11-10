@@ -20,7 +20,7 @@ func TestRetryBackup_simultaneousTapsUploadOnce(t *testing.T) {
 	drive := &countingDrive{}
 	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, slog.New(slog.DiscardHandler))
 	repo := postgres.NewRepo(pool)
-	svc := docsbot.NewService(repo, drive, fakeFiles{}, enq, repo, repo)
+	svc := docsbot.NewService(repo, drive, fakeFiles{}, enq, repo, repo, enq)
 	_, err := pool.Exec(t.Context(), `update documents set backup_status = 'failed' where id = $1::uuid`, string(id))
 	require.NoError(t, err)
 

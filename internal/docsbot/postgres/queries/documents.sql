@@ -53,24 +53,33 @@ where id = @id
 -- name: ClaimFailedForRetry :execrows
 -- Atomically takes a failed upload for retry; 0 rows means it is not failed
 -- (already retried, in flight, done) or not the user's.
+-- A backed-up document whose Drive file is gone (sync_status missing) is claimed
+-- too: it is uploaded afresh, so the stale file id is dropped. The upload takes
+-- the current Telegram file, so there is no pending content change any more.
 update documents
 set backup_status = 'pending',
+    sync_status   = 'ok',
+    sync_reason   = null,
+    drive_file_id = case when backup_status = 'backed_up' then null else drive_file_id end,
+    content_dirty = false,
     updated_at    = now()
 where id = @id
   and user_id = @user_id
-  and backup_status = 'failed';
+  and (backup_status = 'failed' or (backup_status = 'backed_up' and sync_status = 'missing'));
 
 -- name: UpdateDocumentTitle :execrows
 update documents
-set title      = @title,
-    updated_at = now()
+set title        = @title,
+    meta_version = meta_version + 1,
+    updated_at   = now()
 where id = @id
   and user_id = @user_id;
 
 -- name: UpdateDocumentCategory :execrows
 update documents
-set category   = @category,
-    updated_at = now()
+set category     = @category,
+    meta_version = meta_version + 1,
+    updated_at   = now()
 where id = @id
   and user_id = @user_id;
 
@@ -79,6 +88,14 @@ delete
 from documents
 where id = @id
   and user_id = @user_id;
+
+-- name: DeleteDocumentReturning :one
+-- Deletes and reports what the Drive copy was, decided under the row lock.
+delete
+from documents
+where id = @id
+  and user_id = @user_id
+returning backup_status, sync_status, drive_file_id;
 
 -- name: CountSavedDocuments :one
 select count(*)
@@ -120,11 +137,107 @@ where user_id = @user_id
 order by similarity(title, @query) desc, created_at desc
 limit @lim;
 
--- name: MarkDocumentBackedUp :exec
+-- name: MarkDocumentBackedUpSync :one
+-- Like MarkDocumentBackedUp, and in the same statement queues a sync when the
+-- title or category changed since the upload started (meta_version differs).
 update documents
 set backup_status = 'backed_up',
     drive_file_id = @drive_file_id,
+    sync_status   = case when meta_version <> @start_version then 'pending' else sync_status end,
+    sync_reason   = case when meta_version <> @start_version then null else sync_reason end,
     updated_at    = now()
+where id = @id
+  and user_id = @user_id
+returning meta_version;
+
+-- name: ReplaceDocumentContent :one
+-- Swaps the file of a document (id, title, category stay). A backed-up document
+-- is marked content_dirty and sync-pending for the Drive copy when @cloud (Drive
+-- is connected), otherwise only the row changes. 0 rows: the
+-- document is gone, uploading, or already has a sync in flight or a missing file.
+update documents
+set kind              = @kind,
+    tg_file_id        = @tg_file_id,
+    tg_file_unique_id = @tg_file_unique_id,
+    file_size         = @file_size,
+    mime_type         = @mime_type,
+    meta_version      = meta_version + 1,
+    content_dirty     = (@cloud::bool and backup_status = 'backed_up'),
+    sync_status       = case when @cloud::bool and backup_status = 'backed_up' then 'pending' else sync_status end,
+    sync_reason       = case when @cloud::bool and backup_status = 'backed_up' then null else sync_reason end,
+    updated_at        = now()
+where id = @id
+  and user_id = @user_id
+  and backup_status not in ('pending', 'uploading')
+  and sync_status not in ('pending', 'missing')
+returning backup_status;
+
+-- name: UpdateTitleForSync :one
+-- Renames and, in the same statement, decides whether the Drive file must follow:
+-- a backed-up document with a live file goes to sync_status pending. The caller
+-- enqueues the sync job in the same transaction.
+update documents
+set title        = @title,
+    meta_version = meta_version + 1,
+    sync_status  = case when backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
+    sync_reason  = case when backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
+    updated_at   = now()
+where id = @id
+  and user_id = @user_id
+returning backup_status, sync_status;
+
+-- name: UpdateCategoryForSync :one
+-- Same as UpdateTitleForSync, for the category.
+update documents
+set category     = @category,
+    meta_version = meta_version + 1,
+    sync_status  = case when backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
+    sync_reason  = case when backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
+    updated_at   = now()
+where id = @id
+  and user_id = @user_id
+returning backup_status, sync_status;
+
+-- name: MarkSyncPending :execrows
+-- 0 rows: the document is gone, not backed up, or its Drive file is missing.
+-- meta_version moves on, so a stale parallel MarkSynced (older version) loses.
+update documents
+set sync_status  = 'pending',
+    sync_reason  = null,
+    meta_version = meta_version + 1,
+    updated_at   = now()
+where id = @id
+  and user_id = @user_id
+  and backup_status = 'backed_up'
+  and sync_status <> 'missing';
+
+-- name: ClaimSyncFailed :execrows
+-- Atomically takes a failed sync for retry; 0 rows means it is not failed.
+update documents
+set sync_status = 'pending',
+    sync_reason = null,
+    updated_at  = now()
+where id = @id
+  and user_id = @user_id
+  and backup_status = 'backed_up'
+  and sync_status = 'failed';
+
+-- name: MarkSynced :execrows
+-- Succeeds only if nothing changed since the worker read the document
+-- (meta_version) and the sync is still pending.
+update documents
+set sync_status   = 'ok',
+    sync_reason   = null,
+    content_dirty = false
+where id = @id
+  and user_id = @user_id
+  and meta_version = @meta_version
+  and sync_status = 'pending';
+
+-- name: SetSyncStatus :exec
+update documents
+set sync_status = @sync_status,
+    sync_reason = @sync_reason
 where id = @id
   and user_id = @user_id;
 
@@ -187,6 +300,23 @@ from documents d
                   and i.status = 'active'
 where d.status = 'saved'
   and d.backup_status in ('pending', 'uploading')
+  and d.updated_at < @older_than
+order by d.updated_at
+limit @lim;
+
+-- name: StuckSyncs :many
+-- Backed-up documents whose sync has been pending since before @older_than, for
+-- users with an active Drive integration.
+select d.id, d.user_id, d.updated_at
+from documents d
+         join integrations i
+              on i.user_id = d.user_id
+                  and i.bot = 'docs'
+                  and i.provider = 'google'
+                  and i.status = 'active'
+where d.status = 'saved'
+  and d.backup_status = 'backed_up'
+  and d.sync_status = 'pending'
   and d.updated_at < @older_than
 order by d.updated_at
 limit @lim;

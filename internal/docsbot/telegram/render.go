@@ -34,6 +34,7 @@ const (
 	actTransferYes   = "try" // confirm the transfer offer
 	actTransferNo    = "trn" // decline the transfer offer
 	actRetry         = "rt"  // retry a failed backup: d:rt:<docID>
+	actRetrySync     = "rs"  // retry a failed cloud sync: d:rs:<docID>
 	actDisconnect    = "dc"  // disconnect Google Drive
 	actRetryAll      = "rta" // retry every failed backup
 	actExport        = "exp" // resend all documents from Telegram
@@ -175,6 +176,14 @@ func storageLine(doc docsbot.Document) string {
 	switch {
 	case doc.BackupStatus == docsbot.BackupPending || doc.BackupStatus == docsbot.BackupUploading:
 		return textStoragePending
+	case doc.InDrive() && doc.SyncStatus == docsbot.SyncPending:
+		return textStorageSyncing
+	case doc.InDrive() && doc.SyncStatus == docsbot.SyncFailed && doc.SyncReason == docsbot.SyncReasonRevoked:
+		return textStorageSyncRevoked
+	case doc.InDrive() && doc.SyncStatus == docsbot.SyncFailed:
+		return textStorageSyncFailed
+	case doc.InDrive() && doc.SyncStatus == docsbot.SyncMissing:
+		return textStorageMissing
 	case doc.InDrive():
 		return textStorageInDrive
 	case doc.BackupStatus == docsbot.BackupFailed:
@@ -239,12 +248,38 @@ func folderURL(id string) string { return "https://drive.google.com/drive/folder
 // cardKeyboard renders a document's actions. "Открыть в Drive" appears only once
 // the file is backed up, the folder button only when the category folder exists.
 func cardKeyboard(doc docsbot.Document, folderID, orig string) *models.InlineKeyboardMarkup {
+	return cardKeyboardWith(doc, folderID, orig, "")
+}
+
+// revoked reports a failed sync caused by revoked Drive access: retrying cannot
+// help until the user reconnects.
+func revoked(doc docsbot.Document) bool {
+	return doc.InDrive() && doc.SyncStatus == docsbot.SyncFailed && doc.SyncReason == docsbot.SyncReasonRevoked
+}
+
+// cardKeyboardWith is cardKeyboard with the Google consent link, which replaces
+// "Повторить" on a card whose sync failed because access was revoked; without a
+// link such a card has no retry button.
+func cardKeyboardWith(doc docsbot.Document, folderID, orig, reconnectURL string) *models.InlineKeyboardMarkup {
 	// At most two buttons per row: more are cut off on narrow screens.
 	top := []models.InlineKeyboardButton{{Text: btnSendFile, CallbackData: cb(actSend, doc.ID)}}
-	if doc.InDrive() {
+	if doc.InDrive() && doc.SyncStatus != docsbot.SyncMissing {
 		top = append(top, models.InlineKeyboardButton{Text: btnOpenDrive, URL: driveURL(doc.DriveFileID)})
 	}
 	rows := [][]models.InlineKeyboardButton{top}
+	if doc.InDrive() {
+		switch doc.SyncStatus {
+		case docsbot.SyncFailed:
+			switch {
+			case !revoked(doc):
+				rows = append(rows, []models.InlineKeyboardButton{{Text: btnRetryBackup, CallbackData: cb(actRetrySync, doc.ID)}})
+			case reconnectURL != "":
+				rows = append(rows, []models.InlineKeyboardButton{{Text: btnReconnect, URL: reconnectURL}})
+			}
+		case docsbot.SyncMissing:
+			rows = append(rows, []models.InlineKeyboardButton{{Text: btnReupload, CallbackData: cb(actRetry, doc.ID)}})
+		}
+	}
 	if folderID != "" {
 		rows = append(rows, []models.InlineKeyboardButton{{Text: btnOpenFolder, URL: folderURL(folderID)}})
 	}

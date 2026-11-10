@@ -17,7 +17,8 @@ import (
 )
 
 // UploadQueue is the River queue for Drive uploads. It runs one worker so
-// parallel uploads cannot race on creating the same Drive folders.
+// parallel uploads cannot race on creating the same Drive folders. Sync
+// correctness does not depend on it: meta_version guards stale syncs.
 const UploadQueue = "drive_upload"
 
 // UploadDocumentArgs is the River job that backs a saved document up to Drive.
@@ -83,6 +84,9 @@ func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentAr
 		}
 		return fmt.Errorf("upload document: %w", err)
 	}
+	if res.OrphanTrashErr != nil {
+		w.log.ErrorContext(ctx, "trash orphan drive file failed", "err", res.OrphanTrashErr, "job_id", job.ID, "user_id", user, "doc_id", id)
+	}
 	if res.Noop {
 		w.log.DebugContext(ctx, "upload noop", "job_id", job.ID, "attempt", job.Attempt, "user_id", user, "doc_id", id)
 		return nil
@@ -103,22 +107,33 @@ func RegisterUploadDocument(workers *river.Workers, log *slog.Logger) func(Backu
 	return func(svc Backuper, n Notifier) { w.svc, w.notify = svc, n }
 }
 
-// uploadStore is the part of the repo Enqueuer needs: it marks a document
-// pending and runs insert in the same tx.
-type uploadStore interface {
+// enqueueStore is the part of the repo Enqueuer needs: every method changes a
+// document and runs insert (the job insert) in the same tx.
+type enqueueStore interface {
 	EnqueueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) (skip bool, err error)) error
+	SetTitleForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, title string, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
+	SetCategoryForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
+	MarkBackedUpForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion int, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
+	ReplaceContentForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, cloud bool, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
+	EnqueueSyncJob(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) error) error
+	RetrySyncJob(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
+	DeleteForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, queueTrash bool, insert func(ctx context.Context, tx pgx.Tx, remoteID string) error) (bool, error)
 }
 
-// Enqueuer implements docsbot.Uploads atomically over the store and the queue.
+// Enqueuer implements docsbot.Uploads and docsbot.Syncs atomically over the
+// store and the queue.
 type Enqueuer struct {
-	store uploadStore
+	store enqueueStore
 	queue *pjobs.Client
 }
 
-var _ docsbot.Uploads = (*Enqueuer)(nil)
+var (
+	_ docsbot.Uploads = (*Enqueuer)(nil)
+	_ docsbot.Syncs   = (*Enqueuer)(nil)
+)
 
 // NewEnqueuer wires an Enqueuer around the store and the job queue.
-func NewEnqueuer(store uploadStore, queue *pjobs.Client) *Enqueuer {
+func NewEnqueuer(store enqueueStore, queue *pjobs.Client) *Enqueuer {
 	return &Enqueuer{store: store, queue: queue}
 }
 
@@ -166,10 +181,23 @@ func (e *Enqueuer) RequeueUpload(ctx context.Context, user docsbot.UserID, id do
 	return nil
 }
 
-// CancelUploads removes the user's pending (not yet running) upload_document jobs.
+// CancelUploads removes the user's pending (not yet running) upload_document
+// jobs. Sync and trash jobs stay: their workers handle a disconnected Drive.
 func (e *Enqueuer) CancelUploads(ctx context.Context, user docsbot.UserID) error {
-	if _, err := e.queue.DeleteJobsByArg(ctx, UploadDocumentArgs{}.Kind(), "UserID", string(user)); err != nil {
-		return fmt.Errorf("cancel uploads: %w", err)
+	return e.cancel(ctx, user, UploadDocumentArgs{}.Kind())
+}
+
+// CancelUserJobs removes the user's pending upload_document, storage_sync and
+// storage_trash jobs.
+func (e *Enqueuer) CancelUserJobs(ctx context.Context, user docsbot.UserID) error {
+	return e.cancel(ctx, user, UploadDocumentArgs{}.Kind(), StorageSyncArgs{}.Kind(), StorageTrashArgs{}.Kind())
+}
+
+func (e *Enqueuer) cancel(ctx context.Context, user docsbot.UserID, kinds ...string) error {
+	for _, kind := range kinds {
+		if _, err := e.queue.DeleteJobsByArg(ctx, kind, "UserID", string(user)); err != nil {
+			return fmt.Errorf("cancel jobs: %w", err)
+		}
 	}
 	return nil
 }

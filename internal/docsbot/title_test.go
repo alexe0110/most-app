@@ -62,3 +62,34 @@ func TestNormalizeTitle_edgeInputs(t *testing.T) {
 		})
 	}
 }
+
+func TestRemoteName(t *testing.T) {
+	tests := []struct {
+		name, title, mime string
+		kind              docsbot.Kind
+		want              string
+	}{
+		{"pdf gets extension", "Договор", "application/pdf", docsbot.KindDocument, "Договор.pdf"},
+		{"jpeg becomes jpg", "Паспорт", "image/jpeg", docsbot.KindPhoto, "Паспорт.jpg"},
+		{"png, webp, heic", "a", "image/png", docsbot.KindDocument, "a.png"},
+		{"webp", "a", "image/webp", docsbot.KindDocument, "a.webp"},
+		{"heic", "a", "image/heic", docsbot.KindDocument, "a.heic"},
+		{"mime parameters ignored", "a", "application/pdf; charset=x", docsbot.KindDocument, "a.pdf"},
+		{"photo without mime is jpg", "Фото", "", docsbot.KindPhoto, "Фото.jpg"},
+		{"unknown mime keeps title", "a", "application/zip", docsbot.KindDocument, "a"},
+		{"document without mime keeps title", "a", "", docsbot.KindDocument, "a"},
+		{"same extension is not doubled", "scan.pdf", "application/pdf", docsbot.KindDocument, "scan.pdf"},
+		{"same extension, other case", "scan.PDF", "application/pdf", docsbot.KindDocument, "scan.PDF"},
+		{"jpeg title for jpg mime", "p.jpeg", "image/jpeg", docsbot.KindPhoto, "p.jpeg"},
+		{"different extension is replaced", "scan.JPG", "application/pdf", docsbot.KindDocument, "scan.pdf"},
+		{"year is not an extension", "Счёт 01.02.2026", "application/pdf", docsbot.KindDocument, "Счёт 01.02.2026.pdf"},
+		{"separators replaced", `a/b\c`, "application/pdf", docsbot.KindDocument, "a_b_c.pdf"},
+		{"path traversal", "../etc/passwd", "", docsbot.KindDocument, ".._etc_passwd"},
+		{"empty title", "", "", docsbot.KindDocument, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, docsbot.RemoteName(tt.title, tt.mime, tt.kind))
+		})
+	}
+}

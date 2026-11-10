@@ -35,11 +35,15 @@ const (
 	textRenamePrompt = "Пришли новое название документа."
 	textRenameEmpty  = "Название пустое. Нажми «Имя» и пришли название ещё раз."
 
-	textDeleteConfirm   = "Удалить этот документ? Отменить будет нельзя."
-	textDeleted         = "Документ удалён 🗑"
-	textDeleteCancelled = "Удаление отменено."
-	textGone            = "Этого документа уже нет."
-	textStale           = "Кнопка устарела, открой заново."
+	textDeleteConfirm = "Удалить этот документ? Отменить будет нельзя."
+	// textDeleteConfirmDrive is shown for a document in a connected Drive.
+	textDeleteConfirmDrive = "Удалить этот документ? Файл будет перемещён в корзину Google Drive."
+	// textDeletedRemoteKept: the Drive file could not be trashed and stays.
+	textDeletedRemoteKept = "Документ удалён. В Google Drive файл остался — удали его вручную."
+	textDeleted           = "Документ удалён 🗑"
+	textDeleteCancelled   = "Удаление отменено."
+	textGone              = "Этого документа уже нет."
+	textStale             = "Кнопка устарела, открой заново."
 
 	// Callback toasts.
 	toastSending = "Отправляю…"
@@ -71,6 +75,10 @@ const (
 	textStorageInDrive      = "☁️ В Google Drive"
 	textStorageFailed       = "❌ Не удалось выгрузить в Drive"
 	textStorageTooLarge     = "📥 Слишком большой для Drive"
+	textStorageSyncing      = "⏳ Обновляю в Drive…"
+	textStorageSyncFailed   = "⚠️ Не удалось обновить в Drive"
+	textStorageSyncRevoked  = "⚠️ Не удалось обновить в Drive: доступ отозван"
+	textStorageMissing      = "⚠️ Файл удалён в Drive"
 	textDriveFileStayed     = "В Drive файл остался в прежней папке"
 	textStorageTelegramOnly = "📥 Только в Telegram, ещё не в Drive"
 
@@ -125,6 +133,7 @@ const (
 	btnTransferYes        = "Да, перенести"
 	btnTransferNo         = "Не сейчас"
 	btnRetryBackup        = "🔁 Повторить"
+	btnReupload           = "☁️ Выгрузить заново"
 	btnReconnect          = "☁️ Переподключить Google Drive"
 	btnDisconnect         = "🔌 Отключить Google Drive"
 	btnRetryAll           = "🔁 Повторить выгрузку"
@@ -168,6 +177,11 @@ const (
 	textConvertMenu      = "Что сделать с файлом?"
 	textConvertSaving    = "💾 Сохраняю…"
 	textConvertResultOld = "Эта кнопка устарела. Преобразуй файл ещё раз."
+
+	textReplaceConfirm = "Исходный файл будет заменён"
+	textReplacedDone   = "♻️ Исходный файл заменён"
+	textReplaceBusy    = "Подожди, файл ещё сохраняется"
+	textReplaceMissing = "Файл удалён в Drive: сначала «Выгрузить заново»"
 
 	textAlbumTooMany = "В один PDF помещается не больше %d страниц. Сохрани фото по одному."
 	textAlbumTooBig  = "Фото в альбоме больше %d МБ вместе — в один PDF не поместятся. Сохрани их по одному."
@@ -220,6 +234,10 @@ const (
 	btnPDFMerge         = "➕ Склеить"
 	btnSaveResult       = "💾 Сохранить в документы"
 	btnSkipResult       = "⬇️ Только файл"
+	btnSaveAsNew        = "💾 Сохранить как новый"
+	btnReplaceOriginal  = "♻️ Заменить оригинал"
+	btnReplaceYes       = "Заменить"
+	btnReplaceNo        = "Отмена"
 )
 
 // Names of files made by the converter: "<name>-<tag>.<ext>".
