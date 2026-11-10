@@ -21,13 +21,16 @@ type syncDrive struct {
 	parents    []string          // current file parents
 	taken      map[string]string // folder id + "/" + name -> other file id
 	folderID   string
+	trashed    bool // the file sits in the Drive trash (still answers 200)
+
+	goneFolders map[string]bool // ids that answer 404 on GET (stale cache)
 
 	patches []patchCall
 	listQs  []string
 }
 
 type patchCall struct {
-	path, query, body, ctype string
+	path, query, body, ctype, rawPath string
 }
 
 func (d *syncDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -48,15 +51,19 @@ func (d *syncDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.WriteString(w, out)
 		}
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/drive/v3/files/"):
+		if d.goneFolders[strings.TrimPrefix(r.URL.Path, "/drive/v3/files/")] {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		if d.fileStatus != 0 {
 			w.WriteHeader(d.fileStatus)
 			return
 		}
-		b, _ := json.Marshal(map[string]any{"name": d.name, "parents": d.parents})
+		b, _ := json.Marshal(map[string]any{"name": d.name, "parents": d.parents, "trashed": d.trashed})
 		_, _ = w.Write(b)
 	case r.Method == http.MethodPatch:
 		body, _ := io.ReadAll(r.Body)
-		d.patches = append(d.patches, patchCall{r.URL.Path, r.URL.RawQuery, string(body), r.Header.Get("Content-Type")})
+		d.patches = append(d.patches, patchCall{r.URL.Path, r.URL.RawQuery, string(body), r.Header.Get("Content-Type"), r.URL.EscapedPath()})
 		if d.fileStatus != 0 {
 			w.WriteHeader(d.fileStatus)
 			return
@@ -65,6 +72,13 @@ func (d *syncDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusBadRequest)
 	}
+}
+
+func serve(t *testing.T, d *syncDrive) string {
+	t.Helper()
+	srv := httptest.NewServer(d)
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
 func newSyncSvc(t *testing.T, d *syncDrive, clients Clients) *Service {
