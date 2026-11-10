@@ -2,6 +2,7 @@ package telegram_test
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -25,7 +26,7 @@ func TestConvertPDF_photosShowOneAcceptedMessage(t *testing.T) {
 		require.Contains(t, h.lastMarkup(), "conv:cancel")
 	}
 	for id := 101; id <= h.lastMsg(); id++ {
-		if !containsInt(h.deleted, id) {
+		if !slices.Contains(h.deleted, id) {
 			live = append(live, id)
 		}
 	}

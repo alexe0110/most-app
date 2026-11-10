@@ -85,7 +85,11 @@ func (c *converter) runPDFOp(ctx context.Context, b *bot.Bot, chatID, tgUser int
 			return
 		}
 		c.log.InfoContext(ctx, "pdf converted", "user_id", user, "doc_id", src.docID, "op", op, "in_bytes", len(data), "out_bytes", len(out))
-		c.sendResult(ctx, b, chatID, tgUser, resultFileName(src.title, nameFallbackDocument, nameTagEdited, "pdf"), out, src.docID, suffixEdited)
+		name := resultFileName(src.title, nameFallbackDocument, nameTagEdited, "pdf")
+		if !c.sendResult(ctx, b, chatID, tgUser, name, out, src.docID, suffixEdited) {
+			fail(msgID, textSendFailed)
+			return
+		}
 		c.finish(ctx, b, chatID, msgID)
 		return
 	}
@@ -102,7 +106,9 @@ func (c *converter) runPDFOp(ctx context.Context, b *bot.Bot, chatID, tgUser int
 	defer unlock()
 	if prev, ok := c.sessions.live(tgUser); ok {
 		c.sessions.end(tgUser)
-		c.stripKeyboard(ctx, b, chatID, prev.msgID)
+		if prev.msgID != 0 {
+			c.stripKeyboard(ctx, b, chatID, prev.msgID)
+		}
 		reply(ctx, b, c.log, chatID, textPDFPrevCancelled)
 	}
 	c.sessions.start(tgUser)
@@ -160,8 +166,6 @@ func (c *converter) onPDFSource(ctx context.Context, b *bot.Bot, update *models.
 func (c *converter) onRange(ctx context.Context, b *bot.Bot, update *models.Update) {
 	tgUser, _ := messageUser(update)
 	chatID := update.Message.Chat.ID
-	unlock := c.dialogue.lock(tgUser)
-	defer unlock()
 	sess, ok := c.sessions.claim(tgUser, 0, stepAwaitRange)
 	if !ok || len(sess.pdfs) == 0 {
 		return
@@ -170,6 +174,8 @@ func (c *converter) onRange(ctx context.Context, b *bot.Bot, update *models.Upda
 	msgID := c.show(ctx, b, chatID, sess.msgID, textConvertProgress, nil)
 	// again puts the session back and asks once more at the bottom of the chat.
 	again := func(text string) {
+		unlock := c.dialogue.lock(tgUser)
+		defer unlock()
 		sess.msgID = msgID
 		c.sessions.restore(tgUser, sess)
 		c.moveDown(ctx, b, chatID, tgUser, text, cancelKeyboard())
@@ -194,7 +200,11 @@ func (c *converter) onRange(ctx context.Context, b *bot.Bot, update *models.Upda
 		return
 	}
 	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", sess.sourceDoc, "op", sess.pdfOp, "in_bytes", len(src), "out_bytes", len(out))
-	c.sendResult(ctx, b, chatID, tgUser, resultFileName(sess.sourceTitle, nameFallbackDocument, nameTagEdited, "pdf"), out, sess.sourceDoc, suffixEdited)
+	name := resultFileName(sess.sourceTitle, nameFallbackDocument, nameTagEdited, "pdf")
+	if !c.sendResult(ctx, b, chatID, tgUser, name, out, sess.sourceDoc, suffixEdited) {
+		again(textSendFailed)
+		return
+	}
 	c.finish(ctx, b, chatID, msgID)
 }
 
@@ -266,18 +276,23 @@ func (c *converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 // finishMerge joins the collected PDFs. The session is claimed first, so a
 // double «Готово» runs the merge once.
 func (c *converter) finishMerge(ctx context.Context, b *bot.Bot, update *models.Update, tgUser, chatID int64) {
+	unlock := c.dialogue.lock(tgUser) // see finishPDF
 	msgID := callbackMessageID(update)
 	sess, ok := c.sessions.claim(tgUser, msgID, stepMergePDF)
 	if !ok {
+		unlock()
 		c.stale(ctx, b, update, chatID)
 		return
 	}
 	uid, _ := userID(ctx)
 	if len(sess.pdfs) < 2 {
+		unlock()
 		c.retry(ctx, b, chatID, tgUser, sess, msgID, textPDFMergeNeeded, pdfKeyboard())
 		return
 	}
 	msgID = c.show(ctx, b, chatID, msgID, textConvertProgress, nil)
+	unlock()
+
 	files := make([][]byte, 0, len(sess.pdfs))
 	total := 0
 	for _, part := range sess.pdfs {
@@ -303,7 +318,11 @@ func (c *converter) finishMerge(ctx context.Context, b *bot.Bot, update *models.
 		return
 	}
 	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", sess.sourceDoc, "op", opMerge, "files", len(files), "out_bytes", len(out))
-	c.sendResult(ctx, b, chatID, tgUser, resultFileName(sess.sourceTitle, nameFallbackDocument, nameTagEdited, "pdf"), out, sess.sourceDoc, suffixEdited)
+	name := resultFileName(sess.sourceTitle, nameFallbackDocument, nameTagEdited, "pdf")
+	if !c.sendResult(ctx, b, chatID, tgUser, name, out, sess.sourceDoc, suffixEdited) {
+		c.retry(ctx, b, chatID, tgUser, sess, msgID, textSendFailed, pdfKeyboard())
+		return
+	}
 	c.finish(ctx, b, chatID, msgID)
 }
 

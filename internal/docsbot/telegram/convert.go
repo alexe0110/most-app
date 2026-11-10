@@ -161,8 +161,11 @@ func (c *converter) cancel(ctx context.Context, b *bot.Bot, update *models.Updat
 		return
 	}
 	text := textConvertNothing
-	if c.sessions.end(user) {
+	if sess, ok := c.sessions.claim(user, 0); ok {
 		text = textConvertCancelled
+		if sess.msgID != 0 {
+			c.stripKeyboard(ctx, b, update.Message.Chat.ID, sess.msgID)
+		}
 	}
 	reply(ctx, b, c.log, update.Message.Chat.ID, text)
 }
@@ -309,7 +312,7 @@ func (c *converter) onText(ctx context.Context, b *bot.Bot, update *models.Updat
 		return
 	}
 	user, _ := messageUser(update)
-	unlock := c.dialogue.lock(user)
+	unlock := sync.OnceFunc(c.dialogue.lock(user))
 	defer unlock()
 	sess, ok := c.sessions.advance(user, 0, []step{stepCustomLimit}, func(s *session) {
 		s.maxBytes = kb * 1_024
@@ -319,6 +322,7 @@ func (c *converter) onText(ctx context.Context, b *bot.Bot, update *models.Updat
 		return
 	}
 	if !sess.inputPNG {
+		unlock() // compress takes the lock itself
 		c.compress(ctx, b, chatID, user, 0, convert.JPEG)
 		return
 	}
@@ -336,7 +340,11 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 	data := update.CallbackQuery.Data
 	switch {
 	case strings.HasPrefix(data, cbDocPrefix):
-		c.onMenu(ctx, b, chatID, docsbot.DocumentID(strings.TrimPrefix(data, cbDocPrefix)))
+		// A double tap must not open two menus: the second one is dropped silently.
+		if release, ok := c.claimMenu(chatID, callbackMessageID(update)); ok {
+			defer release()
+			c.onMenu(ctx, b, chatID, docsbot.DocumentID(strings.TrimPrefix(data, cbDocPrefix)))
+		}
 		return
 	case strings.HasPrefix(data, cbQuickPrefix):
 		c.onQuick(ctx, b, update, chatID)
@@ -351,7 +359,10 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 		c.onSkip(ctx, b, update, chatID)
 		return
 	case data == cbMenuCancel:
-		c.deleteCallbackMessage(ctx, b, update, chatID)
+		if release, ok := c.claimMenu(chatID, callbackMessageID(update)); ok {
+			defer release()
+			c.deleteCallbackMessage(ctx, b, update, chatID)
+		}
 		return
 	}
 
@@ -440,6 +451,8 @@ func (c *converter) stale(ctx context.Context, b *bot.Bot, update *models.Update
 // the next step, and stays the session's dialogue message (or its replacement,
 // if Telegram refused the edit).
 func (c *converter) next(ctx context.Context, b *bot.Bot, update *models.Update, chatID, user int64, text string, kb *models.InlineKeyboardMarkup) {
+	unlock := c.dialogue.lock(user)
+	defer unlock()
 	c.sessions.setMsg(user, c.show(ctx, b, chatID, callbackMessageID(update), text, kb))
 }
 
@@ -454,7 +467,7 @@ func (c *converter) show(ctx context.Context, b *bot.Bot, chatID int64, msgID in
 			params.ReplyMarkup = kb
 		}
 		_, err := b.EditMessageText(ctx, params)
-		if err == nil || strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
+		if err == nil || isNotModified(err) {
 			return msgID
 		}
 		c.log.WarnContext(ctx, "edit dialogue message failed, sending a new one", "err", err)
@@ -467,6 +480,12 @@ func (c *converter) show(ctx context.Context, b *bot.Bot, chatID int64, msgID in
 		return id
 	}
 	return msgID // both failed: keep the old dialogue message so the session survives
+}
+
+// isNotModified reports Telegram's answer to an edit that changes nothing. The Bot
+// API has no error code for it, only the description text.
+func isNotModified(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "message is not modified")
 }
 
 // moveDown shows the next step of a dialogue that a user's message advanced: a
@@ -482,6 +501,9 @@ func (c *converter) moveDown(ctx context.Context, b *bot.Bot, chatID, user int64
 		markup = kb
 	}
 	id := c.send(ctx, b, chatID, text, markup)
+	if id == 0 {
+		return // keep the previous dialogue message: the session still owns it
+	}
 	c.sessions.setMsg(user, id)
 	if prev != 0 && prev != id {
 		c.drop(ctx, b, chatID, prev)
@@ -509,7 +531,10 @@ func (c *converter) finish(ctx context.Context, b *bot.Bot, chatID int64, msgID 
 
 // retry shows an error on the dialogue message with a keyboard and puts the
 // claimed session back, so the user can try again.
+// Callers must not hold the user's dialogue lock.
 func (c *converter) retry(ctx context.Context, b *bot.Bot, chatID, user int64, sess session, msgID int, text string, kb *models.InlineKeyboardMarkup) {
+	unlock := c.dialogue.lock(user)
+	defer unlock()
 	sess.msgID = c.show(ctx, b, chatID, msgID, text, kb)
 	c.sessions.restore(user, sess)
 }
@@ -533,30 +558,38 @@ func (c *converter) claimMenu(chatID int64, msgID int) (release func(), ok bool)
 
 // finishPDF renders the collected photos into a PDF. The session is claimed
 // first, so a double «Готово» builds it once; it goes back when the user can
-// retry.
+// retry. The dialogue lock covers the claim and the progress note, so a photo
+// arriving at the same time can't move the dialogue under them.
 func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, update *models.Update, user, chatID int64) {
+	unlock := c.dialogue.lock(user)
 	msgID := callbackMessageID(update)
 	sess, ok := c.sessions.claim(user, msgID, stepCollectPDF)
 	if !ok {
+		unlock()
 		c.stale(ctx, b, update, chatID)
 		return
 	}
 	images := sess.orderedImages()
 	if len(images) == 0 {
+		unlock()
 		c.retry(ctx, b, chatID, user, sess, msgID, textConvertNoImages, pdfKeyboard())
 		return
 	}
-
 	msgID = c.show(ctx, b, chatID, msgID, textConvertProgress, nil)
+	unlock()
+
 	pdf, err := convert.ImagesToPDF(images)
 	if err != nil {
-		c.log.Error("convert images to pdf", "err", err, "pages", len(images))
+		c.log.ErrorContext(ctx, "convert images to pdf", "err", err, "pages", len(images))
 		c.retry(ctx, b, chatID, user, sess, msgID, convertErrorText(err), pdfKeyboard())
 		return
 	}
 
 	name := scanName(c.now())
-	c.sendResult(ctx, b, chatID, user, name, pdf, "", suffixPDF)
+	if !c.sendResult(ctx, b, chatID, user, name, pdf, "", suffixPDF) {
+		c.retry(ctx, b, chatID, user, sess, msgID, textSendFailed, pdfKeyboard())
+		return
+	}
 	c.finish(ctx, b, chatID, msgID)
 }
 
@@ -568,28 +601,36 @@ func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, update *mode
 	}
 }
 
-// compress runs the compression for a session at the format step; msgID is the
+// compress runs the compression for a session at the format step; pressMsg is the
 // message a button was pressed on (0 when a typed size got here). It reports
-// false if there was nothing to claim.
+// false if there was nothing to claim. Callers must not hold the dialogue lock.
 func (c *converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64, pressMsg int, format convert.Format) bool {
+	unlock := c.dialogue.lock(user)
 	sess, ok := c.sessions.claim(user, pressMsg, stepChooseFormat)
-	if !ok || len(sess.images) == 0 {
+	if !ok {
+		unlock()
 		return false
 	}
-	msgID := sess.msgID
+	if len(sess.images) == 0 {
+		c.sessions.restore(user, sess)
+		unlock()
+		return false
+	}
 	src := sess.images[0].data
 	maxBytes := sess.maxBytes
+	msgID := c.show(ctx, b, chatID, sess.msgID, textConvertProgress, nil)
+	unlock()
 
-	msgID = c.show(ctx, b, chatID, msgID, textConvertProgress, nil)
+	// An error puts the user back at the last question that was asked.
+	retryKB := formatKeyboard()
+	if !sess.inputPNG {
+		retryKB = limitKeyboard()
+		sess.step = stepChooseLimit
+	}
 	out, err := convert.Compress(src, maxBytes, format)
 	if err != nil {
-		c.log.Error("convert compress", "err", err)
-		kb := formatKeyboard()
-		if !sess.inputPNG {
-			kb = limitKeyboard()
-			sess.step = stepChooseLimit
-		}
-		c.retry(ctx, b, chatID, user, sess, msgID, convertErrorText(err), kb)
+		c.log.ErrorContext(ctx, "convert compress", "err", err)
+		c.retry(ctx, b, chatID, user, sess, msgID, convertErrorText(err), retryKB)
 		return true
 	}
 
@@ -597,7 +638,10 @@ func (c *converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64
 		reply(ctx, b, c.log, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
 	}
 	name := resultFileName(sess.sourceTitle, nameFallbackPhoto, nameTagCompressed, formatExt(format))
-	c.sendResult(ctx, b, chatID, user, name, out, "", suffixCompressed)
+	if !c.sendResult(ctx, b, chatID, user, name, out, "", suffixCompressed) {
+		c.retry(ctx, b, chatID, user, sess, msgID, textSendFailed, retryKB)
+		return true
+	}
 	c.finish(ctx, b, chatID, msgID)
 	return true
 }
@@ -654,7 +698,8 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 	}
 	release, ok := c.claimMenu(chatID, callbackMessageID(update))
 	if !ok {
-		c.stale(ctx, b, update, chatID)
+		// The running tap owns the message: only tell the user, keep its buttons.
+		reply(ctx, b, c.log, chatID, textStale)
 		return
 	}
 	defer release()
@@ -711,7 +756,10 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 	if known && len(out) > maxBytes {
 		reply(ctx, b, c.log, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
 	}
-	c.sendResult(ctx, b, chatID, update.CallbackQuery.From.ID, name, out, id, suffix)
+	if !c.sendResult(ctx, b, chatID, update.CallbackQuery.From.ID, name, out, id, suffix) {
+		c.show(ctx, b, chatID, msgID, textSendFailed, menu)
+		return
+	}
 	c.finish(ctx, b, chatID, msgID)
 }
 
@@ -1111,7 +1159,7 @@ func (c *converter) send(ctx context.Context, b *bot.Bot, chatID int64, text str
 	msg, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ReplyMarkup: markup})
 	if err != nil || msg == nil {
 		if err != nil {
-			c.log.Error("send telegram message", "err", err)
+			c.log.ErrorContext(ctx, "send telegram message", "err", err)
 		}
 		return 0
 	}

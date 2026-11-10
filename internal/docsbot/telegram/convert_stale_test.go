@@ -2,6 +2,7 @@ package telegram_test
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/png"
 	"testing"
@@ -187,4 +188,22 @@ func (h *convHarness) servePNG(fileID string) {
 		panic(err)
 	}
 	h.serve(fileID, buf.Bytes())
+}
+
+// /convert again replaces the session: buttons of the old dialogue are stale.
+func TestConvertDialogue_restartKillsOldButtons(t *testing.T) {
+	h := newConvHarness(t)
+	ctx := t.Context()
+	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	old := h.lastMsg()
+	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	fresh := h.lastMsg()
+	require.NotEqual(t, old, fresh)
+
+	h.bot.ProcessUpdate(ctx, callbackOn("conv:pdf", old))
+	require.Equal(t, staleReply, h.lastText())
+	require.NotContains(t, h.editTexts, fmt.Sprint(old)+":Пришли фото")
+
+	h.bot.ProcessUpdate(ctx, callbackOn("conv:pdf", fresh))
+	require.Contains(t, h.lastShown(), "Пришли фото")
 }

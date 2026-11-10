@@ -56,6 +56,10 @@ type convHarness struct {
 	deleted []int
 	// failEdits makes editMessageText answer with an error (message can't be edited).
 	failEdits bool
+	// gate, when set, holds every file download until it is closed.
+	gate chan struct{}
+	// failDocs makes sendDocument answer with an error (after recording the upload).
+	failDocs bool
 	// failSends makes sendMessage answer with an error.
 	failSends bool
 	// failDeletes makes deleteMessage answer with an error (message too old).
@@ -96,7 +100,11 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 			h.mu.Lock()
 			h.downloads = append(h.downloads, id)
 			data, ok := h.files[id]
+			gate := h.gate
 			h.mu.Unlock()
+			if gate != nil {
+				<-gate
+			}
 			if !ok {
 				data = photo.Bytes()
 			}
@@ -114,6 +122,11 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 			return
 		case strings.HasSuffix(path, "/sendDocument"):
 			n := h.captureDocument(t, r)
+			if h.docsFail() {
+				w.WriteHeader(http.StatusInternalServerError)
+				writeJSON(w, `{"ok":false,"error_code":500,"description":"Internal Server Error"}`)
+				return
+			}
 			if h.noDocument {
 				writeJSON(w, `{"ok":true,"result":{"message_id":7}}`)
 				return
@@ -181,6 +194,12 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 	h.bot = b
 	h.repo = repo
 	return h
+}
+
+func (h *convHarness) docsFail() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.failDocs
 }
 
 func (h *convHarness) sendsFail() bool {
