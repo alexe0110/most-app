@@ -121,10 +121,12 @@ func (s *sessionStore) start(user int64) {
 }
 
 // msgMatches reports whether a press on message msgID belongs to the session's
-// dialogue message. Either id being 0 means unknown, which is accepted: real
-// Telegram message ids are never 0.
+// dialogue message. A press id of 0 means unknown (a typed message drives the
+// step) and is accepted: real Telegram message ids are never 0. A session whose
+// dialogue message is unknown (the send failed) has no current button, so a press
+// on any real message is stale.
 func (s *session) msgMatches(msgID int) bool {
-	return msgID == 0 || s.msgID == 0 || s.msgID == msgID
+	return msgID == 0 || (s.msgID != 0 && s.msgID == msgID)
 }
 
 // atStep reports whether the session is at one of the steps; no steps means any.

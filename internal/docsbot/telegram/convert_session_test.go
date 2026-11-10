@@ -76,6 +76,22 @@ func TestSessionStore_pressValidation(t *testing.T) {
 	require.False(t, ok, "no session")
 }
 
+// A session whose dialogue message is unknown (the send failed) has no current
+// button: a press on an old message must not slip through.
+func TestSessionStore_unknownDialogueMessageRejectsPresses(t *testing.T) {
+	store := newSessionStore(time.Now)
+	store.start(1)
+
+	_, ok := store.check(1, 7, stepChooseAction)
+	require.False(t, ok, "check")
+	_, ok = store.advance(1, 7, []step{stepChooseAction}, func(*session) {})
+	require.False(t, ok, "advance")
+	_, ok = store.claim(1, 7)
+	require.False(t, ok, "claim")
+	_, ok = store.claim(1, 0, stepChooseAction)
+	require.True(t, ok, "typed message (id 0) still works")
+}
+
 func TestConverter_claimMenuOnce(t *testing.T) {
 	c := newConverter(slog.New(slog.DiscardHandler), nil, nil, nil)
 
