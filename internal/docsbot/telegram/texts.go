@@ -7,7 +7,7 @@ package telegram
 // Core flow texts (#9, #10, #12, #13, #14).
 const (
 	textStart = "Привет! Я Most Docs. Пришли документ — фото, PDF или файл, — " +
-		"я разложу его по категориям и найду по запросу.\n\n" +
+		"я разложу его по категориям и найду по запросу. А ещё сожму фото и поработаю с PDF — команда /convert.\n\n" +
 		"Цель — хранить документы на твоём Google Drive. Пока Drive не подключён, " +
 		"они лежат во входящей папке в Telegram — можно начать без настройки.\n\n" +
 		"Подключишь Drive — бот будет видеть только файлы, которые сам создал. " +
@@ -18,7 +18,7 @@ const (
 		"• Приём документов — пришли фото, PDF или файл и выбери категорию.\n" +
 		"• /list — твои документы по категориям.\n" +
 		"• Поиск — напиши слово из названия.\n" +
-		"• /convert — фото → PDF или сжать изображение.\n\n" +
+		"• /convert — фото → PDF, сжать изображение, действия с PDF: повернуть, оставить или убрать страницы, склеить.\n\n" +
 		"Цель — перенести документы на твой Google Drive; пока они хранятся в Telegram."
 
 	textDriveConnected = "Google Drive подключён ✅ Новые документы будут попадать на твой Диск."
@@ -134,13 +134,16 @@ const (
 
 // Converter mode (/convert) texts.
 const (
-	textConvertStart = "Что сделать с изображениями?"
+	textConvertStart = "Что сделать?"
 
-	textConvertPDFPrompt = "Пришли фото — по одному или альбомом. Когда закончишь, нажми «Готово».\n\n" +
-		"Совет: отправляй снимки «как файл» — иначе Telegram сильно их сожмёт."
+	textConvertPDFPrompt      = "Пришли фото — по одному или альбомом. Когда закончишь, нажми «Готово»."
+	textConvertPDFAccepted    = "Принято, страниц: %d. Пришли ещё или нажми «Готово»." // %d = pages so far
+	textConvertCompressPrompt = "Пришли одно фото для сжатия."
+	textConvertPDFAwait       = "Пришли PDF файлом."
+	textConvertPDFMenu        = "Что сделать с PDF?"
 
-	textConvertCompressPrompt = "Пришли одно фото для сжатия.\n\n" +
-		"Совет: отправляй «как файл» (до 20 МБ) — иначе Telegram уже ужмёт качество."
+	// textConvertFileTip is added once per user, after they send a compressed photo.
+	textConvertFileTip = "Совет: отправляй снимки «как файл» (до 20 МБ) — иначе Telegram сильно ужимает качество."
 
 	textConvertChooseLimit  = "До какого размера сжать?"
 	textConvertChooseFormat = "В каком формате сохранить?"
@@ -150,15 +153,17 @@ const (
 	textConvertTapButton = "Нажми кнопку выше или /cancel, чтобы выйти."
 	textConvertNoImages  = "Сначала пришли хотя бы одно фото."
 
-	textConvertUnsupported        = "Так я пока не умею. Пришли фото в JPEG, PNG или WEBP. Видео и другие форматы — позже. С PDF я работаю вне /convert: отправь файл и нажми «🛠»."
+	textConvertUnsupported        = "Так я пока не умею. Пришли фото в JPEG, PNG или WEBP. Видео и другие форматы — позже."
 	textConvertDownloadFailed     = "Не удалось получить файл. Попробуй ещё раз."
 	textConvertTooLarge           = "Изображение слишком большое. Пришли снимок поменьше."
 	textConvertFormatNotSupported = "Этот формат пока не поддерживается. Пришли JPG, PNG или WEBP."
 	textConvertFailed             = "Не удалось обработать изображение. Проверь, что это JPEG, PNG или WEBP."
 
-	textConvertExpired   = "Сессия конвертера истекла. Начни заново: /convert."
 	textConvertCancelled = "Режим конвертера выключен."
 	textConvertNothing   = "Сейчас нечего отменять."
+
+	textConvertProgress = "⏳ Обрабатываю…"
+	textConvertDone     = "Готово ✅"
 
 	textConvertMenu      = "Что сделать с файлом?"
 	textConvertSaving    = "💾 Сохраняю…"
@@ -187,6 +192,7 @@ const (
 const (
 	btnPDF         = "📄 Фото → PDF"
 	btnCompress    = "🗜 Сжать"
+	btnPDFActions  = "📑 Действия с PDF"
 	btnDone        = "Готово"
 	btnCancel      = "Отмена"
 	btnLimit1MB    = "до 1 МБ"
@@ -214,6 +220,18 @@ const (
 	btnPDFMerge         = "➕ Склеить"
 	btnSaveResult       = "💾 Сохранить в документы"
 	btnSkipResult       = "⬇️ Только файл"
+)
+
+// Names of files made by the converter: "<name>-<tag>.<ext>".
+const (
+	nameTagCompressed = "сжатый"
+	nameTagPDF        = "PDF"
+	nameTagJPG        = "JPG"
+	nameTagEdited     = "изменён"
+
+	nameFallbackPhoto    = "фото"
+	nameFallbackDocument = "документ"
+	nameScan             = "Скан %s.pdf" // %s = date, 02.01.2006
 )
 
 // Title suffixes of documents made by the converter.

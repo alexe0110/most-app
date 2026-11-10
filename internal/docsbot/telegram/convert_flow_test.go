@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -49,6 +50,25 @@ type convHarness struct {
 	files map[string][]byte
 	// noDocument makes sendDocument answer without the stored document.
 	noDocument bool
+	// editTexts are the texts of editMessageText calls, in order, as "id:text".
+	editTexts []string
+	// deleted lists the message ids the bot deleted.
+	deleted []int
+	// failEdits makes editMessageText answer with an error (message can't be edited).
+	failEdits bool
+	// gate, when set, holds every file download until it is closed.
+	gate chan struct{}
+	// failDocs makes sendDocument answer with an error (after recording the upload).
+	failDocs bool
+	// failSends makes sendMessage answer with an error.
+	failSends bool
+	// failDeletes makes deleteMessage answer with an error (message too old).
+	failDeletes bool
+	// events is the order of sends ("send:<text>"), edits ("edit:<id>:<text>") and
+	// deletions ("del:<id>").
+	events []string
+	// nextMsg is the id of the next sent message (sendMessage answers with it).
+	nextMsg int
 }
 
 // serve makes fileID download as data.
@@ -60,7 +80,7 @@ func (h *convHarness) serve(fileID string, data []byte) {
 
 func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 	t.Helper()
-	h := &convHarness{files: map[string][]byte{}}
+	h := &convHarness{files: map[string][]byte{}, nextMsg: 100}
 
 	// The image every file download serves — a small, decodable JPEG.
 	img := image.NewRGBA(image.Rect(0, 0, 64, 48))
@@ -80,7 +100,11 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 			h.mu.Lock()
 			h.downloads = append(h.downloads, id)
 			data, ok := h.files[id]
+			gate := h.gate
 			h.mu.Unlock()
+			if gate != nil {
+				<-gate
+			}
 			if !ok {
 				data = photo.Bytes()
 			}
@@ -98,6 +122,11 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 			return
 		case strings.HasSuffix(path, "/sendDocument"):
 			n := h.captureDocument(t, r)
+			if h.docsFail() {
+				w.WriteHeader(http.StatusInternalServerError)
+				writeJSON(w, `{"ok":false,"error_code":500,"description":"Internal Server Error"}`)
+				return
+			}
 			if h.noDocument {
 				writeJSON(w, `{"ok":true,"result":{"message_id":7}}`)
 				return
@@ -110,9 +139,46 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 			h.mu.Unlock()
 			writeJSON(w, `{"ok":true,"result":true}`)
 			return
+		case strings.HasSuffix(path, "/editMessageText"):
+			h.mu.Lock()
+			fail := h.failEdits
+			if !fail {
+				h.editTexts = append(h.editTexts, r.FormValue("message_id")+":"+r.FormValue("text"))
+				h.events = append(h.events, "edit:"+r.FormValue("message_id")+":"+r.FormValue("text"))
+			}
+			h.mu.Unlock()
+			if fail {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, `{"ok":false,"error_code":400,"description":"Bad Request: message can't be edited"}`)
+				return
+			}
+			writeJSON(w, `{"ok":true,"result":true}`)
+			return
+		case strings.HasSuffix(path, "/deleteMessage"):
+			id, _ := strconv.Atoi(r.FormValue("message_id"))
+			h.mu.Lock()
+			if h.failDeletes {
+				h.mu.Unlock()
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, `{"ok":false,"error_code":400,"description":"Bad Request: message can't be deleted"}`)
+				return
+			}
+			h.deleted = append(h.deleted, id)
+			h.events = append(h.events, "del:"+r.FormValue("message_id"))
+			h.mu.Unlock()
+			writeJSON(w, `{"ok":true,"result":true}`)
+			return
+		case strings.HasSuffix(path, "/sendMessage") && h.sendsFail():
+			w.WriteHeader(http.StatusInternalServerError)
+			writeJSON(w, `{"ok":false,"error_code":500,"description":"Internal Server Error"}`)
+			return
 		case strings.HasSuffix(path, "/sendMessage"):
 			h.captureMessage(r)
-			writeJSON(w, `{"ok":true,"result":{}}`)
+			h.mu.Lock()
+			h.nextMsg++
+			id := h.nextMsg
+			h.mu.Unlock()
+			writeJSON(w, fmt.Sprintf(`{"ok":true,"result":{"message_id":%d}}`, id))
 			return
 		default: // answerCallbackQuery, etc.
 			writeJSON(w, `{"ok":true,"result":{}}`)
@@ -130,10 +196,23 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 	return h
 }
 
+func (h *convHarness) docsFail() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.failDocs
+}
+
+func (h *convHarness) sendsFail() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.failSends
+}
+
 func (h *convHarness) captureMessage(r *http.Request) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.texts = append(h.texts, r.FormValue("text"))
+	h.events = append(h.events, "send:"+r.FormValue("text"))
 	h.markupBodies = append(h.markupBodies, r.FormValue("reply_markup"))
 	if r.FormValue("reply_markup") != "" {
 		h.markups++
@@ -155,6 +234,22 @@ func (h *convHarness) captureDocument(t *testing.T, r *http.Request) int {
 	h.docs = append(h.docs, sentDocument{filename: header.Filename, data: data})
 	h.docMarkups = append(h.docMarkups, r.FormValue("reply_markup"))
 	return len(h.docs) - 1
+}
+
+// lastShown is the text of the last sent message or edit.
+func (h *convHarness) lastShown() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := len(h.events) - 1; i >= 0; i-- {
+		switch {
+		case strings.HasPrefix(h.events[i], "send:"):
+			return strings.TrimPrefix(h.events[i], "send:")
+		case strings.HasPrefix(h.events[i], "edit:"):
+			_, text, _ := strings.Cut(strings.TrimPrefix(h.events[i], "edit:"), ":")
+			return text
+		}
+	}
+	return ""
 }
 
 func (h *convHarness) lastText() string {
@@ -241,6 +336,13 @@ func callbackUpdate(data string) *models.Update {
 	}}
 }
 
+// callbackOn is callbackUpdate for a press on the message with the given id.
+func callbackOn(data string, msgID int) *models.Update {
+	u := callbackUpdate(data)
+	u.CallbackQuery.Message.Message.ID = msgID
+	return u
+}
+
 func TestConvert_photosToPDF(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
@@ -254,7 +356,7 @@ func TestConvert_photosToPDF(t *testing.T) {
 
 	require.Len(t, h.docs, 1)
 	doc := h.docs[0]
-	require.True(t, strings.HasPrefix(doc.filename, "scan-"), "got %q", doc.filename)
+	require.True(t, strings.HasPrefix(doc.filename, "Скан "), "got %q", doc.filename)
 	require.True(t, strings.HasSuffix(doc.filename, ".pdf"))
 	require.True(t, bytes.HasPrefix(doc.data, []byte("%PDF")))
 	require.Contains(t, string(doc.data), "/Count 3", "one page per photo")
@@ -272,7 +374,7 @@ func TestConvert_compressPreset(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:fmtjpeg"))
 
 	require.Len(t, h.docs, 1)
-	require.Equal(t, "photo-compressed.jpg", h.docs[0].filename)
+	require.Equal(t, "фото-сжатый.jpg", h.docs[0].filename)
 	require.LessOrEqual(t, len(h.docs[0].data), 2<<20)
 	_, _, err := image.Decode(bytes.NewReader(h.docs[0].data))
 	require.NoError(t, err)
@@ -281,6 +383,7 @@ func TestConvert_compressPreset(t *testing.T) {
 
 func TestConvert_compressCustomLimit(t *testing.T) {
 	h := newConvHarness(t)
+	h.servePNG("large")
 	ctx := t.Context()
 
 	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
@@ -291,7 +394,7 @@ func TestConvert_compressCustomLimit(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:fmtpng"))
 
 	require.Len(t, h.docs, 1)
-	require.Equal(t, "photo-compressed.png", h.docs[0].filename)
+	require.Equal(t, "фото-сжатый.png", h.docs[0].filename)
 }
 
 func TestConvert_customLimitRejectsJunk(t *testing.T) {

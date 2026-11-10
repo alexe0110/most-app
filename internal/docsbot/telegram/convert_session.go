@@ -3,6 +3,7 @@ package telegram
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -25,6 +26,8 @@ const (
 	stepChooseFormat             // compress: waiting for JPEG / PNG
 	stepAwaitRange               // PDF keep/drop: waiting for the page range
 	stepMergePDF                 // PDF merge: collecting PDFs
+	stepAwaitPDF                 // PDF actions: waiting for the PDF
+	stepPDFMenu                  // PDF actions: choosing the operation
 )
 
 // pendingImage is a downloaded image. msgID keeps album order (album photos
@@ -37,16 +40,18 @@ type pendingImage struct {
 // session is one user's in-progress conversion, held only in memory.
 type session struct {
 	step     step
+	msgID    int // the dialogue message whose buttons drive the session; 0 until known
 	images   []pendingImage
 	maxBytes int
+	inputPNG bool // compress: the image is a PNG, so the format is worth asking
 	updated  time.Time
 
 	// PDF operations on a stored document (card or picker).
-	sourceDoc   docsbot.DocumentID
-	sourceTitle string
-	pdfOp       string    // opKeep, opDrop or opMerge
-	pdfs        []pdfPart // keep/drop: the one source; merge: source first, then the added
-	pdfBytes    int       // total size of pdfs
+	sourceDoc   docsbot.DocumentID // "" when the PDF was sent to /convert
+	sourceTitle string             // stored title, or the sent file's name
+	pdfOp       string             // opKeep, opDrop or opMerge
+	pdfs        []pdfPart          // keep/drop: the one source; merge: source first, then the added
+	pdfBytes    int                // total size of pdfs
 }
 
 // pdfPart is a PDF a session will work on. Only the Telegram file id and the
@@ -115,14 +120,61 @@ func (s *sessionStore) start(user int64) {
 	s.byUser[user] = &session{step: stepChooseAction, updated: s.now()}
 }
 
-// claim removes the user's session if it is live and at the given step, and
-// returns it. The caller owns it: a second concurrent claim finds nothing, so an
-// operation can't run twice. restore puts it back when the user can retry.
-func (s *sessionStore) claim(user int64, at step) (session, bool) {
+// msgMatches reports whether a press on message msgID belongs to the session's
+// dialogue message. A press id of 0 means unknown (a typed message drives the
+// step) and is accepted: real Telegram message ids are never 0. A session whose
+// dialogue message is unknown (the send failed) has no current button, so a press
+// on any real message is stale.
+func (s *session) msgMatches(msgID int) bool {
+	return msgID == 0 || (s.msgID != 0 && s.msgID == msgID)
+}
+
+// atStep reports whether the session is at one of the steps; no steps means any.
+func (s *session) atStep(steps []step) bool {
+	return len(steps) == 0 || slices.Contains(steps, s.step)
+}
+
+// check returns a copy of the user's live session if a press on message msgID
+// is valid for one of the steps (none means any step).
+func (s *sessionStore) check(user int64, msgID int, steps ...step) (session, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.liveLocked(user)
-	if !ok || sess.step != at {
+	if !ok || !sess.msgMatches(msgID) || !sess.atStep(steps) {
+		return session{}, false
+	}
+	return *sess, true
+}
+
+// advance validates a button press like check and, if valid, applies fn under
+// the same lock, so a double tap moves the session once. It returns a copy of
+// the updated session.
+func (s *sessionStore) advance(user int64, msgID int, from []step, fn func(*session)) (session, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.liveLocked(user)
+	if !ok || !sess.msgMatches(msgID) || !sess.atStep(from) {
+		return session{}, false
+	}
+	fn(sess)
+	sess.updated = s.now()
+	return *sess, true
+}
+
+// setMsg records the session's dialogue message.
+func (s *sessionStore) setMsg(user int64, msgID int) {
+	s.update(user, func(sess *session) { sess.msgID = msgID })
+}
+
+// claim removes the user's session if it is live, belongs to message msgID (0
+// skips the check) and is at one of the steps (none means any), and returns it.
+// The caller owns it: a second concurrent claim finds nothing, so an operation
+// can't run twice. restore puts it back when the user can retry.
+func (s *sessionStore) claim(user int64, msgID int, at ...step) (session, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.liveLocked(user)
+	if !ok || !sess.msgMatches(msgID) || !sess.atStep(at) {
 		return session{}, false
 	}
 	delete(s.byUser, user)
@@ -262,4 +314,48 @@ func (s *tokenStore[T, O]) peekLocked(token string, owner O) (T, bool) {
 		return zero, false
 	}
 	return e.v, true
+}
+
+// keyedMutex is a mutex per key (a user id) that forgets idle keys.
+type keyedMutex struct {
+	mu      sync.Mutex
+	entries map[int64]*keyedEntry
+}
+
+type keyedEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func newKeyedMutex() keyedMutex { return keyedMutex{entries: map[int64]*keyedEntry{}} }
+
+// lock takes the key's mutex and returns the function that releases it.
+func (k *keyedMutex) lock(key int64) (unlock func()) {
+	k.mu.Lock()
+	e, ok := k.entries[key]
+	if !ok {
+		e = &keyedEntry{}
+		k.entries[key] = e
+	}
+	e.refs++
+	k.mu.Unlock()
+
+	e.mu.Lock()
+	return func() {
+		e.mu.Unlock()
+		k.mu.Lock()
+		defer k.mu.Unlock()
+		if e.refs--; e.refs == 0 {
+			delete(k.entries, key)
+		}
+	}
+}
+
+// busy reports whether another caller waits for the key's mutex while the
+// current holder works.
+func (k *keyedMutex) busy(key int64) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	e, ok := k.entries[key]
+	return ok && e.refs > 1
 }

@@ -75,7 +75,7 @@ func TestConvertWebP_cardToJPG(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":jpg"))
 
 	require.Len(t, h.docs, 1)
-	require.Equal(t, "Скан (JPG).jpg", h.docs[0].filename)
+	require.Equal(t, "Скан-JPG.jpg", h.docs[0].filename)
 	_, format, err := image.Decode(bytes.NewReader(h.docs[0].data))
 	require.NoError(t, err)
 	require.Equal(t, "jpeg", format)

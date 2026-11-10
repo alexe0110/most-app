@@ -239,24 +239,26 @@ func folderURL(id string) string { return "https://drive.google.com/drive/folder
 // cardKeyboard renders a document's actions. "Открыть в Drive" appears only once
 // the file is backed up, the folder button only when the category folder exists.
 func cardKeyboard(doc docsbot.Document, folderID, orig string) *models.InlineKeyboardMarkup {
+	// At most two buttons per row: more are cut off on narrow screens.
 	top := []models.InlineKeyboardButton{{Text: btnSendFile, CallbackData: cb(actSend, doc.ID)}}
 	if doc.InDrive() {
 		top = append(top, models.InlineKeyboardButton{Text: btnOpenDrive, URL: driveURL(doc.DriveFileID)})
 	}
+	rows := [][]models.InlineKeyboardButton{top}
 	if folderID != "" {
-		top = append(top, models.InlineKeyboardButton{Text: btnOpenFolder, URL: folderURL(folderID)})
+		rows = append(rows, []models.InlineKeyboardButton{{Text: btnOpenFolder, URL: folderURL(folderID)}})
 	}
-	rows := [][]models.InlineKeyboardButton{
-		top,
-		{
+	last := []models.InlineKeyboardButton{{Text: btnDelete, CallbackData: cb(actDeleteAsk, doc.ID)}}
+	if convertible(doc) {
+		last = append(last, convertRow(doc.ID, btnConvertCard)...)
+	}
+	rows = append(rows,
+		[]models.InlineKeyboardButton{
 			{Text: btnRename, CallbackData: cb(actRename, doc.ID)},
 			{Text: btnChangeCat, CallbackData: cb(actChangeCat, doc.ID)},
-			{Text: btnDelete, CallbackData: cb(actDeleteAsk, doc.ID)},
 		},
-	}
-	if convertible(doc) {
-		rows = append(rows, convertRow(doc.ID, btnConvertCard))
-	}
+		last,
+	)
 	if back := backFromOrig(orig); back != "" {
 		rows = append(rows, []models.InlineKeyboardButton{{Text: btnBack, CallbackData: back}})
 	}

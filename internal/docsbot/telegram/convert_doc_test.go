@@ -40,7 +40,7 @@ func TestConvertDoc_cardCompressThenSave(t *testing.T) {
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := compressFromMenu(t, h, src.ID)
 
-	require.Equal(t, "Паспорт (сжатый).jpg", h.docs[0].filename)
+	require.Equal(t, "Паспорт-сжатый.jpg", h.docs[0].filename)
 	require.Len(t, h.repo.docs, 1, "nothing is saved before the tap")
 
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
@@ -82,11 +82,11 @@ func TestConvertDoc_pdfFromCard(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":pdf"))
 
 	require.Len(t, h.docs, 1)
-	require.Equal(t, "Паспорт (PDF).pdf", h.docs[0].filename)
+	require.Equal(t, "Паспорт-PDF.pdf", h.docs[0].filename)
 	require.True(t, strings.HasPrefix(string(h.docs[0].data), "%PDF"))
 }
 
-func TestConvertDoc_pendingSourceGoesThroughIntake(t *testing.T) {
+func TestConvertDoc_pendingSourceSavedInOther(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusPending)
 	tok := compressFromMenu(t, h, src.ID)
@@ -94,12 +94,12 @@ func TestConvertDoc_pendingSourceGoesThroughIntake(t *testing.T) {
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok))
 
-	require.Contains(t, h.lastText(), "категорию")
 	require.Len(t, h.repo.docs, 2)
 	for id, d := range h.repo.docs {
 		if id != src.ID {
-			require.Equal(t, docsbot.StatusPending, d.Status)
-			require.Equal(t, "Паспорт (сжатый).jpg", d.Title)
+			require.Equal(t, docsbot.StatusSaved, d.Status, "no category question")
+			require.Equal(t, docsbot.CatOther, d.Category)
+			require.Equal(t, "Паспорт-сжатый.jpg", d.Title)
 		}
 	}
 }
@@ -156,8 +156,11 @@ func TestConvert_commandResultSavedOnlyOnTap(t *testing.T) {
 	require.NotNil(t, m)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+m[1]))
 
-	require.Len(t, h.repo.docs, 1, "no source document: ordinary intake")
-	require.Contains(t, h.lastText(), "категорию")
+	require.Len(t, h.repo.docs, 1, "no source document: saved at once")
+	for _, d := range h.repo.docs {
+		require.Equal(t, docsbot.StatusSaved, d.Status)
+		require.Equal(t, docsbot.CatOther, d.Category)
+	}
 }
 
 func TestCard_convertRowOnlyForConvertible(t *testing.T) {
