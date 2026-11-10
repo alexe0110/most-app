@@ -132,7 +132,7 @@ func TestCallbackDataFitsTelegramLimit(t *testing.T) {
 			data = append(data, b.CallbackData)
 		}
 	}
-	for _, m := range saveKeyboard(token).InlineKeyboard {
+	for _, m := range saveKeyboard(token, false).InlineKeyboard {
 		for _, b := range m {
 			data = append(data, b.CallbackData)
 		}

@@ -178,6 +178,10 @@ const (
 	textConvertSaving    = "💾 Сохраняю…"
 	textConvertResultOld = "Эта кнопка устарела. Преобразуй файл ещё раз."
 
+	textReplaceConfirm = "Исходный файл будет заменён"
+	textReplaceBusy    = "Подожди, файл ещё сохраняется"
+	textReplaceMissing = "Файл удалён в Drive: сначала «Выгрузить заново»"
+
 	textAlbumTooMany = "В один PDF помещается не больше %d страниц. Сохрани фото по одному."
 	textAlbumTooBig  = "Фото в альбоме больше %d МБ вместе — в один PDF не поместятся. Сохрани их по одному."
 
@@ -229,6 +233,10 @@ const (
 	btnPDFMerge         = "➕ Склеить"
 	btnSaveResult       = "💾 Сохранить в документы"
 	btnSkipResult       = "⬇️ Только файл"
+	btnSaveAsNew        = "💾 Сохранить как новый"
+	btnReplaceOriginal  = "♻️ Заменить оригинал"
+	btnReplaceYes       = "Заменить"
+	btnReplaceNo        = "Отмена"
 )
 
 // Names of files made by the converter: "<name>-<tag>.<ext>".

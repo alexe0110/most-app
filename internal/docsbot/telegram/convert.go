@@ -54,6 +54,9 @@ const (
 	cbQuickPrefix = callbackPrefix + "q:"    // conv:q:<docID>:<op> converts a document
 	cbSavePrefix  = callbackPrefix + "save:" // conv:save:<token> saves the result
 	cbSkipPrefix  = callbackPrefix + "skip:" // conv:skip:<token> keeps only the file
+	cbRepAsk      = callbackPrefix + "rp:"   // conv:rp:<token> asks to replace the original
+	cbRepYes      = callbackPrefix + "rpy:"  // conv:rpy:<token> confirms the replacement
+	cbRepNo       = callbackPrefix + "rpn:"  // conv:rpn:<token> cancels it
 	cbAlbumPrefix = callbackPrefix + "alb:"  // conv:alb:<token> merges an album into a PDF
 )
 
@@ -351,6 +354,15 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 		return
 	case strings.HasPrefix(data, cbSavePrefix):
 		c.onSave(ctx, b, update, chatID)
+		return
+	case strings.HasPrefix(data, cbRepAsk):
+		c.onReplaceAsk(ctx, b, update, chatID)
+		return
+	case strings.HasPrefix(data, cbRepYes):
+		c.onReplace(ctx, b, update, chatID)
+		return
+	case strings.HasPrefix(data, cbRepNo):
+		c.onReplaceCancel(ctx, b, update, chatID)
 		return
 	case strings.HasPrefix(data, cbAlbumPrefix):
 		c.onAlbum(ctx, b, update, chatID)
@@ -805,6 +817,99 @@ func (c *converter) onSave(ctx context.Context, b *bot.Bot, update *models.Updat
 	}
 }
 
+// onReplaceAsk turns the result's caption into a confirmation: conv:rp:<token>.
+// The result stays in the store until the user confirms or cancels.
+func (c *converter) onReplaceAsk(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	token := strings.TrimPrefix(update.CallbackQuery.Data, cbRepAsk)
+	res, ok := c.results.peek(token, update.CallbackQuery.From.ID)
+	if !ok || res.sourceDoc == "" {
+		reply(ctx, b, c.log, chatID, textConvertResultOld)
+		return
+	}
+	c.editResultCaption(ctx, b, update, chatID, textReplaceConfirm, replaceKeyboard(token))
+}
+
+// onReplaceCancel puts the result's caption and buttons back: conv:rpn:<token>.
+func (c *converter) onReplaceCancel(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	token := strings.TrimPrefix(update.CallbackQuery.Data, cbRepNo)
+	if _, ok := c.results.peek(token, update.CallbackQuery.From.ID); !ok {
+		reply(ctx, b, c.log, chatID, textConvertResultOld)
+		return
+	}
+	c.editResultCaption(ctx, b, update, chatID, "", saveKeyboard(token, true))
+}
+
+// onReplace swaps the source document's file for the result: conv:rpy:<token>.
+// The result is taken first, so a double tap replaces once. When the document
+// cannot be replaced right now the result is put back, so the user can try again.
+func (c *converter) onReplace(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
+	token := strings.TrimPrefix(update.CallbackQuery.Data, cbRepYes)
+	res, ok := c.results.take(token, update.CallbackQuery.From.ID)
+	if !ok || res.sourceDoc == "" {
+		reply(ctx, b, c.log, chatID, textConvertResultOld)
+		return
+	}
+	retry := func(text string) {
+		c.results.put(token, res)
+		c.editResultCaption(ctx, b, update, chatID, "", saveKeyboard(token, true))
+		reply(ctx, b, c.log, chatID, text)
+	}
+
+	rep, err := c.svc.ReplaceContent(ctx, res.user, res.sourceDoc, res.file)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		c.editResultCaption(ctx, b, update, chatID, "", nil)
+		reply(ctx, b, c.log, chatID, textGone)
+		return
+	}
+	if err != nil {
+		c.log.ErrorContext(ctx, "replace original", "err", err, "user_id", res.user, "doc_id", res.sourceDoc)
+		retry(textError)
+		return
+	}
+
+	switch r := rep.(type) {
+	case docsbot.ReplaceBusy:
+		retry(textReplaceBusy)
+	case docsbot.ReplaceMissing:
+		retry(textReplaceMissing)
+	case docsbot.Replaced:
+		c.editResultCaption(ctx, b, update, chatID, "", nil)
+		c.log.InfoContext(ctx, "original replaced", "user_id", res.user, "doc_id", r.Doc.ID)
+		msg, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: textConvertSaving})
+		if err != nil {
+			c.log.ErrorContext(ctx, "send telegram message", "err", err)
+			return
+		}
+		c.renderSaved(ctx, b, chatID, msg.ID, res.user, docsbot.Saved{Doc: r.Doc, Already: true})
+	case docsbot.AlreadySaved:
+		c.editResultCaption(ctx, b, update, chatID, "", nil)
+		c.sendAlreadySaved(ctx, b, chatID, res.user, r.Doc.ID)
+	default:
+		c.editResultCaption(ctx, b, update, chatID, "", nil)
+		if text, ok := rejectionText(rep); ok {
+			reply(ctx, b, c.log, chatID, text)
+		}
+	}
+}
+
+// editResultCaption sets the caption and buttons (nil removes them) of the
+// result message a button was pressed on, best effort.
+func (c *converter) editResultCaption(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64, caption string, kb *models.InlineKeyboardMarkup) {
+	m := update.CallbackQuery.Message.Message
+	if m == nil {
+		return
+	}
+	if kb == nil {
+		kb = &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}}
+	}
+	_, err := b.EditMessageCaption(ctx, &bot.EditMessageCaptionParams{
+		ChatID: chatID, MessageID: m.ID, Caption: caption, ReplyMarkup: kb,
+	})
+	if err != nil && !isNotModified(err) {
+		c.log.ErrorContext(ctx, "edit result caption", "err", err)
+	}
+}
+
 // registerAlbum remembers an album's images for the "one PDF" button and returns
 // the button's token.
 func (c *converter) registerAlbum(user docsbot.UserID, group string, images []albumImage) string {
@@ -941,7 +1046,7 @@ func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 	user, haveUser := userID(ctx)
 	token := newToken()
 	if haveUser {
-		params.ReplyMarkup = saveKeyboard(token)
+		params.ReplyMarkup = saveKeyboard(token, sourceDoc != "")
 	}
 	msg, err := b.SendDocument(ctx, params)
 	if err != nil {
@@ -1228,11 +1333,28 @@ func quickKeyboard(id docsbot.DocumentID, webp bool) *models.InlineKeyboardMarku
 	}}
 }
 
-func saveKeyboard(token string) *models.InlineKeyboardMarkup {
+// saveKeyboard is the result's keyboard. A result made from a stored document
+// (replace) can also replace that document's file.
+func saveKeyboard(token string, replace bool) *models.InlineKeyboardMarkup {
+	if replace {
+		return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+			{{Text: btnSaveAsNew, CallbackData: cbSavePrefix + token}},
+			{{Text: btnReplaceOriginal, CallbackData: cbRepAsk + token}},
+			{{Text: btnSkipResult, CallbackData: cbSkipPrefix + token}},
+		}}
+	}
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
 		{{Text: btnSaveResult, CallbackData: cbSavePrefix + token}},
 		{{Text: btnSkipResult, CallbackData: cbSkipPrefix + token}},
 	}}
+}
+
+// replaceKeyboard confirms replacing the original.
+func replaceKeyboard(token string) *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: btnReplaceYes, CallbackData: cbRepYes + token},
+		{Text: btnReplaceNo, CallbackData: cbRepNo + token},
+	}}}
 }
 
 // quickLimit maps a compress operation of the menu to its size in bytes.
