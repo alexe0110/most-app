@@ -315,6 +315,8 @@ func (fakeUploads) RequeueUpload(context.Context, docsbot.UserID, docsbot.Docume
 
 func (fakeUploads) CancelUploads(context.Context, docsbot.UserID) error { return nil }
 
+func (fakeUploads) CancelUserJobs(context.Context, docsbot.UserID) error { return nil }
+
 // fakeSyncs is a docsbot.Syncs over fakeRepo that mirrors the SQL decisions: a
 // backed-up document with a live file goes sync-pending; no job is run.
 type fakeSyncs struct{ repo *fakeRepo }

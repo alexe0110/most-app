@@ -110,7 +110,8 @@ type fakeUploads struct {
 	mu       sync.Mutex
 	repo     *fakeRepo
 	calls    []docsbot.DocumentID
-	cancels  []docsbot.UserID
+	cancels  []docsbot.UserID // CancelUploads calls
+	allJobs  []docsbot.UserID // CancelUserJobs calls
 	requeued []docsbot.DocumentID
 }
 
@@ -132,6 +133,13 @@ func (u *fakeUploads) RequeueUpload(_ context.Context, _ docsbot.UserID, id docs
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.requeued = append(u.requeued, id)
+	return nil
+}
+
+func (u *fakeUploads) CancelUserJobs(_ context.Context, user docsbot.UserID) error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.allJobs = append(u.allJobs, user)
 	return nil
 }
 

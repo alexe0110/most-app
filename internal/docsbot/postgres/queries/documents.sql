@@ -54,12 +54,14 @@ where id = @id
 -- Atomically takes a failed upload for retry; 0 rows means it is not failed
 -- (already retried, in flight, done) or not the user's.
 -- A backed-up document whose Drive file is gone (sync_status missing) is claimed
--- too: it is uploaded afresh, so the stale file id is dropped.
+-- too: it is uploaded afresh, so the stale file id is dropped. The upload takes
+-- the current Telegram file, so there is no pending content change any more.
 update documents
 set backup_status = 'pending',
     sync_status   = 'ok',
     sync_reason   = null,
     drive_file_id = case when backup_status = 'backed_up' then null else drive_file_id end,
+    content_dirty = false,
     updated_at    = now()
 where id = @id
   and user_id = @user_id

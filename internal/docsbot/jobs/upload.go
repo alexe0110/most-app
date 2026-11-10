@@ -177,12 +177,22 @@ func (e *Enqueuer) RequeueUpload(ctx context.Context, user docsbot.UserID, id do
 	return nil
 }
 
-// CancelUploads removes the user's pending (not yet running) upload_document,
-// storage_sync and storage_trash jobs.
+// CancelUploads removes the user's pending (not yet running) upload_document
+// jobs. Sync and trash jobs stay: their workers handle a disconnected Drive.
 func (e *Enqueuer) CancelUploads(ctx context.Context, user docsbot.UserID) error {
-	for _, kind := range []string{UploadDocumentArgs{}.Kind(), StorageSyncArgs{}.Kind(), StorageTrashArgs{}.Kind()} {
+	return e.cancel(ctx, user, UploadDocumentArgs{}.Kind())
+}
+
+// CancelUserJobs removes the user's pending upload_document, storage_sync and
+// storage_trash jobs.
+func (e *Enqueuer) CancelUserJobs(ctx context.Context, user docsbot.UserID) error {
+	return e.cancel(ctx, user, UploadDocumentArgs{}.Kind(), StorageSyncArgs{}.Kind(), StorageTrashArgs{}.Kind())
+}
+
+func (e *Enqueuer) cancel(ctx context.Context, user docsbot.UserID, kinds ...string) error {
+	for _, kind := range kinds {
 		if _, err := e.queue.DeleteJobsByArg(ctx, kind, "UserID", string(user)); err != nil {
-			return fmt.Errorf("cancel uploads: %w", err)
+			return fmt.Errorf("cancel jobs: %w", err)
 		}
 	}
 	return nil

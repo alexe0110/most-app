@@ -429,6 +429,7 @@ func TestService_Disconnect(t *testing.T) {
 		require.True(t, disconnected)
 		require.False(t, revoked, "user disconnect must not use Revoke")
 		require.Equal(t, []docsbot.UserID{user}, uploads.cancels)
+		require.Empty(t, uploads.allJobs, "sync and trash jobs stay on disconnect")
 		require.Equal(t, docsbot.BackupNone, repo.docs[pending.ID].BackupStatus)
 		require.Equal(t, docsbot.BackupNone, repo.docs[uploading.ID].BackupStatus)
 		require.Equal(t, docsbot.BackupFailed, repo.docs[failed.ID].BackupStatus)
@@ -480,7 +481,8 @@ func TestService_DeleteAllData(t *testing.T) {
 
 	require.NoError(t, svc.DeleteAllData(t.Context(), user))
 	require.True(t, revoked)
-	require.Equal(t, []docsbot.UserID{user}, uploads.cancels)
+	require.Equal(t, []docsbot.UserID{user}, uploads.allJobs, "every pending job goes with the data")
+	require.Empty(t, uploads.cancels)
 	require.Equal(t, []docsbot.UserID{user}, repo.deleted)
 	require.Empty(t, repo.docs)
 }

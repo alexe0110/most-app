@@ -747,7 +747,8 @@ func (s *Service) Settings(ctx context.Context, user UserID) (SettingsView, erro
 }
 
 // Disconnect turns Drive off at the user's request, cancels the user's pending
-// uploads and resets stuck documents back to Telegram-only. Google failures are
+// uploads (sync and trash jobs stay: their workers see the disconnect and settle
+// the document) and resets stuck documents back to Telegram-only. Google failures are
 // already swallowed below this layer, so a Drive error means the local
 // integration status was not updated (still active): it is returned before
 // anything is cancelled.
@@ -764,14 +765,14 @@ func (s *Service) Disconnect(ctx context.Context, user UserID) error {
 	return nil
 }
 
-// DeleteAllData revokes Drive access, cancels pending uploads and deletes all of
+// DeleteAllData revokes Drive access, cancels all pending jobs and deletes all of
 // the user's data, then soft-deletes the user. A failing revoke does not block
 // the deletion: it is reported afterwards as ErrRevokeIncomplete, which callers
 // treat as success.
 func (s *Service) DeleteAllData(ctx context.Context, user UserID) error {
 	revokeErr := s.drive.Revoke(ctx, user)
-	if err := s.uploads.CancelUploads(ctx, user); err != nil {
-		return fmt.Errorf("cancel uploads: %w", err)
+	if err := s.uploads.CancelUserJobs(ctx, user); err != nil {
+		return fmt.Errorf("cancel jobs: %w", err)
 	}
 	if err := s.repo.DeleteUserData(ctx, user); err != nil {
 		return fmt.Errorf("delete user data: %w", err)

@@ -161,6 +161,9 @@ type Uploads interface {
 	RequeueUpload(ctx context.Context, user UserID, id DocumentID) error
 	// CancelUploads removes the user's pending (not yet running) upload_document jobs.
 	CancelUploads(ctx context.Context, user UserID) error
+	// CancelUserJobs removes all of the user's pending jobs: uploads, syncs and
+	// remote trashes. Used when the user's data is deleted.
+	CancelUserJobs(ctx context.Context, user UserID) error
 }
 
 // Syncs applies changes that the cloud copy must follow. Every method commits

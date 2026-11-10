@@ -101,7 +101,7 @@ func setupUpload(t *testing.T, files docsbot.FileSource, drive docsbot.Drive, lo
 	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
 	require.NoError(t, err)
 	enq = jobs.NewEnqueuer(repo, queue)
-	svc := docsbot.NewService(repo, drive, files, enq, repo, repo)
+	svc := docsbot.NewService(repo, drive, files, enq, repo, repo, docsbot.WithSyncs(enq))
 	spy = &spyNotifier{}
 	bind(svc, spy)
 	return pool, user, id, spy, enq, queue

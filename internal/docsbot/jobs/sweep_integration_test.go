@@ -25,7 +25,7 @@ func setupSweep(t *testing.T, drive docsbot.Drive, backup, age, integrationStatu
 	t.Helper()
 	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, slog.New(slog.DiscardHandler))
 	repo := postgres.NewRepo(pool)
-	svc = docsbot.NewService(repo, drive, fakeFiles{}, enq, repo, repo)
+	svc = docsbot.NewService(repo, drive, fakeFiles{}, enq, repo, repo, docsbot.WithSyncs(enq))
 
 	ctx := t.Context()
 	_, err := pool.Exec(ctx, `update documents set backup_status = $2, updated_at = now() - $3::interval where id = $1::uuid`,

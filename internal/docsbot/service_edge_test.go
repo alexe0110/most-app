@@ -363,7 +363,7 @@ func TestService_DeleteAllData_revokeFailureDoesNotBlockDeletion(t *testing.T) {
 
 	require.ErrorIs(t, err, docsbot.ErrRevokeIncomplete)
 	require.ErrorIs(t, err, boom)
-	require.Equal(t, []docsbot.UserID{user}, uploads.cancels)
+	require.Equal(t, []docsbot.UserID{user}, uploads.allJobs)
 	require.Equal(t, []docsbot.UserID{user}, repo.deleted, "data must be deleted despite the revoke failure")
 	require.Empty(t, repo.docs)
 }
