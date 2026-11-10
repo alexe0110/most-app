@@ -15,6 +15,7 @@ import (
 type fileMeta struct {
 	Name    string   `json:"name"`
 	Parents []string `json:"parents"`
+	Trashed bool     `json:"trashed"`
 }
 
 // Rename gives the file the name, adding " (n)" if another file in the same
@@ -92,6 +93,9 @@ func (s *Service) Replace(ctx context.Context, userID, fileID, mime string, data
 	if err != nil {
 		return err
 	}
+	if _, err := s.getMeta(ctx, httpc, fileID); err != nil {
+		return err
+	}
 	body, ct, err := multipartBody(map[string]any{}, mime, data)
 	if err != nil {
 		return err
@@ -120,9 +124,13 @@ func (s *Service) resolveFolder(ctx context.Context, httpc *http.Client, userID,
 
 func (s *Service) getMeta(ctx context.Context, httpc *http.Client, fileID string) (fileMeta, error) {
 	var meta fileMeta
-	u := s.baseURL + "/drive/v3/files/" + url.PathEscape(fileID) + "?fields=name,parents"
+	u := s.baseURL + "/drive/v3/files/" + url.PathEscape(fileID) + "?fields=name,parents,trashed"
 	if err := s.do(ctx, "files.get", httpc, http.MethodGet, u, "", nil, &meta); err != nil {
 		return fileMeta{}, fileErr("drive get file", err)
+	}
+	if meta.Trashed {
+		// Trashed in the Drive UI: the file is gone as far as we are concerned.
+		return fileMeta{}, ErrFileNotFound
 	}
 	return meta, nil
 }
