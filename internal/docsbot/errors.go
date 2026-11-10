@@ -23,6 +23,9 @@ var (
 	ErrNotRetryable = errors.New("backup not retryable")
 	// ErrRemoteMissing means the file is gone from the user's cloud storage.
 	ErrRemoteMissing = errors.New("remote file missing")
+	// ErrDuplicateFile means another document of the user already has this
+	// Telegram file (unique file id), e.g. a replacement raced with a save.
+	ErrDuplicateFile = errors.New("duplicate file")
 	// ErrRevokeIncomplete means the user's data was removed locally but revoking
 	// Drive access failed; callers treat it as success and only log it.
 	ErrRevokeIncomplete = errors.New("drive revoke incomplete")

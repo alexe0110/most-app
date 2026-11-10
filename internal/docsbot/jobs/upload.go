@@ -109,6 +109,8 @@ type enqueueStore interface {
 	EnqueueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) (skip bool, err error)) error
 	SetTitleForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, title string, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
 	SetCategoryForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
+	MarkBackedUpForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion int, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
+	ReplaceContentForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
 	EnqueueSyncJob(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) error) error
 	RetrySyncJob(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
 	DeleteAndInsert(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) error) error

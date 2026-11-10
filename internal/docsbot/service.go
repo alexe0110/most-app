@@ -401,7 +401,7 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 		return BackupResult{}, fmt.Errorf("upload to drive: %w", err)
 	}
 
-	version, err := s.repo.MarkBackedUp(ctx, user, id, file.ID)
+	queued, err := s.markBackedUp(ctx, user, id, file.ID, startVersion)
 	if errors.Is(err, ErrNotFound) {
 		// Deleted while the file was uploading: nobody references the file, so
 		// trash it (best effort; a failure leaves an orphan the user can delete).
@@ -413,14 +413,79 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 	}
 	doc.BackupStatus = BackupBackedUp
 	doc.DriveFileID = file.ID
-	if version != startVersion && s.syncs != nil {
-		// Title or category changed while uploading: the file has the old ones.
-		if err := s.syncs.EnqueueSync(ctx, user, id); err != nil {
-			return BackupResult{}, fmt.Errorf("enqueue sync: %w", err)
-		}
+	if queued {
 		doc.SyncStatus = SyncPending
 	}
 	return BackupResult{Doc: doc}, nil
+}
+
+// markBackedUp records the upload. With the sync port it is one transaction that
+// also queues a sync if the title or category changed while uploading (the file
+// has the old ones), so a failure leaves nothing half-done for the retry.
+func (s *Service) markBackedUp(ctx context.Context, user UserID, id DocumentID, driveFileID string, startVersion int) (queued bool, err error) {
+	if s.syncs != nil {
+		return s.syncs.MarkBackedUp(ctx, user, id, driveFileID, startVersion)
+	}
+	_, err = s.repo.MarkBackedUp(ctx, user, id, driveFileID)
+	return false, err
+}
+
+// ReplaceContent swaps the file of a saved document for in (a converted copy of
+// it), keeping id, title and category. The user's other document with the same
+// file is AlreadySaved and nothing changes; the same file as the current one is
+// Replaced unchanged. A backed-up document is queued for a cloud sync; one that
+// is not on Drive changes in the database only, and its upload takes the new file.
+// A document that is uploading or syncing is ReplaceBusy, one whose Drive file is
+// gone ReplaceMissing, an unknown one ErrNotFound.
+func (s *Service) ReplaceContent(ctx context.Context, user UserID, id DocumentID, in IncomingFile) (Reply, error) {
+	in.UserID = user
+	cur, err := s.repo.DocumentByID(ctx, user, id)
+	if err != nil {
+		return nil, fmt.Errorf("load document: %w", err)
+	}
+	if cur.TgFileUniqueID == in.FileUniqueID {
+		return Replaced{Doc: cur}, nil
+	}
+	if other, err := s.repo.DocumentByFileUniqueID(ctx, user, in.FileUniqueID); err == nil {
+		return AlreadySaved{Doc: other}, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, fmt.Errorf("lookup document: %w", err)
+	}
+
+	replaced, err := s.syncs.ReplaceContent(ctx, user, id, in)
+	if errors.Is(err, ErrDuplicateFile) {
+		// Lost a race with a save of the same file.
+		other, lerr := s.repo.DocumentByFileUniqueID(ctx, user, in.FileUniqueID)
+		if lerr != nil {
+			return nil, fmt.Errorf("lookup duplicate: %w", lerr)
+		}
+		return AlreadySaved{Doc: other}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("replace content: %w", err)
+	}
+	if !replaced {
+		return s.replaceRefused(ctx, user, id)
+	}
+	doc, err := s.repo.DocumentByID(ctx, user, id)
+	if err != nil {
+		return nil, fmt.Errorf("reload document: %w", err)
+	}
+	return Replaced{Doc: doc}, nil
+}
+
+// replaceRefused explains why the guarded update touched no row.
+func (s *Service) replaceRefused(ctx context.Context, user UserID, id DocumentID) (Reply, error) {
+	doc, err := s.repo.DocumentByID(ctx, user, id)
+	if err != nil {
+		return nil, fmt.Errorf("reload document: %w", err)
+	}
+	if doc.SyncStatus == SyncMissing {
+		return ReplaceMissing{}, nil
+	}
+	// Uploading, or a sync in flight; if the state changed back between the two
+	// statements, a retry by the user will succeed.
+	return ReplaceBusy{}, nil
 }
 
 // MarkBackupFailed records a terminal upload failure.

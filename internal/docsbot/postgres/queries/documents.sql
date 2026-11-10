@@ -138,6 +138,39 @@ where id = @id
   and user_id = @user_id
 returning meta_version;
 
+-- name: MarkDocumentBackedUpSync :one
+-- Like MarkDocumentBackedUp, and in the same statement queues a sync when the
+-- title or category changed since the upload started (meta_version differs).
+update documents
+set backup_status = 'backed_up',
+    drive_file_id = @drive_file_id,
+    sync_status   = case when meta_version <> @start_version then 'pending' else sync_status end,
+    sync_reason   = case when meta_version <> @start_version then null else sync_reason end,
+    updated_at    = now()
+where id = @id
+  and user_id = @user_id
+returning meta_version, sync_status;
+
+-- name: ReplaceDocumentContent :one
+-- Swaps the file of a document (id, title, category stay). A backed-up document
+-- is marked content_dirty and sync-pending for the Drive copy. 0 rows: the
+-- document is gone, uploading, or already has a sync in flight or a missing file.
+update documents
+set tg_file_id        = @tg_file_id,
+    tg_file_unique_id = @tg_file_unique_id,
+    file_size         = @file_size,
+    mime_type         = @mime_type,
+    meta_version      = meta_version + 1,
+    content_dirty     = (backup_status = 'backed_up'),
+    sync_status       = case when backup_status = 'backed_up' then 'pending' else sync_status end,
+    sync_reason       = case when backup_status = 'backed_up' then null else sync_reason end,
+    updated_at        = now()
+where id = @id
+  and user_id = @user_id
+  and backup_status not in ('pending', 'uploading')
+  and sync_status not in ('pending', 'missing')
+returning backup_status;
+
 -- name: UpdateTitleForSync :one
 -- Renames and, in the same statement, decides whether the Drive file must follow:
 -- a backed-up document with a live file goes to sync_status pending. The caller

@@ -619,6 +619,44 @@ func (q *Queries) MarkDocumentBackedUp(ctx context.Context, arg MarkDocumentBack
 	return meta_version, err
 }
 
+const markDocumentBackedUpSync = `-- name: MarkDocumentBackedUpSync :one
+update documents
+set backup_status = 'backed_up',
+    drive_file_id = $1,
+    sync_status   = case when meta_version <> $2 then 'pending' else sync_status end,
+    sync_reason   = case when meta_version <> $2 then null else sync_reason end,
+    updated_at    = now()
+where id = $3
+  and user_id = $4
+returning meta_version, sync_status
+`
+
+type MarkDocumentBackedUpSyncParams struct {
+	DriveFileID  pgtype.Text
+	StartVersion int32
+	ID           pgtype.UUID
+	UserID       pgtype.UUID
+}
+
+type MarkDocumentBackedUpSyncRow struct {
+	MetaVersion int32
+	SyncStatus  string
+}
+
+// Like MarkDocumentBackedUp, and in the same statement queues a sync when the
+// title or category changed since the upload started (meta_version differs).
+func (q *Queries) MarkDocumentBackedUpSync(ctx context.Context, arg MarkDocumentBackedUpSyncParams) (MarkDocumentBackedUpSyncRow, error) {
+	row := q.db.QueryRow(ctx, markDocumentBackedUpSync,
+		arg.DriveFileID,
+		arg.StartVersion,
+		arg.ID,
+		arg.UserID,
+	)
+	var i MarkDocumentBackedUpSyncRow
+	err := row.Scan(&i.MetaVersion, &i.SyncStatus)
+	return i, err
+}
+
 const markDocumentUploading = `-- name: MarkDocumentUploading :exec
 update documents
 set backup_status = 'uploading'
@@ -685,6 +723,50 @@ func (q *Queries) MarkSynced(ctx context.Context, arg MarkSyncedParams) (int64, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const replaceDocumentContent = `-- name: ReplaceDocumentContent :one
+update documents
+set tg_file_id        = $1,
+    tg_file_unique_id = $2,
+    file_size         = $3,
+    mime_type         = $4,
+    meta_version      = meta_version + 1,
+    content_dirty     = (backup_status = 'backed_up'),
+    sync_status       = case when backup_status = 'backed_up' then 'pending' else sync_status end,
+    sync_reason       = case when backup_status = 'backed_up' then null else sync_reason end,
+    updated_at        = now()
+where id = $5
+  and user_id = $6
+  and backup_status not in ('pending', 'uploading')
+  and sync_status not in ('pending', 'missing')
+returning backup_status
+`
+
+type ReplaceDocumentContentParams struct {
+	TgFileID       string
+	TgFileUniqueID string
+	FileSize       pgtype.Int8
+	MimeType       pgtype.Text
+	ID             pgtype.UUID
+	UserID         pgtype.UUID
+}
+
+// Swaps the file of a document (id, title, category stay). A backed-up document
+// is marked content_dirty and sync-pending for the Drive copy. 0 rows: the
+// document is gone, uploading, or already has a sync in flight or a missing file.
+func (q *Queries) ReplaceDocumentContent(ctx context.Context, arg ReplaceDocumentContentParams) (string, error) {
+	row := q.db.QueryRow(ctx, replaceDocumentContent,
+		arg.TgFileID,
+		arg.TgFileUniqueID,
+		arg.FileSize,
+		arg.MimeType,
+		arg.ID,
+		arg.UserID,
+	)
+	var backup_status string
+	err := row.Scan(&backup_status)
+	return backup_status, err
 }
 
 const resetPendingUploads = `-- name: ResetPendingUploads :exec

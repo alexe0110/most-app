@@ -2,12 +2,18 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
+
+// uniqueViolation is the SQLSTATE of a unique constraint violation.
+const uniqueViolation = "23505"
 
 // The insert callbacks below enqueue a job inside the open transaction. River
 // is not imported here; the jobs adapter supplies them.
@@ -73,6 +79,69 @@ func (r *Repo) SetCategoryForSync(ctx context.Context, user docsbot.UserID, id d
 		return insert(ctx, tx)
 	})
 	return queued, err
+}
+
+// MarkBackedUpForSync records a finished upload and, when meta_version moved
+// since startVersion, leaves the document sync-pending and runs insert in the
+// same transaction. ErrNotFound if the document is gone.
+func (r *Repo) MarkBackedUpForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion int, insert func(ctx context.Context, tx pgx.Tx) error) (queued bool, err error) {
+	docID, uid, err := ids(id, user)
+	if err != nil {
+		return false, err
+	}
+	err = r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
+		row, err := q.MarkDocumentBackedUpSync(ctx, MarkDocumentBackedUpSyncParams{
+			ID:           docID,
+			UserID:       uid,
+			DriveFileID:  pgtype.Text{String: driveFileID, Valid: true},
+			StartVersion: int32(startVersion),
+		})
+		if err != nil {
+			return notFoundOr(err, "mark document backed up")
+		}
+		queued = int(row.MetaVersion) != startVersion
+		if !queued {
+			return nil
+		}
+		return insert(ctx, tx)
+	})
+	return queued, err
+}
+
+// ReplaceContentForSync swaps the document's file and, for a backed-up document,
+// runs insert in the same transaction. replaced is false when the update touched
+// no row (gone, uploading, sync in flight or file missing).
+func (r *Repo) ReplaceContentForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, insert func(ctx context.Context, tx pgx.Tx) error) (replaced bool, err error) {
+	docID, uid, err := ids(id, user)
+	if err != nil {
+		return false, err
+	}
+	err = r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
+		backup, err := q.ReplaceDocumentContent(ctx, ReplaceDocumentContentParams{
+			ID:             docID,
+			UserID:         uid,
+			TgFileID:       in.FileID,
+			TgFileUniqueID: in.FileUniqueID,
+			FileSize:       pgtype.Int8{Int64: in.FileSize, Valid: in.FileSize > 0},
+			MimeType:       pgtype.Text{String: in.MIME, Valid: in.MIME != ""},
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+			return docsbot.ErrDuplicateFile
+		}
+		if err != nil {
+			return fmt.Errorf("replace document content: %w", err)
+		}
+		replaced = true
+		if backup != string(docsbot.BackupBackedUp) {
+			return nil
+		}
+		return insert(ctx, tx)
+	})
+	return replaced && err == nil, err
 }
 
 // EnqueueSyncJob marks a backed-up document sync-pending and runs insert in the

@@ -176,6 +176,18 @@ type Syncs interface {
 	EnqueueSync(ctx context.Context, user UserID, id DocumentID) error
 	// RetrySync moves a failed sync back to pending and queues it; false when it was not failed.
 	RetrySync(ctx context.Context, user UserID, id DocumentID) (bool, error)
+	// MarkBackedUp records a successful Drive upload like Repo.MarkBackedUp and, in
+	// the same transaction, marks the document sync-pending and queues a sync when
+	// its meta_version differs from startVersion (title or category changed during
+	// the upload). ErrNotFound if the document was deleted meanwhile.
+	MarkBackedUp(ctx context.Context, user UserID, id DocumentID, driveFileID string, startVersion int) (queued bool, err error)
+	// ReplaceContent swaps the document's file for in (file ids, size, MIME) and
+	// bumps meta_version; a backed-up document also goes content_dirty and
+	// sync-pending with a sync queued, all in one transaction. It reports false,
+	// changing nothing, when the document is gone, uploading, or has a sync in
+	// flight or a missing Drive file. ErrDuplicateFile if the user already has
+	// another document with this file.
+	ReplaceContent(ctx context.Context, user UserID, id DocumentID, in IncomingFile) (replaced bool, err error)
 	// DeleteAndTrash deletes the document row and queues trashing of its remote
 	// file in one transaction. ErrNotFound if the user has no such document.
 	DeleteAndTrash(ctx context.Context, user UserID, id DocumentID, remoteID string) error

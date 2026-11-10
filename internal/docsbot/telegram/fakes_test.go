@@ -344,6 +344,44 @@ func (s fakeSyncs) SetCategory(_ context.Context, user docsbot.UserID, id docsbo
 
 func (fakeSyncs) EnqueueSync(context.Context, docsbot.UserID, docsbot.DocumentID) error { return nil }
 
+func (s fakeSyncs) MarkBackedUp(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion int) (bool, error) {
+	d, ok := s.repo.docs[id]
+	if !ok || d.UserID != user {
+		return false, docsbot.ErrNotFound
+	}
+	d.BackupStatus, d.DriveFileID = docsbot.BackupBackedUp, driveFileID
+	queued := d.MetaVersion != startVersion
+	if queued {
+		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
+	}
+	s.repo.docs[id] = d
+	return queued, nil
+}
+
+// ReplaceContent mirrors ReplaceDocumentContent: the guarded update and the
+// unique (user, file) constraint.
+func (s fakeSyncs) ReplaceContent(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile) (bool, error) {
+	d, ok := s.repo.docs[id]
+	if !ok || d.UserID != user ||
+		d.BackupStatus == docsbot.BackupPending || d.BackupStatus == docsbot.BackupUploading ||
+		d.SyncStatus == docsbot.SyncPending || d.SyncStatus == docsbot.SyncMissing {
+		return false, nil
+	}
+	for _, o := range s.repo.docs {
+		if o.ID != id && o.UserID == user && o.TgFileUniqueID == in.FileUniqueID {
+			return false, docsbot.ErrDuplicateFile
+		}
+	}
+	d.TgFileID, d.TgFileUniqueID, d.FileSize, d.MIME = in.FileID, in.FileUniqueID, in.FileSize, in.MIME
+	d.MetaVersion++
+	if d.BackupStatus == docsbot.BackupBackedUp {
+		d.ContentDirty = true
+		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
+	}
+	s.repo.docs[id] = d
+	return true, nil
+}
+
 func (s fakeSyncs) RetrySync(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) (bool, error) {
 	d, ok := s.repo.docs[id]
 	if !ok || d.UserID != user || d.SyncStatus != docsbot.SyncFailed {

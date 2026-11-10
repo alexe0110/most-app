@@ -207,6 +207,61 @@ func (s *fakeSyncs) EnqueueSync(_ context.Context, user docsbot.UserID, id docsb
 	return nil
 }
 
+func (s *fakeSyncs) MarkBackedUp(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion int) (bool, error) {
+	if s.err != nil {
+		return false, s.err
+	}
+	s.repo.mu.Lock()
+	defer s.repo.mu.Unlock()
+	d, ok := s.repo.docs[id]
+	if !ok || d.UserID != user {
+		return false, docsbot.ErrNotFound
+	}
+	d.BackupStatus, d.DriveFileID = docsbot.BackupBackedUp, driveFileID
+	queued := d.MetaVersion != startVersion
+	if queued {
+		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
+	}
+	s.repo.docs[id] = d
+	if queued {
+		s.addJob(id)
+	}
+	return queued, nil
+}
+
+// ReplaceContent mirrors ReplaceDocumentContent: the guarded update, the unique
+// (user, file) constraint, and the sync job for a backed-up document.
+func (s *fakeSyncs) ReplaceContent(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile) (bool, error) {
+	if s.err != nil {
+		return false, s.err
+	}
+	s.repo.mu.Lock()
+	defer s.repo.mu.Unlock()
+	d, ok := s.repo.docs[id]
+	if !ok || d.UserID != user ||
+		d.BackupStatus == docsbot.BackupPending || d.BackupStatus == docsbot.BackupUploading ||
+		d.SyncStatus == docsbot.SyncPending || d.SyncStatus == docsbot.SyncMissing {
+		return false, nil
+	}
+	for _, o := range s.repo.docs {
+		if o.ID != id && o.UserID == user && o.TgFileUniqueID == in.FileUniqueID {
+			return false, docsbot.ErrDuplicateFile
+		}
+	}
+	d.TgFileID, d.TgFileUniqueID, d.FileSize, d.MIME = in.FileID, in.FileUniqueID, in.FileSize, in.MIME
+	d.MetaVersion++
+	backedUp := d.BackupStatus == docsbot.BackupBackedUp
+	d.ContentDirty = backedUp
+	if backedUp {
+		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
+	}
+	s.repo.docs[id] = d
+	if backedUp {
+		s.addJob(id)
+	}
+	return true, nil
+}
+
 func (s *fakeSyncs) RetrySync(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) (bool, error) {
 	if s.err != nil {
 		return false, s.err

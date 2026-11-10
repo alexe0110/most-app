@@ -356,6 +356,42 @@ func TestService_Backup_changeDuringUploadQueuesSync(t *testing.T) {
 	require.Equal(t, docsbot.SyncPending, repo.docs[doc.ID].SyncStatus)
 }
 
+// Scenario: a rename lands during the upload and the atomic "mark backed up +
+// queue sync" fails. Nothing may be half-done: the document stays uploading, so
+// the retry runs the whole step again instead of seeing backed_up and dropping the sync.
+func TestService_Backup_markBackedUpFailureIsAtomic(t *testing.T) {
+	repo := newFakeRepo()
+	doc := repo.seed(docsbot.Document{
+		UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "a", Kind: docsbot.KindDocument,
+		BackupStatus: docsbot.BackupPending, TgFileID: "tg-1", MIME: "application/pdf",
+	})
+	syncs := &fakeSyncs{repo: repo}
+	uploads := 0
+	drive := renamingDrive{
+		fakeDrive: fakeDrive{connected: true, uploadFile: docsbot.DriveFile{ID: "remote-9"}},
+		onUpload: func() {
+			if uploads++; uploads > 1 {
+				return
+			}
+			_ = repo.SetTitle(t.Context(), user, doc.ID, "renamed")
+			syncs.err = errors.New("db down") // the next syncs call fails
+		},
+	}
+	svc := docsbot.NewService(repo, drive, fakeFiles{data: []byte("x"), mime: "application/pdf"}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), docsbot.WithSyncs(syncs))
+
+	_, err := svc.Backup(t.Context(), user, doc.ID)
+
+	require.Error(t, err)
+	require.Equal(t, docsbot.BackupUploading, repo.docs[doc.ID].BackupStatus)
+	require.Empty(t, syncs.jobs)
+
+	syncs.err = nil
+	res, err := svc.Backup(t.Context(), user, doc.ID)
+	require.NoError(t, err)
+	require.False(t, res.Noop, "the retry runs the step again")
+	require.Equal(t, docsbot.BackupBackedUp, repo.docs[doc.ID].BackupStatus)
+}
+
 func TestService_Backup_deletedDuringUploadTrashesFile(t *testing.T) {
 	repo := newFakeRepo()
 	doc := repo.seed(docsbot.Document{
