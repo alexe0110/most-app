@@ -159,6 +159,9 @@ const (
 	textConvertCancelled = "Режим конвертера выключен."
 	textConvertNothing   = "Сейчас нечего отменять."
 
+	textConvertProgress = "⏳ Обрабатываю…"
+	textConvertDone     = "Готово ✅"
+
 	textConvertMenu      = "Что сделать с файлом?"
 	textConvertSaving    = "💾 Сохраняю…"
 	textConvertResultOld = "Эта кнопка устарела. Преобразуй файл ещё раз."

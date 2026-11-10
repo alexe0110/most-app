@@ -63,7 +63,7 @@ func TestConvert_staleButtons(t *testing.T) {
 			},
 			followUp: func(h *convHarness, dialogue int) {
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:limit1", dialogue))
-				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:fmtjpeg", h.lastMsg()))
+				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:fmtjpeg", dialogue))
 			},
 			wantDocs: 1,
 		},
@@ -126,7 +126,7 @@ func TestConvert_staleButtons(t *testing.T) {
 			followUp: func(h *convHarness, dialogue int) {
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:pdf", dialogue))
 				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
-				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:done", h.lastMsg()))
+				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:done", dialogue))
 			},
 			wantDocs: 1,
 		},
@@ -139,7 +139,7 @@ func TestConvert_staleButtons(t *testing.T) {
 			followUp: func(h *convHarness, dialogue int) {
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:pdf", dialogue))
 				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
-				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:done", h.lastMsg()))
+				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:done", dialogue))
 			},
 			wantDocs: 1,
 		},

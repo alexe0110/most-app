@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -49,6 +50,17 @@ type convHarness struct {
 	files map[string][]byte
 	// noDocument makes sendDocument answer without the stored document.
 	noDocument bool
+	// editTexts are the texts of editMessageText calls, in order, as "id:text".
+	editTexts []string
+	// deleted lists the message ids the bot deleted.
+	deleted []int
+	// failEdits makes editMessageText answer with an error (message can't be edited).
+	failEdits bool
+	// failDeletes makes deleteMessage answer with an error (message too old).
+	failDeletes bool
+	// events is the order of sends ("send:<text>"), edits ("edit:<id>:<text>") and
+	// deletions ("del:<id>").
+	events []string
 	// nextMsg is the id of the next sent message (sendMessage answers with it).
 	nextMsg int
 }
@@ -112,6 +124,35 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 			h.mu.Unlock()
 			writeJSON(w, `{"ok":true,"result":true}`)
 			return
+		case strings.HasSuffix(path, "/editMessageText"):
+			h.mu.Lock()
+			fail := h.failEdits
+			if !fail {
+				h.editTexts = append(h.editTexts, r.FormValue("message_id")+":"+r.FormValue("text"))
+				h.events = append(h.events, "edit:"+r.FormValue("message_id")+":"+r.FormValue("text"))
+			}
+			h.mu.Unlock()
+			if fail {
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, `{"ok":false,"error_code":400,"description":"Bad Request: message can't be edited"}`)
+				return
+			}
+			writeJSON(w, `{"ok":true,"result":true}`)
+			return
+		case strings.HasSuffix(path, "/deleteMessage"):
+			id, _ := strconv.Atoi(r.FormValue("message_id"))
+			h.mu.Lock()
+			if h.failDeletes {
+				h.mu.Unlock()
+				w.WriteHeader(http.StatusBadRequest)
+				writeJSON(w, `{"ok":false,"error_code":400,"description":"Bad Request: message can't be deleted"}`)
+				return
+			}
+			h.deleted = append(h.deleted, id)
+			h.events = append(h.events, "del:"+r.FormValue("message_id"))
+			h.mu.Unlock()
+			writeJSON(w, `{"ok":true,"result":true}`)
+			return
 		case strings.HasSuffix(path, "/sendMessage"):
 			h.captureMessage(r)
 			h.mu.Lock()
@@ -140,6 +181,7 @@ func (h *convHarness) captureMessage(r *http.Request) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.texts = append(h.texts, r.FormValue("text"))
+	h.events = append(h.events, "send:"+r.FormValue("text"))
 	h.markupBodies = append(h.markupBodies, r.FormValue("reply_markup"))
 	if r.FormValue("reply_markup") != "" {
 		h.markups++
@@ -161,6 +203,22 @@ func (h *convHarness) captureDocument(t *testing.T, r *http.Request) int {
 	h.docs = append(h.docs, sentDocument{filename: header.Filename, data: data})
 	h.docMarkups = append(h.docMarkups, r.FormValue("reply_markup"))
 	return len(h.docs) - 1
+}
+
+// lastShown is the text of the last sent message or edit.
+func (h *convHarness) lastShown() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := len(h.events) - 1; i >= 0; i-- {
+		switch {
+		case strings.HasPrefix(h.events[i], "send:"):
+			return strings.TrimPrefix(h.events[i], "send:")
+		case strings.HasPrefix(h.events[i], "edit:"):
+			_, text, _ := strings.Cut(strings.TrimPrefix(h.events[i], "edit:"), ":")
+			return text
+		}
+	}
+	return ""
 }
 
 func (h *convHarness) lastText() string {

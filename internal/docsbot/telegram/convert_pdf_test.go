@@ -104,10 +104,10 @@ func TestConvertPDF_keepAndDropPages(t *testing.T) {
 			ctx := tg.ContextWithUserID(t.Context(), testUserID)
 
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":"+tt.op))
-			require.Contains(t, h.lastText(), "Какие страницы")
+			require.Contains(t, h.lastShown(), "Какие страницы")
 			h.bot.ProcessUpdate(ctx, convText("abc"))
 			require.Empty(t, h.docs)
-			require.Contains(t, h.lastText(), "Не понял")
+			require.Contains(t, h.lastShown(), "Не понял")
 			h.bot.ProcessUpdate(ctx, convText("7"))
 			require.Empty(t, h.docs, "out of range: the session stays")
 			h.bot.ProcessUpdate(ctx, convText(tt.sel))
@@ -128,7 +128,7 @@ func TestConvertPDF_dropAllPagesRefused(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, convText("1-3"))
 
 	require.Empty(t, h.docs)
-	require.Contains(t, h.lastText(), "Не понял")
+	require.Contains(t, h.lastShown(), "Не понял")
 }
 
 func TestConvertPDF_merge(t *testing.T) {
@@ -140,10 +140,10 @@ func TestConvertPDF_merge(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":merge"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
 	require.Empty(t, h.docs)
-	require.Contains(t, h.lastText(), "ещё хотя бы один")
+	require.Contains(t, h.lastShown(), "ещё хотя бы один")
 
 	h.bot.ProcessUpdate(ctx, pdfUpdate("pdf-add", 1000))
-	require.Contains(t, h.lastText(), "Всего файлов: 2")
+	require.Contains(t, h.lastShown(), "Всего файлов: 2")
 	require.Len(t, h.repo.docs, 1, "added PDFs are not stored")
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
 
@@ -160,11 +160,11 @@ func TestConvertPDF_mergeRefusesOversizeAndGarbage(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":merge"))
 
 	h.bot.ProcessUpdate(ctx, pdfUpdate("big", convert.MaxPDFBytes))
-	require.Contains(t, h.lastText(), "20 МБ")
+	require.Contains(t, h.lastShown(), "20 МБ")
 	require.Empty(t, h.downloads[1:], "the declared size is checked before downloading")
 
 	h.bot.ProcessUpdate(ctx, pdfUpdate("junk", 9))
-	require.Contains(t, h.lastText(), "Не получилось прочитать PDF")
+	require.Contains(t, h.lastShown(), "Не получилось прочитать PDF")
 }
 
 func TestConvert_commandRefusesPDF(t *testing.T) {
@@ -176,7 +176,7 @@ func TestConvert_commandRefusesPDF(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, pdfUpdate("pdf-x", 100))
 
 	require.Empty(t, h.docs)
-	require.Contains(t, h.lastText(), "пока не умею")
+	require.Contains(t, h.lastShown(), "пока не умею")
 }
 
 func TestReceive_pdfPickerOffersActions(t *testing.T) {
@@ -223,11 +223,11 @@ func TestConvertPDF_mergeRefusesNonPDF(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":merge"))
 
 	h.bot.ProcessUpdate(ctx, photoUpdate(1))
-	require.Contains(t, h.lastText(), "Это не PDF")
+	require.Contains(t, h.lastShown(), "Это не PDF")
 	h.bot.ProcessUpdate(ctx, namedDocumentUpdate("x", "image/png", "a.png"))
-	require.Contains(t, h.lastText(), "Это не PDF")
+	require.Contains(t, h.lastShown(), "Это не PDF")
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
-	require.Contains(t, h.lastText(), "ещё хотя бы один", "the session survived")
+	require.Contains(t, h.lastShown(), "ещё хотя бы один", "the session survived")
 }
 
 func TestConvertPDF_newOperationCancelsLiveSession(t *testing.T) {
@@ -239,7 +239,7 @@ func TestConvertPDF_newOperationCancelsLiveSession(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":merge"))
 
 	require.Contains(t, h.allTexts(), "Предыдущее преобразование отменено")
-	require.Contains(t, h.lastText(), "Пришли PDF")
+	require.Contains(t, h.lastShown(), "Пришли PDF")
 }
 
 func TestConvert_resultWithoutStoredFileLosesButtons(t *testing.T) {
@@ -251,5 +251,5 @@ func TestConvert_resultWithoutStoredFileLosesButtons(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":rot"))
 
 	require.Len(t, h.docs, 1)
-	require.Equal(t, 2, h.edits, "the menu and the dead result buttons are removed")
+	require.Equal(t, 1, h.edits, "the dead buttons are removed")
 }

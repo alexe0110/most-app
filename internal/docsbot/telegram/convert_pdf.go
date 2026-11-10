@@ -26,17 +26,20 @@ const pdfTimeout = 20 * time.Second
 
 // onPDFOp runs a PDF operation of the menu on a stored document. Rotating gives
 // the result at once; the others open a session that collects the rest of the
-// input (page range, more PDFs).
+// input (page range, more PDFs). The menu message is the progress note and then
+// the session's dialogue message; on an error it shows the menu again.
 func (c *converter) onPDFOp(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64, user docsbot.UserID, doc docsbot.Document, op string) {
 	switch op {
 	case opRotate, opKeep, opDrop, opMerge:
 	default:
 		return
 	}
+	menu := pdfMenuKeyboard(doc.ID)
+	msgID := c.show(ctx, b, chatID, callbackMessageID(update), textConvertProgress, nil)
 	src, err := c.download(ctx, b, doc.TgFileID)
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert download document", "err", err, "user_id", user, "doc_id", doc.ID)
-		reply(ctx, b, c.log, chatID, textConvertDownloadFailed)
+		c.show(ctx, b, chatID, msgID, textConvertDownloadFailed, menu)
 		return
 	}
 	tgUser := update.CallbackQuery.From.ID
@@ -47,12 +50,12 @@ func (c *converter) onPDFOp(ctx context.Context, b *bot.Bot, update *models.Upda
 		out, err := convert.RotatePDF(pctx, src, 90)
 		if err != nil {
 			c.log.ErrorContext(ctx, "convert pdf", "err", err, "user_id", user, "doc_id", doc.ID, "op", op)
-			reply(ctx, b, c.log, chatID, pdfErrorText(err))
+			c.show(ctx, b, chatID, msgID, pdfErrorText(err), menu)
 			return
 		}
 		c.log.InfoContext(ctx, "pdf converted", "user_id", user, "doc_id", doc.ID, "op", op, "in_bytes", len(src), "out_bytes", len(out))
-		c.clearButtons(ctx, b, update, chatID)
 		c.sendResult(ctx, b, chatID, tgUser, resultName(doc.Title, suffixEdited, "document", "pdf"), out, doc.ID, suffixEdited)
+		c.finish(ctx, b, chatID, msgID)
 		return
 	}
 
@@ -60,11 +63,15 @@ func (c *converter) onPDFOp(ctx context.Context, b *bot.Bot, update *models.Upda
 	pages, err := convert.PageCount(pctx, src)
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert pdf", "err", err, "user_id", user, "doc_id", doc.ID, "op", op)
-		reply(ctx, b, c.log, chatID, pdfErrorText(err))
+		c.show(ctx, b, chatID, msgID, pdfErrorText(err), menu)
 		return
 	}
 	c.log.InfoContext(ctx, "pdf session", "user_id", user, "doc_id", doc.ID, "op", op, "pages", pages, "in_bytes", len(src))
-	if c.sessions.end(tgUser) {
+	unlock := c.dialogue.lock(tgUser)
+	defer unlock()
+	if prev, ok := c.sessions.live(tgUser); ok {
+		c.sessions.end(tgUser)
+		c.stripKeyboard(ctx, b, chatID, prev.msgID)
 		reply(ctx, b, c.log, chatID, textPDFPrevCancelled)
 	}
 	c.sessions.start(tgUser)
@@ -77,8 +84,7 @@ func (c *converter) onPDFOp(ctx context.Context, b *bot.Bot, update *models.Upda
 		s.sourceDoc, s.sourceTitle = doc.ID, doc.Title
 		s.pdfs, s.pdfBytes = []pdfPart{{fileID: doc.TgFileID, size: len(src)}}, len(src)
 	})
-	c.clearButtons(ctx, b, update, chatID)
-	c.sessions.setMsg(tgUser, c.send(ctx, b, chatID, prompt, kb))
+	c.sessions.setMsg(tgUser, c.show(ctx, b, chatID, msgID, prompt, kb))
 }
 
 // onRange applies the typed page range to the session's PDF. The session is
@@ -87,16 +93,24 @@ func (c *converter) onPDFOp(ctx context.Context, b *bot.Bot, update *models.Upda
 func (c *converter) onRange(ctx context.Context, b *bot.Bot, update *models.Update) {
 	tgUser, _ := messageUser(update)
 	chatID := update.Message.Chat.ID
+	unlock := c.dialogue.lock(tgUser)
+	defer unlock()
 	sess, ok := c.sessions.claim(tgUser, 0, stepAwaitRange)
 	if !ok || len(sess.pdfs) == 0 {
 		return
 	}
 	uid, _ := userID(ctx)
+	msgID := c.show(ctx, b, chatID, sess.msgID, textConvertProgress, nil)
+	// again puts the session back and asks once more at the bottom of the chat.
+	again := func(text string) {
+		sess.msgID = msgID
+		c.sessions.restore(tgUser, sess)
+		c.moveDown(ctx, b, chatID, tgUser, text, cancelKeyboard())
+	}
 	src, err := c.download(ctx, b, sess.pdfs[0].fileID)
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert download pdf", "err", err, "user_id", uid, "doc_id", sess.sourceDoc)
-		c.sessions.restore(tgUser, sess)
-		reply(ctx, b, c.log, chatID, textConvertDownloadFailed)
+		again(textConvertDownloadFailed)
 		return
 	}
 
@@ -104,18 +118,17 @@ func (c *converter) onRange(ctx context.Context, b *bot.Bot, update *models.Upda
 	defer cancel()
 	out, err := convert.SelectPages(pctx, src, update.Message.Text, sess.pdfOp == opKeep)
 	if errors.Is(err, convert.ErrBadPageRange) {
-		c.sessions.restore(tgUser, sess) // try again
-		reply(ctx, b, c.log, chatID, textPDFBadRange)
+		again(textPDFBadRange)
 		return
 	}
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert pdf", "err", err, "user_id", uid, "doc_id", sess.sourceDoc, "op", sess.pdfOp)
-		reply(ctx, b, c.log, chatID, pdfErrorText(err))
+		c.show(ctx, b, chatID, msgID, pdfErrorText(err), nil)
 		return
 	}
 	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", sess.sourceDoc, "op", sess.pdfOp, "in_bytes", len(src), "out_bytes", len(out))
-	c.stripKeyboard(ctx, b, chatID, sess.msgID)
 	c.sendResult(ctx, b, chatID, tgUser, resultName(sess.sourceTitle, suffixEdited, "document", "pdf"), out, sess.sourceDoc, suffixEdited)
+	c.finish(ctx, b, chatID, msgID)
 }
 
 // onPDFPart adds a PDF the user sent to a merge in progress.
@@ -150,6 +163,8 @@ func (c *converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 		return
 	}
 
+	unlock := c.dialogue.lock(tgUser)
+	defer unlock()
 	total, tooLarge := 0, false
 	c.sessions.update(tgUser, func(s *session) {
 		if s.step != stepMergePDF {
@@ -167,35 +182,38 @@ func (c *converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 		reply(ctx, b, c.log, chatID, pdfTooLargeText())
 		return
 	}
-	reply(ctx, b, c.log, chatID, fmt.Sprintf(textPDFMergeAdded, total))
+	if total == 0 {
+		return
+	}
+	c.moveDown(ctx, b, chatID, tgUser, fmt.Sprintf(textPDFMergeAdded, total), pdfKeyboard())
 }
 
 // finishMerge joins the collected PDFs. The session is claimed first, so a
 // double «Готово» runs the merge once.
 func (c *converter) finishMerge(ctx context.Context, b *bot.Bot, update *models.Update, tgUser, chatID int64) {
-	sess, ok := c.sessions.claim(tgUser, callbackMessageID(update), stepMergePDF)
+	msgID := callbackMessageID(update)
+	sess, ok := c.sessions.claim(tgUser, msgID, stepMergePDF)
 	if !ok {
 		c.stale(ctx, b, update, chatID)
 		return
 	}
 	uid, _ := userID(ctx)
 	if len(sess.pdfs) < 2 {
-		c.sessions.restore(tgUser, sess)
-		reply(ctx, b, c.log, chatID, textPDFMergeNeeded)
+		c.retry(ctx, b, chatID, tgUser, sess, msgID, textPDFMergeNeeded, pdfKeyboard())
 		return
 	}
+	msgID = c.show(ctx, b, chatID, msgID, textConvertProgress, nil)
 	files := make([][]byte, 0, len(sess.pdfs))
 	total := 0
 	for _, part := range sess.pdfs {
 		data, err := c.download(ctx, b, part.fileID)
 		if err != nil {
 			c.log.ErrorContext(ctx, "convert download pdf", "err", err, "user_id", uid, "doc_id", sess.sourceDoc)
-			c.sessions.restore(tgUser, sess)
-			reply(ctx, b, c.log, chatID, textConvertDownloadFailed)
+			c.retry(ctx, b, chatID, tgUser, sess, msgID, textConvertDownloadFailed, pdfKeyboard())
 			return
 		}
 		if total += len(data); total > convert.MaxPDFBytes {
-			reply(ctx, b, c.log, chatID, pdfTooLargeText())
+			c.show(ctx, b, chatID, msgID, pdfTooLargeText(), nil)
 			return
 		}
 		files = append(files, data)
@@ -206,12 +224,12 @@ func (c *converter) finishMerge(ctx context.Context, b *bot.Bot, update *models.
 	out, err := convert.MergePDF(pctx, files)
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert pdf", "err", err, "user_id", uid, "doc_id", sess.sourceDoc, "op", opMerge, "files", len(files))
-		reply(ctx, b, c.log, chatID, pdfErrorText(err))
+		c.show(ctx, b, chatID, msgID, pdfErrorText(err), nil)
 		return
 	}
 	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", sess.sourceDoc, "op", opMerge, "files", len(files), "out_bytes", len(out))
-	c.clearButtons(ctx, b, update, chatID)
 	c.sendResult(ctx, b, chatID, tgUser, resultName(sess.sourceTitle, suffixEdited, "document", "pdf"), out, sess.sourceDoc, suffixEdited)
+	c.finish(ctx, b, chatID, msgID)
 }
 
 func pdfTooLargeText() string { return fmt.Sprintf(textPDFTooLarge, convert.MaxPDFBytes>>20) }

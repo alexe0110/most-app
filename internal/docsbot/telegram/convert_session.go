@@ -310,3 +310,38 @@ func (s *tokenStore[T, O]) peekLocked(token string, owner O) (T, bool) {
 	}
 	return e.v, true
 }
+
+// keyedMutex is a mutex per key (a user id) that forgets idle keys.
+type keyedMutex struct {
+	mu      sync.Mutex
+	entries map[int64]*keyedEntry
+}
+
+type keyedEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func newKeyedMutex() keyedMutex { return keyedMutex{entries: map[int64]*keyedEntry{}} }
+
+// lock takes the key's mutex and returns the function that releases it.
+func (k *keyedMutex) lock(key int64) (unlock func()) {
+	k.mu.Lock()
+	e, ok := k.entries[key]
+	if !ok {
+		e = &keyedEntry{}
+		k.entries[key] = e
+	}
+	e.refs++
+	k.mu.Unlock()
+
+	e.mu.Lock()
+	return func() {
+		e.mu.Unlock()
+		k.mu.Lock()
+		defer k.mu.Unlock()
+		if e.refs--; e.refs == 0 {
+			delete(k.entries, key)
+		}
+	}
+}
