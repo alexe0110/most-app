@@ -56,15 +56,17 @@ func TestService_SaveDerived(t *testing.T) {
 			wantCat:   docsbot.CatPassport,
 		},
 		{
-			name:      "pending source: ordinary intake",
+			name:      "pending source: saved in Other under its own title",
 			source:    &docsbot.Document{Status: docsbot.StatusPending, Title: "x", TgFileUniqueID: "u-src"},
-			wantType:  docsbot.NeedCategory{},
+			wantType:  docsbot.Saved{},
 			wantTitle: "photo-compressed.jpg",
+			wantCat:   docsbot.CatOther,
 		},
 		{
-			name:      "no source: ordinary intake",
-			wantType:  docsbot.NeedCategory{},
+			name:      "no source: saved in Other under its own title",
+			wantType:  docsbot.Saved{},
 			wantTitle: "photo-compressed.jpg",
+			wantCat:   docsbot.CatOther,
 		},
 		{
 			name:     "limit reply passes through",
@@ -98,7 +100,9 @@ func TestService_SaveDerived(t *testing.T) {
 				require.Equal(t, tt.wantTitle, r.Doc.Title)
 				require.Equal(t, tt.wantCat, r.Doc.Category)
 				require.Equal(t, docsbot.StatusSaved, repo.docs[r.Doc.ID].Status)
-				require.Equal(t, tt.source.Title, repo.docs[srcID].Title, "source untouched")
+				if tt.source != nil {
+					require.Equal(t, tt.source.Title, repo.docs[srcID].Title, "source untouched")
+				}
 			case docsbot.NeedCategory:
 				require.Equal(t, tt.wantTitle, r.Doc.Title)
 				require.Equal(t, docsbot.StatusPending, r.Doc.Status)
@@ -173,4 +177,15 @@ func TestService_SaveDerived_alreadySavedIsNotDeleted(t *testing.T) {
 	require.NoError(t, err)
 	require.IsType(t, docsbot.AlreadySaved{}, rep)
 	require.Contains(t, repo.docs, dup.ID)
+}
+
+func TestService_SaveDerived_noSourceFailedSaveDropsTheCopy(t *testing.T) {
+	boom := errors.New("drive down")
+	repo := newFakeRepo()
+	svc, _ := edgeService(repo, fakeDrive{err: boom})
+
+	_, err := svc.SaveDerived(t.Context(), user, "", docsbot.IncomingFile{FileUniqueID: "u-new", Title: "x"}, " (PDF)")
+
+	require.ErrorIs(t, err, boom)
+	require.Empty(t, repo.docs, "the copy is not left pending")
 }

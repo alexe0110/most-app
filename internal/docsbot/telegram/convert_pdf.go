@@ -24,49 +24,80 @@ const (
 // pdfTimeout bounds one PDF operation; a pathological file must not hold a worker.
 const pdfTimeout = 20 * time.Second
 
-// onPDFOp runs a PDF operation of the menu on a stored document. Rotating gives
-// the result at once; the others open a session that collects the rest of the
-// input (page range, more PDFs). The menu message is the progress note and then
-// the session's dialogue message; on an error it shows the menu again.
-func (c *converter) onPDFOp(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64, user docsbot.UserID, doc docsbot.Document, op string) {
+// pdfSource is the PDF an operation works on: a stored document (docID set) or
+// a file sent to /convert. Only the Telegram file id is kept; the bytes are
+// downloaded when the operation runs.
+type pdfSource struct {
+	docID  docsbot.DocumentID
+	title  string
+	fileID string
+}
+
+// onPDFOp runs a PDF operation of the card menu on a stored document. The menu
+// message is the progress note and then the session's dialogue message; on an
+// error it shows the menu again.
+func (c *converter) onPDFOp(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64, doc docsbot.Document, op string) {
+	menu := pdfMenuKeyboard(doc.ID)
+	c.runPDFOp(ctx, b, chatID, update.CallbackQuery.From.ID, callbackMessageID(update),
+		pdfSource{docID: doc.ID, title: doc.Title, fileID: doc.TgFileID}, op,
+		func(msgID int, text string) { c.show(ctx, b, chatID, msgID, text, menu) })
+}
+
+// onSessionPDFOp runs an operation of the PDF menu of /convert (a PDF the user
+// sent). The session is claimed for the run and goes back if the user can retry.
+func (c *converter) onSessionPDFOp(ctx context.Context, b *bot.Bot, update *models.Update, chatID, tgUser int64, op string) {
+	sess, ok := c.sessions.claim(tgUser, callbackMessageID(update), stepPDFMenu)
+	if !ok || len(sess.pdfs) == 0 {
+		c.stale(ctx, b, update, chatID)
+		return
+	}
+	c.runPDFOp(ctx, b, chatID, tgUser, sess.msgID,
+		pdfSource{title: sess.sourceTitle, fileID: sess.pdfs[0].fileID}, op,
+		func(msgID int, text string) { c.retry(ctx, b, chatID, tgUser, sess, msgID, text, pdfActionsKeyboard()) })
+}
+
+// runPDFOp runs a PDF operation on src. Rotating gives the result at once; the
+// others open a session that collects the rest of the input (page range, more
+// PDFs). The dialogue message msgID turns into the progress note; fail shows an
+// error on it.
+func (c *converter) runPDFOp(ctx context.Context, b *bot.Bot, chatID, tgUser int64, msgID int, src pdfSource, op string, fail func(msgID int, text string)) {
 	switch op {
 	case opRotate, opKeep, opDrop, opMerge:
 	default:
 		return
 	}
-	menu := pdfMenuKeyboard(doc.ID)
-	msgID := c.show(ctx, b, chatID, callbackMessageID(update), textConvertProgress, nil)
-	src, err := c.download(ctx, b, doc.TgFileID)
+	user, _ := userID(ctx)
+	msgID = c.show(ctx, b, chatID, msgID, textConvertProgress, nil)
+	data, err := c.download(ctx, b, src.fileID)
 	if err != nil {
-		c.log.ErrorContext(ctx, "convert download document", "err", err, "user_id", user, "doc_id", doc.ID)
-		c.show(ctx, b, chatID, msgID, textConvertDownloadFailed, menu)
+		c.log.ErrorContext(ctx, "convert download document", "err", err, "user_id", user, "doc_id", src.docID)
+		fail(msgID, textConvertDownloadFailed)
 		return
 	}
-	tgUser := update.CallbackQuery.From.ID
 
 	pctx, cancel := context.WithTimeout(ctx, pdfTimeout)
 	defer cancel()
 	if op == opRotate {
-		out, err := convert.RotatePDF(pctx, src, 90)
+		out, err := convert.RotatePDF(pctx, data, 90)
 		if err != nil {
-			c.log.ErrorContext(ctx, "convert pdf", "err", err, "user_id", user, "doc_id", doc.ID, "op", op)
-			c.show(ctx, b, chatID, msgID, pdfErrorText(err), menu)
+			c.log.ErrorContext(ctx, "convert pdf", "err", err, "user_id", user, "doc_id", src.docID, "op", op)
+			fail(msgID, pdfErrorText(err))
 			return
 		}
-		c.log.InfoContext(ctx, "pdf converted", "user_id", user, "doc_id", doc.ID, "op", op, "in_bytes", len(src), "out_bytes", len(out))
-		c.sendResult(ctx, b, chatID, tgUser, resultName(doc.Title, suffixEdited, "document", "pdf"), out, doc.ID, suffixEdited)
+		c.log.InfoContext(ctx, "pdf converted", "user_id", user, "doc_id", src.docID, "op", op, "in_bytes", len(data), "out_bytes", len(out))
+		c.sendResult(ctx, b, chatID, tgUser, resultName(src.title, suffixEdited, "document", "pdf"), out, src.docID, suffixEdited)
 		c.finish(ctx, b, chatID, msgID)
 		return
 	}
 
 	// keep, drop and merge need more input: check the file now, then wait for it.
-	pages, err := convert.PageCount(pctx, src)
+	pages, err := convert.PageCount(pctx, data)
 	if err != nil {
-		c.log.ErrorContext(ctx, "convert pdf", "err", err, "user_id", user, "doc_id", doc.ID, "op", op)
-		c.show(ctx, b, chatID, msgID, pdfErrorText(err), menu)
+		c.log.ErrorContext(ctx, "convert pdf", "err", err, "user_id", user, "doc_id", src.docID, "op", op)
+		fail(msgID, pdfErrorText(err))
 		return
 	}
-	c.log.InfoContext(ctx, "pdf session", "user_id", user, "doc_id", doc.ID, "op", op, "pages", pages, "in_bytes", len(src))
+	c.log.InfoContext(ctx, "pdf session", "user_id", user, "doc_id", src.docID, "op", op, "pages", pages, "in_bytes", len(data))
 	unlock := c.dialogue.lock(tgUser)
 	defer unlock()
 	if prev, ok := c.sessions.live(tgUser); ok {
@@ -81,10 +112,46 @@ func (c *converter) onPDFOp(ctx context.Context, b *bot.Bot, update *models.Upda
 	}
 	c.sessions.update(tgUser, func(s *session) {
 		s.step, s.pdfOp = next, op
-		s.sourceDoc, s.sourceTitle = doc.ID, doc.Title
-		s.pdfs, s.pdfBytes = []pdfPart{{fileID: doc.TgFileID, size: len(src)}}, len(src)
+		s.sourceDoc, s.sourceTitle = src.docID, src.title
+		s.pdfs, s.pdfBytes = []pdfPart{{fileID: src.fileID, size: len(data)}}, len(data)
 	})
 	c.sessions.setMsg(tgUser, c.show(ctx, b, chatID, msgID, prompt, kb))
+}
+
+// onPDFSource takes the PDF a user sends after «Действия с PDF» and offers the
+// operations.
+func (c *converter) onPDFSource(ctx context.Context, b *bot.Bot, update *models.Update) {
+	tgUser, _ := messageUser(update)
+	chatID := update.Message.Chat.ID
+	file := update.Message.Document
+	if file.FileSize > convert.MaxPDFBytes {
+		reply(ctx, b, c.log, chatID, pdfTooLargeText())
+		return
+	}
+	data, err := c.download(ctx, b, file.FileID)
+	if err != nil {
+		uid, _ := userID(ctx)
+		c.log.ErrorContext(ctx, "convert download pdf", "err", err, "user_id", uid)
+		reply(ctx, b, c.log, chatID, textConvertDownloadFailed)
+		return
+	}
+	pctx, cancel := context.WithTimeout(ctx, pdfTimeout)
+	defer cancel()
+	if _, err := convert.PageCount(pctx, data); err != nil {
+		reply(ctx, b, c.log, chatID, pdfErrorText(err))
+		return
+	}
+
+	unlock := c.dialogue.lock(tgUser)
+	defer unlock()
+	if _, ok := c.sessions.advance(tgUser, 0, []step{stepAwaitPDF}, func(s *session) {
+		s.pdfs, s.pdfBytes = []pdfPart{{fileID: file.FileID, size: len(data)}}, len(data)
+		s.sourceDoc, s.sourceTitle = "", file.FileName
+		s.step = stepPDFMenu
+	}); !ok {
+		return
+	}
+	c.moveDown(ctx, b, chatID, tgUser, textConvertPDFMenu, pdfActionsKeyboard())
 }
 
 // onRange applies the typed page range to the session's PDF. The session is
@@ -137,6 +204,14 @@ func (c *converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 	chatID := update.Message.Chat.ID
 	sess, ok := c.sessions.live(tgUser)
 	if !ok {
+		return
+	}
+	if sess.step == stepAwaitPDF {
+		c.onPDFSource(ctx, b, update)
+		return
+	}
+	if sess.step == stepChooseAction {
+		reply(ctx, b, c.log, chatID, textConvertTapButton)
 		return
 	}
 	if sess.step != stepMergePDF {
@@ -263,5 +338,21 @@ func pdfMenuKeyboard(id docsbot.DocumentID) *models.InlineKeyboardMarkup {
 			{Text: btnPDFMerge, CallbackData: q(opMerge)},
 			{Text: btnQuickCancel, CallbackData: cbMenuCancel},
 		},
+	}}
+}
+
+// pdfActionsKeyboard is the PDF menu of /convert: the operations are bound to
+// the session, not to a stored document.
+func pdfActionsKeyboard() *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{
+			{Text: btnPDFRotate, CallbackData: cbSessRotate},
+			{Text: btnPDFKeep, CallbackData: cbSessKeep},
+		},
+		{
+			{Text: btnPDFDrop, CallbackData: cbSessDrop},
+			{Text: btnPDFMerge, CallbackData: cbSessMerge},
+		},
+		{{Text: btnCancel, CallbackData: cbCancel}},
 	}}
 }

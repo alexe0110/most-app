@@ -26,6 +26,8 @@ const (
 	stepChooseFormat             // compress: waiting for JPEG / PNG
 	stepAwaitRange               // PDF keep/drop: waiting for the page range
 	stepMergePDF                 // PDF merge: collecting PDFs
+	stepAwaitPDF                 // PDF actions: waiting for the PDF
+	stepPDFMenu                  // PDF actions: choosing the operation
 )
 
 // pendingImage is a downloaded image. msgID keeps album order (album photos
@@ -41,14 +43,15 @@ type session struct {
 	msgID    int // the dialogue message whose buttons drive the session; 0 until known
 	images   []pendingImage
 	maxBytes int
+	inputPNG bool // compress: the image is a PNG, so the format is worth asking
 	updated  time.Time
 
 	// PDF operations on a stored document (card or picker).
-	sourceDoc   docsbot.DocumentID
-	sourceTitle string
-	pdfOp       string    // opKeep, opDrop or opMerge
-	pdfs        []pdfPart // keep/drop: the one source; merge: source first, then the added
-	pdfBytes    int       // total size of pdfs
+	sourceDoc   docsbot.DocumentID // "" when the PDF was sent to /convert
+	sourceTitle string             // stored title, or the sent file's name
+	pdfOp       string             // opKeep, opDrop or opMerge
+	pdfs        []pdfPart          // keep/drop: the one source; merge: source first, then the added
+	pdfBytes    int                // total size of pdfs
 }
 
 // pdfPart is a PDF a session will work on. Only the Telegram file id and the
@@ -344,4 +347,13 @@ func (k *keyedMutex) lock(key int64) (unlock func()) {
 			delete(k.entries, key)
 		}
 	}
+}
+
+// busy reports whether another caller waits for the key's mutex while the
+// current holder works.
+func (k *keyedMutex) busy(key int64) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	e, ok := k.entries[key]
+	return ok && e.refs > 1
 }

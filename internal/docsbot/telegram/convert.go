@@ -39,6 +39,13 @@ const (
 	cbFmtJPEG     = callbackPrefix + "fmtjpeg"
 	cbFmtPNG      = callbackPrefix + "fmtpng"
 	cbMenuCancel  = callbackPrefix + "x" // closes the convert menu
+	cbPDFActions  = callbackPrefix + "pdfops"
+
+	// PDF operations on a PDF sent to /convert (bound to the session).
+	cbSessRotate = callbackPrefix + "p:" + opRotate
+	cbSessKeep   = callbackPrefix + "p:" + opKeep
+	cbSessDrop   = callbackPrefix + "p:" + opDrop
+	cbSessMerge  = callbackPrefix + "p:" + opMerge
 )
 
 // Prefixes of the buttons that work without a /convert session.
@@ -85,6 +92,9 @@ type converter struct {
 	// so a double tap on the same menu does the work once.
 	inflightMu sync.Mutex
 	inflight   map[string]struct{}
+	// tipShown remembers who has seen the "send as file" tip (once per process).
+	tipMu    sync.Mutex
+	tipShown map[int64]bool
 	// dialogue serializes the dialogue message of one user, so photos of an album
 	// (parallel updates) leave exactly one live message.
 	dialogue keyedMutex
@@ -110,6 +120,7 @@ func newConverter(
 		now:              time.Now,
 		http:             &http.Client{Timeout: downloadWait},
 		inflight:         map[string]struct{}{},
+		tipShown:         map[int64]bool{},
 		dialogue:         newKeyedMutex(),
 		svc:              svc,
 		renderSaved:      renderSaved,
@@ -164,7 +175,7 @@ func (c *converter) message(ctx context.Context, b *bot.Bot, update *models.Upda
 	chatID := update.Message.Chat.ID
 
 	switch {
-	case len(update.Message.Photo) > 0 && sess.step == stepMergePDF:
+	case len(update.Message.Photo) > 0 && awaitsPDF(sess.step):
 		reply(ctx, b, c.log, chatID, textPDFNotPDF)
 	case len(update.Message.Photo) > 0:
 		c.onImage(ctx, b, update, largestPhoto(update.Message.Photo).FileID)
@@ -185,7 +196,7 @@ func (c *converter) onDocument(ctx context.Context, b *bot.Bot, update *models.U
 		return
 	}
 	user, _ := messageUser(update)
-	if sess, ok := c.sessions.live(user); ok && sess.step == stepMergePDF {
+	if sess, ok := c.sessions.live(user); ok && awaitsPDF(sess.step) {
 		reply(ctx, b, c.log, update.Message.Chat.ID, textPDFNotPDF)
 		return
 	}
@@ -223,22 +234,53 @@ func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Upda
 
 	unlock := c.dialogue.lock(user)
 	defer unlock()
-	toCompress := false
+	toCompress, pages := false, 0
 	c.sessions.update(user, func(s *session) {
 		switch s.step {
 		case stepAwaitImage:
 			s.images = []pendingImage{{msgID: update.Message.ID, data: data}}
 			s.step = stepChooseLimit
+			s.inputPNG = isPNG(data)
 			toCompress = true
 		case stepCollectPDF:
 			s.images = append(s.images, pendingImage{msgID: update.Message.ID, data: data})
+			pages = len(s.images)
 		}
 	})
-	if toCompress {
-		c.moveDown(ctx, b, chatID, user, textConvertChooseLimit, limitKeyboard())
+	switch {
+	case toCompress:
+		text := textConvertChooseLimit + c.fileTip(user, update)
+		c.moveDown(ctx, b, chatID, user, text, limitKeyboard())
+	case pages > 0 && !c.dialogue.busy(user):
+		// Photos of an album arrive in parallel: only the last one waiting shows
+		// the total, so the chat gets one message, not one per photo.
+		text := fmt.Sprintf(textConvertPDFAccepted, pages) + c.fileTip(user, update)
+		c.moveDown(ctx, b, chatID, user, text, pdfKeyboard())
 	}
-	// PDF mode collects silently; [Готово] builds the result.
 }
+
+// fileTip is the "send as file" tip for a user who just sent a compressed photo
+// (not a file). It is returned once per user per process, "" afterwards.
+func (c *converter) fileTip(user int64, update *models.Update) string {
+	if len(update.Message.Photo) == 0 {
+		return ""
+	}
+	c.tipMu.Lock()
+	defer c.tipMu.Unlock()
+	if c.tipShown[user] {
+		return ""
+	}
+	c.tipShown[user] = true
+	return "\n\n" + textConvertFileTip
+}
+
+// pngMagic opens every PNG file.
+var pngMagic = []byte("\x89PNG\r\n\x1a\n")
+
+func isPNG(data []byte) bool { return bytes.HasPrefix(data, pngMagic) }
+
+// awaitsPDF reports whether the step waits for a PDF file from the user.
+func awaitsPDF(s step) bool { return s == stepMergePDF || s == stepAwaitPDF }
 
 // onText reads a typed custom size; other text just nudges to tap a button.
 func (c *converter) onText(ctx context.Context, b *bot.Bot, update *models.Update, at step) {
@@ -260,10 +302,15 @@ func (c *converter) onText(ctx context.Context, b *bot.Bot, update *models.Updat
 	user, _ := messageUser(update)
 	unlock := c.dialogue.lock(user)
 	defer unlock()
-	if _, ok := c.sessions.advance(user, 0, []step{stepCustomLimit}, func(s *session) {
+	sess, ok := c.sessions.advance(user, 0, []step{stepCustomLimit}, func(s *session) {
 		s.maxBytes = kb * 1_024
 		s.step = stepChooseFormat
-	}); !ok {
+	})
+	if !ok {
+		return
+	}
+	if !sess.inputPNG {
+		c.compress(ctx, b, chatID, user, 0, convert.JPEG)
 		return
 	}
 	c.moveDown(ctx, b, chatID, user, textConvertChooseFormat, formatKeyboard())
@@ -310,6 +357,14 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 			return
 		}
 		c.next(ctx, b, update, chatID, user, textConvertPDFPrompt, pdfKeyboard())
+	case cbPDFActions:
+		if _, ok := c.sessions.advance(user, msgID, []step{stepChooseAction}, func(s *session) { s.step = stepAwaitPDF }); !ok {
+			c.stale(ctx, b, update, chatID)
+			return
+		}
+		c.next(ctx, b, update, chatID, user, textConvertPDFAwait, cancelKeyboard())
+	case cbSessRotate, cbSessKeep, cbSessDrop, cbSessMerge:
+		c.onSessionPDFOp(ctx, b, update, chatID, user, strings.TrimPrefix(data, callbackPrefix+"p:"))
 	case cbCompress:
 		if _, ok := c.sessions.advance(user, msgID, []step{stepChooseAction}, func(s *session) { s.step = stepAwaitImage }); !ok {
 			c.stale(ctx, b, update, chatID)
@@ -335,11 +390,17 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 		c.clearButtons(ctx, b, update, chatID)
 		reply(ctx, b, c.log, chatID, textConvertCancelled)
 	case cbLimit1, cbLimit2, cbLimit5:
-		if _, ok := c.sessions.advance(user, msgID, []step{stepChooseLimit}, func(s *session) {
+		sess, ok := c.sessions.advance(user, msgID, []step{stepChooseLimit}, func(s *session) {
 			s.maxBytes = limitBytes(data)
 			s.step = stepChooseFormat
-		}); !ok {
+		})
+		if !ok {
 			c.stale(ctx, b, update, chatID)
+			return
+		}
+		if !sess.inputPNG {
+			// A JPEG or WEBP can only become a JPEG: nothing to ask.
+			c.finishCompress(ctx, b, update, user, chatID, convert.JPEG)
 			return
 		}
 		c.next(ctx, b, update, chatID, user, textConvertChooseFormat, formatKeyboard())
@@ -490,12 +551,20 @@ func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, update *models.Up
 // finishCompress compresses the stored image to the chosen format. The session
 // is claimed first (one run per tap); it goes back when the user can retry.
 func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, update *models.Update, user, chatID int64, format convert.Format) {
-	msgID := callbackMessageID(update)
-	sess, ok := c.sessions.claim(user, msgID, stepChooseFormat)
-	if !ok || len(sess.images) == 0 {
+	if !c.compress(ctx, b, chatID, user, callbackMessageID(update), format) {
 		c.stale(ctx, b, update, chatID)
-		return
 	}
+}
+
+// compress runs the compression for a session at the format step; msgID is the
+// message a button was pressed on (0 when a typed size got here). It reports
+// false if there was nothing to claim.
+func (c *converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64, pressMsg int, format convert.Format) bool {
+	sess, ok := c.sessions.claim(user, pressMsg, stepChooseFormat)
+	if !ok || len(sess.images) == 0 {
+		return false
+	}
+	msgID := sess.msgID
 	src := sess.images[0].data
 	maxBytes := sess.maxBytes
 
@@ -503,8 +572,13 @@ func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, update *mode
 	out, err := convert.Compress(src, maxBytes, format)
 	if err != nil {
 		c.log.Error("convert compress", "err", err)
-		c.retry(ctx, b, chatID, user, sess, msgID, convertErrorText(err), formatKeyboard())
-		return
+		kb := formatKeyboard()
+		if !sess.inputPNG {
+			kb = limitKeyboard()
+			sess.step = stepChooseLimit
+		}
+		c.retry(ctx, b, chatID, user, sess, msgID, convertErrorText(err), kb)
+		return true
 	}
 
 	if len(out) > maxBytes {
@@ -513,6 +587,7 @@ func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, update *mode
 	name := "photo-compressed." + formatExt(format)
 	c.sendResult(ctx, b, chatID, user, name, out, "", suffixCompressed)
 	c.finish(ctx, b, chatID, msgID)
+	return true
 }
 
 // scanName is the file name of a PDF made from photos.
@@ -582,7 +657,7 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 		return
 	}
 	if isPDF(doc) {
-		c.onPDFOp(ctx, b, update, chatID, user, doc, op)
+		c.onPDFOp(ctx, b, update, chatID, doc, op)
 		return
 	}
 	maxBytes, known := quickLimit(op)
@@ -1032,10 +1107,13 @@ func (c *converter) send(ctx context.Context, b *bot.Bot, chatID int64, text str
 }
 
 func actionKeyboard() *models.InlineKeyboardMarkup {
-	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: btnPDF, CallbackData: cbPDF},
-		{Text: btnCompress, CallbackData: cbCompress},
-	}}}
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{
+			{Text: btnPDF, CallbackData: cbPDF},
+			{Text: btnCompress, CallbackData: cbCompress},
+		},
+		{{Text: btnPDFActions, CallbackData: cbPDFActions}},
+	}}
 }
 
 func pdfKeyboard() *models.InlineKeyboardMarkup {

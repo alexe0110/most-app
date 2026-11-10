@@ -134,13 +134,16 @@ const (
 
 // Converter mode (/convert) texts.
 const (
-	textConvertStart = "Что сделать с изображениями?"
+	textConvertStart = "Что сделать?"
 
-	textConvertPDFPrompt = "Пришли фото — по одному или альбомом. Когда закончишь, нажми «Готово».\n\n" +
-		"Совет: отправляй снимки «как файл» — иначе Telegram сильно их сожмёт."
+	textConvertPDFPrompt      = "Пришли фото — по одному или альбомом. Когда закончишь, нажми «Готово»."
+	textConvertPDFAccepted    = "Принято, страниц: %d. Пришли ещё или нажми «Готово»." // %d = pages so far
+	textConvertCompressPrompt = "Пришли одно фото для сжатия."
+	textConvertPDFAwait       = "Пришли PDF файлом."
+	textConvertPDFMenu        = "Что сделать с PDF?"
 
-	textConvertCompressPrompt = "Пришли одно фото для сжатия.\n\n" +
-		"Совет: отправляй «как файл» (до 20 МБ) — иначе Telegram уже ужмёт качество."
+	// textConvertFileTip is added once per user, after they send a compressed photo.
+	textConvertFileTip = "Совет: отправляй снимки «как файл» (до 20 МБ) — иначе Telegram сильно ужимает качество."
 
 	textConvertChooseLimit  = "До какого размера сжать?"
 	textConvertChooseFormat = "В каком формате сохранить?"
@@ -150,7 +153,7 @@ const (
 	textConvertTapButton = "Нажми кнопку выше или /cancel, чтобы выйти."
 	textConvertNoImages  = "Сначала пришли хотя бы одно фото."
 
-	textConvertUnsupported        = "Так я пока не умею. Пришли фото в JPEG, PNG или WEBP. Видео и другие форматы — позже. С PDF я работаю вне /convert: отправь файл и нажми «🛠»."
+	textConvertUnsupported        = "Так я пока не умею. Пришли фото в JPEG, PNG или WEBP. Видео и другие форматы — позже."
 	textConvertDownloadFailed     = "Не удалось получить файл. Попробуй ещё раз."
 	textConvertTooLarge           = "Изображение слишком большое. Пришли снимок поменьше."
 	textConvertFormatNotSupported = "Этот формат пока не поддерживается. Пришли JPG, PNG или WEBP."
@@ -189,6 +192,7 @@ const (
 const (
 	btnPDF         = "📄 Фото → PDF"
 	btnCompress    = "🗜 Сжать"
+	btnPDFActions  = "📑 Действия с PDF"
 	btnDone        = "Готово"
 	btnCancel      = "Отмена"
 	btnLimit1MB    = "до 1 МБ"

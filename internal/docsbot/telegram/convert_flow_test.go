@@ -352,6 +352,7 @@ func TestConvert_compressPreset(t *testing.T) {
 
 func TestConvert_compressCustomLimit(t *testing.T) {
 	h := newConvHarness(t)
+	h.servePNG("large")
 	ctx := t.Context()
 
 	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))

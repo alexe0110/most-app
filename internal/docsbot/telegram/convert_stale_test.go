@@ -1,6 +1,9 @@
 package telegram_test
 
 import (
+	"bytes"
+	"image"
+	"image/png"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -27,6 +30,7 @@ func TestConvert_staleButtons(t *testing.T) {
 		{
 			name: "second tap of a limit button",
 			run: func(h *convHarness) (func(), int) {
+				h.servePNG("large")
 				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", h.lastMsg()))
 				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
@@ -42,6 +46,7 @@ func TestConvert_staleButtons(t *testing.T) {
 		{
 			name: "second tap of a format button",
 			run: func(h *convHarness) (func(), int) {
+				h.servePNG("large")
 				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", h.lastMsg()))
 				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
@@ -55,6 +60,7 @@ func TestConvert_staleButtons(t *testing.T) {
 		{
 			name: "format button at the limit step",
 			run: func(h *convHarness) (func(), int) {
+				h.servePNG("large")
 				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", h.lastMsg()))
 				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
@@ -75,9 +81,9 @@ func TestConvert_staleButtons(t *testing.T) {
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:pdf", startMsg))
 				return func() { h.bot.ProcessUpdate(t.Context(), callbackOn("conv:pdf", startMsg)) }, 0
 			},
-			followUp: func(h *convHarness, dialogue int) {
+			followUp: func(h *convHarness, _ int) {
 				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
-				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:done", dialogue))
+				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:done", h.lastMsg()))
 			},
 			wantDocs: 1,
 		},
@@ -89,9 +95,9 @@ func TestConvert_staleButtons(t *testing.T) {
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:pdf", startMsg))
 				return func() { h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", startMsg)) }, 0
 			},
-			followUp: func(h *convHarness, dialogue int) {
+			followUp: func(h *convHarness, _ int) {
 				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
-				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:done", dialogue))
+				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:done", h.lastMsg()))
 			},
 			wantDocs: 1,
 		},
@@ -100,8 +106,8 @@ func TestConvert_staleButtons(t *testing.T) {
 			run: func(h *convHarness) (func(), int) {
 				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:pdf", h.lastMsg()))
-				doneMsg := h.lastMsg()
 				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
+				doneMsg := h.lastMsg()
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:done", doneMsg))
 				return func() { h.bot.ProcessUpdate(t.Context(), callbackOn("conv:done", doneMsg)) }, 1
 			},
@@ -126,7 +132,7 @@ func TestConvert_staleButtons(t *testing.T) {
 			followUp: func(h *convHarness, dialogue int) {
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:pdf", dialogue))
 				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
-				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:done", dialogue))
+				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:done", h.lastMsg()))
 			},
 			wantDocs: 1,
 		},
@@ -139,7 +145,7 @@ func TestConvert_staleButtons(t *testing.T) {
 			followUp: func(h *convHarness, dialogue int) {
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:pdf", dialogue))
 				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
-				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:done", dialogue))
+				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:done", h.lastMsg()))
 			},
 			wantDocs: 1,
 		},
@@ -171,4 +177,14 @@ func TestConvert_staleButtons(t *testing.T) {
 			require.Len(t, h.docs, tt.wantDocs, "the session is unchanged by a stale press")
 		})
 	}
+}
+
+// servePNG makes fileID download as a small PNG.
+func (h *convHarness) servePNG(fileID string) {
+	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		panic(err)
+	}
+	h.serve(fileID, buf.Bytes())
 }

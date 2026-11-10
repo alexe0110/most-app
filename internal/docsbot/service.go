@@ -125,9 +125,10 @@ func (s *Service) Receive(ctx context.Context, in IncomingFile) (Reply, error) {
 // SaveDerived stores a file made from another document (a compressed copy, a
 // PDF) as a new document. When the source is saved, the copy lands in the
 // source's category under DerivedTitle(source title, suffix) and the result is
-// Saved. A pending or absent source (empty sourceID) means ordinary intake: the
-// reply is NeedCategory and the title is in.Title. Limit replies and duplicates
-// pass through unchanged; an unknown source is ErrNotFound.
+// Saved. A pending or absent source (empty sourceID) has no category to inherit:
+// the copy is saved in CatOther under in.Title, and the user can change the
+// category from the card. Limit replies and duplicates pass through unchanged;
+// an unknown source is ErrNotFound.
 func (s *Service) SaveDerived(ctx context.Context, user UserID, sourceID DocumentID, in IncomingFile, suffix string) (Reply, error) {
 	in.UserID = user
 	var src Document
@@ -149,10 +150,14 @@ func (s *Service) SaveDerived(ctx context.Context, user UserID, sourceID Documen
 		return nil, err
 	}
 	need, ok := rep.(NeedCategory)
-	if !fromSaved || !ok {
+	if !ok {
 		return rep, nil
 	}
-	saved, err := s.ChooseCategory(ctx, user, need.Doc.ID, src.Category)
+	cat := CatOther
+	if fromSaved {
+		cat = src.Category
+	}
+	saved, err := s.ChooseCategory(ctx, user, need.Doc.ID, cat)
 	if err != nil {
 		// Don't leave the copy pending: nobody will categorize it.
 		if delErr := s.repo.DeleteDocument(ctx, user, need.Doc.ID); delErr != nil && !errors.Is(delErr, ErrNotFound) {

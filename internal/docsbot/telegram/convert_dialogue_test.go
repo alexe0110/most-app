@@ -35,13 +35,15 @@ func TestConvertDialogue_editFallback(t *testing.T) {
 	h.failEdits = false
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:done", start))
 	require.Equal(t, "Кнопка устарела, открой заново.", h.lastText())
-	h.bot.ProcessUpdate(ctx, photoUpdate(1))
+	h.bot.ProcessUpdate(ctx, photoUpdate(1)) // the dialogue moves down: the prompt is replaced by a new message
+	accepted := h.lastMsg()
+	require.Contains(t, h.deleted, moved)
 	sendsBefore := h.sends()
-	h.bot.ProcessUpdate(ctx, callbackOn("conv:done", moved))
+	h.bot.ProcessUpdate(ctx, callbackOn("conv:done", accepted))
 
 	require.Len(t, h.docs, 1)
-	require.Equal(t, sendsBefore, h.sends(), "the progress is an edit of the new message")
-	require.Contains(t, h.editTexts, fmt.Sprintf("%d:⏳ Обрабатываю…", moved))
+	require.Equal(t, sendsBefore, h.sends(), "the progress is an edit of the live message")
+	require.Contains(t, h.editTexts, fmt.Sprintf("%d:⏳ Обрабатываю…", accepted))
 }
 
 func TestConvertDialogue_notModifiedIsSuccess(t *testing.T) {
@@ -76,13 +78,14 @@ func TestConvertDialogue_resultReplacesProgress(t *testing.T) {
 			start := h.lastMsg()
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:pdf", start))
 			h.bot.ProcessUpdate(ctx, photoUpdate(1))
+			dialogue := h.lastMsg()
 
-			h.bot.ProcessUpdate(ctx, callbackOn("conv:done", start))
+			h.bot.ProcessUpdate(ctx, callbackOn("conv:done", dialogue))
 
 			require.Len(t, h.docs, 1)
-			require.Contains(t, h.editTexts, fmt.Sprintf("%d:⏳ Обрабатываю…", start))
-			require.Equal(t, tt.wantDeleted, containsInt(h.deleted, start))
-			require.Equal(t, tt.wantDone, containsString(h.editTexts, fmt.Sprintf("%d:Готово ✅", start)))
+			require.Contains(t, h.editTexts, fmt.Sprintf("%d:⏳ Обрабатываю…", dialogue))
+			require.Equal(t, tt.wantDeleted, containsInt(h.deleted, dialogue))
+			require.Equal(t, tt.wantDone, containsString(h.editTexts, fmt.Sprintf("%d:Готово ✅", dialogue)))
 		})
 	}
 }
@@ -108,14 +111,15 @@ func TestConvertDialogue_errorStaysInDialogue(t *testing.T) {
 	start := h.lastMsg()
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:pdf", start))
 	h.bot.ProcessUpdate(ctx, photoUpdate(1))
+	dialogue := h.lastMsg()
 	sends := h.sends()
 
-	h.bot.ProcessUpdate(ctx, callbackOn("conv:done", start))
+	h.bot.ProcessUpdate(ctx, callbackOn("conv:done", dialogue))
 
 	require.Empty(t, h.docs)
 	require.Equal(t, sends, h.sends(), "the error is an edit of the dialogue message")
 	require.Contains(t, h.lastShown(), "Так я пока не умею")
-	h.bot.ProcessUpdate(ctx, callbackOn("conv:cancel", start))
+	h.bot.ProcessUpdate(ctx, callbackOn("conv:cancel", dialogue))
 	require.Contains(t, h.lastText(), "Режим конвертера выключен", "the session survived for a retry")
 }
 
