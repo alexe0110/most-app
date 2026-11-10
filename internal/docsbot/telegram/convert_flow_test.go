@@ -56,6 +56,8 @@ type convHarness struct {
 	deleted []int
 	// failEdits makes editMessageText answer with an error (message can't be edited).
 	failEdits bool
+	// failSends makes sendMessage answer with an error.
+	failSends bool
 	// failDeletes makes deleteMessage answer with an error (message too old).
 	failDeletes bool
 	// events is the order of sends ("send:<text>"), edits ("edit:<id>:<text>") and
@@ -153,6 +155,10 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 			h.mu.Unlock()
 			writeJSON(w, `{"ok":true,"result":true}`)
 			return
+		case strings.HasSuffix(path, "/sendMessage") && h.sendsFail():
+			w.WriteHeader(http.StatusInternalServerError)
+			writeJSON(w, `{"ok":false,"error_code":500,"description":"Internal Server Error"}`)
+			return
 		case strings.HasSuffix(path, "/sendMessage"):
 			h.captureMessage(r)
 			h.mu.Lock()
@@ -175,6 +181,12 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 	h.bot = b
 	h.repo = repo
 	return h
+}
+
+func (h *convHarness) sendsFail() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.failSends
 }
 
 func (h *convHarness) captureMessage(r *http.Request) {

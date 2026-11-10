@@ -145,6 +145,11 @@ func (c *converter) start(ctx context.Context, b *bot.Bot, update *models.Update
 	if !ok {
 		return
 	}
+	unlock := c.dialogue.lock(user)
+	defer unlock()
+	if prev, ok := c.sessions.live(user); ok && prev.msgID != 0 {
+		c.stripKeyboard(ctx, b, update.Message.Chat.ID, prev.msgID)
+	}
 	c.sessions.start(user)
 	c.sessions.setMsg(user, c.send(ctx, b, update.Message.Chat.ID, textConvertStart, actionKeyboard()))
 }
@@ -458,7 +463,10 @@ func (c *converter) show(ctx context.Context, b *bot.Bot, chatID int64, msgID in
 	if kb != nil {
 		markup = kb
 	}
-	return c.send(ctx, b, chatID, text, markup)
+	if id := c.send(ctx, b, chatID, text, markup); id != 0 {
+		return id
+	}
+	return msgID // both failed: keep the old dialogue message so the session survives
 }
 
 // moveDown shows the next step of a dialogue that a user's message advanced: a

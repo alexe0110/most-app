@@ -210,7 +210,7 @@ func (c *converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 		c.onPDFSource(ctx, b, update)
 		return
 	}
-	if sess.step == stepChooseAction {
+	if sess.step == stepChooseAction || sess.step == stepPDFMenu {
 		reply(ctx, b, c.log, chatID, textConvertTapButton)
 		return
 	}

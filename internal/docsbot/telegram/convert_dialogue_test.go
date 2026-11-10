@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -139,4 +140,47 @@ func containsString(list []string, v string) bool {
 		}
 	}
 	return false
+}
+
+func TestConvertDialogue_editAndSendBothFailKeepsMessage(t *testing.T) {
+	h := newConvHarness(t)
+	ctx := t.Context()
+	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	start := h.lastMsg()
+
+	h.failEdits, h.failSends = true, true
+	h.bot.ProcessUpdate(ctx, callbackOn("conv:pdf", start))
+	h.failEdits, h.failSends = false, false
+
+	h.bot.ProcessUpdate(ctx, callbackOn("conv:cancel", start))
+	require.Contains(t, h.lastText(), "Режим конвертера выключен", "the session still owns its dialogue message")
+}
+
+func TestConvert_newCommandStripsPreviousDialogue(t *testing.T) {
+	h := newConvHarness(t)
+	ctx := t.Context()
+	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	edits := h.edits
+
+	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+
+	require.Equal(t, edits+1, h.edits, "the old dialogue loses its buttons")
+}
+
+func TestConvertPDFActions_offStepInputAtMenu(t *testing.T) {
+	h := newConvHarness(t)
+	h.serve("pdf-in", testPDF(t, 2))
+	ctx := t.Context()
+	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, callbackOn("conv:pdfops", h.lastMsg()))
+	h.bot.ProcessUpdate(ctx, namedDocumentUpdate("pdf-in", "application/pdf", "a.pdf"))
+
+	for name, u := range map[string]*models.Update{
+		"second pdf": namedDocumentUpdate("pdf-in", "application/pdf", "b.pdf"),
+		"photo":      photoUpdate(2),
+		"text":       convText("hi"),
+	} {
+		h.bot.ProcessUpdate(ctx, u)
+		require.Contains(t, h.lastText(), "Нажми кнопку", name)
+	}
 }
