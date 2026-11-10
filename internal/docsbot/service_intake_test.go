@@ -204,7 +204,8 @@ func TestService_Receive_duplicateAndDeleteSemantics(t *testing.T) {
 	require.NoError(t, err)
 	require.IsType(t, docsbot.AlreadySaved{}, saved)
 
-	require.NoError(t, svc.Delete(ctx, user, pending.ID))
+	_, err = svc.Delete(ctx, user, pending.ID)
+	require.NoError(t, err)
 	fresh, err := svc.Receive(ctx, intakeFile("dup"))
 	require.NoError(t, err)
 	need, ok := fresh.(docsbot.NeedCategory)

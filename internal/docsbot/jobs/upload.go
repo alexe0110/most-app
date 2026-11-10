@@ -103,22 +103,31 @@ func RegisterUploadDocument(workers *river.Workers, log *slog.Logger) func(Backu
 	return func(svc Backuper, n Notifier) { w.svc, w.notify = svc, n }
 }
 
-// uploadStore is the part of the repo Enqueuer needs: it marks a document
-// pending and runs insert in the same tx.
-type uploadStore interface {
+// enqueueStore is the part of the repo Enqueuer needs: every method changes a
+// document and runs insert (the job insert) in the same tx.
+type enqueueStore interface {
 	EnqueueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) (skip bool, err error)) error
+	SetTitleForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, title string, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
+	SetCategoryForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
+	EnqueueSyncJob(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) error) error
+	RetrySyncJob(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) error) (bool, error)
+	DeleteAndInsert(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) error) error
 }
 
-// Enqueuer implements docsbot.Uploads atomically over the store and the queue.
+// Enqueuer implements docsbot.Uploads and docsbot.Syncs atomically over the
+// store and the queue.
 type Enqueuer struct {
-	store uploadStore
+	store enqueueStore
 	queue *pjobs.Client
 }
 
-var _ docsbot.Uploads = (*Enqueuer)(nil)
+var (
+	_ docsbot.Uploads = (*Enqueuer)(nil)
+	_ docsbot.Syncs   = (*Enqueuer)(nil)
+)
 
 // NewEnqueuer wires an Enqueuer around the store and the job queue.
-func NewEnqueuer(store uploadStore, queue *pjobs.Client) *Enqueuer {
+func NewEnqueuer(store enqueueStore, queue *pjobs.Client) *Enqueuer {
 	return &Enqueuer{store: store, queue: queue}
 }
 
@@ -166,10 +175,13 @@ func (e *Enqueuer) RequeueUpload(ctx context.Context, user docsbot.UserID, id do
 	return nil
 }
 
-// CancelUploads removes the user's pending (not yet running) upload_document jobs.
+// CancelUploads removes the user's pending (not yet running) upload_document,
+// storage_sync and storage_trash jobs.
 func (e *Enqueuer) CancelUploads(ctx context.Context, user docsbot.UserID) error {
-	if _, err := e.queue.DeleteJobsByArg(ctx, UploadDocumentArgs{}.Kind(), "UserID", string(user)); err != nil {
-		return fmt.Errorf("cancel uploads: %w", err)
+	for _, kind := range []string{UploadDocumentArgs{}.Kind(), StorageSyncArgs{}.Kind(), StorageTrashArgs{}.Kind()} {
+		if _, err := e.queue.DeleteJobsByArg(ctx, kind, "UserID", string(user)); err != nil {
+			return fmt.Errorf("cancel uploads: %w", err)
+		}
 	}
 	return nil
 }

@@ -68,6 +68,7 @@ func ignoreBlocked(err error) error {
 // statusService is the part of docsbot.Service the Notifier needs to refresh
 // batch status messages. Declared here, at the consumer.
 type statusService interface {
+	Card(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) (docsbot.Card, error)
 	StatusView(ctx context.Context, user docsbot.UserID, doc docsbot.DocumentID) (docsbot.StatusView, error)
 	CloseStatus(ctx context.Context, user docsbot.UserID, id docsbot.StatusMessageID) error
 	SetStatusMessageID(ctx context.Context, user docsbot.UserID, id docsbot.StatusMessageID, messageID int) error
@@ -160,6 +161,32 @@ func (n *Notifier) singleOutcome(ctx context.Context, user docsbot.UserID, doc d
 		return fmt.Errorf("resolve tg user: %w", err)
 	}
 	return n.bot.SendMarkup(ctx, chatID, text, kb)
+}
+
+// SyncOutcome shows the document's card after a cloud sync failed or found the
+// Drive file gone, with the matching button (retry or re-upload).
+func (n *Notifier) SyncOutcome(ctx context.Context, user docsbot.UserID, doc docsbot.DocumentID) error {
+	card, err := n.svc.Card(ctx, user, doc)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("load card: %w", err)
+	}
+	chatID, err := n.users.TgUserID(ctx, string(user))
+	if err != nil {
+		return fmt.Errorf("resolve tg user: %w", err)
+	}
+	return ignoreBlocked(n.bot.SendMarkup(ctx, chatID, cardText(card.Doc), cardKeyboard(card.Doc, "", "")))
+}
+
+// RemoteKept tells the user a deleted document's Drive file could not be trashed.
+func (n *Notifier) RemoteKept(ctx context.Context, user docsbot.UserID) error {
+	chatID, err := n.users.TgUserID(ctx, string(user))
+	if err != nil {
+		return fmt.Errorf("resolve tg user: %w", err)
+	}
+	return ignoreBlocked(n.bot.Send(ctx, chatID, textDeletedRemoteKept))
 }
 
 // throttle sleeps so consecutive edits of one status message are at least

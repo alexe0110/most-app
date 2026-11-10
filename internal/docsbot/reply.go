@@ -48,14 +48,20 @@ type SavedGroup struct {
 	Already    bool
 }
 
+// Deleted is the outcome of deleting a document. RemoteKept is true when the
+// document had a file on Drive that could not be trashed (Drive not connected),
+// so the user has to remove it by hand.
+type Deleted struct{ RemoteKept bool }
+
 // Card is one document's detail view.
 type Card struct {
 	Doc Document
 	// CategoryFolderID is the Drive folder id of the document's category; empty
 	// while the folder has not been created.
 	CategoryFolderID string
-	// FileInOldFolder is set right after a backed-up document changed category:
-	// the file stays in its previous Drive folder, so the card links to the file.
+	// FileInOldFolder is set right after a backed-up document changed category
+	// while Drive is not connected: the file stays in its previous Drive folder,
+	// so the card links to the file.
 	FileInOldFolder bool
 }
 

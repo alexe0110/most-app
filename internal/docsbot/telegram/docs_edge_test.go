@@ -86,18 +86,31 @@ func TestDisconnect_driveFailureIsShown(t *testing.T) {
 	require.True(t, has(sent.texts, "Что-то пошло не так"), "texts %q", sent.texts)
 }
 
-func TestSetCategory_backedUpCardLinksFileAndNotesOldFolder(t *testing.T) {
-	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: true})
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	doc := repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther,
-		BackupStatus: docsbot.BackupBackedUp, DriveFileID: "file-1", Title: "a",
-	})
+func TestSetCategory_backedUpCard(t *testing.T) {
+	tests := []struct {
+		name      string
+		connected bool
+		want      string
+	}{
+		{"connected: file follows via sync", true, "Обновляю в Drive"},
+		{"not connected: file stays in the old folder", false, "В Drive файл остался в прежней папке"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: tt.connected})
+			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			doc := repo.seed(docsbot.Document{
+				UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther,
+				BackupStatus: docsbot.BackupBackedUp, DriveFileID: "file-1", Title: "a",
+			})
 
-	b.ProcessUpdate(ctx, dataCallback(100, "d:sc:"+string(doc.ID)+":auto"))
+			b.ProcessUpdate(ctx, dataCallback(100, "d:sc:"+string(doc.ID)+":auto"))
 
-	require.Equal(t, docsbot.CatAuto, repo.docs[doc.ID].Category)
-	require.True(t, has(sent.edits, "В Drive файл остался в прежней папке"), "edits %q", sent.edits)
+			require.Equal(t, docsbot.CatAuto, repo.docs[doc.ID].Category)
+			require.True(t, has(sent.edits, tt.want), "edits %q", sent.edits)
+			require.False(t, has(sent.edits, "прежней папке") && tt.connected, "edits %q", sent.edits)
+		})
+	}
 }
 
 func TestOpenCard_backedUpShowsFileButNoFolder(t *testing.T) {

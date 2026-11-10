@@ -302,18 +302,46 @@ func (r *Repo) Search(ctx context.Context, user docsbot.UserID, query string, li
 }
 
 // MarkBackedUp records a successful Drive upload.
-func (r *Repo) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string) error {
+func (r *Repo) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string) (int, error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	err = r.MarkDocumentBackedUp(ctx, MarkDocumentBackedUpParams{
+	version, err := r.MarkDocumentBackedUp(ctx, MarkDocumentBackedUpParams{
 		ID:          docID,
 		UserID:      uid,
 		DriveFileID: pgtype.Text{String: driveFileID, Valid: true},
 	})
 	if err != nil {
-		return fmt.Errorf("mark document backed up: %w", err)
+		return 0, notFoundOr(err, "mark document backed up")
+	}
+	return int(version), nil
+}
+
+// MarkSynced records a finished sync if the document is unchanged since version.
+func (r *Repo) MarkSynced(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, version int) (bool, error) {
+	docID, uid, err := ids(id, user)
+	if err != nil {
+		return false, err
+	}
+	n, err := r.Queries.MarkSynced(ctx, MarkSyncedParams{ID: docID, UserID: uid, MetaVersion: int32(version)})
+	if err != nil {
+		return false, fmt.Errorf("mark synced: %w", err)
+	}
+	return n > 0, nil
+}
+
+// SetSyncStatus sets sync_status and sync_reason ("" clears the reason).
+func (r *Repo) SetSyncStatus(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, s docsbot.SyncStatus, reason string) error {
+	docID, uid, err := ids(id, user)
+	if err != nil {
+		return err
+	}
+	err = r.Queries.SetSyncStatus(ctx, SetSyncStatusParams{
+		ID: docID, UserID: uid, SyncStatus: string(s), SyncReason: pgtype.Text{String: reason, Valid: reason != ""},
+	})
+	if err != nil {
+		return fmt.Errorf("set sync status: %w", err)
 	}
 	return nil
 }
@@ -407,6 +435,10 @@ func toDocument(d Document) docsbot.Document {
 		MIME:            d.MimeType.String,
 		MediaGroupID:    d.MediaGroupID.String,
 		BackupStatus:    docsbot.BackupStatus(d.BackupStatus),
+		SyncStatus:      docsbot.SyncStatus(d.SyncStatus),
+		SyncReason:      d.SyncReason.String,
+		MetaVersion:     int(d.MetaVersion),
+		ContentDirty:    d.ContentDirty,
 		CreatedAt:       d.CreatedAt.Time,
 	}
 }

@@ -147,7 +147,7 @@ func (q *Queries) InsertStatusMessage(ctx context.Context, arg InsertStatusMessa
 }
 
 const listDocumentsByStatusMessage = `-- name: ListDocumentsByStatusMessage :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty
 from documents
 where status_message_id = $1
   and user_id = $2
@@ -185,6 +185,10 @@ func (q *Queries) ListDocumentsByStatusMessage(ctx context.Context, arg ListDocu
 			&i.FileSize,
 			&i.MimeType,
 			&i.MediaGroupID,
+			&i.SyncStatus,
+			&i.SyncReason,
+			&i.MetaVersion,
+			&i.ContentDirty,
 		); err != nil {
 			return nil, err
 		}

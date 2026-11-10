@@ -25,6 +25,14 @@ func (fakeDrive) Upload(context.Context, docsbot.UserID, docsbot.DriveUpload) (d
 	return docsbot.DriveFile{}, nil
 }
 
+func (fakeDrive) Rename(context.Context, docsbot.UserID, string, string) error { return nil }
+
+func (fakeDrive) Move(context.Context, docsbot.UserID, string, docsbot.Category) error { return nil }
+
+func (fakeDrive) Trash(context.Context, docsbot.UserID, string) error { return nil }
+
+func (fakeDrive) Replace(context.Context, docsbot.UserID, string, string, []byte) error { return nil }
+
 func (d fakeDrive) Revoke(context.Context, docsbot.UserID) error { return d.revokeErr }
 
 func (d fakeDrive) Disconnect(context.Context, docsbot.UserID) error { return d.revokeErr }
@@ -307,6 +315,53 @@ func (fakeUploads) RequeueUpload(context.Context, docsbot.UserID, docsbot.Docume
 
 func (fakeUploads) CancelUploads(context.Context, docsbot.UserID) error { return nil }
 
+// fakeSyncs is a docsbot.Syncs over fakeRepo that mirrors the SQL decisions: a
+// backed-up document with a live file goes sync-pending; no job is run.
+type fakeSyncs struct{ repo *fakeRepo }
+
+func (s fakeSyncs) change(user docsbot.UserID, id docsbot.DocumentID, fn func(*docsbot.Document)) (bool, error) {
+	d, ok := s.repo.docs[id]
+	if !ok || d.UserID != user {
+		return false, docsbot.ErrNotFound
+	}
+	fn(&d)
+	d.MetaVersion++
+	queued := d.BackupStatus == docsbot.BackupBackedUp && d.SyncStatus != docsbot.SyncMissing
+	if queued {
+		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
+	}
+	s.repo.docs[id] = d
+	return queued, nil
+}
+
+func (s fakeSyncs) SetTitle(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, title string) (bool, error) {
+	return s.change(user, id, func(d *docsbot.Document) { d.Title = title })
+}
+
+func (s fakeSyncs) SetCategory(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (bool, error) {
+	return s.change(user, id, func(d *docsbot.Document) { d.Category = cat })
+}
+
+func (fakeSyncs) EnqueueSync(context.Context, docsbot.UserID, docsbot.DocumentID) error { return nil }
+
+func (s fakeSyncs) RetrySync(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) (bool, error) {
+	d, ok := s.repo.docs[id]
+	if !ok || d.UserID != user || d.SyncStatus != docsbot.SyncFailed {
+		return false, nil
+	}
+	d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
+	s.repo.docs[id] = d
+	return true, nil
+}
+
+func (s fakeSyncs) DeleteAndTrash(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, _ string) error {
+	if d, ok := s.repo.docs[id]; !ok || d.UserID != user {
+		return docsbot.ErrNotFound
+	}
+	delete(s.repo.docs, id)
+	return nil
+}
+
 // fakeDeps builds a Service over in-memory fakes, plus the fake authorizer.
 func fakeDeps() (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
 	return fakeDepsWith(fakeDrive{})
@@ -317,12 +372,32 @@ func fakeDeps() (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
 func fakeDepsWith(drive fakeDrive) (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
 	repo := newFakeRepo()
 	repo.status = newFakeStatus(repo)
-	return docsbot.NewService(repo, drive, nil, fakeUploads{repo: repo}, repo, repo.status), fakeAuth{}, repo
+	return docsbot.NewService(repo, drive, nil, fakeUploads{repo: repo}, repo, repo.status, docsbot.WithSyncs(fakeSyncs{repo: repo})), fakeAuth{}, repo
 }
 
-func (r *fakeRepo) MarkBackedUp(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string) error {
+func (r *fakeRepo) MarkBackedUp(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string) (int, error) {
+	d, ok := r.docs[id]
+	if !ok || d.UserID != user {
+		return 0, docsbot.ErrNotFound
+	}
+	d.BackupStatus, d.DriveFileID = docsbot.BackupBackedUp, driveFileID
+	r.docs[id] = d
+	return d.MetaVersion, nil
+}
+
+func (r *fakeRepo) MarkSynced(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, version int) (bool, error) {
+	d, ok := r.docs[id]
+	if !ok || d.UserID != user || d.MetaVersion != version || d.SyncStatus != docsbot.SyncPending {
+		return false, nil
+	}
+	d.SyncStatus, d.SyncReason, d.ContentDirty = docsbot.SyncOK, "", false
+	r.docs[id] = d
+	return true, nil
+}
+
+func (r *fakeRepo) SetSyncStatus(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, s docsbot.SyncStatus, reason string) error {
 	if d, ok := r.docs[id]; ok && d.UserID == user {
-		d.BackupStatus, d.DriveFileID = docsbot.BackupBackedUp, driveFileID
+		d.SyncStatus, d.SyncReason = s, reason
 		r.docs[id] = d
 	}
 	return nil

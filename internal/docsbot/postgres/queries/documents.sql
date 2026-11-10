@@ -53,24 +53,31 @@ where id = @id
 -- name: ClaimFailedForRetry :execrows
 -- Atomically takes a failed upload for retry; 0 rows means it is not failed
 -- (already retried, in flight, done) or not the user's.
+-- A backed-up document whose Drive file is gone (sync_status missing) is claimed
+-- too: it is uploaded afresh, so the stale file id is dropped.
 update documents
 set backup_status = 'pending',
+    sync_status   = 'ok',
+    sync_reason   = null,
+    drive_file_id = case when backup_status = 'backed_up' then null else drive_file_id end,
     updated_at    = now()
 where id = @id
   and user_id = @user_id
-  and backup_status = 'failed';
+  and (backup_status = 'failed' or (backup_status = 'backed_up' and sync_status = 'missing'));
 
 -- name: UpdateDocumentTitle :execrows
 update documents
-set title      = @title,
-    updated_at = now()
+set title        = @title,
+    meta_version = meta_version + 1,
+    updated_at   = now()
 where id = @id
   and user_id = @user_id;
 
 -- name: UpdateDocumentCategory :execrows
 update documents
-set category   = @category,
-    updated_at = now()
+set category     = @category,
+    meta_version = meta_version + 1,
+    updated_at   = now()
 where id = @id
   and user_id = @user_id;
 
@@ -120,11 +127,79 @@ where user_id = @user_id
 order by similarity(title, @query) desc, created_at desc
 limit @lim;
 
--- name: MarkDocumentBackedUp :exec
+-- name: MarkDocumentBackedUp :one
+-- Returns meta_version so the worker can tell whether the title or category
+-- changed while the file was uploading.
 update documents
 set backup_status = 'backed_up',
     drive_file_id = @drive_file_id,
     updated_at    = now()
+where id = @id
+  and user_id = @user_id
+returning meta_version;
+
+-- name: UpdateTitleForSync :one
+-- Renames and, in the same statement, decides whether the Drive file must follow:
+-- a backed-up document with a live file goes to sync_status pending. The caller
+-- enqueues the sync job in the same transaction.
+update documents
+set title        = @title,
+    meta_version = meta_version + 1,
+    sync_status  = case when backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
+    sync_reason  = case when backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
+    updated_at   = now()
+where id = @id
+  and user_id = @user_id
+returning backup_status, sync_status;
+
+-- name: UpdateCategoryForSync :one
+-- Same as UpdateTitleForSync, for the category.
+update documents
+set category     = @category,
+    meta_version = meta_version + 1,
+    sync_status  = case when backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
+    sync_reason  = case when backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
+    updated_at   = now()
+where id = @id
+  and user_id = @user_id
+returning backup_status, sync_status;
+
+-- name: MarkSyncPending :execrows
+-- 0 rows: the document is gone, not backed up, or its Drive file is missing.
+update documents
+set sync_status = 'pending',
+    sync_reason = null
+where id = @id
+  and user_id = @user_id
+  and backup_status = 'backed_up'
+  and sync_status <> 'missing';
+
+-- name: ClaimSyncFailed :execrows
+-- Atomically takes a failed sync for retry; 0 rows means it is not failed.
+update documents
+set sync_status = 'pending',
+    sync_reason = null
+where id = @id
+  and user_id = @user_id
+  and backup_status = 'backed_up'
+  and sync_status = 'failed';
+
+-- name: MarkSynced :execrows
+-- Succeeds only if nothing changed since the worker read the document
+-- (meta_version) and the sync is still pending.
+update documents
+set sync_status   = 'ok',
+    sync_reason   = null,
+    content_dirty = false
+where id = @id
+  and user_id = @user_id
+  and meta_version = @meta_version
+  and sync_status = 'pending';
+
+-- name: SetSyncStatus :exec
+update documents
+set sync_status = @sync_status,
+    sync_reason = @sync_reason
 where id = @id
   and user_id = @user_id;
 

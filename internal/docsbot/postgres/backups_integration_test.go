@@ -32,7 +32,8 @@ func TestBackups_markAndList(t *testing.T) {
 	a := savedDoc(t, repo, user, "a")
 	b := savedDoc(t, repo, user, "b")
 
-	require.NoError(t, repo.MarkBackedUp(ctx, user, a.ID, "drive-a"))
+	_, err := repo.MarkBackedUp(ctx, user, a.ID, "drive-a")
+	require.NoError(t, err)
 	got, err := repo.DocumentByID(ctx, user, a.ID)
 	require.NoError(t, err)
 	require.Equal(t, docsbot.BackupBackedUp, got.BackupStatus)

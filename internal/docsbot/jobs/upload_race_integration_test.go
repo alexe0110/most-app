@@ -123,6 +123,14 @@ func (d raceDrive) Upload(ctx context.Context, user docsbot.UserID, in docsbot.D
 	}
 	return docsbot.DriveFile{ID: f.ID, Link: f.Link}, nil
 }
+func (raceDrive) Rename(context.Context, docsbot.UserID, string, string) error { return nil }
+
+func (raceDrive) Move(context.Context, docsbot.UserID, string, docsbot.Category) error { return nil }
+
+func (raceDrive) Trash(context.Context, docsbot.UserID, string) error { return nil }
+
+func (raceDrive) Replace(context.Context, docsbot.UserID, string, string, []byte) error { return nil }
+
 func (raceDrive) Revoke(context.Context, docsbot.UserID) error { return nil }
 
 func (raceDrive) Disconnect(context.Context, docsbot.UserID) error { return nil }

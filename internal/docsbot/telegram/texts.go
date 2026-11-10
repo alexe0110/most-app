@@ -35,11 +35,15 @@ const (
 	textRenamePrompt = "Пришли новое название документа."
 	textRenameEmpty  = "Название пустое. Нажми «Имя» и пришли название ещё раз."
 
-	textDeleteConfirm   = "Удалить этот документ? Отменить будет нельзя."
-	textDeleted         = "Документ удалён 🗑"
-	textDeleteCancelled = "Удаление отменено."
-	textGone            = "Этого документа уже нет."
-	textStale           = "Кнопка устарела, открой заново."
+	textDeleteConfirm = "Удалить этот документ? Отменить будет нельзя."
+	// textDeleteConfirmDrive is shown for a document in a connected Drive.
+	textDeleteConfirmDrive = "Удалить этот документ? Файл будет перемещён в корзину Google Drive."
+	// textDeletedRemoteKept: the Drive file could not be trashed and stays.
+	textDeletedRemoteKept = "Документ удалён. В Google Drive файл остался — удали его вручную."
+	textDeleted           = "Документ удалён 🗑"
+	textDeleteCancelled   = "Удаление отменено."
+	textGone              = "Этого документа уже нет."
+	textStale             = "Кнопка устарела, открой заново."
 
 	// Callback toasts.
 	toastSending = "Отправляю…"
@@ -71,6 +75,10 @@ const (
 	textStorageInDrive      = "☁️ В Google Drive"
 	textStorageFailed       = "❌ Не удалось выгрузить в Drive"
 	textStorageTooLarge     = "📥 Слишком большой для Drive"
+	textStorageSyncing      = "⏳ Обновляю в Drive…"
+	textStorageSyncFailed   = "⚠️ Не удалось обновить в Drive"
+	textStorageSyncRevoked  = "⚠️ Не удалось обновить в Drive: доступ отозван"
+	textStorageMissing      = "⚠️ Файл удалён в Drive"
 	textDriveFileStayed     = "В Drive файл остался в прежней папке"
 	textStorageTelegramOnly = "📥 Только в Telegram, ещё не в Drive"
 
@@ -125,6 +133,7 @@ const (
 	btnTransferYes        = "Да, перенести"
 	btnTransferNo         = "Не сейчас"
 	btnRetryBackup        = "🔁 Повторить"
+	btnReupload           = "☁️ Выгрузить заново"
 	btnReconnect          = "☁️ Переподключить Google Drive"
 	btnDisconnect         = "🔌 Отключить Google Drive"
 	btnRetryAll           = "🔁 Повторить выгрузку"

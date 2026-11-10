@@ -21,6 +21,8 @@ var (
 	// ErrNotRetryable means a retry was asked for a document that is not in the
 	// failed state (already retried, in flight, done) or is not the user's.
 	ErrNotRetryable = errors.New("backup not retryable")
+	// ErrRemoteMissing means the file is gone from the user's cloud storage.
+	ErrRemoteMissing = errors.New("remote file missing")
 	// ErrRevokeIncomplete means the user's data was removed locally but revoking
 	// Drive access failed; callers treat it as success and only log it.
 	ErrRevokeIncomplete = errors.New("drive revoke incomplete")

@@ -27,6 +27,14 @@ func (fakeDrive) Connected(context.Context, docsbot.UserID) (bool, error) { retu
 func (fakeDrive) Upload(context.Context, docsbot.UserID, docsbot.DriveUpload) (docsbot.DriveFile, error) {
 	return docsbot.DriveFile{ID: "drive-1", Link: "https://drive/1"}, nil
 }
+func (fakeDrive) Rename(context.Context, docsbot.UserID, string, string) error { return nil }
+
+func (fakeDrive) Move(context.Context, docsbot.UserID, string, docsbot.Category) error { return nil }
+
+func (fakeDrive) Trash(context.Context, docsbot.UserID, string) error { return nil }
+
+func (fakeDrive) Replace(context.Context, docsbot.UserID, string, string, []byte) error { return nil }
+
 func (fakeDrive) Revoke(context.Context, docsbot.UserID) error { return nil }
 
 func (fakeDrive) Disconnect(context.Context, docsbot.UserID) error { return nil }

@@ -50,10 +50,13 @@ func (q *Queries) ClaimFailedDocuments(ctx context.Context, userID pgtype.UUID) 
 const claimFailedForRetry = `-- name: ClaimFailedForRetry :execrows
 update documents
 set backup_status = 'pending',
+    sync_status   = 'ok',
+    sync_reason   = null,
+    drive_file_id = case when backup_status = 'backed_up' then null else drive_file_id end,
     updated_at    = now()
 where id = $1
   and user_id = $2
-  and backup_status = 'failed'
+  and (backup_status = 'failed' or (backup_status = 'backed_up' and sync_status = 'missing'))
 `
 
 type ClaimFailedForRetryParams struct {
@@ -63,8 +66,34 @@ type ClaimFailedForRetryParams struct {
 
 // Atomically takes a failed upload for retry; 0 rows means it is not failed
 // (already retried, in flight, done) or not the user's.
+// A backed-up document whose Drive file is gone (sync_status missing) is claimed
+// too: it is uploaded afresh, so the stale file id is dropped.
 func (q *Queries) ClaimFailedForRetry(ctx context.Context, arg ClaimFailedForRetryParams) (int64, error) {
 	result, err := q.db.Exec(ctx, claimFailedForRetry, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const claimSyncFailed = `-- name: ClaimSyncFailed :execrows
+update documents
+set sync_status = 'pending',
+    sync_reason = null
+where id = $1
+  and user_id = $2
+  and backup_status = 'backed_up'
+  and sync_status = 'failed'
+`
+
+type ClaimSyncFailedParams struct {
+	ID     pgtype.UUID
+	UserID pgtype.UUID
+}
+
+// Atomically takes a failed sync for retry; 0 rows means it is not failed.
+func (q *Queries) ClaimSyncFailed(ctx context.Context, arg ClaimSyncFailedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, claimSyncFailed, arg.ID, arg.UserID)
 	if err != nil {
 		return 0, err
 	}
@@ -252,7 +281,7 @@ func (q *Queries) DocumentCategoryCounts(ctx context.Context, userID pgtype.UUID
 }
 
 const getDocumentByID = `-- name: GetDocumentByID :one
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty
 from documents
 where id = $1
   and user_id = $2
@@ -283,12 +312,16 @@ func (q *Queries) GetDocumentByID(ctx context.Context, arg GetDocumentByIDParams
 		&i.FileSize,
 		&i.MimeType,
 		&i.MediaGroupID,
+		&i.SyncStatus,
+		&i.SyncReason,
+		&i.MetaVersion,
+		&i.ContentDirty,
 	)
 	return i, err
 }
 
 const getDocumentByUniqueID = `-- name: GetDocumentByUniqueID :one
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty
 from documents
 where user_id = $1
   and tg_file_unique_id = $2
@@ -319,6 +352,10 @@ func (q *Queries) GetDocumentByUniqueID(ctx context.Context, arg GetDocumentByUn
 		&i.FileSize,
 		&i.MimeType,
 		&i.MediaGroupID,
+		&i.SyncStatus,
+		&i.SyncReason,
+		&i.MetaVersion,
+		&i.ContentDirty,
 	)
 	return i, err
 }
@@ -326,7 +363,7 @@ func (q *Queries) GetDocumentByUniqueID(ctx context.Context, arg GetDocumentByUn
 const insertDocument = `-- name: InsertDocument :one
 insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, file_size, mime_type, media_group_id)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-returning id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id
+returning id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty
 `
 
 type InsertDocumentParams struct {
@@ -375,12 +412,16 @@ func (q *Queries) InsertDocument(ctx context.Context, arg InsertDocumentParams) 
 		&i.FileSize,
 		&i.MimeType,
 		&i.MediaGroupID,
+		&i.SyncStatus,
+		&i.SyncReason,
+		&i.MetaVersion,
+		&i.ContentDirty,
 	)
 	return i, err
 }
 
 const listDocumentsByCategory = `-- name: ListDocumentsByCategory :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty
 from documents
 where user_id = $1
   and category = $2
@@ -427,6 +468,10 @@ func (q *Queries) ListDocumentsByCategory(ctx context.Context, arg ListDocuments
 			&i.FileSize,
 			&i.MimeType,
 			&i.MediaGroupID,
+			&i.SyncStatus,
+			&i.SyncReason,
+			&i.MetaVersion,
+			&i.ContentDirty,
 		); err != nil {
 			return nil, err
 		}
@@ -439,7 +484,7 @@ func (q *Queries) ListDocumentsByCategory(ctx context.Context, arg ListDocuments
 }
 
 const listPendingByMediaGroup = `-- name: ListPendingByMediaGroup :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty
 from documents
 where user_id = $1
   and media_group_id = $2
@@ -479,6 +524,10 @@ func (q *Queries) ListPendingByMediaGroup(ctx context.Context, arg ListPendingBy
 			&i.FileSize,
 			&i.MimeType,
 			&i.MediaGroupID,
+			&i.SyncStatus,
+			&i.SyncReason,
+			&i.MetaVersion,
+			&i.ContentDirty,
 		); err != nil {
 			return nil, err
 		}
@@ -491,7 +540,7 @@ func (q *Queries) ListPendingByMediaGroup(ctx context.Context, arg ListPendingBy
 }
 
 const listSavedDocumentsForExport = `-- name: ListSavedDocumentsForExport :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty
 from documents
 where user_id = $1
   and status = 'saved'
@@ -530,6 +579,10 @@ func (q *Queries) ListSavedDocumentsForExport(ctx context.Context, arg ListSaved
 			&i.FileSize,
 			&i.MimeType,
 			&i.MediaGroupID,
+			&i.SyncStatus,
+			&i.SyncReason,
+			&i.MetaVersion,
+			&i.ContentDirty,
 		); err != nil {
 			return nil, err
 		}
@@ -541,13 +594,14 @@ func (q *Queries) ListSavedDocumentsForExport(ctx context.Context, arg ListSaved
 	return items, nil
 }
 
-const markDocumentBackedUp = `-- name: MarkDocumentBackedUp :exec
+const markDocumentBackedUp = `-- name: MarkDocumentBackedUp :one
 update documents
 set backup_status = 'backed_up',
     drive_file_id = $1,
     updated_at    = now()
 where id = $2
   and user_id = $3
+returning meta_version
 `
 
 type MarkDocumentBackedUpParams struct {
@@ -556,9 +610,13 @@ type MarkDocumentBackedUpParams struct {
 	UserID      pgtype.UUID
 }
 
-func (q *Queries) MarkDocumentBackedUp(ctx context.Context, arg MarkDocumentBackedUpParams) error {
-	_, err := q.db.Exec(ctx, markDocumentBackedUp, arg.DriveFileID, arg.ID, arg.UserID)
-	return err
+// Returns meta_version so the worker can tell whether the title or category
+// changed while the file was uploading.
+func (q *Queries) MarkDocumentBackedUp(ctx context.Context, arg MarkDocumentBackedUpParams) (int32, error) {
+	row := q.db.QueryRow(ctx, markDocumentBackedUp, arg.DriveFileID, arg.ID, arg.UserID)
+	var meta_version int32
+	err := row.Scan(&meta_version)
+	return meta_version, err
 }
 
 const markDocumentUploading = `-- name: MarkDocumentUploading :exec
@@ -576,6 +634,57 @@ type MarkDocumentUploadingParams struct {
 func (q *Queries) MarkDocumentUploading(ctx context.Context, arg MarkDocumentUploadingParams) error {
 	_, err := q.db.Exec(ctx, markDocumentUploading, arg.ID, arg.UserID)
 	return err
+}
+
+const markSyncPending = `-- name: MarkSyncPending :execrows
+update documents
+set sync_status = 'pending',
+    sync_reason = null
+where id = $1
+  and user_id = $2
+  and backup_status = 'backed_up'
+  and sync_status <> 'missing'
+`
+
+type MarkSyncPendingParams struct {
+	ID     pgtype.UUID
+	UserID pgtype.UUID
+}
+
+// 0 rows: the document is gone, not backed up, or its Drive file is missing.
+func (q *Queries) MarkSyncPending(ctx context.Context, arg MarkSyncPendingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markSyncPending, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markSynced = `-- name: MarkSynced :execrows
+update documents
+set sync_status   = 'ok',
+    sync_reason   = null,
+    content_dirty = false
+where id = $1
+  and user_id = $2
+  and meta_version = $3
+  and sync_status = 'pending'
+`
+
+type MarkSyncedParams struct {
+	ID          pgtype.UUID
+	UserID      pgtype.UUID
+	MetaVersion int32
+}
+
+// Succeeds only if nothing changed since the worker read the document
+// (meta_version) and the sync is still pending.
+func (q *Queries) MarkSynced(ctx context.Context, arg MarkSyncedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markSynced, arg.ID, arg.UserID, arg.MetaVersion)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const resetPendingUploads = `-- name: ResetPendingUploads :exec
@@ -618,7 +727,7 @@ func (q *Queries) SaveDocumentCategory(ctx context.Context, arg SaveDocumentCate
 }
 
 const searchDocuments = `-- name: SearchDocuments :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty
 from documents
 where user_id = $1
   and status = 'saved'
@@ -666,6 +775,10 @@ func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams
 			&i.FileSize,
 			&i.MimeType,
 			&i.MediaGroupID,
+			&i.SyncStatus,
+			&i.SyncReason,
+			&i.MetaVersion,
+			&i.ContentDirty,
 		); err != nil {
 			return nil, err
 		}
@@ -675,6 +788,31 @@ func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams
 		return nil, err
 	}
 	return items, nil
+}
+
+const setSyncStatus = `-- name: SetSyncStatus :exec
+update documents
+set sync_status = $1,
+    sync_reason = $2
+where id = $3
+  and user_id = $4
+`
+
+type SetSyncStatusParams struct {
+	SyncStatus string
+	SyncReason pgtype.Text
+	ID         pgtype.UUID
+	UserID     pgtype.UUID
+}
+
+func (q *Queries) SetSyncStatus(ctx context.Context, arg SetSyncStatusParams) error {
+	_, err := q.db.Exec(ctx, setSyncStatus,
+		arg.SyncStatus,
+		arg.SyncReason,
+		arg.ID,
+		arg.UserID,
+	)
+	return err
 }
 
 const stuckUploads = `-- name: StuckUploads :many
@@ -747,6 +885,37 @@ func (q *Queries) TitleExistsInCategory(ctx context.Context, arg TitleExistsInCa
 	return exists, err
 }
 
+const updateCategoryForSync = `-- name: UpdateCategoryForSync :one
+update documents
+set category     = $1,
+    meta_version = meta_version + 1,
+    sync_status  = case when backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
+    sync_reason  = case when backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
+    updated_at   = now()
+where id = $2
+  and user_id = $3
+returning backup_status, sync_status
+`
+
+type UpdateCategoryForSyncParams struct {
+	Category string
+	ID       pgtype.UUID
+	UserID   pgtype.UUID
+}
+
+type UpdateCategoryForSyncRow struct {
+	BackupStatus string
+	SyncStatus   string
+}
+
+// Same as UpdateTitleForSync, for the category.
+func (q *Queries) UpdateCategoryForSync(ctx context.Context, arg UpdateCategoryForSyncParams) (UpdateCategoryForSyncRow, error) {
+	row := q.db.QueryRow(ctx, updateCategoryForSync, arg.Category, arg.ID, arg.UserID)
+	var i UpdateCategoryForSyncRow
+	err := row.Scan(&i.BackupStatus, &i.SyncStatus)
+	return i, err
+}
+
 const updateDocumentBackupStatus = `-- name: UpdateDocumentBackupStatus :exec
 update documents
 set backup_status = $1,
@@ -768,8 +937,9 @@ func (q *Queries) UpdateDocumentBackupStatus(ctx context.Context, arg UpdateDocu
 
 const updateDocumentCategory = `-- name: UpdateDocumentCategory :execrows
 update documents
-set category   = $1,
-    updated_at = now()
+set category     = $1,
+    meta_version = meta_version + 1,
+    updated_at   = now()
 where id = $2
   and user_id = $3
 `
@@ -790,8 +960,9 @@ func (q *Queries) UpdateDocumentCategory(ctx context.Context, arg UpdateDocument
 
 const updateDocumentTitle = `-- name: UpdateDocumentTitle :execrows
 update documents
-set title      = $1,
-    updated_at = now()
+set title        = $1,
+    meta_version = meta_version + 1,
+    updated_at   = now()
 where id = $2
   and user_id = $3
 `
@@ -808,6 +979,39 @@ func (q *Queries) UpdateDocumentTitle(ctx context.Context, arg UpdateDocumentTit
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const updateTitleForSync = `-- name: UpdateTitleForSync :one
+update documents
+set title        = $1,
+    meta_version = meta_version + 1,
+    sync_status  = case when backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
+    sync_reason  = case when backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
+    updated_at   = now()
+where id = $2
+  and user_id = $3
+returning backup_status, sync_status
+`
+
+type UpdateTitleForSyncParams struct {
+	Title  string
+	ID     pgtype.UUID
+	UserID pgtype.UUID
+}
+
+type UpdateTitleForSyncRow struct {
+	BackupStatus string
+	SyncStatus   string
+}
+
+// Renames and, in the same statement, decides whether the Drive file must follow:
+// a backed-up document with a live file goes to sync_status pending. The caller
+// enqueues the sync job in the same transaction.
+func (q *Queries) UpdateTitleForSync(ctx context.Context, arg UpdateTitleForSyncParams) (UpdateTitleForSyncRow, error) {
+	row := q.db.QueryRow(ctx, updateTitleForSync, arg.Title, arg.ID, arg.UserID)
+	var i UpdateTitleForSyncRow
+	err := row.Scan(&i.BackupStatus, &i.SyncStatus)
+	return i, err
 }
 
 const userIntakeStats = `-- name: UserIntakeStats :one

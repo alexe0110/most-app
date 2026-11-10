@@ -18,10 +18,10 @@ type flakyMarkRepo struct {
 	failMarks int
 }
 
-func (r *flakyMarkRepo) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string) error {
+func (r *flakyMarkRepo) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string) (int, error) {
 	if r.failMarks > 0 {
 		r.failMarks--
-		return errors.New("db down")
+		return 0, errors.New("db down")
 	}
 	return r.fakeRepo.MarkBackedUp(ctx, user, id, driveFileID)
 }

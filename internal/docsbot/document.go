@@ -77,6 +77,22 @@ func (b BackupStatus) Terminal() bool {
 	return b == BackupBackedUp || b == BackupFailed || b == BackupTooLarge
 }
 
+// SyncStatus tracks whether the Drive file matches the document's title, category
+// and content. It only matters for a backed-up document.
+type SyncStatus string
+
+// Cloud sync lifecycle.
+const (
+	SyncOK      SyncStatus = "ok"
+	SyncPending SyncStatus = "pending"
+	SyncFailed  SyncStatus = "failed"
+	// SyncMissing means the Drive file was deleted outside the bot.
+	SyncMissing SyncStatus = "missing"
+)
+
+// SyncReasonRevoked is the SyncReason of a sync that failed because Drive access was revoked.
+const SyncReasonRevoked = "revoked"
+
 // Kind records how the file was sent, so it can be resent with the right method.
 type Kind string
 
@@ -102,6 +118,14 @@ type Document struct {
 	FileSize     int64
 	MIME         string
 	BackupStatus BackupStatus
+	// SyncStatus is the state of the Drive copy relative to the row; SyncReason
+	// explains a failed sync ("" or SyncReasonRevoked).
+	SyncStatus SyncStatus
+	SyncReason string
+	// MetaVersion counts title, category and content changes.
+	MetaVersion int
+	// ContentDirty means the Drive file content must be replaced.
+	ContentDirty bool
 	// MediaGroupID is the Telegram album the file arrived in, "" for a single file.
 	MediaGroupID string
 	// StatusMessageID is the status-message group the document belongs to, "" if none.

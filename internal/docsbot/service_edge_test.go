@@ -156,8 +156,10 @@ func TestService_SetTitleCategoryDelete_missingIsNotFound(t *testing.T) {
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
 	_, err = svc.Recategorize(t.Context(), user, foreign.ID, docsbot.CatPassport)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
-	require.ErrorIs(t, svc.Delete(t.Context(), user, foreign.ID), docsbot.ErrNotFound)
-	require.ErrorIs(t, svc.Delete(t.Context(), user, "nope"), docsbot.ErrNotFound)
+	_, err = svc.Delete(t.Context(), user, foreign.ID)
+	require.ErrorIs(t, err, docsbot.ErrNotFound)
+	_, err = svc.Delete(t.Context(), user, "nope")
+	require.ErrorIs(t, err, docsbot.ErrNotFound)
 
 	require.Equal(t, "x", repo.docs[foreign.ID].Title, "foreign document untouched")
 }
@@ -177,7 +179,7 @@ func TestService_parallelDelete(t *testing.T) {
 	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved})
 	svc, _ := edgeService(repo, fakeDrive{})
 
-	errs := runParallel(20, func(int) error { return svc.Delete(t.Context(), user, doc.ID) })
+	errs := runParallel(20, func(int) error { _, err := svc.Delete(t.Context(), user, doc.ID); return err })
 
 	ok := 0
 	for _, err := range errs {
@@ -198,7 +200,8 @@ func TestService_parallelDeleteAndRename(t *testing.T) {
 
 	errs := runParallel(20, func(i int) error {
 		if i == 10 {
-			return svc.Delete(t.Context(), user, doc.ID)
+			_, err := svc.Delete(t.Context(), user, doc.ID)
+			return err
 		}
 		_, err := svc.Rename(t.Context(), user, doc.ID, "new")
 		return err

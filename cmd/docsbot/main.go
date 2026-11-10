@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 	_ "time/tzdata" // zone database for images without /usr/share/zoneinfo
@@ -69,6 +68,8 @@ func run() error {
 	purge := jobs.RegisterPurgeUsers(workers, pool, log)
 	purgeStates := jobs.RegisterPurgeOAuthStates(workers, pool, log)
 	bindUpload := docjobs.RegisterUploadDocument(workers, log)
+	bindSync := docjobs.RegisterStorageSync(workers, log)
+	bindTrash := docjobs.RegisterStorageTrash(workers, log)
 	bindSweep, sweepPeriodic := docjobs.RegisterSweepUploads(workers, log)
 	bindPurgePending, purgePendingPeriodic := docjobs.RegisterPurgePending(workers, log)
 	queue, err := jobs.New(pool, log, workers, map[string]river.QueueConfig{docjobs.UploadQueue: {MaxWorkers: 1}}, purge, purgeStates, sweepPeriodic, purgePendingPeriodic) // started below, once wired
@@ -102,7 +103,7 @@ func run() error {
 
 	gdriveSvc := gdrive.New(gdriveClients{oauth: oauthSvc}, repo, gdrive.WithLogger(log))
 	driveAdapter := driveBridge{oauth: oauthSvc, gd: gdriveSvc}
-	svc = docsbot.NewService(repo, driveAdapter, files, enq, repo, repo, docsbot.WithCategoryNamer(telegram.CategoryLabel))
+	svc = docsbot.NewService(repo, driveAdapter, files, enq, repo, repo, docsbot.WithSyncs(enq), docsbot.WithCategoryNamer(telegram.CategoryLabel))
 
 	tgbot, err = tg.New(tg.Config{
 		Token:         cfg.TelegramToken,
@@ -117,6 +118,8 @@ func run() error {
 	files.bot = tgbot
 	notifier := telegram.NewNotifier(tgbot, repo, oauthSvc, svc, log)
 	bindUpload(svc, notifier)
+	bindSync(svc, notifier)
+	bindTrash(svc, notifier)
 	bindSweep(svc, notifier)
 	bindPurgePending(svc)
 	if err := tgbot.SetCommands(ctx, telegram.Commands()); err != nil {
@@ -200,28 +203,47 @@ func (d driveBridge) Upload(ctx context.Context, user docsbot.UserID, in docsbot
 	f, err := d.gd.Upload(ctx, string(user), gdrive.Upload{
 		CacheKey:   string(in.Category),
 		FolderName: telegram.CategoryLabel(in.Category),
-		Name:       driveName(in.Name),
+		Name:       in.Name,
 		MIME:       in.MIME,
 		Data:       in.Data,
 		DocID:      in.DocID,
 	})
-	if errors.Is(err, gdrive.ErrAccessRevoked) || errors.Is(err, oauth.ErrAccessRevoked) {
-		return docsbot.DriveFile{}, docsbot.ErrDriveRevoked
-	}
-	if errors.Is(err, gdrive.ErrAccessDisconnected) || errors.Is(err, oauth.ErrAccessDisconnected) {
-		return docsbot.DriveFile{}, docsbot.ErrDriveDisconnected
-	}
 	if err != nil {
-		return docsbot.DriveFile{}, err
+		return docsbot.DriveFile{}, driveErr(err)
 	}
 	return docsbot.DriveFile{ID: f.ID, Link: f.Link}, nil
 }
 
-// driveFileNameReplacer swaps path separators, which Drive file names should not carry.
-var driveFileNameReplacer = strings.NewReplacer("/", "_", "\\", "_")
+func (d driveBridge) Rename(ctx context.Context, user docsbot.UserID, remoteID, name string) error {
+	return driveErr(d.gd.Rename(ctx, string(user), remoteID, name))
+}
 
-// driveName makes a document title usable as a Drive file name.
-func driveName(title string) string { return driveFileNameReplacer.Replace(title) }
+func (d driveBridge) Move(ctx context.Context, user docsbot.UserID, remoteID string, cat docsbot.Category) error {
+	return driveErr(d.gd.Move(ctx, string(user), remoteID, string(cat), telegram.CategoryLabel(cat)))
+}
+
+func (d driveBridge) Trash(ctx context.Context, user docsbot.UserID, remoteID string) error {
+	return driveErr(d.gd.Trash(ctx, string(user), remoteID))
+}
+
+func (d driveBridge) Replace(ctx context.Context, user docsbot.UserID, remoteID, mime string, data []byte) error {
+	return driveErr(d.gd.Replace(ctx, string(user), remoteID, mime, data))
+}
+
+// driveErr translates gdrive and oauth errors into domain errors; others pass through.
+func driveErr(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, gdrive.ErrAccessRevoked), errors.Is(err, oauth.ErrAccessRevoked):
+		return docsbot.ErrDriveRevoked
+	case errors.Is(err, gdrive.ErrAccessDisconnected), errors.Is(err, oauth.ErrAccessDisconnected):
+		return docsbot.ErrDriveDisconnected
+	case errors.Is(err, gdrive.ErrFileNotFound):
+		return docsbot.ErrRemoteMissing
+	}
+	return err
+}
 
 // Revoke best-effort revokes the user's Drive access at Google and marks the
 // integration revoked locally even if Google is unreachable.
