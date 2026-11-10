@@ -50,6 +50,10 @@ var ErrAccessRevoked = errors.New("gdrive: access revoked")
 // should fall back silently, without asking to reconnect.
 var ErrAccessDisconnected = errors.New("gdrive: access disconnected by user")
 
+// ErrFileNotFound means the file itself is gone from Drive (404). The caller maps
+// it to its own "remote missing" meaning.
+var ErrFileNotFound = errors.New("gdrive: file not found")
+
 // errNotFound is an internal signal for a 404 response.
 var errNotFound = errors.New("gdrive: not found")
 
@@ -100,15 +104,9 @@ type File struct {
 
 // Upload stores the file in the user's category folder and returns its link.
 func (s *Service) Upload(ctx context.Context, userID string, up Upload) (File, error) {
-	httpc, err := s.clients.Client(ctx, userID)
+	httpc, err := s.client(ctx, userID)
 	if err != nil {
-		if errors.Is(err, oauth.ErrAccessRevoked) {
-			return File{}, ErrAccessRevoked
-		}
-		if errors.Is(err, oauth.ErrAccessDisconnected) {
-			return File{}, ErrAccessDisconnected
-		}
-		return File{}, fmt.Errorf("drive client: %w", err)
+		return File{}, err
 	}
 
 	f, err := s.resolveAndUpload(ctx, httpc, userID, up)
@@ -129,6 +127,21 @@ func (s *Service) Upload(ctx context.Context, userID string, up Upload) (File, e
 		return File{}, err
 	}
 	return f, nil
+}
+
+// client returns an authenticated HTTP client, translating oauth errors.
+func (s *Service) client(ctx context.Context, userID string) (*http.Client, error) {
+	httpc, err := s.clients.Client(ctx, userID)
+	if err != nil {
+		if errors.Is(err, oauth.ErrAccessRevoked) {
+			return nil, ErrAccessRevoked
+		}
+		if errors.Is(err, oauth.ErrAccessDisconnected) {
+			return nil, ErrAccessDisconnected
+		}
+		return nil, fmt.Errorf("drive client: %w", err)
+	}
+	return httpc, nil
 }
 
 // resolveAndUpload resolves the root and category folders, then uploads the
@@ -155,7 +168,7 @@ func (s *Service) resolveAndUpload(ctx context.Context, httpc *http.Client, user
 		}
 	}
 
-	name, err := s.uniqueName(ctx, httpc, folderID, up.Name)
+	name, err := s.uniqueName(ctx, httpc, folderID, up.Name, "")
 	if err != nil {
 		return File{}, fmt.Errorf("pick file name: %w", err)
 	}
@@ -252,7 +265,8 @@ func (s *Service) createFolder(ctx context.Context, httpc *http.Client, name, pa
 }
 
 // uniqueName appends " (n)" until no non-trashed file in the folder has the name.
-func (s *Service) uniqueName(ctx context.Context, httpc *http.Client, folderID, name string) (string, error) {
+// The file excludeID (may be "") does not count as a collision with itself.
+func (s *Service) uniqueName(ctx context.Context, httpc *http.Client, folderID, name, excludeID string) (string, error) {
 	candidate := name
 	for i := 1; i <= maxNameTries; i++ {
 		q := fmt.Sprintf("name='%s' and '%s' in parents and trashed=false", escapeQuery(candidate), folderID)
@@ -260,12 +274,21 @@ func (s *Service) uniqueName(ctx context.Context, httpc *http.Client, folderID, 
 		if err != nil {
 			return "", fmt.Errorf("drive check name: %w", err)
 		}
-		if len(files) == 0 {
+		if !hasOther(files, excludeID) {
 			return candidate, nil
 		}
 		candidate = name + " (" + strconv.Itoa(i) + ")"
 	}
 	return candidate, nil
+}
+
+func hasOther(ids []string, excludeID string) bool {
+	for _, id := range ids {
+		if id != excludeID {
+			return true
+		}
+	}
+	return false
 }
 
 // list runs a files.list query and returns the matching ids. A non-empty
@@ -334,26 +357,9 @@ func (s *Service) upload(ctx context.Context, httpc *http.Client, folderID, name
 	if up.DocID != "" {
 		md["appProperties"] = map[string]string{docIDProperty: up.DocID}
 	}
-	meta, err := json.Marshal(md)
+	body, ct, err := multipartBody(md, up.MIME, up.Data)
 	if err != nil {
-		return File{}, fmt.Errorf("encode metadata: %w", err)
-	}
-
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
-	metaHdr := textproto.MIMEHeader{"Content-Type": {"application/json; charset=UTF-8"}}
-	if err := writePart(mw, metaHdr, meta); err != nil {
 		return File{}, err
-	}
-	dataHdr := textproto.MIMEHeader{}
-	if up.MIME != "" {
-		dataHdr.Set("Content-Type", up.MIME)
-	}
-	if err := writePart(mw, dataHdr, up.Data); err != nil {
-		return File{}, err
-	}
-	if err := mw.Close(); err != nil {
-		return File{}, fmt.Errorf("close multipart: %w", err)
 	}
 
 	var out struct {
@@ -361,12 +367,36 @@ func (s *Service) upload(ctx context.Context, httpc *http.Client, folderID, name
 		WebViewLink string `json:"webViewLink"`
 	}
 	u := s.baseURL + "/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink"
-	ct := "multipart/related; boundary=" + mw.Boundary()
-	if err := s.do(ctx, "files.upload", httpc, http.MethodPost, u, ct, &buf, &out); err != nil {
+	if err := s.do(ctx, "files.upload", httpc, http.MethodPost, u, ct, body, &out); err != nil {
 		return File{}, fmt.Errorf("drive upload: %w", err)
 	}
 
 	return File{ID: out.ID, Link: fileLink(out.ID, out.WebViewLink)}, nil
+}
+
+// multipartBody builds a multipart/related body: JSON metadata, then the bytes.
+func multipartBody(md map[string]any, mime string, data []byte) (io.Reader, string, error) {
+	meta, err := json.Marshal(md)
+	if err != nil {
+		return nil, "", fmt.Errorf("encode metadata: %w", err)
+	}
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	metaHdr := textproto.MIMEHeader{"Content-Type": {"application/json; charset=UTF-8"}}
+	if err := writePart(mw, metaHdr, meta); err != nil {
+		return nil, "", err
+	}
+	dataHdr := textproto.MIMEHeader{}
+	if mime != "" {
+		dataHdr.Set("Content-Type", mime)
+	}
+	if err := writePart(mw, dataHdr, data); err != nil {
+		return nil, "", err
+	}
+	if err := mw.Close(); err != nil {
+		return nil, "", fmt.Errorf("close multipart: %w", err)
+	}
+	return &buf, "multipart/related; boundary=" + mw.Boundary(), nil
 }
 
 func writePart(mw *multipart.Writer, hdr textproto.MIMEHeader, data []byte) error {
