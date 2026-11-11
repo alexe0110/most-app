@@ -27,6 +27,8 @@ type botCall struct {
 	text      string
 	messageID string
 	parseMode string
+	markup    string // raw reply_markup form value
+	hasMarkup bool   // reply_markup field was present at all
 }
 
 // fakeBotAPI is a Bot API stand-in whose editMessageText answer is configurable.
@@ -54,11 +56,19 @@ func (f *fakeBotAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	method := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, botCall{
+	call := botCall{
 		method: method, text: r.FormValue("text"), messageID: r.FormValue("message_id"), parseMode: r.FormValue("parse_mode"),
-	})
+	}
+	if vals, ok := r.Form["reply_markup"]; ok && len(vals) > 0 {
+		call.hasMarkup, call.markup = true, vals[0]
+	}
+	f.calls = append(f.calls, call)
 	w.Header().Set("Content-Type", "application/json")
 	switch {
+	case call.hasMarkup && call.markup == "null":
+		// Mirrors Telegram: a JSON null is not an object.
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"ok":false,"error_code":400,"description":"Bad Request: object expected as reply markup"}`)
 	case method == "editMessageText" && f.editErr != "":
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = io.WriteString(w, `{"ok":false,"error_code":400,"description":"`+f.editErr+`"}`)
@@ -371,4 +381,56 @@ func TestNotifyConnected_blockedIsNotAnError(t *testing.T) {
 	notify := telegram.NotifyConnected(e.bot, chatLookup{}, e.svc, slog.New(slog.DiscardHandler))
 
 	require.NoError(t, notify(t.Context(), testUserID))
+}
+
+const emptyKeyboard = `{"inline_keyboard":[]}`
+
+// A batch without failures has no keyboard: the edit must clear it with an
+// explicit empty keyboard, never a JSON null (Telegram answers 400 to that).
+func TestNotifier_UploadOutcome_noFailuresClearsKeyboard(t *testing.T) {
+	e := newNotifierEnv(t)
+	sm, docs := e.batch(t, docsbot.BackupBackedUp, docsbot.BackupBackedUp)
+
+	require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, docs[0].ID))
+
+	edits := e.api.callsOf("editMessageText")
+	require.Len(t, edits, 1, "edit must not be rejected and retried")
+	require.Contains(t, edits[0].text, "✅")
+	require.True(t, edits[0].hasMarkup)
+	require.Equal(t, emptyKeyboard, edits[0].markup)
+	require.True(t, e.status.msgs[sm.ID].Closed)
+}
+
+func TestNotifier_UploadOutcome_retryButtonRemovedAfterRecovery(t *testing.T) {
+	e := newNotifierEnv(t)
+	_, docs := e.batch(t, docsbot.BackupBackedUp, docsbot.BackupFailed)
+
+	require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, docs[1].ID))
+	edits := e.api.callsOf("editMessageText")
+	require.Len(t, edits, 1)
+	require.Contains(t, edits[0].markup, "Повторить")
+	require.Contains(t, edits[0].markup, "d:rsm:")
+
+	require.NoError(t, e.repo.SetBackupStatus(t.Context(), testUserID, docs[1].ID, docsbot.BackupBackedUp))
+	require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, docs[1].ID))
+
+	edits = e.api.callsOf("editMessageText")
+	require.Len(t, edits, 2)
+	require.Equal(t, emptyKeyboard, edits[1].markup, "retry button is removed once nothing failed")
+}
+
+func TestNotifier_UploadOutcome_resendWithoutFailuresHasNoMarkup(t *testing.T) {
+	e := newNotifierEnv(t)
+	e.api.editErr = "Bad Request: message to edit not found"
+	_, docs := e.batch(t, docsbot.BackupBackedUp)
+
+	require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, docs[0].ID))
+
+	edits := e.api.callsOf("editMessageText")
+	require.Len(t, edits, 1)
+	require.Equal(t, emptyKeyboard, edits[0].markup, "the failed edit clears the keyboard, never null")
+
+	sends := e.api.callsOf("sendMessage")
+	require.Len(t, sends, 1)
+	require.False(t, sends[0].hasMarkup, "no reply_markup, not even null")
 }
