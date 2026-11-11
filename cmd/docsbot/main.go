@@ -103,7 +103,7 @@ func run() error {
 
 	gdriveSvc := gdrive.New(gdriveClients{oauth: oauthSvc}, repo, gdrive.WithLogger(log))
 	driveAdapter := driveBridge{oauth: oauthSvc, gd: gdriveSvc}
-	svc = docsbot.NewService(repo, driveAdapter, files, enq, repo, repo, enq, docsbot.WithCategoryNamer(telegram.CategoryLabel))
+	svc = docsbot.NewService(repo, driveAdapter, files, enq, repo, repo, enq)
 
 	tgbot, err = tg.New(tg.Config{
 		Token:         cfg.TelegramToken,
@@ -202,7 +202,7 @@ func (d driveBridge) Connected(ctx context.Context, user docsbot.UserID) (bool, 
 func (d driveBridge) Upload(ctx context.Context, user docsbot.UserID, in docsbot.DriveUpload) (docsbot.DriveFile, error) {
 	f, err := d.gd.Upload(ctx, string(user), gdrive.Upload{
 		CacheKey:   string(in.Category),
-		FolderName: telegram.CategoryLabel(in.Category),
+		FolderName: in.Category.FolderName(),
 		Name:       in.Name,
 		MIME:       in.MIME,
 		Data:       in.Data,
@@ -219,7 +219,7 @@ func (d driveBridge) Rename(ctx context.Context, user docsbot.UserID, remoteID, 
 }
 
 func (d driveBridge) Move(ctx context.Context, user docsbot.UserID, remoteID string, cat docsbot.Category) error {
-	return driveErr(d.gd.Move(ctx, string(user), remoteID, string(cat), telegram.CategoryLabel(cat)))
+	return driveErr(d.gd.Move(ctx, string(user), remoteID, string(cat), cat.FolderName()))
 }
 
 func (d driveBridge) Trash(ctx context.Context, user docsbot.UserID, remoteID string) error {

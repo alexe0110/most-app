@@ -56,7 +56,7 @@ func TestRenderFound_opensCards(t *testing.T) {
 	}})
 	require.Equal(t, "Нашёл (1):", text)
 	btn := kb.InlineKeyboard[0][0]
-	require.Contains(t, btn.Text, categoryLabel(docsbot.CatPassport))
+	require.Contains(t, btn.Text, docsbot.CatPassport.Label())
 	require.True(t, strings.HasPrefix(btn.CallbackData, "d:oc:"))
 	require.True(t, strings.HasSuffix(btn.CallbackData, ":s"))
 

@@ -45,43 +45,23 @@ const (
 	actNoop          = "noop"
 )
 
-// categoryLabels are the Russian names shown to the user (product.md). The
-// stored value is the slug.
-var categoryLabels = map[docsbot.Category]string{
-	docsbot.CatPassport:  "Паспорт и ID",
-	docsbot.CatContracts: "Договоры",
-	docsbot.CatReceipts:  "Чеки и гарантии",
-	docsbot.CatAuto:      "Авто",
-	docsbot.CatMedical:   "Медицина",
-	docsbot.CatEduWork:   "Учёба и работа",
-	docsbot.CatOther:     "Другое",
-}
-
-func categoryLabel(c docsbot.Category) string {
-	if label, ok := categoryLabels[c]; ok {
-		return label
-	}
-	return string(c)
-}
-
-// CategoryLabel is the Russian display name for a category.
-func CategoryLabel(c docsbot.Category) string { return categoryLabel(c) }
-
 // cb builds "d:<action>:<docID>".
 func cb(action string, id docsbot.DocumentID) string {
 	return fmt.Sprintf("%s%s:%s", cbPrefix, action, id)
 }
 
-// categoryKeyboard offers every category, two per row. action is actCategory for
-// a new document or actSetCategory when changing one.
-func categoryKeyboard(action string, id docsbot.DocumentID) *models.InlineKeyboardMarkup {
+// categoryRows lays category buttons out two per row, with «Другое» alone in the
+// last row.
+func categoryRows(cats []docsbot.Category, button func(docsbot.Category) models.InlineKeyboardButton) [][]models.InlineKeyboardButton {
 	var rows [][]models.InlineKeyboardButton
 	var line []models.InlineKeyboardButton
-	for _, c := range docsbot.AllCategories {
-		line = append(line, models.InlineKeyboardButton{
-			Text:         categoryLabel(c),
-			CallbackData: fmt.Sprintf("%s%s:%s:%s", cbPrefix, action, id, c),
-		})
+	var other []models.InlineKeyboardButton
+	for _, c := range cats {
+		if c == docsbot.CatOther {
+			other = []models.InlineKeyboardButton{button(c)}
+			continue
+		}
+		line = append(line, button(c))
 		if len(line) == 2 {
 			rows = append(rows, line)
 			line = nil
@@ -90,6 +70,21 @@ func categoryKeyboard(action string, id docsbot.DocumentID) *models.InlineKeyboa
 	if len(line) > 0 {
 		rows = append(rows, line)
 	}
+	if other != nil {
+		rows = append(rows, other)
+	}
+	return rows
+}
+
+// categoryKeyboard offers every category, two per row. action is actCategory for
+// a new document or actSetCategory when changing one.
+func categoryKeyboard(action string, id docsbot.DocumentID) *models.InlineKeyboardMarkup {
+	rows := categoryRows(docsbot.AllCategories, func(c docsbot.Category) models.InlineKeyboardButton {
+		return models.InlineKeyboardButton{
+			Text:         c.Label(),
+			CallbackData: fmt.Sprintf("%s%s:%s:%s", cbPrefix, action, id, c),
+		}
+	})
 	return &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
@@ -158,7 +153,7 @@ func cardText(doc docsbot.Document) string { return cardBody(doc.Title, doc) }
 func cardBody(title string, doc docsbot.Document) string {
 	b := &strings.Builder{}
 	fmt.Fprintf(b, "📄 %s\n", title)
-	fmt.Fprintf(b, "Категория: %s\n", categoryLabel(doc.Category))
+	fmt.Fprintf(b, "Категория: %s\n", doc.Category.Label())
 	fmt.Fprintf(b, "Добавлен: %s", formatDate(doc.CreatedAt))
 	if t := fileType(doc); t != "" {
 		b.WriteString(" · " + t)
@@ -322,13 +317,18 @@ func renderCatalog(c docsbot.Catalog) (string, *models.InlineKeyboardMarkup) {
 	if c.DriveConnected && c.NotInDrive > 0 {
 		fmt.Fprintf(b, "\n\n📥 %d ещё не в Drive", c.NotInDrive)
 	}
-	var rows [][]models.InlineKeyboardButton
+	counts := make(map[docsbot.Category]int, len(c.Counts))
+	cats := make([]docsbot.Category, 0, len(c.Counts))
 	for _, cc := range c.Counts {
-		rows = append(rows, []models.InlineKeyboardButton{{
-			Text:         fmt.Sprintf("%s (%d)", categoryLabel(cc.Category), cc.Count),
-			CallbackData: fmt.Sprintf("%s%s:%s:1", cbPrefix, actListCat, cc.Category),
-		}})
+		counts[cc.Category] = cc.Count
+		cats = append(cats, cc.Category)
 	}
+	rows := categoryRows(cats, func(cat docsbot.Category) models.InlineKeyboardButton {
+		return models.InlineKeyboardButton{
+			Text:         fmt.Sprintf("%s (%d)", cat.Label(), counts[cat]),
+			CallbackData: fmt.Sprintf("%s%s:%s:1", cbPrefix, actListCat, cat),
+		}
+	})
 	if c.DriveConnected && c.NotInDrive > 0 {
 		rows = append(rows, []models.InlineKeyboardButton{{Text: btnTransfer, CallbackData: cbPrefix + actTransfer}})
 	}
@@ -381,7 +381,7 @@ func renderSettings(v docsbot.SettingsView, connectURL string, haveURL bool) (st
 
 // renderCategoryPage lists one page of a category, a card-opening button per document.
 func renderCategoryPage(p docsbot.CategoryPage) (string, *models.InlineKeyboardMarkup) {
-	text := fmt.Sprintf("%s — %d", categoryLabel(p.Category), p.Total)
+	text := fmt.Sprintf("%s — %d", p.Category.Label(), p.Total)
 	var rows [][]models.InlineKeyboardButton
 	for _, doc := range p.Docs {
 		prefix := "📄 "
@@ -439,7 +439,7 @@ func renderFound(f docsbot.Found) (string, *models.InlineKeyboardMarkup) {
 	var rows [][]models.InlineKeyboardButton
 	for _, doc := range f.Docs {
 		rows = append(rows, []models.InlineKeyboardButton{{
-			Text:         "📄 " + truncate(doc.Title, 32) + " · " + categoryLabel(doc.Category),
+			Text:         "📄 " + truncate(doc.Title, 32) + " · " + doc.Category.Label(),
 			CallbackData: fmt.Sprintf("%s%s:%s:s", cbPrefix, actOpenCard, doc.ID),
 		}})
 	}
@@ -569,7 +569,7 @@ func statusLine(d docsbot.Document, folderByCat map[docsbot.Category]string) str
 	name := html.EscapeString(truncate(d.Title, statusNameLimit))
 	switch d.BackupStatus {
 	case docsbot.BackupBackedUp:
-		line := fmt.Sprintf("✅ %s · %s · <a href=%q>файл</a>", name, categoryLabel(d.Category), driveURL(d.DriveFileID))
+		line := fmt.Sprintf("✅ %s · %s · <a href=%q>файл</a>", name, d.Category.Label(), driveURL(d.DriveFileID))
 		if id := folderByCat[d.Category]; id != "" {
 			line += fmt.Sprintf(" <a href=%q>папка</a>", folderURL(id))
 		}
@@ -579,7 +579,7 @@ func statusLine(d docsbot.Document, folderByCat map[docsbot.Category]string) str
 	case docsbot.BackupTooLarge:
 		return "📥 " + name + " · слишком большой для Drive"
 	default:
-		return fmt.Sprintf("⏳ %s · %s", name, categoryLabel(d.Category))
+		return fmt.Sprintf("⏳ %s · %s", name, d.Category.Label())
 	}
 }
 

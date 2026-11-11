@@ -291,6 +291,7 @@ func (r *Repo) ListByCategory(ctx context.Context, user docsbot.UserID, cat docs
 	rows, err := r.ListDocumentsByCategory(ctx, ListDocumentsByCategoryParams{
 		UserID:   uid,
 		Category: string(cat),
+		Known:    knownCategories(),
 		Lim:      int32(limit),
 		Off:      int32(offset),
 	})
@@ -298,6 +299,16 @@ func (r *Repo) ListByCategory(ctx context.Context, user docsbot.UserID, cat docs
 		return nil, fmt.Errorf("list documents by category: %w", err)
 	}
 	return toDocuments(rows), nil
+}
+
+// knownCategories are the current category slugs; "other" also collects the rows
+// whose slug is not among them.
+func knownCategories() []string {
+	out := make([]string, len(docsbot.AllCategories))
+	for i, c := range docsbot.AllCategories {
+		out[i] = string(c)
+	}
+	return out
 }
 
 // likeEscaper escapes the LIKE metacharacters so user input matches literally;

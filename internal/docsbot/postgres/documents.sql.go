@@ -454,15 +454,16 @@ const listDocumentsByCategory = `-- name: ListDocumentsByCategory :many
 select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty
 from documents
 where user_id = $1
-  and category = $2
+  and (category = $2 or ($2 = 'other' and category <> all($3::text[])))
   and status = 'saved'
 order by created_at desc
-limit $4 offset $3
+limit $5 offset $4
 `
 
 type ListDocumentsByCategoryParams struct {
 	UserID   pgtype.UUID
 	Category string
+	Known    []string
 	Off      int32
 	Lim      int32
 }
@@ -471,6 +472,7 @@ func (q *Queries) ListDocumentsByCategory(ctx context.Context, arg ListDocuments
 	rows, err := q.db.Query(ctx, listDocumentsByCategory,
 		arg.UserID,
 		arg.Category,
+		arg.Known,
 		arg.Off,
 		arg.Lim,
 	)

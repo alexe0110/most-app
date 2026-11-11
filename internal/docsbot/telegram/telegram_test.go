@@ -344,7 +344,7 @@ func TestSetCategory_editsCardInPlace(t *testing.T) {
 	require.Len(t, sent.edits, 2)
 	last := sent.edits[len(sent.edits)-1]
 	require.Contains(t, last, "Категория:")
-	require.Contains(t, last, telegram.CategoryLabel(docsbot.CatOther))
+	require.Contains(t, last, docsbot.CatOther.Label())
 	require.True(t, has(sent.editMarkups, "d:lc:"+string(docsbot.CatPassport)+":1"), "origin kept: %q", sent.editMarkups)
 	require.Empty(t, sent.texts, "no new card is sent")
 }
@@ -367,7 +367,7 @@ func TestDeleteYes_returnsToOrigin(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallback(100, "d:del:"+string(first.ID)))
 	require.True(t, has(sent.edits, "Удалить этот документ"), "edits %q", sent.edits)
 	b.ProcessUpdate(ctx, dataCallback(100, "d:dy:"+string(first.ID)))
-	require.True(t, has(sent.edits, telegram.CategoryLabel(docsbot.CatPassport)+" — 1"), "category page: %q", sent.edits)
+	require.True(t, has(sent.edits, docsbot.CatPassport.Label()+" — 1"), "category page: %q", sent.edits)
 
 	open(second.ID)
 	b.ProcessUpdate(ctx, dataCallback(100, "d:dy:"+string(second.ID)))
@@ -550,7 +550,7 @@ func TestSend_sendsFileWithCaptionAndStaleIsGone(t *testing.T) {
 	doc := seedPassport(repo, "Паспорт РК", "u1")
 
 	b.ProcessUpdate(ctx, dataCallback(100, "d:snd:"+string(doc.ID)))
-	require.Equal(t, []string{"Паспорт РК · " + telegram.CategoryLabel(docsbot.CatPassport)}, sent.files)
+	require.Equal(t, []string{"Паспорт РК · " + docsbot.CatPassport.Label()}, sent.files)
 
 	b.ProcessUpdate(ctx, dataCallback(100, "d:snd:missing"))
 	require.True(t, has(sent.texts, "Этого документа уже нет"), "texts %q", sent.texts)

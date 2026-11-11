@@ -122,7 +122,7 @@ order by category;
 select *
 from documents
 where user_id = @user_id
-  and category = @category
+  and (category = @category or (@category = 'other' and category <> all(@known::text[])))
   and status = 'saved'
 order by created_at desc
 limit @lim offset @off;

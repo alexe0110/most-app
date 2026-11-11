@@ -112,7 +112,7 @@ func (raceDrive) Connected(context.Context, docsbot.UserID) (bool, error) { retu
 func (d raceDrive) Upload(ctx context.Context, user docsbot.UserID, in docsbot.DriveUpload) (docsbot.DriveFile, error) {
 	f, err := d.gd.Upload(ctx, string(user), gdrive.Upload{
 		CacheKey:   string(in.Category),
-		FolderName: telegram.CategoryLabel(in.Category),
+		FolderName: in.Category.FolderName(),
 		Name:       in.Name,
 		MIME:       in.MIME,
 		Data:       in.Data,
@@ -192,6 +192,6 @@ func TestUploadDocument_batchCreatesFoldersOnce(t *testing.T) {
 
 	require.Equal(t, 1, fd.createdCount("Most Docs"))
 	for _, cat := range used {
-		require.Equal(t, 1, fd.createdCount(telegram.CategoryLabel(cat)), string(cat))
+		require.Equal(t, 1, fd.createdCount(cat.FolderName()), string(cat))
 	}
 }

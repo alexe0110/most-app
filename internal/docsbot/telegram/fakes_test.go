@@ -260,10 +260,8 @@ func (r *fakeRepo) CategoryCounts(_ context.Context, user docsbot.UserID) ([]doc
 		byCat[d.Category]++
 	}
 	var out []docsbot.CategoryCount
-	for _, c := range docsbot.AllCategories {
-		if n, ok := byCat[c]; ok {
-			out = append(out, docsbot.CategoryCount{Category: c, Count: n})
-		}
+	for c, n := range byCat { // raw and unordered, like the SQL: the service folds and sorts
+		out = append(out, docsbot.CategoryCount{Category: c, Count: n})
 	}
 	return out, nil
 }
@@ -271,7 +269,7 @@ func (r *fakeRepo) CategoryCounts(_ context.Context, user docsbot.UserID) ([]doc
 func (r *fakeRepo) ListByCategory(_ context.Context, user docsbot.UserID, cat docsbot.Category, limit, offset int) ([]docsbot.Document, error) {
 	var all []docsbot.Document
 	for _, d := range r.savedFor(user) {
-		if d.Category == cat {
+		if d.Category == cat || (cat == docsbot.CatOther && !d.Category.Valid()) {
 			all = append(all, d)
 		}
 	}

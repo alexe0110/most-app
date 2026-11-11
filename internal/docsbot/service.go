@@ -52,7 +52,6 @@ type Service struct {
 	status  StatusMessages
 	syncs   Syncs
 	now     func() time.Time
-	name    func(Category) string
 	loc     *time.Location
 }
 
@@ -64,12 +63,6 @@ func WithClock(now func() time.Time) Option {
 	return func(s *Service) { s.now = now }
 }
 
-// WithCategoryNamer sets how a category slug is turned into the display name
-// used in a document's default title. Injected from the telegram adapter.
-func WithCategoryNamer(fn func(Category) string) Option {
-	return func(s *Service) { s.name = fn }
-}
-
 // WithLocation sets the time zone used for the date in default titles.
 func WithLocation(loc *time.Location) Option {
 	return func(s *Service) { s.loc = loc }
@@ -79,9 +72,8 @@ func WithLocation(loc *time.Location) Option {
 func NewService(repo Repo, drive Drive, files FileSource, uploads Uploads, folders Folders, status StatusMessages, syncs Syncs, opts ...Option) *Service {
 	s := &Service{
 		repo: repo, drive: drive, files: files, uploads: uploads, folders: folders, status: status, syncs: syncs,
-		now:  time.Now,
-		name: func(c Category) string { return string(c) },
-		loc:  defaultLocation(),
+		now: time.Now,
+		loc: defaultLocation(),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -317,7 +309,7 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 // defaultTitle builds "<category> — dd.mm.yyyy", adding " (n)" until it is unique
 // within the user's category.
 func (s *Service) defaultTitle(ctx context.Context, user UserID, cat Category) (string, error) {
-	base := s.name(cat) + " — " + s.now().In(s.loc).Format("02.01.2006")
+	base := cat.Label() + " — " + s.now().In(s.loc).Format("02.01.2006")
 	title := base
 	for i := 2; i <= maxTitleSuffix; i++ {
 		exists, err := s.repo.TitleExistsInCategory(ctx, user, cat, title)
@@ -936,7 +928,7 @@ func (s *Service) Catalog(ctx context.Context, user UserID) (Catalog, error) {
 			return Catalog{}, fmt.Errorf("count not backed up: %w", err)
 		}
 	}
-	return Catalog{Counts: counts, NotInDrive: notInDrive, DriveConnected: connected}, nil
+	return Catalog{Counts: foldCategoryCounts(counts), NotInDrive: notInDrive, DriveConnected: connected}, nil
 }
 
 // CategoryPage returns one page (pageSize) of a category, newest first. page is
@@ -996,7 +988,7 @@ func (s *Service) categoryTotal(ctx context.Context, user UserID, cat Category) 
 	if err != nil {
 		return 0, fmt.Errorf("category counts: %w", err)
 	}
-	for _, c := range counts {
+	for _, c := range foldCategoryCounts(counts) {
 		if c.Category == cat {
 			return c.Count, nil
 		}

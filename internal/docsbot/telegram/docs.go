@@ -592,7 +592,7 @@ func (d *docs) onCategoryGroup(ctx context.Context, b *bot.Bot, u *models.Update
 	case len(group.Docs) == 1:
 		d.editCard(ctx, b, chatID, msgID, group.Docs[0], "", "")
 	default:
-		text := fmt.Sprintf(textGroupSaved, len(group.Docs), plural(len(group.Docs), "файл", "файла", "файлов"), categoryLabel(cat))
+		text := fmt.Sprintf(textGroupSaved, len(group.Docs), plural(len(group.Docs), "файл", "файла", "файлов"), cat.Label())
 		if tooLarge > 0 {
 			text += "\n" + fmt.Sprintf(textGroupTooLarge, tooLarge)
 		}
@@ -1036,7 +1036,7 @@ func (d *docs) connectURL(ctx context.Context, user docsbot.UserID) (string, boo
 // sendFile resends a stored file with the method matching how it arrived.
 func (d *docs) sendFile(ctx context.Context, b *bot.Bot, chatID int64, doc docsbot.Document) {
 	var err error
-	caption := doc.Title + " · " + categoryLabel(doc.Category)
+	caption := doc.Title + " · " + doc.Category.Label()
 	op := "sendDocument"
 	start := time.Now()
 	switch doc.Kind {

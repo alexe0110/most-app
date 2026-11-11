@@ -415,7 +415,6 @@ func TestService_defaultTitle_usesLocation(t *testing.T) {
 			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "u"})
 			opts := append([]docsbot.Option{
 				docsbot.WithClock(func() time.Time { return now }),
-				docsbot.WithCategoryNamer(func(docsbot.Category) string { return "Медицина" }),
 			}, tt.opts...)
 			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, opts...)
 

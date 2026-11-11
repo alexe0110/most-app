@@ -11,42 +11,6 @@ type DocumentID string
 // StatusMessageID is a batch status message's internal (UUID) identifier.
 type StatusMessageID string
 
-// Category is a document bucket. The stored value is a stable slug; the Russian
-// label shown to the user lives in the telegram adapter (texts.go).
-type Category string
-
-// MVP categories (product.md).
-const (
-	CatPassport  Category = "passport"
-	CatContracts Category = "contracts"
-	CatReceipts  Category = "receipts"
-	CatAuto      Category = "auto"
-	CatMedical   Category = "medical"
-	CatEduWork   Category = "edu_work"
-	CatOther     Category = "other"
-)
-
-// AllCategories lists the categories in display order (product.md).
-var AllCategories = []Category{
-	CatPassport, CatContracts, CatReceipts, CatAuto, CatMedical, CatEduWork, CatOther,
-}
-
-// Valid reports whether c is one of the known categories.
-func (c Category) Valid() bool {
-	for _, k := range AllCategories {
-		if c == k {
-			return true
-		}
-	}
-	return false
-}
-
-// ParseCategory turns a stored or callback string into a Category.
-func ParseCategory(s string) (Category, bool) {
-	c := Category(s)
-	return c, c.Valid()
-}
-
 // Status is the document's own lifecycle, independent of Drive.
 type Status string
 
