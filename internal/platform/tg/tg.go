@@ -124,7 +124,7 @@ func (b *Bot) Send(ctx context.Context, chatID int64, text string) error {
 // for notifications sent outside an update handler.
 func (b *Bot) SendMarkup(ctx context.Context, chatID int64, text string, markup models.ReplyMarkup) error {
 	start := time.Now()
-	_, err := b.api.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ReplyMarkup: markup})
+	_, err := b.api.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ReplyMarkup: markupOrNil(markup)})
 	b.trace(ctx, "sendMessage", start, err)
 	if err != nil {
 		return b.sendErr(ctx, "send message", err)
@@ -137,7 +137,7 @@ func (b *Bot) SendMarkup(ctx context.Context, chatID int64, text string, markup 
 func (b *Bot) SendHTML(ctx context.Context, chatID int64, text string, markup models.ReplyMarkup) (int, error) {
 	start := time.Now()
 	res, err := b.api.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: chatID, Text: text, ParseMode: models.ParseModeHTML, ReplyMarkup: markup,
+		ChatID: chatID, Text: text, ParseMode: models.ParseModeHTML, ReplyMarkup: markupOrNil(markup),
 	})
 	b.trace(ctx, "sendMessage", start, err)
 	if err != nil {
@@ -146,10 +146,15 @@ func (b *Bot) SendHTML(ctx context.Context, chatID int64, text string, markup mo
 	return res.ID, nil
 }
 
-// EditHTML rewrites a message with HTML text and markup (nil drops the
-// keyboard). The error is returned for the caller to classify.
+// EditHTML rewrites a message with HTML text and markup. A nil markup, typed or
+// untyped, removes the keyboard. The error is returned for the caller to classify.
 func (b *Bot) EditHTML(ctx context.Context, chatID int64, messageID int, text string, markup models.ReplyMarkup) error {
 	start := time.Now()
+	markup = markupOrNil(markup)
+	if markup == nil {
+		// An explicit empty keyboard is how editMessageText clears it.
+		markup = &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}}
+	}
 	_, err := b.api.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID: chatID, MessageID: messageID, Text: text, ParseMode: models.ParseModeHTML, ReplyMarkup: markup,
 	})
@@ -221,6 +226,34 @@ func (b *Bot) Download(ctx context.Context, fileID string) (data []byte, mime st
 		return nil, "", ErrFileTooLarge
 	}
 	return data, resp.Header.Get("Content-Type"), nil
+}
+
+// markupOrNil returns m, or an untyped nil when m is nil or a typed nil pointer
+// (e.g. (*models.InlineKeyboardMarkup)(nil)), so omitempty drops reply_markup
+// instead of sending null, which Telegram rejects with 400. It covers every
+// pointer type go-telegram/bot v1.27.0 accepts as a reply markup.
+func markupOrNil(m models.ReplyMarkup) models.ReplyMarkup {
+	switch v := m.(type) {
+	case nil:
+		return nil
+	case *models.InlineKeyboardMarkup:
+		if v == nil {
+			return nil
+		}
+	case *models.ReplyKeyboardMarkup:
+		if v == nil {
+			return nil
+		}
+	case *models.ReplyKeyboardRemove:
+		if v == nil {
+			return nil
+		}
+	case *models.ForceReply:
+		if v == nil {
+			return nil
+		}
+	}
+	return m
 }
 
 // sendErr wraps a failed outgoing call. A 403 becomes ErrBlocked and is logged
