@@ -49,14 +49,30 @@ func isInvisibleFormat(r rune) bool {
 	return false
 }
 
+// TrimExt drops a trailing file extension from a file name ("ВНЖ.pdf" -> "ВНЖ").
+// A tail that is not extension-like ("Отчёт 2026", "v1.2025") stays, and so does a
+// name that would become empty (".pdf").
+func TrimExt(name string) string {
+	if base := stripExt(name); base != "" {
+		return base
+	}
+	return name
+}
+
+// stripExt drops an extension-like tail; the result may be empty.
+func stripExt(name string) string {
+	ext := filepath.Ext(name)
+	if !looksLikeExt(strings.TrimPrefix(ext, ".")) {
+		return name
+	}
+	return strings.TrimSpace(strings.TrimSuffix(name, ext))
+}
+
 // DerivedTitle names a document made from src (a compressed copy, a PDF): the
 // file extension is dropped and suffix appended. The result fits MaxTitleRunes
 // by trimming the base, never the suffix.
 func DerivedTitle(src, suffix string) string {
-	base := NormalizeTitle(src)
-	if ext := filepath.Ext(base); looksLikeExt(strings.TrimPrefix(ext, ".")) {
-		base = strings.TrimSpace(strings.TrimSuffix(base, ext))
-	}
+	base := stripExt(NormalizeTitle(src))
 	suffix = strings.TrimSpace(suffix)
 	if base == "" {
 		return suffix

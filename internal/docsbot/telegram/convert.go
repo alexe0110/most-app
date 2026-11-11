@@ -1062,7 +1062,7 @@ func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 		tgUser: tgUser, user: user, sourceDoc: sourceDoc, suffix: suffix,
 		file: docsbot.IncomingFile{
 			Kind: docsbot.KindDocument, FileID: msg.Document.FileID, FileUniqueID: msg.Document.FileUniqueID,
-			Title: filename, FileSize: msg.Document.FileSize, MIME: msg.Document.MimeType,
+			Title: docsbot.TrimExt(filename), FileSize: msg.Document.FileSize, MIME: msg.Document.MimeType,
 		},
 	})
 	return true

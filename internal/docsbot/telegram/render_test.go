@@ -23,10 +23,10 @@ func TestRenderCategoryPage_driveBadge(t *testing.T) {
 		doc       docsbot.Document
 		want      string
 	}{
-		{"backed up", true, backedUp, "☁️ Backed"},
-		{"not backed up", true, pending, "📥 Pending"},
-		{"file deleted in drive", true, docsbot.Document{ID: "3", Title: "Gone", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing}, "📥 Gone"},
-		{"drive not connected", false, backedUp, "📄 Backed"},
+		{"backed up", true, backedUp, "☁️ 📄 Backed"},
+		{"not backed up", true, pending, "📥 📄 Pending"},
+		{"file deleted in drive", true, docsbot.Document{ID: "3", Title: "Gone", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing}, "📥 📄 Gone"},
+		{"drive not connected", false, pending, "📥 📄 Pending"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -48,7 +48,7 @@ func TestRenderCategoryPage_openCardData(t *testing.T) {
 	})
 	btn := kb.InlineKeyboard[0][0]
 	require.Equal(t, "d:oc:x1:l:auto:2", btn.CallbackData)
-	require.Equal(t, "📄 Doc · 05.03", btn.Text)
+	require.Equal(t, "📥 📄 Doc", btn.Text, "no date in the row")
 }
 
 func TestRenderFound_opensCards(t *testing.T) {
@@ -57,7 +57,7 @@ func TestRenderFound_opensCards(t *testing.T) {
 	}})
 	require.Equal(t, "Нашёл (1):", text)
 	btn := kb.InlineKeyboard[0][0]
-	require.Contains(t, btn.Text, docsbot.CatPassport.Label())
+	require.Equal(t, "📥 📄 Паспорт", btn.Text, "same row format as the list, no category")
 	require.True(t, strings.HasPrefix(btn.CallbackData, "d:oc:"))
 	require.True(t, strings.HasSuffix(btn.CallbackData, ":s"))
 
@@ -419,13 +419,13 @@ func TestIncomingFile(t *testing.T) {
 			want: docsbot.IncomingFile{UserID: "u", Kind: docsbot.KindDocument, FileID: "d", FileUniqueID: "ud", FileSize: 7, MIME: "application/pdf"},
 		},
 		{
-			name: "document file name is kept",
+			name: "document file name loses its extension",
 			msg: &models.Message{Caption: "подпись", Document: &models.Document{
 				FileID: "d", FileUniqueID: "ud", FileName: "scan.pdf", FileSize: 99, MimeType: "application/pdf",
 			}},
 			want: docsbot.IncomingFile{
 				UserID: "u", Kind: docsbot.KindDocument, FileID: "d", FileUniqueID: "ud",
-				Title: "scan.pdf", FileSize: 99, MIME: "application/pdf",
+				Title: "scan", FileSize: 99, MIME: "application/pdf",
 			},
 		},
 		{
@@ -601,4 +601,86 @@ func TestCardKeyboard_revokedSyncOffersReconnect(t *testing.T) {
 	texts, _ = buttons(cardKeyboardWith(doc, "", "", "https://consent"))
 	require.Contains(t, texts, btnRetryBackup, "an ordinary failure is retried")
 	require.NotContains(t, texts, btnReconnect)
+}
+
+func TestListLabel(t *testing.T) {
+	tests := []struct {
+		name string
+		doc  docsbot.Document
+		want string
+	}{
+		{"pdf in drive", docsbot.Document{Title: "ВНЖ", MIME: "application/pdf", Kind: docsbot.KindDocument, BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncOK}, "☁️ 📄 ВНЖ"},
+		{"photo in telegram", docsbot.Document{Title: "Фото", Kind: docsbot.KindPhoto}, "📥 🖼 Фото"},
+		{"image document", docsbot.Document{Title: "Скан", MIME: "image/png", Kind: docsbot.KindDocument}, "📥 🖼 Скан"},
+		{"drive file deleted", docsbot.Document{Title: "Договор", MIME: "application/pdf", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing}, "📥 📄 Договор"},
+		{"drive sync pending still cloud", docsbot.Document{Title: "Х", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncPending}, "☁️ 📄 Х"},
+		{"too large", docsbot.Document{Title: "Огромный", BackupStatus: docsbot.BackupTooLarge}, "📥 📄 Огромный"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, listLabel(tt.doc))
+		})
+	}
+}
+
+func TestRenderCategoryPage_sameRowAsSearch(t *testing.T) {
+	doc := docsbot.Document{ID: "1", Title: "Договор аренды квартиры на Абая 2026", Category: docsbot.CatRealty}
+	_, list := renderCategoryPage(docsbot.CategoryPage{Category: docsbot.CatRealty, Docs: []docsbot.Document{doc}, Page: 1, Pages: 1, Total: 1})
+	_, found := renderFound(docsbot.Found{Docs: []docsbot.Document{doc}})
+	require.Equal(t, list.InlineKeyboard[0][0].Text, found.InlineKeyboard[0][0].Text)
+	require.LessOrEqual(t, len([]rune(list.InlineKeyboard[0][0].Text)), 36)
+}
+
+func TestTruncateMiddle(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		n    int
+		want string
+	}{
+		{"short stays", "ВНЖ", 30, "ВНЖ"},
+		{"exactly n stays", "абвгд", 5, "абвгд"},
+		{"cyrillic keeps both ends", "Договор аренды квартиры 2026", 15, "Договор…ры 2026"},
+		{"latin", "abcdefghijklmnopqrstuvwxyz", 10, "abcde…wxyz"},
+		{"emoji is not split", "😀😀😀😀😀😀😀😀", 5, "😀😀…😀😀"},
+		{"tiny limit falls back", "abcdef", 2, "a…"},
+		{"end stays visible", "Справка о доходах за прошлый год № 12345", 20, "Справка о…д № 12345"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateMiddle(tt.in, tt.n)
+			require.Equal(t, tt.want, got)
+			require.LessOrEqual(t, len([]rune(got)), tt.n)
+		})
+	}
+}
+
+func TestCategoryKeyboard_twoPerRowOtherAlone(t *testing.T) {
+	kb := categoryKeyboard(actCategory, "d1")
+	rows := kb.InlineKeyboard
+	require.Len(t, rows, 6)
+	for _, row := range rows[:5] {
+		require.Len(t, row, 2)
+	}
+	require.Len(t, rows[5], 1)
+	require.Equal(t, "Другое", rows[5][0].Text)
+	require.Equal(t, "d:cat:d1:other", rows[5][0].CallbackData)
+	require.Equal(t, "Паспорт и ID", rows[0][0].Text)
+	require.Equal(t, "Справки", rows[0][1].Text)
+}
+
+func TestRenderCatalog_layout(t *testing.T) {
+	_, kb := renderCatalog(docsbot.Catalog{Counts: []docsbot.CategoryCount{
+		{Category: docsbot.CatPassport, Count: 2},
+		{Category: docsbot.CatAuto, Count: 1},
+		{Category: docsbot.CatWork, Count: 3},
+		{Category: docsbot.CatOther, Count: 4},
+	}})
+	require.Len(t, kb.InlineKeyboard, 3)
+	require.Equal(t, "Паспорт и ID (2)", kb.InlineKeyboard[0][0].Text)
+	require.Equal(t, "Авто (1)", kb.InlineKeyboard[0][1].Text)
+	require.Equal(t, "Работа (3)", kb.InlineKeyboard[1][0].Text)
+	require.Len(t, kb.InlineKeyboard[2], 1)
+	require.Equal(t, "Другое (4)", kb.InlineKeyboard[2][0].Text)
+	require.Equal(t, "d:lc:other:1", kb.InlineKeyboard[2][0].CallbackData)
 }

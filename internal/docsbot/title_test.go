@@ -93,3 +93,24 @@ func TestRemoteName(t *testing.T) {
 		})
 	}
 }
+
+func TestTrimExt(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"ВНЖ.pdf", "ВНЖ"},
+		{"scan.JPG", "scan"},
+		{"Паспорт РК.jpeg", "Паспорт РК"},
+		{"archive.tar.gz", "archive.tar"},
+		{"Отчёт 2026", "Отчёт 2026"},
+		{"v1.2025", "v1.2025"},
+		{"Договор", "Договор"},
+		{"Справка №1.", "Справка №1."},
+		{".pdf", ".pdf"},
+		{"", ""},
+		{"Длинное.расширение", "Длинное.расширение"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			require.Equal(t, tt.want, docsbot.TrimExt(tt.in))
+		})
+	}
+}

@@ -392,15 +392,8 @@ func renderCategoryPage(p docsbot.CategoryPage) (string, *models.InlineKeyboardM
 	text := fmt.Sprintf("%s — %d", p.Category.Label(), p.Total)
 	var rows [][]models.InlineKeyboardButton
 	for _, doc := range p.Docs {
-		prefix := "📄 "
-		if p.DriveConnected {
-			prefix = "📥 "
-			if doc.InDrive() && doc.SyncStatus != docsbot.SyncMissing {
-				prefix = "☁️ "
-			}
-		}
 		rows = append(rows, []models.InlineKeyboardButton{{
-			Text:         prefix + truncate(doc.Title, 32) + " · " + doc.CreatedAt.Format("02.01"),
+			Text:         listLabel(doc),
 			CallbackData: fmt.Sprintf("%s%s:%s:l:%s:%d", cbPrefix, actOpenCard, doc.ID, p.Category, p.Page),
 		}})
 	}
@@ -447,7 +440,7 @@ func renderFound(f docsbot.Found) (string, *models.InlineKeyboardMarkup) {
 	var rows [][]models.InlineKeyboardButton
 	for _, doc := range f.Docs {
 		rows = append(rows, []models.InlineKeyboardButton{{
-			Text:         "📄 " + truncate(doc.Title, 32) + " · " + doc.Category.Label(),
+			Text:         listLabel(doc),
 			CallbackData: fmt.Sprintf("%s%s:%s:s", cbPrefix, actOpenCard, doc.ID),
 		}})
 	}
@@ -475,11 +468,11 @@ func incomingFile(m *models.Message, user docsbot.UserID) (docsbot.IncomingFile,
 	}
 }
 
-// documentTitle is the file name or caption; "" when neither exists (the domain
+// documentTitle is the file name without its extension, or the caption; "" when neither exists (the domain
 // then assigns a default name).
 func documentTitle(m *models.Message) string {
 	if m.Document.FileName != "" {
-		return m.Document.FileName
+		return docsbot.TrimExt(m.Document.FileName)
 	}
 	return m.Caption
 }
@@ -495,6 +488,46 @@ func driveURL(fileID string) string {
 
 func formatDate(t time.Time) string {
 	return t.Format("02.01.2006")
+}
+
+// listTitleRunes is how many runes of a title one list or search button shows.
+const listTitleRunes = 30
+
+// listLabel is a document's button text in a list or search result:
+// "<storage> <type> <title>", e.g. "☁️ 📄 ВНЖ". The storage icon says where the
+// file lives (☁️ in Drive, 📥 only in Telegram, also when its Drive file is gone),
+// the type icon what it is (🖼 image, 📄 anything else).
+func listLabel(doc docsbot.Document) string {
+	return storageIcon(doc) + " " + typeIcon(doc) + " " + truncateMiddle(doc.Title, listTitleRunes)
+}
+
+func storageIcon(doc docsbot.Document) string {
+	if doc.InDrive() && doc.SyncStatus != docsbot.SyncMissing {
+		return "☁️"
+	}
+	return "📥"
+}
+
+func typeIcon(doc docsbot.Document) string {
+	if doc.Kind == docsbot.KindPhoto || strings.HasPrefix(doc.MIME, "image/") {
+		return "🖼"
+	}
+	return "📄"
+}
+
+// truncateMiddle shortens s to n runes by cutting the middle, so both the start
+// and the end (often a number or a year) stay visible: "Договор аренды…2026".
+func truncateMiddle(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n < 3 {
+		return truncate(s, n)
+	}
+	tail := (n - 1) / 2
+	head := n - 1 - tail
+	return strings.TrimRight(string(r[:head]), " ") + "…" + strings.TrimLeft(string(r[len(r)-tail:]), " ")
 }
 
 // truncate shortens s to n runes, adding an ellipsis.
