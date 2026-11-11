@@ -60,3 +60,27 @@ func TestService_Catalog_foldsRetiredSlugs(t *testing.T) {
 	require.Equal(t, 2, page.Total)
 	require.Len(t, page.Docs, 2)
 }
+
+func TestCategory_FolderNames(t *testing.T) {
+	want := map[docsbot.Category]string{
+		docsbot.CatPassport:     "Паспорт и ID",
+		docsbot.CatCertificates: "Справки",
+		docsbot.CatInsurance:    "Страховки",
+		docsbot.CatRealty:       "Недвижимость",
+		docsbot.CatReceipts:     "Чеки и гарантии",
+		docsbot.CatAuto:         "Авто",
+		docsbot.CatMedical:      "Медицина",
+		docsbot.CatTravel:       "Путешествия",
+		docsbot.CatEducation:    "Учёба",
+		docsbot.CatWork:         "Работа",
+		docsbot.CatOther:        "Другое",
+	}
+	require.Len(t, docsbot.AllCategories, len(want))
+	for _, c := range docsbot.AllCategories {
+		require.Equal(t, want[c], c.FolderName(), string(c))
+		require.Equal(t, c.Label(), c.FolderName(), "folder name and label are one string")
+	}
+	for _, retired := range []docsbot.Category{"contracts", "edu_work", "nonsense"} {
+		require.Equal(t, "Другое", retired.FolderName(), "unknown slug falls back, never panics")
+	}
+}

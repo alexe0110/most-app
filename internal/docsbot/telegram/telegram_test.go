@@ -36,6 +36,8 @@ type capture struct {
 	editIDs     []int    // message_id of each editMessageText
 	answers     []string // answerCallbackQuery toast texts
 	groups      []string // sendMediaGroup "media" JSON, one per album
+	sendModes   []string // sendMessage parse_mode
+	editModes   []string // editMessageText parse_mode
 }
 
 func (c *capture) record(bucket *[]string, s string) {
@@ -88,6 +90,7 @@ func newBotOpts(t *testing.T, log *slog.Logger, drive fakeDrive, opts ...telegra
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/sendMessage"):
 			sent.record(&sent.texts, r.FormValue("text"))
+			sent.record(&sent.sendModes, r.FormValue("parse_mode"))
 			sent.record(&sent.markups, r.FormValue("reply_markup"))
 		case strings.HasSuffix(r.URL.Path, "/sendDocument"), strings.HasSuffix(r.URL.Path, "/sendPhoto"):
 			sent.record(&sent.files, r.FormValue("caption"))
@@ -108,6 +111,7 @@ func newBotOpts(t *testing.T, log *slog.Logger, drive fakeDrive, opts ...telegra
 			sent.record(&sent.answers, r.FormValue("text"))
 		case strings.HasSuffix(r.URL.Path, "/editMessageText"):
 			sent.record(&sent.edits, r.FormValue("text"))
+			sent.record(&sent.editModes, r.FormValue("parse_mode"))
 			sent.mu.Lock()
 			sent.editIDs = append(sent.editIDs, formInt(r, "message_id"))
 			sent.mu.Unlock()
@@ -232,7 +236,7 @@ func TestChooseCategory_savesAndShowsCard(t *testing.T) {
 
 	require.False(t, has(sent.texts, "Сохранил"), "the picker becomes the card, no extra message")
 	require.Len(t, sent.texts, 1, "only the Drive nudge for the first document: %q", sent.texts)
-	require.True(t, has(sent.edits, "Категория:"), "edits %q", sent.edits)
+	require.True(t, has(sent.edits, "🗂 "), "edits %q", sent.edits)
 	require.False(t, has(sent.edits, "✅"), "edits %q", sent.edits)
 	require.Equal(t, docsbot.StatusSaved, repo.docs[doc.ID].Status)
 	require.Equal(t, docsbot.CatOther, repo.docs[doc.ID].Category)
@@ -340,7 +344,7 @@ func TestOpenCard_editsMessageWithBack(t *testing.T) {
 
 			b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(doc.ID)+tt.suffix))
 
-			require.True(t, has(sent.edits, "Категория:"), "edits %q", sent.edits)
+			require.True(t, has(sent.edits, "🗂 "), "edits %q", sent.edits)
 			require.True(t, has(sent.edits, "📄"), "edits %q", sent.edits)
 			require.True(t, has(sent.editMarkups, "⬅️ Назад"), "markups %q", sent.editMarkups)
 			require.True(t, has(sent.editMarkups, tt.wantBack), "markups %q", sent.editMarkups)
@@ -372,7 +376,7 @@ func TestSetCategory_editsCardInPlace(t *testing.T) {
 
 	require.Len(t, sent.edits, 2)
 	last := sent.edits[len(sent.edits)-1]
-	require.Contains(t, last, "Категория:")
+	require.Contains(t, last, "🗂 ")
 	require.Contains(t, last, docsbot.CatOther.Label())
 	require.True(t, has(sent.editMarkups, "d:lc:"+string(docsbot.CatPassport)+":1"), "origin kept: %q", sent.editMarkups)
 	require.Empty(t, sent.texts, "no new card is sent")
@@ -746,7 +750,7 @@ func TestDeleteNo_restoresCardAndStaleIsGone(t *testing.T) {
 	doc := seedPassport(repo, "Паспорт РК", "u1")
 
 	b.ProcessUpdate(ctx, dataCallback(100, "d:dn:"+string(doc.ID)))
-	require.Contains(t, sent.edits[0], "Категория:")
+	require.Contains(t, sent.edits[0], "🗂 ")
 
 	b.ProcessUpdate(ctx, dataCallback(100, "d:dn:missing"))
 	require.True(t, has(sent.edits, "Этого документа уже нет"), "edits %q", sent.edits)
@@ -800,7 +804,7 @@ func TestOpenCard_detectsFileDeletedInDrive(t *testing.T) {
 		wantOpen  bool
 	}{
 		{"file deleted", true, "Файл удалён в Drive, копия осталась в Telegram", true, false},
-		{"file there", false, "В Google Drive", false, true},
+		{"file there", false, "Google Drive · копия в Telegram", false, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -890,4 +894,32 @@ func TestDeleteData_promptOffersExportFirst(t *testing.T) {
 	require.Contains(t, sent.texts[0], "/export")
 	require.Contains(t, sent.markups[0], "d:exp")
 	require.Contains(t, sent.markups[0], "Сначала прислать все документы")
+}
+
+// Every card view is HTML (the title is escaped in cardText): sent, opened from a
+// list, recategorized, and the rename prompt and hint around it.
+func TestCard_isAlwaysSentAsHTML(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := repo.seed(docsbot.Document{
+		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Category: docsbot.CatPassport,
+		Title: "A & <b>B</b>", TgFileID: "f", TgFileUniqueID: "u",
+	})
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(doc.ID)+":s"))
+	require.Contains(t, sent.edits[len(sent.edits)-1], "<b>A &amp; &lt;b&gt;B&lt;/b&gt;</b>")
+	b.ProcessUpdate(ctx, dataCallback(100, "d:rn:"+string(doc.ID)))
+	b.ProcessUpdate(ctx, textUpdateID(100, 5, " "))
+	b.ProcessUpdate(ctx, dataCallback(100, "d:rnc:"+string(doc.ID)))
+	b.ProcessUpdate(ctx, dataCallback(100, "d:sc:"+string(doc.ID)+":"+string(docsbot.CatAuto)))
+	b.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
+		From: &models.User{ID: 100}, Chat: models.Chat{ID: 100, Type: models.ChatTypePrivate},
+		Document: &models.Document{FileID: "f", FileUniqueID: "u", FileName: "x.pdf"},
+	}}) // the same file again: AlreadySaved card
+
+	require.Len(t, sent.editModes, 5)
+	for _, mode := range sent.editModes {
+		require.Equal(t, "HTML", mode)
+	}
+	require.Equal(t, []string{"HTML"}, sent.sendModes, "the already-saved card")
 }

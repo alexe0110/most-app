@@ -83,6 +83,7 @@ func TestConvertPDF_menuAndRotate(t *testing.T) {
 	for id, d := range h.repo.docs {
 		if id != src.ID {
 			require.Equal(t, "Договор (изменён)", d.Title)
+			require.Equal(t, 3, d.PageCount, "the converter counts the pages of its PDF result")
 			require.Equal(t, docsbot.CatCertificates, d.Category)
 			require.Equal(t, docsbot.StatusSaved, d.Status)
 		}

@@ -37,6 +37,9 @@ func (r *Repo) CreateDocument(ctx context.Context, in docsbot.IncomingFile) (doc
 		FileSize:       pgtype.Int8{Int64: in.FileSize, Valid: in.FileSize > 0},
 		MimeType:       pgtype.Text{String: in.MIME, Valid: in.MIME != ""},
 		MediaGroupID:   pgtype.Text{String: in.MediaGroupID, Valid: in.MediaGroupID != ""},
+		PageCount:      int32(in.PageCount),
+		ImageWidth:     int32(in.Width),
+		ImageHeight:    int32(in.Height),
 	})
 	if err != nil {
 		return docsbot.Document{}, fmt.Errorf("insert document: %w", err)
@@ -463,6 +466,9 @@ func toDocument(d Document) docsbot.Document {
 		TgFileUniqueID:  d.TgFileUniqueID,
 		DriveFileID:     d.DriveFileID.String,
 		FileSize:        d.FileSize.Int64,
+		PageCount:       int(d.PageCount.Int32),
+		Width:           int(d.ImageWidth.Int32),
+		Height:          int(d.ImageHeight.Int32),
 		MIME:            d.MimeType.String,
 		MediaGroupID:    d.MediaGroupID.String,
 		BackupStatus:    docsbot.BackupStatus(d.BackupStatus),

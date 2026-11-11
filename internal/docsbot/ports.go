@@ -149,6 +149,12 @@ type DriveFile struct {
 	Link string
 }
 
+// PageCounter counts the pages of a PDF; declared by the domain, implemented in
+// wiring over platform/convert (the domain does not import it).
+type PageCounter interface {
+	PageCount(ctx context.Context, data []byte) (int, error)
+}
+
 // FileSource downloads a stored Telegram file by its file_id. A file above the
 // Bot API limit returns ErrFileTooLarge.
 type FileSource interface {
@@ -190,8 +196,9 @@ type Syncs interface {
 	// MarkBackedUp records a successful Drive upload (backup_status=backed_up +
 	// drive_file_id) and, in the same transaction, marks the document sync-pending and queues a sync when
 	// its meta_version differs from startVersion (title or category changed during
-	// the upload). ErrNotFound if the document was deleted meanwhile.
-	MarkBackedUp(ctx context.Context, user UserID, id DocumentID, driveFileID string, startVersion int) (queued bool, err error)
+	// the upload). pages > 0 records the PDF's page count (0: unknown, keep the stored one).
+	// ErrNotFound if the document was deleted meanwhile.
+	MarkBackedUp(ctx context.Context, user UserID, id DocumentID, driveFileID string, startVersion, pages int) (queued bool, err error)
 	// ReplaceContent swaps the document's file for in (file ids, size, MIME) and
 	// bumps meta_version; a backed-up document also goes content_dirty and
 	// sync-pending with a sync queued, all in one transaction; without cloud (Drive

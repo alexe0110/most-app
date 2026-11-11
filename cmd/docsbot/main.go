@@ -20,6 +20,7 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
 	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/config"
+	"github.com/alexe0110/most-app/internal/platform/convert"
 	"github.com/alexe0110/most-app/internal/platform/db"
 	"github.com/alexe0110/most-app/internal/platform/gdrive"
 	"github.com/alexe0110/most-app/internal/platform/jobs"
@@ -103,7 +104,7 @@ func run() error {
 
 	gdriveSvc := gdrive.New(gdriveClients{oauth: oauthSvc}, repo, gdrive.WithLogger(log))
 	driveAdapter := driveBridge{oauth: oauthSvc, gd: gdriveSvc}
-	svc = docsbot.NewService(repo, driveAdapter, files, enq, repo, repo, enq)
+	svc = docsbot.NewService(repo, driveAdapter, files, enq, repo, repo, enq, docsbot.WithPageCounter(pageCounter{}))
 
 	tgbot, err = tg.New(tg.Config{
 		Token:         cfg.TelegramToken,
@@ -233,6 +234,13 @@ func (d driveBridge) FileExists(ctx context.Context, user docsbot.UserID, remote
 
 func (d driveBridge) Replace(ctx context.Context, user docsbot.UserID, remoteID, mime string, data []byte) error {
 	return driveErr(d.gd.Replace(ctx, string(user), remoteID, mime, data))
+}
+
+// pageCounter counts PDF pages for the domain over platform/convert.
+type pageCounter struct{}
+
+func (pageCounter) PageCount(ctx context.Context, data []byte) (int, error) {
+	return convert.PageCount(ctx, data)
 }
 
 // driveErr translates gdrive and oauth errors into domain errors; others pass through.

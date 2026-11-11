@@ -1,8 +1,8 @@
 -- name: InsertDocument :one
 -- A received file starts as pending with no category; the category and 'saved'
 -- status are set once the user picks one (SaveDocumentCategory).
-insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, file_size, mime_type, media_group_id)
-values (@user_id, @status, @kind, @category, @title, @tg_file_id, @tg_file_unique_id, @file_size, @mime_type, @media_group_id)
+insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, file_size, mime_type, media_group_id, page_count, image_width, image_height)
+values (@user_id, @status, @kind, @category, @title, @tg_file_id, @tg_file_unique_id, @file_size, @mime_type, @media_group_id, nullif(@page_count::integer, 0), nullif(@image_width::integer, 0), nullif(@image_height::integer, 0))
 returning *;
 
 -- name: TitleExistsInCategory :one
@@ -145,6 +145,7 @@ set backup_status = 'backed_up',
     drive_file_id = @drive_file_id,
     sync_status   = case when meta_version <> @start_version then 'pending' else sync_status end,
     sync_reason   = case when meta_version <> @start_version then null else sync_reason end,
+    page_count    = coalesce(sqlc.narg(page_count)::integer, page_count),
     updated_at    = now()
 where id = @id
   and user_id = @user_id
@@ -161,6 +162,9 @@ set kind              = @kind,
     tg_file_unique_id = @tg_file_unique_id,
     file_size         = @file_size,
     mime_type         = @mime_type,
+    page_count        = nullif(@page_count::integer, 0),
+    image_width       = nullif(@image_width::integer, 0),
+    image_height      = nullif(@image_height::integer, 0),
     meta_version      = meta_version + 1,
     content_dirty     = (@cloud::bool and backup_status = 'backed_up'),
     sync_status       = case when @cloud::bool and backup_status = 'backed_up' then 'pending' else sync_status end,

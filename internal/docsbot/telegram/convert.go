@@ -5,6 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/jpeg" // register decoders for image.DecodeConfig
+	_ "image/png"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1058,11 +1061,23 @@ func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 		c.removeKeyboard(ctx, b, chatID, msg)
 		return true
 	}
+	pages, width, height := 0, 0, 0
+	if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
+		// Cheap: only the header is read. Formats without a decoder stay unknown.
+		width, height = cfg.Width, cfg.Height
+	}
+	if msg.Document.MimeType == "application/pdf" || strings.EqualFold(filepath.Ext(filename), ".pdf") {
+		// The result is already in memory; a failed count only leaves the page count unknown.
+		if n, err := convert.PageCount(ctx, data); err == nil {
+			pages = n
+		}
+	}
 	c.results.put(token, convResult{
 		tgUser: tgUser, user: user, sourceDoc: sourceDoc, suffix: suffix,
 		file: docsbot.IncomingFile{
 			Kind: docsbot.KindDocument, FileID: msg.Document.FileID, FileUniqueID: msg.Document.FileUniqueID,
-			Title: docsbot.TrimExt(filename), FileSize: msg.Document.FileSize, MIME: msg.Document.MimeType,
+			Title: docsbot.TrimExt(filename), FileSize: msg.Document.FileSize, MIME: msg.Document.MimeType, PageCount: pages,
+			Width: width, Height: height,
 		},
 	})
 	return true

@@ -79,9 +79,13 @@ type Document struct {
 	TgFileUniqueID string
 	DriveFileID    string
 	// FileSize is the size in bytes, 0 if unknown.
-	FileSize     int64
-	MIME         string
-	BackupStatus BackupStatus
+	FileSize int64
+	// PageCount is the number of pages of a PDF, 0 if unknown.
+	PageCount int
+	// Width and Height are the pixel size of an image, 0 if unknown.
+	Width, Height int
+	MIME          string
+	BackupStatus  BackupStatus
 	// SyncStatus is the state of the Drive copy relative to the row; SyncReason
 	// explains a failed sync ("" or SyncReasonRevoked).
 	SyncStatus SyncStatus
@@ -131,6 +135,10 @@ type IncomingFile struct {
 	// FileSize is the size in bytes, 0 if unknown.
 	FileSize int64
 	MIME     string
+	// PageCount is the number of pages of a PDF, 0 if unknown.
+	PageCount int
+	// Width and Height are the pixel size of an image, 0 if unknown.
+	Width, Height int
 	// MediaGroupID is the Telegram album the file belongs to, "" for a single file.
 	MediaGroupID string
 }

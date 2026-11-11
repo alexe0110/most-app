@@ -42,7 +42,7 @@ func TestRestart_callbacksWithoutStoreEntries(t *testing.T) {
 
 	// origins are lost: the card opens and goes back to the catalog.
 	b.ProcessUpdate(ctx, dataCallback(100, "d:dn:"+id))
-	require.Contains(t, sent.edits[len(sent.edits)-1], "Категория:")
+	require.Contains(t, sent.edits[len(sent.edits)-1], "🗂 ")
 
 	// searches are lost: "back to search" falls back to the catalog.
 	b.ProcessUpdate(ctx, dataCallback(100, "d:sb"))

@@ -83,7 +83,7 @@ func (r *fakeRepo) CreateDocument(_ context.Context, in docsbot.IncomingFile) (d
 	return r.seed(docsbot.Document{
 		UserID: in.UserID, Status: docsbot.StatusPending, Kind: in.Kind, Title: in.Title,
 		TgFileID: in.FileID, TgFileUniqueID: in.FileUniqueID, BackupStatus: docsbot.BackupNone,
-		MediaGroupID: in.MediaGroupID, FileSize: in.FileSize, MIME: in.MIME,
+		MediaGroupID: in.MediaGroupID, FileSize: in.FileSize, PageCount: in.PageCount, Width: in.Width, Height: in.Height, MIME: in.MIME,
 	}), nil
 }
 
@@ -353,12 +353,15 @@ func (s fakeSyncs) SetCategory(_ context.Context, user docsbot.UserID, id docsbo
 
 func (fakeSyncs) EnqueueSync(context.Context, docsbot.UserID, docsbot.DocumentID) error { return nil }
 
-func (s fakeSyncs) MarkBackedUp(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion int) (bool, error) {
+func (s fakeSyncs) MarkBackedUp(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion, pages int) (bool, error) {
 	d, ok := s.repo.docs[id]
 	if !ok || d.UserID != user {
 		return false, docsbot.ErrNotFound
 	}
 	d.BackupStatus, d.DriveFileID = docsbot.BackupBackedUp, driveFileID
+	if pages > 0 {
+		d.PageCount = pages
+	}
 	queued := d.MetaVersion != startVersion
 	if queued {
 		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
@@ -381,7 +384,8 @@ func (s fakeSyncs) ReplaceContent(_ context.Context, user docsbot.UserID, id doc
 			return false, docsbot.ErrDuplicateFile
 		}
 	}
-	d.Kind, d.TgFileID, d.TgFileUniqueID, d.FileSize, d.MIME = in.Kind, in.FileID, in.FileUniqueID, in.FileSize, in.MIME
+	d.Kind, d.TgFileID, d.TgFileUniqueID, d.FileSize, d.MIME, d.PageCount = in.Kind, in.FileID, in.FileUniqueID, in.FileSize, in.MIME, in.PageCount
+	d.Width, d.Height = in.Width, in.Height
 	d.MetaVersion++
 	if cloud && d.BackupStatus == docsbot.BackupBackedUp {
 		d.ContentDirty = true

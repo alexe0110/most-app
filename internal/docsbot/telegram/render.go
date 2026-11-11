@@ -154,24 +154,37 @@ func reconnectKeyboard(url string) *models.InlineKeyboardMarkup {
 	}}}
 }
 
-// cardText describes one document: name, category, date, and where it lives.
-func cardText(doc docsbot.Document) string { return cardBody(doc.Title, doc) }
-
-// cardBody is cardText with a caller-prepared title (HTML-escaped for HTML messages).
-func cardBody(title string, doc docsbot.Document) string {
+// cardText describes one document as HTML (every dynamic part is escaped):
+//
+//	📄 <b>ВНЖ</b>
+//	🗂 Паспорт и ID · PDF · 3 стр. · 194 КБ
+//	📅 10.11.2026
+//	☁️ Google Drive · копия в Telegram
+func cardText(doc docsbot.Document) string {
 	b := &strings.Builder{}
-	fmt.Fprintf(b, "📄 %s\n", title)
-	fmt.Fprintf(b, "Категория: %s\n", doc.Category.Label())
-	fmt.Fprintf(b, "Добавлен: %s", formatDate(doc.CreatedAt))
+	fmt.Fprintf(b, "%s <b>%s</b>\n", typeIcon(doc), html.EscapeString(doc.Title))
+	b.WriteString("🗂 " + html.EscapeString(strings.Join(cardFacts(doc), " · ")) + "\n")
+	b.WriteString("📅 " + formatDate(doc.CreatedAt) + "\n")
+	b.WriteString(html.EscapeString(storageLine(doc)))
+	return b.String()
+}
+
+// cardFacts are the details after the category: type, pixel size, pages, file size; unknown ones are left out.
+func cardFacts(doc docsbot.Document) []string {
+	facts := []string{doc.Category.Label()}
 	if t := fileType(doc); t != "" {
-		b.WriteString(" · " + t)
+		facts = append(facts, t)
+	}
+	if doc.Width > 0 && doc.Height > 0 {
+		facts = append(facts, fmt.Sprintf("%d×%d", doc.Width, doc.Height))
+	}
+	if doc.PageCount > 0 {
+		facts = append(facts, fmt.Sprintf("%d стр.", doc.PageCount))
 	}
 	if sz := humanSize(doc.FileSize); sz != "" {
-		b.WriteString(" · " + sz)
+		facts = append(facts, sz)
 	}
-	b.WriteString("\n")
-	b.WriteString(storageLine(doc))
-	return b.String()
+	return facts
 }
 
 // storageLine says where the document lives right now (plain text).
@@ -264,10 +277,10 @@ func revoked(doc docsbot.Document) bool {
 // "Повторить" on a card whose sync failed because access was revoked; without a
 // link such a card has no retry button.
 func cardKeyboardWith(doc docsbot.Document, folderID, orig, reconnectURL string) *models.InlineKeyboardMarkup {
-	// At most two buttons per row: more are cut off on narrow screens.
-	top := []models.InlineKeyboardButton{{Text: btnSendFile, CallbackData: cb(actSend, doc.ID)}}
+	// At most two buttons per row, short labels: more are cut off on narrow screens.
+	top := []models.InlineKeyboardButton{{Text: btnCardSend, CallbackData: cb(actSend, doc.ID)}}
 	if doc.InDrive() && doc.SyncStatus != docsbot.SyncMissing {
-		top = append(top, models.InlineKeyboardButton{Text: btnOpenDrive, URL: driveURL(doc.DriveFileID)})
+		top = append(top, models.InlineKeyboardButton{Text: btnCardOpen, URL: driveURL(doc.DriveFileID)})
 	}
 	rows := [][]models.InlineKeyboardButton{top}
 	if doc.InDrive() {
@@ -286,17 +299,16 @@ func cardKeyboardWith(doc docsbot.Document, folderID, orig, reconnectURL string)
 	if folderID != "" {
 		rows = append(rows, []models.InlineKeyboardButton{{Text: btnOpenFolder, URL: folderURL(folderID)}})
 	}
-	last := []models.InlineKeyboardButton{{Text: btnDelete, CallbackData: cb(actDeleteAsk, doc.ID)}}
+	rows = append(rows, []models.InlineKeyboardButton{
+		{Text: btnRename, CallbackData: cb(actRename, doc.ID)},
+		{Text: btnChangeCat, CallbackData: cb(actChangeCat, doc.ID)},
+	})
+	var last []models.InlineKeyboardButton
 	if convertible(doc) {
 		last = append(last, convertRow(doc.ID, btnConvertCard)...)
 	}
-	rows = append(rows,
-		[]models.InlineKeyboardButton{
-			{Text: btnRename, CallbackData: cb(actRename, doc.ID)},
-			{Text: btnChangeCat, CallbackData: cb(actChangeCat, doc.ID)},
-		},
-		last,
-	)
+	last = append(last, models.InlineKeyboardButton{Text: btnDelete, CallbackData: cb(actDeleteAsk, doc.ID)})
+	rows = append(rows, last)
 	if back := backFromOrig(orig); back != "" {
 		rows = append(rows, []models.InlineKeyboardButton{{Text: btnBack, CallbackData: back}})
 	}
@@ -461,6 +473,7 @@ func incomingFile(m *models.Message, user docsbot.UserID) (docsbot.IncomingFile,
 			UserID: user, Kind: docsbot.KindPhoto,
 			FileID: p.FileID, FileUniqueID: p.FileUniqueID, Title: photoTitle(m),
 			FileSize: int64(p.FileSize), MIME: "", MediaGroupID: m.MediaGroupID,
+			Width: p.Width, Height: p.Height,
 		}, true
 	case m.Document != nil:
 		return docsbot.IncomingFile{
@@ -602,7 +615,7 @@ func renderSingleStatus(sm docsbot.StatusMessage, doc docsbot.Document, folderBy
 	if doc.BackupStatus == docsbot.BackupFailed {
 		kb.InlineKeyboard = append(kb.InlineKeyboard, retryBatchKeyboard(sm.ID).InlineKeyboard...)
 	}
-	return cardBody(html.EscapeString(doc.Title), doc), kb
+	return cardText(doc), kb
 }
 
 func retryBatchKeyboard(id docsbot.StatusMessageID) *models.InlineKeyboardMarkup {

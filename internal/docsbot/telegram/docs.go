@@ -789,7 +789,8 @@ func (d *docs) onRetryBatch(ctx context.Context, b *bot.Bot, u *models.Update, u
 	d.redrawStatus(ctx, b, user, view)
 }
 
-// editHTML rewrites an HTML message; "message is not modified" is not an error.
+// editHTML rewrites an HTML message (a card, a status message, a rename prompt);
+// "message is not modified" is not an error.
 func (d *docs) editHTML(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup) {
 	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text, ParseMode: models.ParseModeHTML}
 	if kb == nil {
@@ -801,7 +802,7 @@ func (d *docs) editHTML(ctx context.Context, b *bot.Bot, chatID int64, msgID int
 	_, err := b.EditMessageText(ctx, params)
 	traceAPI(ctx, d.log, "editMessageText", start)
 	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
-		d.log.ErrorContext(ctx, "edit status message", "err", err)
+		d.log.ErrorContext(ctx, "edit html message", "err", err)
 	}
 }
 
@@ -880,7 +881,7 @@ func (d *docs) onRenamePrompt(ctx context.Context, b *bot.Bot, u *models.Update,
 		return
 	}
 	d.renames.set(u.CallbackQuery.From.ID, id, chatID, msgID)
-	d.editMessage(ctx, b, chatID, msgID, textRenamePrompt, renameCancelKeyboard(id))
+	d.editHTML(ctx, b, chatID, msgID, textRenamePrompt, renameCancelKeyboard(id))
 }
 
 // onRenameCancel drops the rename armed on this message, if any, and puts the
@@ -952,7 +953,7 @@ func (d *docs) applyRename(ctx context.Context, b *bot.Bot, user docsbot.UserID,
 // renameHint re-arms the rename and tells, in the prompt message itself, what was wrong.
 func (d *docs) renameHint(ctx context.Context, b *bot.Bot, tgUser int64, e renameEntry, hint string) {
 	d.renames.set(tgUser, e.id, e.chat, e.msg)
-	d.editMessage(ctx, b, e.chat, e.msg, hint, renameCancelKeyboard(e.id))
+	d.editHTML(ctx, b, e.chat, e.msg, hint, renameCancelKeyboard(e.id))
 }
 
 // deleteUserMessage removes the user's message from the chat. It is cosmetic: a
@@ -1193,7 +1194,7 @@ func (d *docs) sendCard(ctx context.Context, b *bot.Bot, chatID int64, doc docsb
 	if header != "" {
 		text = header + "\n\n" + text
 	}
-	d.send(ctx, b, chatID, text, d.cardKB(ctx, doc, folderID, ""))
+	d.sendHTML(ctx, b, chatID, text, d.cardKB(ctx, doc, folderID, ""))
 }
 
 // editCard replaces a message with a document's card and remembers where the
@@ -1202,8 +1203,9 @@ func (d *docs) editCard(ctx context.Context, b *bot.Bot, chatID int64, msgID int
 	d.editCardText(ctx, b, chatID, msgID, cardText(doc), d.cardKB(ctx, doc, folderID, orig), orig)
 }
 
+// editCardText is editCard with a prepared HTML text (the card plus a note).
 func (d *docs) editCardText(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup, orig string) {
-	d.editMessage(ctx, b, chatID, msgID, text, kb)
+	d.editHTML(ctx, b, chatID, msgID, text, kb)
 	d.origins.set(chatID, msgID, orig)
 }
 
@@ -1270,6 +1272,20 @@ func (d *docs) onSearchBack(ctx context.Context, b *bot.Bot, u *models.Update, u
 	}
 	text, kb := renderFound(found)
 	d.editMessage(ctx, b, chatID, msgID, text, kb)
+}
+
+// sendHTML posts an HTML message, with an inline keyboard when kb is non-nil.
+func (d *docs) sendHTML(ctx context.Context, b *bot.Bot, chatID int64, text string, kb *models.InlineKeyboardMarkup) {
+	params := &bot.SendMessageParams{ChatID: chatID, Text: text, ParseMode: models.ParseModeHTML}
+	if kb != nil {
+		params.ReplyMarkup = kb
+	}
+	start := time.Now()
+	_, err := b.SendMessage(ctx, params)
+	traceAPI(ctx, d.log, "sendMessage", start)
+	if err != nil {
+		d.log.Error("send telegram message", "err", err)
+	}
 }
 
 // send posts a message, with an inline keyboard when kb is non-nil.

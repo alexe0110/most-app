@@ -73,7 +73,7 @@ const (
 	textTransferAllDone   = "Готово: %d в Drive"         // %d = backed up
 
 	textStoragePending      = "⏳ Загружаю в Drive…"
-	textStorageInDrive      = "☁️ В Google Drive"
+	textStorageInDrive      = "☁️ Google Drive · копия в Telegram"
 	textStorageFailed       = "❌ Не удалось выгрузить в Drive"
 	textStorageTooLarge     = "📥 Слишком большой для Drive"
 	textStorageSyncing      = "⏳ Обновляю в Drive…"
@@ -81,7 +81,7 @@ const (
 	textStorageSyncRevoked  = "⚠️ Не удалось обновить в Drive: доступ отозван"
 	textStorageMissing      = "📥 Файл удалён в Drive, копия осталась в Telegram"
 	textDriveFileStayed     = "В Drive файл остался в прежней папке"
-	textStorageTelegramOnly = "📥 Только в Telegram, ещё не в Drive"
+	textStorageTelegramOnly = "📥 Только в Telegram"
 
 	// textGroupNotice is sent once to a group the bot was added to, right before it leaves.
 	textGroupNotice = "Я работаю только в личных сообщениях: документы не должны попадать в общий чат. Напиши мне в личку."
@@ -118,7 +118,8 @@ const (
 // Inline button labels for the core flow.
 const (
 	btnConnectDrive       = "☁️ Подключить Google Drive"
-	btnSendFile           = "📤 Прислать файл"
+	btnCardSend           = "📤 Прислать"
+	btnCardOpen           = "☁️ Открыть"
 	btnOpenDrive          = "☁️ Открыть в Drive"
 	btnOpenFolder         = "📁 Папка в Drive"
 	btnOpenCategoryFolder = "📁 Папка категории"

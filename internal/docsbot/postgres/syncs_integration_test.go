@@ -207,7 +207,7 @@ func TestSyncs_failedInsertRollsBackTheChange(t *testing.T) {
 	require.False(t, replaced)
 	require.Equal(t, "file-a", e.row(t, id).TgFile)
 
-	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, e.seed(t, e.user, "u", "uploading", "ok"), "drive-x", -1, m.insert)
+	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, e.seed(t, e.user, "u", "uploading", "ok"), "drive-x", -1, 0, m.insert)
 	require.ErrorIs(t, err, boom)
 }
 
@@ -235,7 +235,7 @@ func TestSyncs_markBackedUpComparesVersion(t *testing.T) {
 			}
 
 			m := &marker{pool: e.pool}
-			queued, err := e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", start, m.insert)
+			queued, err := e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", start, 0, m.insert)
 
 			require.NoError(t, err)
 			require.Equal(t, tt.wantQueued, queued)
@@ -254,15 +254,15 @@ func TestSyncs_markBackedUpGoneAndForeign(t *testing.T) {
 	id := e.seed(t, e.user, "a", "uploading", "ok")
 	m := &marker{pool: e.pool}
 
-	_, err := e.repo.MarkBackedUpForSync(ctx, e.otherUser, id, "drive-1", 0, m.insert)
+	_, err := e.repo.MarkBackedUpForSync(ctx, e.otherUser, id, "drive-1", 0, 0, m.insert)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
 	require.Equal(t, "uploading", e.row(t, id).Backup)
 	require.Empty(t, e.row(t, id).DriveFile)
 
 	require.NoError(t, e.repo.DeleteDocument(ctx, e.user, id))
-	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", 0, m.insert)
+	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", 0, 0, m.insert)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
-	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", 0, noInsert)
+	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", 0, 0, noInsert)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
 	require.Zero(t, m.calls)
 }

@@ -63,6 +63,8 @@ type Service struct {
 	// throttle OpenCard; guarded by checksMu.
 	checksMu sync.Mutex
 	checks   map[DocumentID]time.Time
+
+	pages PageCounter // nil: pages are not counted
 }
 
 // Option tunes a Service at construction.
@@ -71,6 +73,12 @@ type Option func(*Service)
 // WithClock replaces the time source; used to pin the status-message window in tests.
 func WithClock(now func() time.Time) Option {
 	return func(s *Service) { s.now = now }
+}
+
+// WithPageCounter sets how the pages of a PDF are counted when it is backed up.
+// Without it the page count of such a document stays unknown.
+func WithPageCounter(pc PageCounter) Option {
+	return func(s *Service) { s.pages = pc }
 }
 
 // WithLocation sets the time zone used for the date in default titles.
@@ -386,6 +394,7 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 		return BackupResult{}, fmt.Errorf("download file: %w", err)
 	}
 
+	pages := s.countPages(ctx, doc, mime, data)
 	name := RemoteName(doc.Title, doc.MIME, doc.Kind)
 	file, err := s.drive.Upload(ctx, user, DriveUpload{Category: doc.Category, Name: name, MIME: mime, Data: data, DocID: string(id)})
 	if errors.Is(err, ErrDriveDisconnected) {
@@ -402,7 +411,7 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 		return BackupResult{}, fmt.Errorf("upload to drive: %w", err)
 	}
 
-	queued, err := s.syncs.MarkBackedUp(ctx, user, id, file.ID, startVersion)
+	queued, err := s.syncs.MarkBackedUp(ctx, user, id, file.ID, startVersion, pages)
 	if errors.Is(err, ErrNotFound) {
 		// Deleted while the file was uploading: nobody references the file, so
 		// trash it (best effort; a failure leaves an orphan the user can delete
@@ -414,10 +423,27 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 	}
 	doc.BackupStatus = BackupBackedUp
 	doc.DriveFileID = file.ID
+	if pages > 0 {
+		doc.PageCount = pages
+	}
 	if queued {
 		doc.SyncStatus = SyncPending
 	}
 	return BackupResult{Doc: doc}, nil
+}
+
+// countPages counts a PDF's pages for the card; 0 means unknown (not a PDF, no
+// counter configured, or the file could not be read). A failure is not an error:
+// the page count is decoration and must not hold up the upload.
+func (s *Service) countPages(ctx context.Context, doc Document, mime string, data []byte) int {
+	if s.pages == nil || (doc.MIME != "application/pdf" && mime != "application/pdf") {
+		return 0
+	}
+	n, err := s.pages.PageCount(ctx, data)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // ReplaceContent swaps the file of a saved document for in (a converted copy of

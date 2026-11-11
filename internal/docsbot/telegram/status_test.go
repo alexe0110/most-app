@@ -54,7 +54,7 @@ func TestChooseCategory_driveOn_oneFileBecomesLiveCard(t *testing.T) {
 
 	require.Empty(t, sent.texts, "the picker is edited, nothing new is sent")
 	require.Len(t, sent.edits, 1)
-	require.Contains(t, sent.edits[0], "Категория:")
+	require.Contains(t, sent.edits[0], "🗂 ")
 	require.Contains(t, sent.edits[0], "⏳ Загружаю в Drive…")
 	require.NotEmpty(t, repo.docs[id].StatusMessageID)
 	sm, err := repo.status.ByID(t.Context(), testUserID, repo.docs[id].StatusMessageID)
@@ -124,7 +124,7 @@ func TestChooseCategory_driveOff_pickerBecomesCard(t *testing.T) {
 
 	require.Len(t, sent.edits, 3)
 	for _, e := range sent.edits {
-		require.Contains(t, e, "Категория:")
+		require.Contains(t, e, "🗂 ")
 		require.NotContains(t, e, "✅")
 	}
 	require.False(t, has(sent.texts, "Сохранил"))

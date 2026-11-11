@@ -234,7 +234,7 @@ func (s *fakeSyncs) EnqueueSync(_ context.Context, user docsbot.UserID, id docsb
 	return nil
 }
 
-func (s *fakeSyncs) MarkBackedUp(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion int) (bool, error) {
+func (s *fakeSyncs) MarkBackedUp(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion, pages int) (bool, error) {
 	if s.err != nil {
 		return false, s.err
 	}
@@ -245,6 +245,9 @@ func (s *fakeSyncs) MarkBackedUp(_ context.Context, user docsbot.UserID, id docs
 		return false, docsbot.ErrNotFound
 	}
 	d.BackupStatus, d.DriveFileID = docsbot.BackupBackedUp, driveFileID
+	if pages > 0 {
+		d.PageCount = pages
+	}
 	queued := d.MetaVersion != startVersion
 	if queued {
 		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
@@ -275,7 +278,8 @@ func (s *fakeSyncs) ReplaceContent(_ context.Context, user docsbot.UserID, id do
 			return false, docsbot.ErrDuplicateFile
 		}
 	}
-	d.Kind, d.TgFileID, d.TgFileUniqueID, d.FileSize, d.MIME = in.Kind, in.FileID, in.FileUniqueID, in.FileSize, in.MIME
+	d.Kind, d.TgFileID, d.TgFileUniqueID, d.FileSize, d.MIME, d.PageCount = in.Kind, in.FileID, in.FileUniqueID, in.FileSize, in.MIME, in.PageCount
+	d.Width, d.Height = in.Width, in.Height
 	d.MetaVersion++
 	backedUp := cloud && d.BackupStatus == docsbot.BackupBackedUp
 	d.ContentDirty = backedUp
@@ -381,7 +385,7 @@ func (r *fakeRepo) CreateDocument(_ context.Context, in docsbot.IncomingFile) (d
 	return r.seedLocked(docsbot.Document{
 		UserID: in.UserID, Status: docsbot.StatusPending, Kind: in.Kind, Title: in.Title,
 		TgFileID: in.FileID, TgFileUniqueID: in.FileUniqueID, BackupStatus: docsbot.BackupNone,
-		MediaGroupID: in.MediaGroupID, FileSize: in.FileSize,
+		MediaGroupID: in.MediaGroupID, FileSize: in.FileSize, PageCount: in.PageCount, Width: in.Width, Height: in.Height,
 	}), nil
 }
 

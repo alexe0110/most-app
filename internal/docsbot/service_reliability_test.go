@@ -18,12 +18,12 @@ type flakySyncs struct {
 	failMarks int
 }
 
-func (s *flakySyncs) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion int) (bool, error) {
+func (s *flakySyncs) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion, pages int) (bool, error) {
 	if s.failMarks > 0 {
 		s.failMarks--
 		return false, errors.New("db down")
 	}
-	return s.fakeSyncs.MarkBackedUp(ctx, user, id, driveFileID, startVersion)
+	return s.fakeSyncs.MarkBackedUp(ctx, user, id, driveFileID, startVersion, pages)
 }
 
 // idempotentDrive emulates Drive appProperties idempotency: a repeated upload
