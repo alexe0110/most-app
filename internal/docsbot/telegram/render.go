@@ -343,6 +343,14 @@ func renderCatalog(c docsbot.Catalog) (string, *models.InlineKeyboardMarkup) {
 	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
+// exportFirstKeyboard is the button under the delete-data prompt: get everything
+// back first, then confirm.
+func exportFirstKeyboard() *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: btnExportAll, CallbackData: cbPrefix + actExport},
+	}}}
+}
+
 // renderSettings draws the /settings screen: Drive state, document counts, and
 // the available actions. connectURL is the Google consent link; haveURL is false
 // when it could not be built (then no connect/reconnect button is shown).
@@ -379,9 +387,6 @@ func renderSettings(v docsbot.SettingsView, connectURL string, haveURL bool) (st
 		rows = append(rows, []models.InlineKeyboardButton{{
 			Text: fmt.Sprintf("%s (%d)", btnRetryAll, v.Failed), CallbackData: cbPrefix + actRetryAll,
 		}})
-	}
-	if v.Total > 0 {
-		rows = append(rows, []models.InlineKeyboardButton{{Text: btnExportAll, CallbackData: cbPrefix + actExport}})
 	}
 	rows = append(rows, []models.InlineKeyboardButton{{Text: btnDeleteData, CallbackData: cbPrefix + actDeleteData}})
 	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}

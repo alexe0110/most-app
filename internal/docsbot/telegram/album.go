@@ -29,6 +29,11 @@ func WithAlbumTimer(after AfterFunc) Option {
 	return func(d *docs) { d.albums.after = after }
 }
 
+// WithExportPace replaces the pauses between exported files and albums; used by tests.
+func WithExportPace(file, album time.Duration) Option {
+	return func(d *docs) { d.pauseFile, d.pauseAlbum = file, album }
+}
+
 func realAfterFunc(d time.Duration, f func()) func() bool {
 	return time.AfterFunc(d, f).Stop
 }

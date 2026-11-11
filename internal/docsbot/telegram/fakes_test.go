@@ -491,6 +491,7 @@ func (r *fakeRepo) BackupStatusCounts(_ context.Context, user docsbot.UserID) ([
 
 func (r *fakeRepo) SavedForExport(_ context.Context, user docsbot.UserID, limit int) ([]docsbot.Document, error) {
 	docs := r.savedFor(user)
+	sort.Slice(docs, func(i, j int) bool { return docs[i].CreatedAt.Before(docs[j].CreatedAt) }) // oldest first, like the SQL
 	if len(docs) > limit {
 		docs = docs[:limit]
 	}

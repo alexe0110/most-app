@@ -35,6 +35,8 @@ type docs struct {
 	// registerAlbum remembers an album's images for the "one PDF" button and
 	// returns its token; set by Register (the converter owns the PDF work).
 	registerAlbum func(user docsbot.UserID, group string, images []albumImage) string
+	// pauseFile and pauseAlbum space out export sends under the Bot API rate limit.
+	pauseFile, pauseAlbum time.Duration
 }
 
 func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Option) *docs {
@@ -45,6 +47,8 @@ func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Op
 		searches: newSearchStore(time.Now),
 		origins:  newOriginStore(time.Now),
 		albums:   newAlbumBuffer(),
+
+		pauseFile: exportPause, pauseAlbum: exportAlbumPause,
 	}
 	for _, opt := range opts {
 		opt(d)
@@ -356,13 +360,28 @@ func (d *docs) onRetryAll(ctx context.Context, b *bot.Bot, u *models.Update, use
 	d.redrawStatus(ctx, b, user, view)
 }
 
-// onExport resends the user's stored documents from Telegram, paced under the
-// Bot API rate limit, up to the service's per-request cap.
+// onExport is the "send all documents" button.
 func (d *docs) onExport(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
 	chatID, ok := callbackChat(u)
 	if !ok {
 		return
 	}
+	d.export(ctx, b, chatID, user)
+}
+
+// exportCmd is the /export command.
+func (d *docs) exportCmd(ctx context.Context, b *bot.Bot, u *models.Update) {
+	user, ok := userID(ctx)
+	if !ok {
+		return
+	}
+	d.export(ctx, b, u.Message.Chat.ID, user)
+}
+
+// export resends the user's stored documents from Telegram, up to the service's
+// per-request cap: photos and documents go in albums of up to maxAlbumFiles, paced
+// under the Bot API rate limit.
+func (d *docs) export(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID) {
 	exp, err := d.svc.ExportAll(ctx, user)
 	if err != nil {
 		d.fail(ctx, b, chatID, "export", err)
@@ -374,17 +393,71 @@ func (d *docs) onExport(ctx context.Context, b *bot.Bot, u *models.Update, user 
 	}
 	d.log.InfoContext(ctx, "export started", "user_id", user, "count", len(exp.Docs))
 	reply(ctx, b, d.log, chatID, textExportStart)
-	for i, doc := range exp.Docs {
-		if i > 0 && !pause(ctx, exportPause) {
-			return // context cancelled; stop sending
+	prev := 0
+	for i, batch := range exportBatches(exp.Docs) {
+		if i > 0 {
+			gap := d.pauseFile
+			if len(batch) > 1 || prev > 1 {
+				gap = d.pauseAlbum
+			}
+			if !pause(ctx, gap) {
+				return // context cancelled; stop sending
+			}
 		}
-		d.sendFile(ctx, b, chatID, doc)
+		prev = len(batch)
+		if len(batch) == 1 {
+			d.sendFile(ctx, b, chatID, batch[0])
+			continue
+		}
+		d.sendAlbum(ctx, b, chatID, batch)
 	}
 	if exp.Truncated {
 		reply(ctx, b, d.log, chatID, fmt.Sprintf(textExportTruncated, len(exp.Docs), exp.Total))
 		return
 	}
 	reply(ctx, b, d.log, chatID, fmt.Sprintf(textExportDone, len(exp.Docs)))
+}
+
+// maxAlbumFiles is the most files Telegram takes in one media group.
+const maxAlbumFiles = 10
+
+// exportBatches splits documents, in order, into runs of one kind (photo or
+// document: Telegram does not mix them in an album) of at most maxAlbumFiles.
+func exportBatches(docs []docsbot.Document) [][]docsbot.Document {
+	var out [][]docsbot.Document
+	for _, doc := range docs {
+		if n := len(out); n > 0 {
+			last := out[n-1]
+			if len(last) < maxAlbumFiles && (last[0].Kind == docsbot.KindPhoto) == (doc.Kind == docsbot.KindPhoto) {
+				out[n-1] = append(last, doc)
+				continue
+			}
+		}
+		out = append(out, []docsbot.Document{doc})
+	}
+	return out
+}
+
+// sendAlbum resends 2-10 stored files of one kind as a media group by file_id.
+func (d *docs) sendAlbum(ctx context.Context, b *bot.Bot, chatID int64, batch []docsbot.Document) {
+	media := make([]models.InputMedia, 0, len(batch))
+	for _, doc := range batch {
+		caption := doc.Title + " · " + doc.Category.Label()
+		if doc.Kind == docsbot.KindPhoto {
+			media = append(media, &models.InputMediaPhoto{Media: doc.TgFileID, Caption: caption})
+		} else {
+			media = append(media, &models.InputMediaDocument{Media: doc.TgFileID, Caption: caption})
+		}
+	}
+	start := time.Now()
+	_, err := b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{ChatID: chatID, Media: media})
+	traceAPI(ctx, d.log, "sendMediaGroup", start)
+	if err != nil {
+		d.log.ErrorContext(ctx, "send album", "err", err, "user_id", batch[0].UserID, "count", len(batch))
+		reply(ctx, b, d.log, chatID, textSendFailed)
+		return
+	}
+	d.log.InfoContext(ctx, "album sent", "user_id", batch[0].UserID, "count", len(batch))
 }
 
 // onDeleteData arms the "type УДАЛИТЬ" confirmation and explains what is removed.
@@ -397,7 +470,7 @@ func (d *docs) onDeleteData(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.log.InfoContext(ctx, "delete data requested", "user_id", user)
 	}
 	d.confirms.arm(u.CallbackQuery.From.ID)
-	reply(ctx, b, d.log, chatID, textDeleteDataPrompt)
+	d.send(ctx, b, chatID, textDeleteDataPrompt, exportFirstKeyboard())
 }
 
 // onDeleteConfirm deletes everything once the user typed the exact word.
@@ -1451,8 +1524,12 @@ func (s *searchStore) take(user int64) (string, bool) {
 // confirmWord is the exact word the user must type to delete all their data.
 const confirmWord = "УДАЛИТЬ"
 
-// exportPause spaces out resent files to stay under Telegram's rate limit.
-const exportPause = 50 * time.Millisecond
+// exportPause spaces out resent single files, and exportAlbumPause albums, to
+// stay under Telegram's rate limit (about 20 messages a minute into one chat).
+const (
+	exportPause      = 50 * time.Millisecond
+	exportAlbumPause = time.Second
+)
 
 // pause waits for d, returning false if ctx is cancelled first.
 func pause(ctx context.Context, d time.Duration) bool {
