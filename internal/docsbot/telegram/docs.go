@@ -190,7 +190,8 @@ func (d *docs) logReceived(ctx context.Context, user docsbot.UserID, rep docsbot
 	}
 }
 
-// onText handles any non-command text: a pending rename, otherwise a search.
+// onText handles any non-command text: a pending rename, otherwise a search. A
+// text sent after the rename expired (or the bot restarted) is just a search.
 func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 	if u.Message == nil || u.Message.From == nil {
 		return
@@ -208,14 +209,8 @@ func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.onDeleteConfirm(ctx, b, chatID, user, u.Message.Text)
 		return
 	}
-	if id, chat, msg, ok := d.renames.take(u.Message.From.ID); ok {
-		d.applyRename(ctx, b, chatID, user, id, chat, msg, u.Message.Text)
-		return
-	}
-	// A reply to the rename prompt with no armed rename: the bot restarted or
-	// the rename expired. Don't treat the new name as a search query.
-	if rp := u.Message.ReplyToMessage; rp != nil && rp.Text == textRenamePrompt {
-		reply(ctx, b, d.log, chatID, textStale)
+	if e, ok := d.renames.take(u.Message.From.ID); ok {
+		d.applyRename(ctx, b, user, e, u.Message)
 		return
 	}
 	d.searches.set(u.Message.From.ID, u.Message.Text)
@@ -248,6 +243,10 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 	if len(parts) < 2 {
 		return
 	}
+	if parts[1] != actRenameCancel {
+		// Any other button abandons a rename prompt that sits on another message.
+		d.releaseRename(ctx, b, user, u)
+	}
 	switch parts[1] {
 	case actCategory:
 		d.onCategory(ctx, b, u, user, parts)
@@ -263,6 +262,8 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.onSend(ctx, b, u, user, parts)
 	case actRename:
 		d.onRenamePrompt(ctx, b, u, parts)
+	case actRenameCancel:
+		d.onRenameCancel(ctx, b, u, user, parts)
 	case actDeleteAsk:
 		d.onDeleteAsk(ctx, b, u, user, parts)
 	case actDeleteYes:
@@ -794,7 +795,8 @@ func (d *docs) onSend(ctx context.Context, b *bot.Bot, u *models.Update, user do
 	d.sendFile(ctx, b, chatID, card.Doc)
 }
 
-// onRenamePrompt arms the rename and asks for the new name via force reply.
+// onRenamePrompt arms the rename and turns the card's own message into the
+// prompt, with a cancel button. Typing the name is the next text message.
 func (d *docs) onRenamePrompt(ctx context.Context, b *bot.Bot, u *models.Update, parts []string) {
 	id, ok := docID(parts)
 	if !ok {
@@ -805,31 +807,89 @@ func (d *docs) onRenamePrompt(ctx context.Context, b *bot.Bot, u *models.Update,
 		return
 	}
 	d.renames.set(u.CallbackQuery.From.ID, id, chatID, msgID)
-	start := time.Now()
-	_, err := b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:      chatID,
-		Text:        textRenamePrompt,
-		ReplyMarkup: &models.ForceReply{ForceReply: true, InputFieldPlaceholder: "Новое имя"},
-	})
-	traceAPI(ctx, d.log, "sendMessage", start)
+	d.editMessage(ctx, b, chatID, msgID, textRenamePrompt, renameCancelKeyboard(id))
+}
+
+// onRenameCancel drops the rename armed on this message, if any, and puts the
+// card back. Repeating it, or pressing it on a stale prompt, only redraws the card.
+func (d *docs) onRenameCancel(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	id, ok := docID(parts)
+	if !ok {
+		return
+	}
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	d.renames.drop(u.CallbackQuery.From.ID, chatID, msgID)
+	d.restoreCard(ctx, b, user, chatID, msgID, id)
+}
+
+// releaseRename ends the user's armed rename when they press a button on another
+// message and returns that message to the card it was.
+func (d *docs) releaseRename(ctx context.Context, b *bot.Bot, user docsbot.UserID, u *models.Update) {
+	e, ok := d.renames.take(u.CallbackQuery.From.ID)
+	if !ok {
+		return
+	}
+	if chatID, msgID, ok := callbackMessage(u); ok && e.chat == chatID && e.msg == msgID {
+		return
+	}
+	d.restoreCard(ctx, b, user, e.chat, e.msg, e.id)
+}
+
+// restoreCard redraws a message as the document's card, keeping where it was
+// opened from. A vanished document turns the message into the "gone" note.
+func (d *docs) restoreCard(ctx context.Context, b *bot.Bot, user docsbot.UserID, chatID int64, msgID int, id docsbot.DocumentID) {
+	card, err := d.svc.Card(ctx, user, id)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		d.gone(ctx, b, chatID, msgID)
+		return
+	}
 	if err != nil {
-		d.log.Error("send rename prompt", "err", err)
+		d.log.ErrorContext(ctx, "restore card", "err", err, "user_id", user)
+		return
+	}
+	orig, _ := d.origins.get(chatID, msgID)
+	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
+}
+
+// applyRename takes the typed name: the user's message is removed (the chat stays
+// clean), then the prompt message becomes the renamed card, or shows a hint and
+// keeps waiting when the name is unusable.
+func (d *docs) applyRename(ctx context.Context, b *bot.Bot, user docsbot.UserID, e renameEntry, m *models.Message) {
+	d.deleteUserMessage(ctx, b, m.Chat.ID, m.ID)
+	card, err := d.svc.Rename(ctx, user, e.id, m.Text)
+	switch {
+	case errors.Is(err, docsbot.ErrEmptyTitle):
+		d.renameHint(ctx, b, m.From.ID, e, textRenameEmpty)
+	case errors.Is(err, docsbot.ErrTitleTooLong):
+		d.renameHint(ctx, b, m.From.ID, e, fmt.Sprintf(textRenameTooLong, docsbot.MaxTitleRunes))
+	case errors.Is(err, docsbot.ErrNotFound):
+		d.gone(ctx, b, e.chat, e.msg)
+	case err != nil:
+		d.fail(ctx, b, e.chat, "rename", err)
+	default:
+		d.log.InfoContext(ctx, "document renamed", "user_id", user, "doc_id", e.id)
+		orig, _ := d.origins.get(e.chat, e.msg)
+		d.editCard(ctx, b, e.chat, e.msg, card.Doc, card.CategoryFolderID, orig)
 	}
 }
 
-func (d *docs) applyRename(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID, cardChat int64, cardMsg int, title string) {
-	card, err := d.svc.Rename(ctx, user, id, title)
-	switch {
-	case errors.Is(err, docsbot.ErrEmptyTitle):
-		reply(ctx, b, d.log, chatID, textRenameEmpty)
-	case errors.Is(err, docsbot.ErrNotFound):
-		reply(ctx, b, d.log, chatID, textGone)
-	case err != nil:
-		d.fail(ctx, b, chatID, "rename", err)
-	default:
-		d.log.InfoContext(ctx, "document renamed", "user_id", user, "doc_id", id)
-		orig, _ := d.origins.get(cardChat, cardMsg)
-		d.editCard(ctx, b, cardChat, cardMsg, card.Doc, card.CategoryFolderID, orig)
+// renameHint re-arms the rename and tells, in the prompt message itself, what was wrong.
+func (d *docs) renameHint(ctx context.Context, b *bot.Bot, tgUser int64, e renameEntry, hint string) {
+	d.renames.set(tgUser, e.id, e.chat, e.msg)
+	d.editMessage(ctx, b, e.chat, e.msg, hint, renameCancelKeyboard(e.id))
+}
+
+// deleteUserMessage removes the user's message from the chat. It is cosmetic: a
+// failure (too old, no right) is only logged.
+func (d *docs) deleteUserMessage(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
+	start := time.Now()
+	_, err := b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: msgID})
+	traceAPI(ctx, d.log, "deleteMessage", start)
+	if err != nil {
+		d.log.WarnContext(ctx, "delete user message", "err", err)
 	}
 }
 
@@ -1164,7 +1224,7 @@ func (d *docs) editMessage(ctx context.Context, b *bot.Bot, chatID int64, msgID 
 	start := time.Now()
 	_, err := b.EditMessageText(ctx, params)
 	traceAPI(ctx, d.log, "editMessageText", start)
-	if err != nil {
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
 		d.log.Error("edit telegram message", "err", err)
 	}
 }
@@ -1247,8 +1307,9 @@ func deepLinkConnected(text string) bool {
 	return strings.TrimSpace(arg) == "connected"
 }
 
-// renameStore remembers which document a user is renaming. In memory only: a
-// restart drops it, and a stale arm (older than the TTL) is ignored.
+// renameStore remembers which document a user is renaming and on which message
+// the prompt sits. In memory only: a restart drops it, and a stale arm (older
+// than the TTL) is ignored.
 type renameStore struct {
 	mu  sync.Mutex
 	m   map[int64]renameEntry
@@ -1257,7 +1318,7 @@ type renameStore struct {
 
 type renameEntry struct {
 	id   docsbot.DocumentID
-	chat int64 // the card's message, edited in place after the rename
+	chat int64 // the card's message: it shows the prompt, then the renamed card
 	msg  int
 	at   time.Time
 }
@@ -1274,19 +1335,29 @@ func (s *renameStore) set(user int64, id docsbot.DocumentID, chat int64, msg int
 	s.m[user] = renameEntry{id: id, chat: chat, msg: msg, at: s.now()}
 }
 
-// take removes and returns the armed document, if any and not expired.
-func (s *renameStore) take(user int64) (id docsbot.DocumentID, chat int64, msg int, ok bool) {
+// take removes and returns the armed rename, if any and not expired.
+func (s *renameStore) take(user int64) (renameEntry, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, found := s.m[user]
 	if !found {
-		return "", 0, 0, false
+		return renameEntry{}, false
 	}
 	delete(s.m, user)
 	if s.now().Sub(e.at) > renameTTL {
-		return "", 0, 0, false
+		return renameEntry{}, false
 	}
-	return e.id, e.chat, e.msg, true
+	return e, true
+}
+
+// drop forgets the user's rename if it is armed on that message; one armed on
+// another message (a newer prompt) is left alone.
+func (s *renameStore) drop(user int64, chat int64, msg int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e, ok := s.m[user]; ok && e.chat == chat && e.msg == msg {
+		delete(s.m, user)
+	}
 }
 
 // originStore remembers where each card message was opened from (a list page, the

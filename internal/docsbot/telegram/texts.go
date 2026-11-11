@@ -32,8 +32,9 @@ const (
 	textGroupTooLarge       = "Слишком большие для Drive, остались в Telegram: %d" // %d = files
 	textAlreadySaved        = "Этот файл уже сохранён."
 
-	textRenamePrompt = "Пришли новое название документа."
-	textRenameEmpty  = "Название пустое. Нажми «Имя» и пришли название ещё раз."
+	textRenamePrompt  = "Пришли новое название"
+	textRenameEmpty   = "Название пустое. Пришли новое название или нажми «Отмена»."
+	textRenameTooLong = "Название слишком длинное, максимум %d символов. Пришли покороче или нажми «Отмена»." // docsbot.MaxTitleRunes
 
 	textDeleteConfirm = "Удалить этот документ? Отменить будет нельзя."
 	// textDeleteConfirmDrive is shown for a document in a connected Drive.
@@ -126,6 +127,7 @@ const (
 	btnDelete             = "🗑 Удалить"
 	btnDeleteYes          = "Да, удалить"
 	btnDeleteNo           = "Отмена"
+	btnRenameCancel       = "Отмена"
 	btnTransfer           = "📤 Перенести в Drive"
 	btnBack               = "⬅️ Назад"
 	btnMyDocs             = "📂 Мои документы"

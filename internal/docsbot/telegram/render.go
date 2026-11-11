@@ -24,7 +24,8 @@ const (
 	actSetCategory   = "sc"  // change an existing document's category
 	actChangeCat     = "chc" // show the category picker for a card
 	actSend          = "snd" // resend the original file
-	actRename        = "rn"  // ask for a new title (force reply)
+	actRename        = "rn"  // ask for a new title: the card message becomes the prompt
+	actRenameCancel  = "rnc" // cancel the rename prompt: d:rnc:<docID>
 	actDeleteAsk     = "del" // ask to confirm deletion
 	actDeleteYes     = "dy"  // confirm deletion
 	actDeleteNo      = "dn"  // cancel deletion
@@ -113,6 +114,13 @@ func albumChoiceKeyboard(token string, pickDoc docsbot.DocumentID) *models.Inlin
 // convertRow is a one-button row opening the convert menu of a document.
 func convertRow(id docsbot.DocumentID, label string) []models.InlineKeyboardButton {
 	return []models.InlineKeyboardButton{{Text: label, CallbackData: cbDocPrefix + string(id)}}
+}
+
+// renameCancelKeyboard is the single "Отмена" button under the rename prompt.
+func renameCancelKeyboard(id docsbot.DocumentID) *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: btnRenameCancel, CallbackData: cb(actRenameCancel, id)},
+	}}}
 }
 
 func connectKeyboard(url string) *models.InlineKeyboardMarkup {

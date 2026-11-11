@@ -910,12 +910,16 @@ func (s *Service) allowRemoteCheck(id DocumentID) bool {
 	return true
 }
 
-// Rename changes a document's title to a normalized, non-blank value. When Drive
-// is connected a backed-up document's file is renamed by the sync worker.
+// Rename changes a document's title to a normalized, non-blank value of at most
+// MaxTitleRunes runes: a longer title is refused (ErrTitleTooLong), not cut. When
+// Drive is connected a backed-up document's file is renamed by the sync worker.
 func (s *Service) Rename(ctx context.Context, user UserID, id DocumentID, title string) (Card, error) {
-	title = NormalizeTitle(title)
+	title = collapseTitle(title)
 	if title == "" {
 		return Card{}, ErrEmptyTitle
+	}
+	if len([]rune(title)) > MaxTitleRunes {
+		return Card{}, ErrTitleTooLong
 	}
 	connected, err := s.drive.Connected(ctx, user)
 	if err != nil {

@@ -2,10 +2,12 @@ package telegram_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -28,6 +30,8 @@ type capture struct {
 	editMarkups []string // editMessageText reply_markup
 	files       []string // sendDocument/sendPhoto caption
 	deletes     int      // deleteMessage calls
+	deleteIDs   []int    // message_id of each deleteMessage
+	editIDs     []int    // message_id of each editMessageText
 	answers     []string // answerCallbackQuery toast texts
 }
 
@@ -35,6 +39,12 @@ func (c *capture) record(bucket *[]string, s string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	*bucket = append(*bucket, s)
+}
+
+// formInt reads an integer form field of a Bot API request, 0 when absent.
+func formInt(r *http.Request, key string) int {
+	n, _ := strconv.Atoi(r.FormValue(key))
+	return n
 }
 
 // has reports whether any captured message contains sub.
@@ -81,6 +91,7 @@ func newBotOpts(t *testing.T, log *slog.Logger, drive fakeDrive, opts ...telegra
 		case strings.HasSuffix(r.URL.Path, "/deleteMessage"):
 			sent.mu.Lock()
 			sent.deletes++
+			sent.deleteIDs = append(sent.deleteIDs, formInt(r, "message_id"))
 			sent.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"ok":true,"result":true}`)
@@ -89,6 +100,9 @@ func newBotOpts(t *testing.T, log *slog.Logger, drive fakeDrive, opts ...telegra
 			sent.record(&sent.answers, r.FormValue("text"))
 		case strings.HasSuffix(r.URL.Path, "/editMessageText"):
 			sent.record(&sent.edits, r.FormValue("text"))
+			sent.mu.Lock()
+			sent.editIDs = append(sent.editIDs, formInt(r, "message_id"))
+			sent.mu.Unlock()
 			sent.record(&sent.editMarkups, r.FormValue("reply_markup"))
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -230,6 +244,13 @@ func dataCallbackMsg(chatID int64, msgID int, data string) *models.Update {
 			Message: &models.Message{ID: msgID, Chat: models.Chat{ID: chatID, Type: models.ChatTypePrivate}},
 		},
 	}}
+}
+
+// textUpdateID is textUpdate with a message id (the bot deletes renamed-title messages).
+func textUpdateID(chatID int64, msgID int, text string) *models.Update {
+	u := textUpdate(chatID, text)
+	u.Message.ID = msgID
+	return u
 }
 
 func textUpdate(chatID int64, text string) *models.Update {
@@ -520,15 +541,170 @@ func TestRename_editsCardInPlace(t *testing.T) {
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 	doc := seedPassport(repo, "Старое", "u1")
 	b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(doc.ID)+":l:"+string(docsbot.CatPassport)+":1"))
+
 	b.ProcessUpdate(ctx, dataCallback(100, "d:rn:"+string(doc.ID)))
-	require.Len(t, sent.texts, 1, "only the force-reply prompt is sent")
 
-	b.ProcessUpdate(ctx, textUpdate(100, "Новое имя"))
+	prompt := sent.edits[len(sent.edits)-1]
+	require.Equal(t, "Пришли новое название", prompt, "the card message turns into the prompt")
+	require.Equal(t, "d:rnc:"+string(doc.ID), cancelData(t, sent.editMarkups[len(sent.editMarkups)-1]))
+	require.Empty(t, sent.texts, "no separate prompt message, no force reply")
 
-	require.Len(t, sent.texts, 1, "no new card message")
+	b.ProcessUpdate(ctx, textUpdateID(100, 55, "Новое имя"))
+
+	require.Empty(t, sent.texts, "no new message at all")
 	require.Equal(t, "Новое имя", repo.docs[doc.ID].Title)
+	require.Equal(t, []int{55}, sent.deleteIDs, "the user's message is removed")
+	require.Equal(t, 7, sent.editIDs[len(sent.editIDs)-1], "the same message is edited")
 	require.Contains(t, sent.edits[len(sent.edits)-1], "Новое имя")
 	require.True(t, has(sent.editMarkups, "d:lc:"+string(docsbot.CatPassport)+":1"), "origin kept: %q", sent.editMarkups)
+}
+
+// cancelData extracts the callback data of the only button of a prompt keyboard.
+func cancelData(t *testing.T, markup string) string {
+	t.Helper()
+	var kb models.InlineKeyboardMarkup
+	require.NoError(t, json.Unmarshal([]byte(markup), &kb))
+	require.Len(t, kb.InlineKeyboard, 1)
+	require.Len(t, kb.InlineKeyboard[0], 1)
+	require.Equal(t, "Отмена", kb.InlineKeyboard[0][0].Text)
+	return kb.InlineKeyboard[0][0].CallbackData
+}
+
+func TestRename_invalidTitleKeepsWaiting(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		wantHint string
+	}{
+		{"blank", " \n\u200b ", "Название пустое"},
+		{"too long", strings.Repeat("я", docsbot.MaxTitleRunes+1), "слишком длинное"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, sent, repo := newBot(t)
+			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			doc := seedPassport(repo, "Старое", "u1")
+			b.ProcessUpdate(ctx, dataCallback(100, "d:rn:"+string(doc.ID)))
+
+			b.ProcessUpdate(ctx, textUpdateID(100, 55, tt.text))
+
+			require.Contains(t, sent.edits[len(sent.edits)-1], tt.wantHint, "hint in the same message")
+			require.Equal(t, 7, sent.editIDs[len(sent.editIDs)-1])
+			require.Equal(t, "d:rnc:"+string(doc.ID), cancelData(t, sent.editMarkups[len(sent.editMarkups)-1]))
+			require.Empty(t, sent.texts)
+			require.Equal(t, "Старое", repo.docs[doc.ID].Title)
+
+			// The state is kept: the next valid name goes through.
+			b.ProcessUpdate(ctx, textUpdateID(100, 56, "Хорошее имя"))
+			require.Equal(t, "Хорошее имя", repo.docs[doc.ID].Title)
+			require.Equal(t, []int{55, 56}, sent.deleteIDs)
+		})
+	}
+}
+
+func TestRename_cancelRestoresCardAndIsRepeatable(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := seedPassport(repo, "Старое", "u1")
+	b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(doc.ID)+":s"))
+	b.ProcessUpdate(ctx, dataCallback(100, "d:rn:"+string(doc.ID)))
+
+	b.ProcessUpdate(ctx, dataCallback(100, "d:rnc:"+string(doc.ID)))
+	require.Contains(t, sent.edits[len(sent.edits)-1], "Старое", "card is back")
+	require.True(t, has(sent.editMarkups[len(sent.editMarkups)-1:], "d:sb"), "with its Назад")
+
+	// A repeated tap is harmless: it just redraws the card.
+	b.ProcessUpdate(ctx, dataCallback(100, "d:rnc:"+string(doc.ID)))
+	require.Contains(t, sent.edits[len(sent.edits)-1], "Старое")
+
+	// The state is gone: a text is a search, not a rename.
+	b.ProcessUpdate(ctx, textUpdateID(100, 60, "Новое"))
+	require.Equal(t, "Старое", repo.docs[doc.ID].Title)
+	require.Empty(t, sent.deleteIDs)
+	require.True(t, has(sent.texts, "Ничего не нашёл") || has(sent.texts, "Нашёл"), "texts %q", sent.texts)
+}
+
+func TestRename_staleCancelHasNoSideEffects(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := seedPassport(repo, "Старое", "u1")
+	other := seedPassport(repo, "Другое", "u2")
+	// B is armed on message 8; a stale cancel of message 7 must not drop it.
+	b.ProcessUpdate(ctx, dataCallbackMsg(100, 8, "d:rn:"+string(other.ID)))
+
+	b.ProcessUpdate(ctx, dataCallbackMsg(100, 7, "d:rnc:"+string(doc.ID)))
+
+	require.Equal(t, 7, sent.editIDs[len(sent.editIDs)-1])
+	require.Contains(t, sent.edits[len(sent.edits)-1], "Старое")
+	b.ProcessUpdate(ctx, textUpdateID(100, 61, "Имя для второго"))
+	require.Equal(t, "Имя для второго", repo.docs[other.ID].Title, "the newer prompt is still armed")
+	require.Equal(t, "Старое", repo.docs[doc.ID].Title)
+}
+
+func TestRename_otherButtonRestoresPromptCard(t *testing.T) {
+	tests := []struct {
+		name     string
+		callback func(doc docsbot.Document) string
+	}{
+		{"open another card", func(docsbot.Document) string { return "d:lb" }},
+		{"delete ask", func(d docsbot.Document) string { return "d:del:" + string(d.ID) }},
+		{"category", func(d docsbot.Document) string { return "d:chc:" + string(d.ID) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, sent, repo := newBot(t)
+			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			doc := seedPassport(repo, "Старое", "u1")
+			other := seedPassport(repo, "Другое", "u2")
+			b.ProcessUpdate(ctx, dataCallbackMsg(100, 7, "d:rn:"+string(doc.ID)))
+			sent.edits, sent.editIDs = nil, nil
+
+			b.ProcessUpdate(ctx, dataCallbackMsg(100, 9, tt.callback(other)))
+
+			require.Equal(t, 7, sent.editIDs[0], "the prompt message is returned to its card first")
+			require.Contains(t, sent.edits[0], "Старое")
+			// And the text is no longer a rename.
+			b.ProcessUpdate(ctx, textUpdateID(100, 62, "Не имя"))
+			require.Equal(t, "Старое", repo.docs[doc.ID].Title)
+			require.Empty(t, sent.deleteIDs)
+		})
+	}
+}
+
+func TestRename_newPromptRestoresPreviousCard(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	a := seedPassport(repo, "Первое", "u1")
+	c := seedPassport(repo, "Второе", "u2")
+	b.ProcessUpdate(ctx, dataCallbackMsg(100, 7, "d:rn:"+string(a.ID)))
+	sent.edits, sent.editIDs = nil, nil
+
+	b.ProcessUpdate(ctx, dataCallbackMsg(100, 9, "d:rn:"+string(c.ID)))
+
+	require.Equal(t, []int{7, 9}, sent.editIDs)
+	require.Contains(t, sent.edits[0], "Первое", "the first message is a card again")
+	require.Equal(t, "Пришли новое название", sent.edits[1])
+	b.ProcessUpdate(ctx, textUpdateID(100, 63, "Новое для второго"))
+	require.Equal(t, "Новое для второго", repo.docs[c.ID].Title)
+	require.Equal(t, "Первое", repo.docs[a.ID].Title)
+}
+
+func TestRename_expiredStateIsASearch(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := seedPassport(repo, "Старое", "u1")
+
+	// No armed rename (restart or TTL): the text goes to search, nothing is renamed or deleted.
+	b.ProcessUpdate(ctx, textUpdateID(100, 64, "Новое имя"))
+
+	require.Equal(t, "Старое", repo.docs[doc.ID].Title)
+	require.Empty(t, sent.deleteIDs)
+	require.Len(t, sent.texts, 1)
+
+	// A cancel on the stale prompt only restores the card.
+	b.ProcessUpdate(ctx, dataCallback(100, "d:rnc:"+string(doc.ID)))
+	require.Contains(t, sent.edits[len(sent.edits)-1], "Старое")
+	require.Equal(t, "Старое", repo.docs[doc.ID].Title)
 }
 
 func TestRename_deletedDocumentIsGone(t *testing.T) {
@@ -538,9 +714,9 @@ func TestRename_deletedDocumentIsGone(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallback(100, "d:rn:"+string(doc.ID)))
 	delete(repo.docs, doc.ID)
 
-	b.ProcessUpdate(ctx, textUpdate(100, "Новое"))
+	b.ProcessUpdate(ctx, textUpdateID(100, 65, "Новое"))
 
-	require.True(t, has(sent.texts, "Этого документа уже нет"), "texts %q", sent.texts)
+	require.True(t, has(sent.edits, "Этого документа уже нет"), "edits %q", sent.edits)
 	require.False(t, has(sent.texts, "Что-то пошло не так"))
 }
 

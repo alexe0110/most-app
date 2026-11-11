@@ -3,7 +3,6 @@ package telegram_test
 import (
 	"testing"
 
-	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
@@ -13,21 +12,16 @@ import (
 // The in-memory stores (renames, searches, origins, sessions) are empty after
 // a restart. These tests press old buttons against empty stores.
 
-func replyToRenamePrompt(chatID int64, text string) *models.Update {
-	u := textUpdate(chatID, text)
-	u.Message.ReplyToMessage = &models.Message{Text: "Пришли новое название документа."}
-	return u
-}
-
-func TestRestart_renameReplyWithoutArmedRenameIsStale(t *testing.T) {
+func TestRestart_renameTextWithoutArmedRenameIsASearch(t *testing.T) {
 	b, sent, repo := newBot(t)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 	doc := seedPassport(repo, "Старое", "u1")
 
-	b.ProcessUpdate(ctx, replyToRenamePrompt(100, "Новое имя"))
+	b.ProcessUpdate(ctx, textUpdateID(100, 9, "Новое имя"))
 
-	require.Equal(t, []string{"Кнопка устарела, открой заново."}, sent.texts)
 	require.Equal(t, "Старое", repo.docs[doc.ID].Title, "title untouched")
+	require.Zero(t, sent.deletes, "the message is not deleted")
+	require.Len(t, sent.texts, 1, "answered as a search")
 }
 
 func TestRestart_plainTextStillSearches(t *testing.T) {

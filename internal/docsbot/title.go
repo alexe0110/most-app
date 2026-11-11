@@ -14,6 +14,15 @@ const MaxTitleRunes = 100
 // spaces, whitespace runs collapse, the result is trimmed and capped at
 // MaxTitleRunes runes (a rune is never split). Blank input yields "".
 func NormalizeTitle(s string) string {
+	s = collapseTitle(s)
+	if r := []rune(s); len(r) > MaxTitleRunes {
+		s = strings.TrimSpace(string(r[:MaxTitleRunes]))
+	}
+	return s
+}
+
+// collapseTitle is NormalizeTitle without the length cap.
+func collapseTitle(s string) string {
 	s = strings.Map(func(r rune) rune {
 		if unicode.IsSpace(r) || unicode.IsControl(r) || isInvisibleFormat(r) {
 			return ' '
@@ -23,9 +32,6 @@ func NormalizeTitle(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if strings.Trim(s, " \u200d") == "" { // only joiners left: visually blank
 		return ""
-	}
-	if r := []rune(s); len(r) > MaxTitleRunes {
-		s = strings.TrimSpace(string(r[:MaxTitleRunes]))
 	}
 	return s
 }
