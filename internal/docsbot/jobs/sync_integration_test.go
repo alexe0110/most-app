@@ -47,6 +47,10 @@ func (d *cloudDrive) Rename(_ context.Context, _ docsbot.UserID, _, name string)
 	return nil
 }
 
+func (d *cloudDrive) FileExists(context.Context, docsbot.UserID, string) (bool, error) {
+	return true, nil
+}
+
 func (d *cloudDrive) Trash(_ context.Context, _ docsbot.UserID, remoteID string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()

@@ -33,6 +33,13 @@ type fakeDrive struct {
 	trashErr   error
 	replaceErr error
 	uploadedAs *string // last Upload name, when set
+
+	// FileExists: existsRes is the answer, existsErr the failure; checks counts
+	// calls and checkDeadline records the context's remaining time on each call.
+	existsRes     bool
+	existsErr     error
+	existsCalls   *int
+	checkDeadline *time.Duration
 }
 
 func (d fakeDrive) record(op string) {
@@ -54,6 +61,17 @@ func (d fakeDrive) Move(_ context.Context, _ docsbot.UserID, remoteID string, ca
 func (d fakeDrive) Trash(_ context.Context, _ docsbot.UserID, remoteID string) error {
 	d.record("trash:" + remoteID)
 	return d.trashErr
+}
+
+func (d fakeDrive) FileExists(ctx context.Context, _ docsbot.UserID, remoteID string) (bool, error) {
+	d.record("exists:" + remoteID)
+	if d.existsCalls != nil {
+		*d.existsCalls++
+	}
+	if dl, ok := ctx.Deadline(); ok && d.checkDeadline != nil {
+		*d.checkDeadline = time.Until(dl)
+	}
+	return d.existsRes, d.existsErr
 }
 
 func (d fakeDrive) Replace(_ context.Context, _ docsbot.UserID, remoteID, _ string, _ []byte) error {
@@ -666,6 +684,19 @@ func (r *fakeRepo) MarkSynced(_ context.Context, user docsbot.UserID, id docsbot
 		return false, nil
 	}
 	d.SyncStatus, d.SyncReason, d.ContentDirty = docsbot.SyncOK, "", false
+	r.docs[id] = d
+	return true, nil
+}
+
+// TransitionSyncStatus mirrors the conditional UPDATE.
+func (r *fakeRepo) TransitionSyncStatus(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, from, to docsbot.SyncStatus) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	d, ok := r.docs[id]
+	if !ok || d.UserID != user || d.SyncStatus != from || d.BackupStatus != docsbot.BackupBackedUp {
+		return false, nil
+	}
+	d.SyncStatus, d.SyncReason = to, ""
 	r.docs[id] = d
 	return true, nil
 }

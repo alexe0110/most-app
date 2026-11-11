@@ -387,7 +387,7 @@ func renderCategoryPage(p docsbot.CategoryPage) (string, *models.InlineKeyboardM
 		prefix := "📄 "
 		if p.DriveConnected {
 			prefix = "📥 "
-			if doc.InDrive() {
+			if doc.InDrive() && doc.SyncStatus != docsbot.SyncMissing {
 				prefix = "☁️ "
 			}
 		}

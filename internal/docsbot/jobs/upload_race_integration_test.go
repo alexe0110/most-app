@@ -21,7 +21,6 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/jobs"
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
-	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 	"github.com/alexe0110/most-app/internal/platform/gdrive"
 	pjobs "github.com/alexe0110/most-app/internal/platform/jobs"
@@ -128,6 +127,10 @@ func (raceDrive) Rename(context.Context, docsbot.UserID, string, string) error {
 func (raceDrive) Move(context.Context, docsbot.UserID, string, docsbot.Category) error { return nil }
 
 func (raceDrive) Trash(context.Context, docsbot.UserID, string) error { return nil }
+
+func (raceDrive) FileExists(context.Context, docsbot.UserID, string) (bool, error) {
+	return true, nil
+}
 
 func (raceDrive) Replace(context.Context, docsbot.UserID, string, string, []byte) error { return nil }
 

@@ -226,6 +226,11 @@ func (d driveBridge) Trash(ctx context.Context, user docsbot.UserID, remoteID st
 	return driveErr(d.gd.Trash(ctx, string(user), remoteID))
 }
 
+func (d driveBridge) FileExists(ctx context.Context, user docsbot.UserID, remoteID string) (bool, error) {
+	ok, err := d.gd.Exists(ctx, string(user), remoteID)
+	return ok, driveErr(err)
+}
+
 func (d driveBridge) Replace(ctx context.Context, user docsbot.UserID, remoteID, mime string, data []byte) error {
 	return driveErr(d.gd.Replace(ctx, string(user), remoteID, mime, data))
 }

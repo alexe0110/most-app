@@ -57,6 +57,11 @@ type Repo interface {
 	MarkSynced(ctx context.Context, user UserID, id DocumentID, metaVersion int) (bool, error)
 	// SetSyncStatus sets sync_status and sync_reason ("" clears it).
 	SetSyncStatus(ctx context.Context, user UserID, id DocumentID, s SyncStatus, reason string) error
+	// TransitionSyncStatus moves a backed-up document from one sync_status to
+	// another, clearing sync_reason, only while it still has the from status. It
+	// reports false when the status moved on (e.g. an edit queued a sync) or the
+	// document is gone, so a stale check never overwrites newer state.
+	TransitionSyncStatus(ctx context.Context, user UserID, id DocumentID, from, to SyncStatus) (bool, error)
 	// ClaimTransferable atomically moves every saved document that is not on Drive
 	// (none or failed) to pending and returns their ids, oldest first. Concurrent
 	// callers never receive the same document.
@@ -121,6 +126,10 @@ type Drive interface {
 	Move(ctx context.Context, user UserID, remoteID string, cat Category) error
 	// Trash moves the remote file to the provider's trash, never deleting it for good.
 	Trash(ctx context.Context, user UserID, remoteID string) error
+	// FileExists reports whether the remote file is still there; a file in the
+	// provider's trash counts as gone. A revoked grant returns ErrDriveRevoked,
+	// a disconnect ErrDriveDisconnected.
+	FileExists(ctx context.Context, user UserID, remoteID string) (bool, error)
 	// Replace overwrites the remote file's content, keeping its id, name and folder.
 	Replace(ctx context.Context, user UserID, remoteID, mime string, data []byte) error
 }

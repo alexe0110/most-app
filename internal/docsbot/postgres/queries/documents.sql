@@ -241,6 +241,16 @@ set sync_status = @sync_status,
 where id = @id
   and user_id = @user_id;
 
+-- name: TransitionSyncStatus :execrows
+-- Conditional: a concurrent edit that queued a sync (pending) is never overwritten.
+update documents
+set sync_status = @to_status,
+    sync_reason = null
+where id = @id
+  and user_id = @user_id
+  and sync_status = @from_status
+  and backup_status = 'backed_up';
+
 -- name: ClaimTransferableDocuments :many
 -- Atomically takes every saved document not yet on Drive (none, failed) for
 -- upload; a concurrent caller gets no rows for the same documents.

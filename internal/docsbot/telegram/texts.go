@@ -78,7 +78,7 @@ const (
 	textStorageSyncing      = "⏳ Обновляю в Drive…"
 	textStorageSyncFailed   = "⚠️ Не удалось обновить в Drive"
 	textStorageSyncRevoked  = "⚠️ Не удалось обновить в Drive: доступ отозван"
-	textStorageMissing      = "⚠️ Файл удалён в Drive"
+	textStorageMissing      = "📥 Файл удалён в Drive, копия осталась в Telegram"
 	textDriveFileStayed     = "В Drive файл остался в прежней папке"
 	textStorageTelegramOnly = "📥 Только в Telegram, ещё не в Drive"
 

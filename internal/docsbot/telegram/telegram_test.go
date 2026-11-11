@@ -606,3 +606,33 @@ func TestSettingsActions_logEventsWithoutLeaks(t *testing.T) {
 		require.NotContains(t, out, leak)
 	}
 }
+
+func TestOpenCard_detectsFileDeletedInDrive(t *testing.T) {
+	tests := []struct {
+		name      string
+		gone      bool
+		wantText  string
+		wantRetry bool
+		wantOpen  bool
+	}{
+		{"file deleted", true, "Файл удалён в Drive, копия осталась в Telegram", true, false},
+		{"file there", false, "В Google Drive", false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: true, gone: tt.gone})
+			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			doc := repo.seed(docsbot.Document{
+				UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Category: docsbot.CatPassport,
+				Title: "Паспорт РК", TgFileID: "f", TgFileUniqueID: "u",
+				BackupStatus: docsbot.BackupBackedUp, DriveFileID: "remote", SyncStatus: docsbot.SyncOK,
+			})
+
+			b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(doc.ID)+":s"))
+
+			require.True(t, has(sent.edits, tt.wantText), "edits %q", sent.edits)
+			require.Equal(t, tt.wantRetry, has(sent.editMarkups, "d:rt:"+string(doc.ID)), "markups %q", sent.editMarkups)
+			require.Equal(t, tt.wantOpen, has(sent.editMarkups, "drive.google.com/file"), "markups %q", sent.editMarkups)
+		})
+	}
+}

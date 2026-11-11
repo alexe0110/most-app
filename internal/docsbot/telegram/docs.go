@@ -1100,7 +1100,7 @@ func (d *docs) onOpenCard(ctx context.Context, b *bot.Bot, u *models.Update, use
 	if !ok {
 		return
 	}
-	card, err := d.svc.Card(ctx, user, id)
+	card, err := d.svc.OpenCard(ctx, user, id)
 	if errors.Is(err, docsbot.ErrNotFound) {
 		d.gone(ctx, b, chatID, msgID)
 		return

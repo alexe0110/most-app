@@ -25,6 +25,7 @@ func TestRenderCategoryPage_driveBadge(t *testing.T) {
 	}{
 		{"backed up", true, backedUp, "☁️ Backed"},
 		{"not backed up", true, pending, "📥 Pending"},
+		{"file deleted in drive", true, docsbot.Document{ID: "3", Title: "Gone", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing}, "📥 Gone"},
 		{"drive not connected", false, backedUp, "📄 Backed"},
 	}
 	for _, tt := range tests {
@@ -307,6 +308,11 @@ func TestStorageLine(t *testing.T) {
 	for _, tt := range tests {
 		require.Equal(t, tt.want, storageLine(docsbot.Document{BackupStatus: tt.st}), tt.st)
 	}
+}
+
+func TestStorageLine_fileDeletedInDrive(t *testing.T) {
+	doc := docsbot.Document{BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing}
+	require.Equal(t, "📥 Файл удалён в Drive, копия осталась в Telegram", storageLine(doc))
 }
 
 func TestRenderStatusMessage_single(t *testing.T) {

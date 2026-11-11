@@ -361,6 +361,22 @@ func (r *Repo) SetSyncStatus(ctx context.Context, user docsbot.UserID, id docsbo
 	return nil
 }
 
+// TransitionSyncStatus moves sync_status from -> to for a backed-up document and
+// reports whether the row still had the from status.
+func (r *Repo) TransitionSyncStatus(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, from, to docsbot.SyncStatus) (bool, error) {
+	docID, uid, err := ids(id, user)
+	if err != nil {
+		return false, err
+	}
+	n, err := r.Queries.TransitionSyncStatus(ctx, TransitionSyncStatusParams{
+		ID: docID, UserID: uid, FromStatus: string(from), ToStatus: string(to),
+	})
+	if err != nil {
+		return false, fmt.Errorf("transition sync status: %w", err)
+	}
+	return n > 0, nil
+}
+
 // ClaimTransferable atomically moves every saved none/failed document to
 // pending and returns their ids, oldest first.
 func (r *Repo) ClaimTransferable(ctx context.Context, user docsbot.UserID) ([]docsbot.DocumentID, error) {

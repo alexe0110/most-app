@@ -33,6 +33,10 @@ func (fakeDrive) Move(context.Context, docsbot.UserID, string, docsbot.Category)
 
 func (fakeDrive) Trash(context.Context, docsbot.UserID, string) error { return nil }
 
+func (fakeDrive) FileExists(context.Context, docsbot.UserID, string) (bool, error) {
+	return true, nil
+}
+
 func (fakeDrive) Replace(context.Context, docsbot.UserID, string, string, []byte) error { return nil }
 
 func (fakeDrive) Revoke(context.Context, docsbot.UserID) error { return nil }

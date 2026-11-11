@@ -17,6 +17,7 @@ import (
 type fakeDrive struct {
 	connected bool
 	revokeErr error // returned by Revoke and Disconnect
+	gone      bool  // FileExists reports the remote file as deleted
 }
 
 func (d fakeDrive) Connected(context.Context, docsbot.UserID) (bool, error) { return d.connected, nil }
@@ -30,6 +31,10 @@ func (fakeDrive) Rename(context.Context, docsbot.UserID, string, string) error {
 func (fakeDrive) Move(context.Context, docsbot.UserID, string, docsbot.Category) error { return nil }
 
 func (fakeDrive) Trash(context.Context, docsbot.UserID, string) error { return nil }
+
+func (d fakeDrive) FileExists(context.Context, docsbot.UserID, string) (bool, error) {
+	return !d.gone, nil
+}
 
 func (fakeDrive) Replace(context.Context, docsbot.UserID, string, string, []byte) error { return nil }
 
@@ -427,6 +432,17 @@ func (r *fakeRepo) MarkSynced(_ context.Context, user docsbot.UserID, id docsbot
 		return false, nil
 	}
 	d.SyncStatus, d.SyncReason, d.ContentDirty = docsbot.SyncOK, "", false
+	r.docs[id] = d
+	return true, nil
+}
+
+// TransitionSyncStatus mirrors the conditional UPDATE.
+func (r *fakeRepo) TransitionSyncStatus(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, from, to docsbot.SyncStatus) (bool, error) {
+	d, ok := r.docs[id]
+	if !ok || d.UserID != user || d.SyncStatus != from || d.BackupStatus != docsbot.BackupBackedUp {
+		return false, nil
+	}
+	d.SyncStatus, d.SyncReason = to, ""
 	r.docs[id] = d
 	return true, nil
 }

@@ -621,3 +621,41 @@ func TestSyncs_claimFailedRetryKeepsClockFresh(t *testing.T) {
 	require.NoError(t, e.pool.QueryRow(t.Context(), `select updated_at > now() - interval '1 minute' from documents where id = $1::uuid`, string(id)).Scan(&fresh))
 	require.True(t, fresh)
 }
+
+func TestSyncs_transitionSyncStatusIsConditional(t *testing.T) {
+	e := newSyncEnv(t)
+	ctx := t.Context()
+	tests := []struct {
+		name       string
+		backup     string
+		sync       string
+		from, to   docsbot.SyncStatus
+		wantMoved  bool
+		wantStatus string
+	}{
+		{"ok -> missing", "backed_up", "ok", docsbot.SyncOK, docsbot.SyncMissing, true, "missing"},
+		{"missing -> ok", "backed_up", "missing", docsbot.SyncMissing, docsbot.SyncOK, true, "ok"},
+		{"pending is not overwritten", "backed_up", "pending", docsbot.SyncOK, docsbot.SyncMissing, false, "pending"},
+		{"failed is not overwritten", "backed_up", "failed", docsbot.SyncOK, docsbot.SyncMissing, false, "failed"},
+		{"not backed up is untouched", "failed", "ok", docsbot.SyncOK, docsbot.SyncMissing, false, "ok"},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id := e.seed(t, e.user, "tr"+string(rune('a'+i)), tt.backup, tt.sync)
+			before := e.row(t, id)
+
+			moved, err := e.repo.TransitionSyncStatus(ctx, e.user, id, tt.from, tt.to)
+
+			require.NoError(t, err)
+			require.Equal(t, tt.wantMoved, moved)
+			got := e.row(t, id)
+			require.Equal(t, tt.wantStatus, got.Sync)
+			require.Equal(t, before.Meta, got.Meta, "meta_version is not bumped")
+
+			// A foreign user never moves it.
+			moved, err = e.repo.TransitionSyncStatus(ctx, e.otherUser, id, docsbot.SyncOK, docsbot.SyncMissing)
+			require.NoError(t, err)
+			require.False(t, moved)
+		})
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -39,6 +40,10 @@ const (
 	intakeWindow = time.Minute
 	// pendingTTL is how long a document may wait for a category before it is purged.
 	pendingTTL = 24 * time.Hour
+	// remoteCheckTimeout bounds the Drive existence check made when a card opens.
+	remoteCheckTimeout = 3 * time.Second
+	// remoteCheckEvery is the minimum gap between existence checks of one document.
+	remoteCheckEvery = time.Minute
 )
 
 // Service holds the Most Docs use cases. It depends only on ports, never on
@@ -53,6 +58,11 @@ type Service struct {
 	syncs   Syncs
 	now     func() time.Time
 	loc     *time.Location
+
+	// checks remembers when each document's Drive file was last looked up, to
+	// throttle OpenCard; guarded by checksMu.
+	checksMu sync.Mutex
+	checks   map[DocumentID]time.Time
 }
 
 // Option tunes a Service at construction.
@@ -74,6 +84,8 @@ func NewService(repo Repo, drive Drive, files FileSource, uploads Uploads, folde
 		repo: repo, drive: drive, files: files, uploads: uploads, folders: folders, status: status, syncs: syncs,
 		now: time.Now,
 		loc: defaultLocation(),
+
+		checks: make(map[DocumentID]time.Time),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -835,6 +847,67 @@ func (s *Service) Card(ctx context.Context, user UserID, id DocumentID) (Card, e
 		return Card{}, fmt.Errorf("category folder: %w", err)
 	}
 	return Card{Doc: doc, CategoryFolderID: folderID}, nil
+}
+
+// OpenCard is Card for a card the user opens from a list or search: when the
+// document has a live Drive file it also checks, at most once a minute and within
+// remoteCheckTimeout, that the file still exists, and flips the sync status
+// ok <-> missing accordingly. Any failure to check (network, timeout, revoked or
+// disconnected Drive) leaves the card as it is; nothing is re-uploaded here.
+func (s *Service) OpenCard(ctx context.Context, user UserID, id DocumentID) (Card, error) {
+	card, err := s.Card(ctx, user, id)
+	if err != nil {
+		return Card{}, err
+	}
+	doc := card.Doc
+	if !doc.InDrive() || doc.DriveFileID == "" || (doc.SyncStatus != SyncOK && doc.SyncStatus != SyncMissing) {
+		return card, nil
+	}
+	if connected, err := s.drive.Connected(ctx, user); err != nil || !connected {
+		return card, nil
+	}
+	if !s.allowRemoteCheck(doc.ID) {
+		return card, nil
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, remoteCheckTimeout)
+	defer cancel()
+	exists, err := s.drive.FileExists(checkCtx, user, doc.DriveFileID)
+	if err != nil {
+		return card, nil
+	}
+
+	from, to := SyncOK, SyncMissing
+	if exists {
+		from, to = SyncMissing, SyncOK
+	}
+	if doc.SyncStatus != from {
+		return card, nil
+	}
+	moved, err := s.repo.TransitionSyncStatus(ctx, user, doc.ID, from, to)
+	if err != nil || !moved {
+		return card, nil
+	}
+	card.Doc.SyncStatus, card.Doc.SyncReason = to, ""
+	return card, nil
+}
+
+// allowRemoteCheck reports whether the document's Drive file may be checked now,
+// and records the attempt. Entries older than the throttle window are dropped on
+// the way, so the map does not grow without bound.
+func (s *Service) allowRemoteCheck(id DocumentID) bool {
+	now := s.now()
+	s.checksMu.Lock()
+	defer s.checksMu.Unlock()
+	for k, t := range s.checks {
+		if now.Sub(t) >= remoteCheckEvery {
+			delete(s.checks, k)
+		}
+	}
+	if _, recent := s.checks[id]; recent {
+		return false
+	}
+	s.checks[id] = now
+	return true
 }
 
 // Rename changes a document's title to a normalized, non-blank value. When Drive

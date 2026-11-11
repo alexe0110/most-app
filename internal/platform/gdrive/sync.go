@@ -78,6 +78,29 @@ func (s *Service) Move(ctx context.Context, userID, fileID, cacheKey, folderName
 	return s.patch(ctx, httpc, "files.move", fileID, v.Encode(), map[string]any{})
 }
 
+// Exists reports whether the file is still in Drive: a 404 or a trashed file is
+// gone (false, nil). A revoked grant or any other failure is an error, so the
+// caller does not mistake an outage for a deleted file.
+func (s *Service) Exists(ctx context.Context, userID, fileID string) (bool, error) {
+	httpc, err := s.client(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	var meta struct {
+		ID      string `json:"id"`
+		Trashed bool   `json:"trashed"`
+	}
+	u := s.baseURL + "/drive/v3/files/" + url.PathEscape(fileID) + "?fields=id,trashed"
+	err = s.do(ctx, "files.exists", httpc, http.MethodGet, u, "", nil, &meta)
+	switch {
+	case errors.Is(err, errNotFound):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("drive check file: %w", err)
+	}
+	return !meta.Trashed, nil
+}
+
 // Trash moves the file to the Drive trash (never a permanent delete).
 func (s *Service) Trash(ctx context.Context, userID, fileID string) error {
 	httpc, err := s.client(ctx, userID)

@@ -1027,6 +1027,37 @@ func (q *Queries) TitleExistsInCategory(ctx context.Context, arg TitleExistsInCa
 	return exists, err
 }
 
+const transitionSyncStatus = `-- name: TransitionSyncStatus :execrows
+update documents
+set sync_status = $1,
+    sync_reason = null
+where id = $2
+  and user_id = $3
+  and sync_status = $4
+  and backup_status = 'backed_up'
+`
+
+type TransitionSyncStatusParams struct {
+	ToStatus   string
+	ID         pgtype.UUID
+	UserID     pgtype.UUID
+	FromStatus string
+}
+
+// Conditional: a concurrent edit that queued a sync (pending) is never overwritten.
+func (q *Queries) TransitionSyncStatus(ctx context.Context, arg TransitionSyncStatusParams) (int64, error) {
+	result, err := q.db.Exec(ctx, transitionSyncStatus,
+		arg.ToStatus,
+		arg.ID,
+		arg.UserID,
+		arg.FromStatus,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateCategoryForSync = `-- name: UpdateCategoryForSync :one
 update documents
 set category     = $1,
