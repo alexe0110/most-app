@@ -21,7 +21,7 @@ jobs:
   deploy:
     needs: [tests, linters]
     runs-on: ubuntu-latest
-    environment: dev
+    environment: "Most / dev"
     env:
       RAILWAY_CLI_VERSION: 5.71.0
     steps:

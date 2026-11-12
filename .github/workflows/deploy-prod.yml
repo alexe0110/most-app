@@ -30,7 +30,7 @@ jobs:
   deploy:
     needs: [tests, linters]
     runs-on: ubuntu-latest
-    environment: production
+    environment: "Most / production"
     env:
       RAILWAY_CLI_VERSION: 5.71.0
     steps:
