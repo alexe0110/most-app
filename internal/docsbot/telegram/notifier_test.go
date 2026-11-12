@@ -110,6 +110,8 @@ type stubUsers struct{}
 
 func (stubUsers) Ensure(context.Context, int64, string) (string, error) { return testUserID, nil }
 
+func (stubUsers) Lookup(context.Context, int64) (string, bool, error) { return testUserID, true, nil }
+
 type chatLookup struct{}
 
 func (chatLookup) TgUserID(context.Context, string) (int64, error) { return 100, nil }

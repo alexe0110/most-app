@@ -52,6 +52,15 @@ type Repo interface {
 	CategoryCounts(ctx context.Context, user UserID) ([]CategoryCount, error)
 	ListByCategory(ctx context.Context, user UserID, cat Category, limit, offset int) ([]Document, error)
 	Search(ctx context.Context, user UserID, query string, limit int) ([]Document, error)
+	// InlineSearch lists the user's saved documents whose title matches query or
+	// whose category is in cats, best match first (inline mode).
+	InlineSearch(ctx context.Context, user UserID, query string, cats []Category, limit, offset int) ([]Document, error)
+	// RecentSaved lists the user's saved documents, newest first (inline mode).
+	RecentSaved(ctx context.Context, user UserID, limit, offset int) ([]Document, error)
+	// InlineEnabled reports whether the user allows inline mode; true until they turn it off.
+	InlineEnabled(ctx context.Context, user UserID) (bool, error)
+	// SetInlineEnabled stores the user's inline-mode switch.
+	SetInlineEnabled(ctx context.Context, user UserID, on bool) error
 	// MarkSynced records a finished sync (sync_status ok, content_dirty cleared). It
 	// reports false when meta_version moved on or the sync is no longer pending.
 	MarkSynced(ctx context.Context, user UserID, id DocumentID, metaVersion int) (bool, error)

@@ -137,6 +137,29 @@ where user_id = @user_id
 order by similarity(title, @query) desc, created_at desc
 limit @lim;
 
+-- name: InlineSearchDocuments :many
+-- Inline-mode search: the title matches like SearchDocuments, or the category is
+-- one of @cats (categories whose label matched the query). @pattern is the escaped query.
+select *
+from documents
+where user_id = @user_id
+  and status = 'saved'
+  and (
+      title ilike '%' || @pattern || '%' escape '\'
+      or similarity(title, @query) > 0.3
+      or category = any(@cats::text[])
+  )
+order by similarity(title, @query) desc, created_at desc, id desc
+limit @lim offset @off;
+
+-- name: RecentSavedDocuments :many
+select *
+from documents
+where user_id = @user_id
+  and status = 'saved'
+order by created_at desc, id desc
+limit @lim offset @off;
+
 -- name: MarkDocumentBackedUpSync :one
 -- Like MarkDocumentBackedUp, and in the same statement queues a sync when the
 -- title or category changed since the upload started (meta_version differs).

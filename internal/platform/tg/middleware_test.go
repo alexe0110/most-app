@@ -24,6 +24,11 @@ type fakeUsers struct {
 	calls   int
 	gotTgID int64
 	gotLang string
+
+	found      bool
+	lookupErr  error
+	lookups    int
+	lookedUpTg int64
 }
 
 func (f *fakeUsers) Ensure(_ context.Context, tgUserID int64, lang string) (string, error) {
@@ -31,6 +36,12 @@ func (f *fakeUsers) Ensure(_ context.Context, tgUserID int64, lang string) (stri
 	f.gotTgID = tgUserID
 	f.gotLang = lang
 	return f.id, f.err
+}
+
+func (f *fakeUsers) Lookup(_ context.Context, tgUserID int64) (string, bool, error) {
+	f.lookups++
+	f.lookedUpTg = tgUserID
+	return f.id, f.found, f.lookupErr
 }
 
 func messageUpdate(tgUserID int64, lang string) *models.Update {
@@ -88,6 +99,66 @@ func TestEnsureUser(t *testing.T) {
 	})
 }
 
+func TestEnsureUser_inlineQuery(t *testing.T) {
+	update := &models.Update{InlineQuery: &models.InlineQuery{From: &models.User{ID: 42}}}
+
+	t.Run("known user: id stashed, no upsert", func(t *testing.T) {
+		users := &fakeUsers{id: "user-1", found: true}
+		var gotID string
+		var gotOK bool
+		h := ensureUser(users, discardLog())(func(ctx context.Context, _ *bot.Bot, _ *models.Update) {
+			gotID, gotOK = UserIDFromContext(ctx)
+		})
+
+		h(context.Background(), nil, update)
+
+		require.True(t, gotOK)
+		require.Equal(t, "user-1", gotID)
+		require.Zero(t, users.calls, "inline must not call Ensure")
+		require.Equal(t, int64(42), users.lookedUpTg)
+	})
+
+	t.Run("unknown user: passes without id", func(t *testing.T) {
+		users := &fakeUsers{}
+		var nextCalled, gotOK bool
+		h := ensureUser(users, discardLog())(func(ctx context.Context, _ *bot.Bot, _ *models.Update) {
+			nextCalled = true
+			_, gotOK = UserIDFromContext(ctx)
+		})
+
+		h(context.Background(), nil, update)
+
+		require.True(t, nextCalled)
+		require.False(t, gotOK)
+		require.Zero(t, users.calls)
+	})
+
+	t.Run("no sender: passes without lookup", func(t *testing.T) {
+		users := &fakeUsers{id: "user-1", found: true}
+		var nextCalled, gotOK bool
+		h := ensureUser(users, discardLog())(func(ctx context.Context, _ *bot.Bot, _ *models.Update) {
+			nextCalled = true
+			_, gotOK = UserIDFromContext(ctx)
+		})
+
+		h(context.Background(), nil, &models.Update{InlineQuery: &models.InlineQuery{}})
+
+		require.True(t, nextCalled)
+		require.False(t, gotOK)
+		require.Zero(t, users.lookups)
+	})
+
+	t.Run("lookup error drops the update", func(t *testing.T) {
+		users := &fakeUsers{lookupErr: errors.New("db down")}
+		var nextCalled bool
+		h := ensureUser(users, discardLog())(func(context.Context, *bot.Bot, *models.Update) { nextCalled = true })
+
+		h(context.Background(), nil, update)
+
+		require.False(t, nextCalled)
+	})
+}
+
 func chatMessage(typ models.ChatType) *models.Update {
 	return &models.Update{Message: &models.Message{
 		From: &models.User{ID: 1},
@@ -135,7 +206,7 @@ func TestPrivateOnly(t *testing.T) {
 		{"edited private message", &models.Update{EditedMessage: &models.Message{Chat: models.Chat{ID: 1, Type: models.ChatTypePrivate}}}, true, false},
 		{"edited channel post", &models.Update{EditedChannelPost: &models.Message{Chat: models.Chat{ID: -1, Type: models.ChatTypeChannel}}}, false, false},
 		{"callback without message", &models.Update{CallbackQuery: &models.CallbackQuery{From: models.User{ID: 1}}}, false, false},
-		{"inline query", &models.Update{InlineQuery: &models.InlineQuery{From: &models.User{ID: 1}}}, false, false},
+		{"inline query", &models.Update{InlineQuery: &models.InlineQuery{From: &models.User{ID: 1}}}, true, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

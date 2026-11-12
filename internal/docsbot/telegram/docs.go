@@ -84,12 +84,27 @@ func (d *docs) onUnsupported(ctx context.Context, b *bot.Bot, u *models.Update) 
 }
 
 // start greets the user. The OAuth redirect sends the user back with
-// ?start=connected, which just confirms the connection.
+// ?start=connected, which just confirms the connection. The button over inline
+// results sends ?start=inline: with inline mode off, the user lands on the
+// settings screen to turn it on.
 func (d *docs) start(ctx context.Context, b *bot.Bot, u *models.Update) {
 	chatID := u.Message.Chat.ID
-	if deepLinkConnected(u.Message.Text) {
+	switch startPayload(u.Message.Text) {
+	case startConnected:
 		reply(ctx, b, d.log, chatID, textDriveConnected)
 		return
+	case startInline:
+		if user, ok := userID(ctx); ok {
+			view, err := d.svc.Settings(ctx, user)
+			if err != nil {
+				d.fail(ctx, b, chatID, "settings", err)
+				return
+			}
+			if !view.InlineEnabled {
+				d.sendSettings(ctx, b, chatID, user, view)
+				return
+			}
+		}
 	}
 	reply(ctx, b, d.log, chatID, textStart)
 }
@@ -107,6 +122,11 @@ func (d *docs) settings(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.fail(ctx, b, chatID, "settings", err)
 		return
 	}
+	d.sendSettings(ctx, b, chatID, user, view)
+}
+
+// sendSettings sends the /settings screen for view.
+func (d *docs) sendSettings(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, view docsbot.SettingsView) {
 	url, haveURL := d.connectURL(ctx, user)
 	text, kb := renderSettings(view, url, haveURL)
 	d.send(ctx, b, chatID, text, kb)
@@ -304,6 +324,8 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.onDeleteData(ctx, b, u)
 	case actRetryBatch:
 		d.onRetryBatch(ctx, b, u, user, parts)
+	case actInline:
+		d.onInlineSwitch(ctx, b, u, user, parts)
 	case actNoop:
 	}
 }
@@ -342,6 +364,29 @@ func (d *docs) onDisconnect(ctx context.Context, b *bot.Bot, u *models.Update, u
 	}
 	d.log.InfoContext(ctx, "drive disconnected", "user_id", user)
 	d.editText(ctx, b, chatID, msgID, textDisconnected)
+}
+
+// onInlineSwitch applies the wanted inline-mode state from d:inl:<1|0> and
+// redraws the settings message in place.
+func (d *docs) onInlineSwitch(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok || len(parts) < 3 || (parts[2] != "1" && parts[2] != "0") {
+		return // the callback is already answered; a malformed payload changes nothing
+	}
+	on := parts[2] == "1"
+	if err := d.svc.SetInlineEnabled(ctx, user, on); err != nil {
+		d.fail(ctx, b, chatID, "set inline enabled", err)
+		return
+	}
+	view, err := d.svc.Settings(ctx, user)
+	if err != nil {
+		d.fail(ctx, b, chatID, "settings", err)
+		return
+	}
+	d.log.InfoContext(ctx, "inline mode switched", "user_id", user, "enabled", on)
+	url, haveURL := d.connectURL(ctx, user)
+	text, kb := renderSettings(view, url, haveURL)
+	d.editMessage(ctx, b, chatID, msgID, text, kb)
 }
 
 // onRetryAll re-queues every failed Drive upload; the /settings message turns
@@ -1477,10 +1522,16 @@ func callbackMessage(u *models.Update) (chatID int64, msgID int, ok bool) {
 	return m.Chat.ID, m.ID, true
 }
 
-// deepLinkConnected reports whether /start carried the ?start=connected payload.
-func deepLinkConnected(text string) bool {
+// /start deep-link payloads.
+const (
+	startConnected = "connected" // the OAuth redirect back to the bot
+	startInline    = "inline"    // the button over inline results
+)
+
+// startPayload returns the argument of /start (?start=<payload>), "" if none.
+func startPayload(text string) string {
 	_, arg, _ := strings.Cut(text, " ")
-	return strings.TrimSpace(arg) == "connected"
+	return strings.TrimSpace(arg)
 }
 
 // renameStore remembers which document a user is renaming and on which message
