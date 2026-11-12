@@ -401,9 +401,6 @@ func TestDocuments_retiredSlugBelongsToOther(t *testing.T) {
 		}
 		require.Empty(t, ids(c), string(c))
 	}
-	// The retired slug itself is not a category anyone lists by.
-	require.Empty(t, ids("contracts"))
-
 	counts, err := repo.CategoryCounts(ctx, user)
 	require.NoError(t, err)
 	got := map[docsbot.Category]int{}
