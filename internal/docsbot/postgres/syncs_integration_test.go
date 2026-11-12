@@ -632,19 +632,26 @@ func TestSyncs_transitionSyncStatusIsConditional(t *testing.T) {
 		from, to   docsbot.SyncStatus
 		wantMoved  bool
 		wantStatus string
+		remote     string // the Drive file id checked; "" means the row's own
 	}{
-		{"ok -> missing", "backed_up", "ok", docsbot.SyncOK, docsbot.SyncMissing, true, "missing"},
-		{"missing -> ok", "backed_up", "missing", docsbot.SyncMissing, docsbot.SyncOK, true, "ok"},
-		{"pending is not overwritten", "backed_up", "pending", docsbot.SyncOK, docsbot.SyncMissing, false, "pending"},
-		{"failed is not overwritten", "backed_up", "failed", docsbot.SyncOK, docsbot.SyncMissing, false, "failed"},
-		{"not backed up is untouched", "failed", "ok", docsbot.SyncOK, docsbot.SyncMissing, false, "ok"},
+		{"ok -> missing", "backed_up", "ok", docsbot.SyncOK, docsbot.SyncMissing, true, "missing", ""},
+		{"missing -> ok", "backed_up", "missing", docsbot.SyncMissing, docsbot.SyncOK, true, "ok", ""},
+		{"pending is not overwritten", "backed_up", "pending", docsbot.SyncOK, docsbot.SyncMissing, false, "pending", ""},
+		{"failed is not overwritten", "backed_up", "failed", docsbot.SyncOK, docsbot.SyncMissing, false, "failed", ""},
+		{"not backed up is untouched", "failed", "ok", docsbot.SyncOK, docsbot.SyncMissing, false, "ok", ""},
+		{"re-uploaded file is not marked missing", "backed_up", "ok", docsbot.SyncOK, docsbot.SyncMissing, false, "ok", "remote-old"},
 	}
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			id := e.seed(t, e.user, "tr"+string(rune('a'+i)), tt.backup, tt.sync)
+			unique := "tr" + string(rune('a'+i))
+			id := e.seed(t, e.user, unique, tt.backup, tt.sync)
 			before := e.row(t, id)
+			remote := tt.remote
+			if remote == "" {
+				remote = "remote-" + unique
+			}
 
-			moved, err := e.repo.TransitionSyncStatus(ctx, e.user, id, tt.from, tt.to)
+			moved, err := e.repo.TransitionSyncStatus(ctx, e.user, id, remote, tt.from, tt.to)
 
 			require.NoError(t, err)
 			require.Equal(t, tt.wantMoved, moved)
@@ -653,7 +660,7 @@ func TestSyncs_transitionSyncStatusIsConditional(t *testing.T) {
 			require.Equal(t, before.Meta, got.Meta, "meta_version is not bumped")
 
 			// A foreign user never moves it.
-			moved, err = e.repo.TransitionSyncStatus(ctx, e.otherUser, id, docsbot.SyncOK, docsbot.SyncMissing)
+			moved, err = e.repo.TransitionSyncStatus(ctx, e.otherUser, id, remote, docsbot.SyncOK, docsbot.SyncMissing)
 			require.NoError(t, err)
 			require.False(t, moved)
 		})

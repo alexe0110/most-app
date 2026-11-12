@@ -134,3 +134,59 @@ func (d *racingDrive) FileExists(context.Context, docsbot.UserID, string) (bool,
 	d.onCheck()
 	return false, nil
 }
+
+// failingTransitionRepo fails the conditional sync-status update.
+type failingTransitionRepo struct{ *fakeRepo }
+
+func (failingTransitionRepo) TransitionSyncStatus(context.Context, docsbot.UserID, docsbot.DocumentID, string, docsbot.SyncStatus, docsbot.SyncStatus) (bool, error) {
+	return false, errors.New("db down")
+}
+
+func TestService_OpenCard_databaseErrorsComeBackWithTheCard(t *testing.T) {
+	t.Run("drive status", func(t *testing.T) {
+		repo := newFakeRepo()
+		doc := backedUpDoc(repo, nil)
+		svc, _ := syncService(repo, fakeDrive{connected: true, err: errors.New("db down")}, fakeFiles{})
+
+		card, err := svc.OpenCard(t.Context(), user, doc.ID)
+
+		require.Error(t, err)
+		require.Equal(t, doc.ID, card.Doc.ID, "the card read so far is returned")
+	})
+	t.Run("transition", func(t *testing.T) {
+		repo := newFakeRepo()
+		doc := backedUpDoc(repo, nil)
+		svc := docsbot.NewService(failingTransitionRepo{repo}, fakeDrive{connected: true}, fakeFiles{}, &fakeUploads{repo: repo},
+			repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+
+		card, err := svc.OpenCard(t.Context(), user, doc.ID)
+
+		require.Error(t, err)
+		require.Equal(t, doc.ID, card.Doc.ID)
+		require.Equal(t, docsbot.SyncOK, card.Doc.SyncStatus)
+	})
+	t.Run("a Drive check failure is not an error", func(t *testing.T) {
+		repo := newFakeRepo()
+		doc := backedUpDoc(repo, nil)
+		svc, _ := syncService(repo, fakeDrive{connected: true, existsErr: errors.New("net")}, fakeFiles{})
+		_, err := svc.OpenCard(t.Context(), user, doc.ID)
+		require.NoError(t, err)
+	})
+}
+
+func TestService_OpenCard_throttleIsCheckedBeforeDriveStatus(t *testing.T) {
+	repo := newFakeRepo()
+	doc := backedUpDoc(repo, nil)
+	var calls int
+	svc, _ := syncService(repo, fakeDrive{connected: true, existsRes: true, existsCalls: &calls}, fakeFiles{})
+	_, err := svc.OpenCard(t.Context(), user, doc.ID)
+	require.NoError(t, err)
+
+	// Within the window the status lookup is not even attempted, so its failure is not seen.
+	svc2 := docsbot.NewService(repo, fakeDrive{connected: true, err: errors.New("db down")}, fakeFiles{},
+		&fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	_, err = svc2.OpenCard(t.Context(), user, doc.ID)
+	require.Error(t, err, "first open on svc2 does consult the status")
+	_, err = svc2.OpenCard(t.Context(), user, doc.ID)
+	require.NoError(t, err, "the second one is throttled before Connected")
+}

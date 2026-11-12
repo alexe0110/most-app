@@ -365,14 +365,14 @@ func (r *Repo) SetSyncStatus(ctx context.Context, user docsbot.UserID, id docsbo
 }
 
 // TransitionSyncStatus moves sync_status from -> to for a backed-up document and
-// reports whether the row still had the from status.
-func (r *Repo) TransitionSyncStatus(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, from, to docsbot.SyncStatus) (bool, error) {
+// reports whether the row still had the from status and the checked Drive file.
+func (r *Repo) TransitionSyncStatus(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, remoteID string, from, to docsbot.SyncStatus) (bool, error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return false, err
 	}
 	n, err := r.Queries.TransitionSyncStatus(ctx, TransitionSyncStatusParams{
-		ID: docID, UserID: uid, FromStatus: string(from), ToStatus: string(to),
+		ID: docID, UserID: uid, FromStatus: string(from), ToStatus: string(to), DriveFileID: pgtype.Text{String: remoteID, Valid: true},
 	})
 	if err != nil {
 		return false, fmt.Errorf("transition sync status: %w", err)

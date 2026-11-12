@@ -1240,9 +1240,13 @@ func (d *docs) onOpenCard(ctx context.Context, b *bot.Bot, u *models.Update, use
 		d.gone(ctx, b, chatID, msgID)
 		return
 	}
-	if err != nil {
+	if err != nil && card.Doc.ID == "" {
 		d.fail(ctx, b, chatID, "load card", err)
 		return
+	}
+	if err != nil {
+		// The Drive check failed on our side; the card read so far is still right to show.
+		d.log.ErrorContext(ctx, "open card", "err", err, "user_id", user)
 	}
 	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, strings.Join(parts[3:], ":"))
 }

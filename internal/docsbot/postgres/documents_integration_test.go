@@ -363,3 +363,55 @@ func (e syncEnv) pages(t *testing.T, id docsbot.DocumentID) int {
 	}
 	return *n
 }
+
+// A row saved under a retired slug (before the category set changed) is "Другое":
+// listed there, counted there, and in no other category.
+func TestDocuments_retiredSlugBelongsToOther(t *testing.T) {
+	repo, user := domainRepo(t)
+	ctx := t.Context()
+	mk := func(unique, title string, cat docsbot.Category) docsbot.DocumentID {
+		t.Helper()
+		d, err := repo.CreateDocument(ctx, docsbot.IncomingFile{UserID: user, Kind: docsbot.KindDocument, Title: title, FileID: "f" + unique, FileUniqueID: unique})
+		require.NoError(t, err)
+		saved, err := repo.SaveDocument(ctx, user, d.ID, cat)
+		require.NoError(t, err)
+		require.True(t, saved)
+		return d.ID
+	}
+	retired := mk("r1", "Старый договор", "contracts")
+	retired2 := mk("r2", "Старая работа", "edu_work")
+	other := mk("o1", "Просто другое", docsbot.CatOther)
+	passport := mk("p1", "Паспорт", docsbot.CatPassport)
+
+	ids := func(cat docsbot.Category) []docsbot.DocumentID {
+		t.Helper()
+		docs, err := repo.ListByCategory(ctx, user, cat, 50, 0)
+		require.NoError(t, err)
+		var out []docsbot.DocumentID
+		for _, d := range docs {
+			out = append(out, d.ID)
+		}
+		return out
+	}
+	require.ElementsMatch(t, []docsbot.DocumentID{retired, retired2, other}, ids(docsbot.CatOther))
+	require.ElementsMatch(t, []docsbot.DocumentID{passport}, ids(docsbot.CatPassport))
+	for _, c := range docsbot.AllCategories {
+		if c == docsbot.CatOther || c == docsbot.CatPassport {
+			continue
+		}
+		require.Empty(t, ids(c), string(c))
+	}
+	// The retired slug itself is not a category anyone lists by.
+	require.Empty(t, ids("contracts"))
+
+	counts, err := repo.CategoryCounts(ctx, user)
+	require.NoError(t, err)
+	got := map[docsbot.Category]int{}
+	for _, c := range counts {
+		got[c.Category] += c.Count
+	}
+	require.Equal(t, 1, got[docsbot.CatPassport])
+	require.Equal(t, 1, got["contracts"], "the raw count keeps the slug; the service folds it into other")
+	require.Equal(t, 1, got["edu_work"])
+	require.Equal(t, 1, got[docsbot.CatOther])
+}

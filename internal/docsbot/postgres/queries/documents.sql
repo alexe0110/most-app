@@ -246,14 +246,17 @@ where id = @id
   and user_id = @user_id;
 
 -- name: TransitionSyncStatus :execrows
--- Conditional: a concurrent edit that queued a sync (pending) is never overwritten.
+-- Conditional: a concurrent edit that queued a sync (pending), or a re-upload that
+-- gave the row another Drive file, is never overwritten. Like SetSyncStatus it
+-- leaves updated_at alone (that clock belongs to uploads and the sweeper).
 update documents
 set sync_status = @to_status,
     sync_reason = null
 where id = @id
   and user_id = @user_id
   and sync_status = @from_status
-  and backup_status = 'backed_up';
+  and backup_status = 'backed_up'
+  and drive_file_id = @drive_file_id;
 
 -- name: ClaimTransferableDocuments :many
 -- Atomically takes every saved document not yet on Drive (none, failed) for

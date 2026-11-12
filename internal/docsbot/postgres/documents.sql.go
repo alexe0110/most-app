@@ -1074,22 +1074,27 @@ where id = $2
   and user_id = $3
   and sync_status = $4
   and backup_status = 'backed_up'
+  and drive_file_id = $5
 `
 
 type TransitionSyncStatusParams struct {
-	ToStatus   string
-	ID         pgtype.UUID
-	UserID     pgtype.UUID
-	FromStatus string
+	ToStatus    string
+	ID          pgtype.UUID
+	UserID      pgtype.UUID
+	FromStatus  string
+	DriveFileID pgtype.Text
 }
 
-// Conditional: a concurrent edit that queued a sync (pending) is never overwritten.
+// Conditional: a concurrent edit that queued a sync (pending), or a re-upload that
+// gave the row another Drive file, is never overwritten. Like SetSyncStatus it
+// leaves updated_at alone (that clock belongs to uploads and the sweeper).
 func (q *Queries) TransitionSyncStatus(ctx context.Context, arg TransitionSyncStatusParams) (int64, error) {
 	result, err := q.db.Exec(ctx, transitionSyncStatus,
 		arg.ToStatus,
 		arg.ID,
 		arg.UserID,
 		arg.FromStatus,
+		arg.DriveFileID,
 	)
 	if err != nil {
 		return 0, err

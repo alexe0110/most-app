@@ -693,11 +693,11 @@ func (r *fakeRepo) MarkSynced(_ context.Context, user docsbot.UserID, id docsbot
 }
 
 // TransitionSyncStatus mirrors the conditional UPDATE.
-func (r *fakeRepo) TransitionSyncStatus(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, from, to docsbot.SyncStatus) (bool, error) {
+func (r *fakeRepo) TransitionSyncStatus(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, remoteID string, from, to docsbot.SyncStatus) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	d, ok := r.docs[id]
-	if !ok || d.UserID != user || d.SyncStatus != from || d.BackupStatus != docsbot.BackupBackedUp {
+	if !ok || d.UserID != user || d.SyncStatus != from || d.BackupStatus != docsbot.BackupBackedUp || d.DriveFileID != remoteID {
 		return false, nil
 	}
 	d.SyncStatus, d.SyncReason = to, ""

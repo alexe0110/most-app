@@ -878,8 +878,10 @@ func (s *Service) Card(ctx context.Context, user UserID, id DocumentID) (Card, e
 // OpenCard is Card for a card the user opens from a list or search: when the
 // document has a live Drive file it also checks, at most once a minute and within
 // remoteCheckTimeout, that the file still exists, and flips the sync status
-// ok <-> missing accordingly. Any failure to check (network, timeout, revoked or
-// disconnected Drive) leaves the card as it is; nothing is re-uploaded here.
+// ok <-> missing accordingly. A failure of the check itself (network, timeout,
+// revoked or disconnected Drive) is not an error: the card stays as it is. A
+// database error comes back together with the card read so far (Card.Doc.ID set),
+// which the caller may still show; nothing is re-uploaded here.
 func (s *Service) OpenCard(ctx context.Context, user UserID, id DocumentID) (Card, error) {
 	card, err := s.Card(ctx, user, id)
 	if err != nil {
@@ -889,10 +891,14 @@ func (s *Service) OpenCard(ctx context.Context, user UserID, id DocumentID) (Car
 	if !doc.InDrive() || doc.DriveFileID == "" || (doc.SyncStatus != SyncOK && doc.SyncStatus != SyncMissing) {
 		return card, nil
 	}
-	if connected, err := s.drive.Connected(ctx, user); err != nil || !connected {
+	if !s.allowRemoteCheck(doc.ID) {
 		return card, nil
 	}
-	if !s.allowRemoteCheck(doc.ID) {
+	connected, err := s.drive.Connected(ctx, user)
+	if err != nil {
+		return card, fmt.Errorf("drive status: %w", err)
+	}
+	if !connected {
 		return card, nil
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, remoteCheckTimeout)
@@ -909,8 +915,11 @@ func (s *Service) OpenCard(ctx context.Context, user UserID, id DocumentID) (Car
 	if doc.SyncStatus != from {
 		return card, nil
 	}
-	moved, err := s.repo.TransitionSyncStatus(ctx, user, doc.ID, from, to)
-	if err != nil || !moved {
+	moved, err := s.repo.TransitionSyncStatus(ctx, user, doc.ID, doc.DriveFileID, from, to)
+	if err != nil {
+		return card, fmt.Errorf("transition sync status: %w", err)
+	}
+	if !moved {
 		return card, nil
 	}
 	card.Doc.SyncStatus, card.Doc.SyncReason = to, ""

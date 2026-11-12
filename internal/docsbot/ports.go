@@ -59,9 +59,10 @@ type Repo interface {
 	SetSyncStatus(ctx context.Context, user UserID, id DocumentID, s SyncStatus, reason string) error
 	// TransitionSyncStatus moves a backed-up document from one sync_status to
 	// another, clearing sync_reason, only while it still has the from status. It
-	// reports false when the status moved on (e.g. an edit queued a sync) or the
-	// document is gone, so a stale check never overwrites newer state.
-	TransitionSyncStatus(ctx context.Context, user UserID, id DocumentID, from, to SyncStatus) (bool, error)
+	// reports false when the status moved on (e.g. an edit queued a sync), the
+	// row now points at another Drive file than remoteID, or the document is gone,
+	// so a stale check never overwrites newer state.
+	TransitionSyncStatus(ctx context.Context, user UserID, id DocumentID, remoteID string, from, to SyncStatus) (bool, error)
 	// ClaimTransferable atomically moves every saved document that is not on Drive
 	// (none or failed) to pending and returns their ids, oldest first. Concurrent
 	// callers never receive the same document.
