@@ -2,6 +2,7 @@ package telegram_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -922,4 +923,36 @@ func TestCard_isAlwaysSentAsHTML(t *testing.T) {
 		require.Equal(t, "HTML", mode)
 	}
 	require.Equal(t, []string{"HTML"}, sent.sendModes, "the already-saved card")
+}
+
+func TestExport_cancelStopsBetweenBatches(t *testing.T) {
+	b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithExportPace(time.Hour, time.Hour))
+	ctx, cancel := context.WithCancel(tg.ContextWithUserID(t.Context(), testUserID))
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedExport(repo, docsbot.KindPhoto, 1, "p", base)
+	seedExport(repo, docsbot.KindDocument, 1, "d", base.Add(time.Hour))
+	time.AfterFunc(100*time.Millisecond, cancel)
+
+	b.ProcessUpdate(ctx, commandUpdate(100, "export"))
+
+	require.Len(t, sent.files, 1, "stops before the second batch")
+	require.False(t, has(sent.texts, "Готово"), "texts %q", sent.texts)
+}
+
+func TestExport_exactlyTenDocumentsIsOneAlbumAndElevenSplits(t *testing.T) {
+	for _, tt := range []struct {
+		n          int
+		wantGroups int
+		wantFiles  int
+	}{{10, 1, 0}, {11, 1, 1}} {
+		b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithExportPace(0, 0))
+		ctx := tg.ContextWithUserID(t.Context(), testUserID)
+		seedExport(repo, docsbot.KindDocument, tt.n, "d", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+
+		b.ProcessUpdate(ctx, commandUpdate(100, "export"))
+
+		require.Len(t, sent.groups, tt.wantGroups, "n=%d", tt.n)
+		require.Len(t, sent.files, tt.wantFiles, "n=%d", tt.n)
+		require.True(t, has(sent.texts, fmt.Sprintf("прислал %d", tt.n)), "texts %q", sent.texts)
+	}
 }
