@@ -145,7 +145,7 @@ func TestUserScoping_otherUserCannotTouchDocument(t *testing.T) {
 
 	require.NoError(t, repo.SetBackupStatus(ctx, b, doc.ID, docsbot.BackupFailed))
 	require.NoError(t, repo.MarkUploading(ctx, b, doc.ID))
-	_, err := repo.MarkBackedUpForSync(ctx, b, doc.ID, "stolen", 0, noInsert)
+	_, err := repo.MarkBackedUpForSync(ctx, b, doc.ID, "stolen", 0, 0, noInsert)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
 	got := backupOf(t, repo, a, doc.ID)
 	require.Equal(t, docsbot.BackupUploading, got.BackupStatus)

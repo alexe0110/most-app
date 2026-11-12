@@ -37,6 +37,9 @@ func (r *Repo) CreateDocument(ctx context.Context, in docsbot.IncomingFile) (doc
 		FileSize:       pgtype.Int8{Int64: in.FileSize, Valid: in.FileSize > 0},
 		MimeType:       pgtype.Text{String: in.MIME, Valid: in.MIME != ""},
 		MediaGroupID:   pgtype.Text{String: in.MediaGroupID, Valid: in.MediaGroupID != ""},
+		PageCount:      int32(in.PageCount),
+		ImageWidth:     int32(in.Width),
+		ImageHeight:    int32(in.Height),
 	})
 	if err != nil {
 		return docsbot.Document{}, fmt.Errorf("insert document: %w", err)
@@ -291,6 +294,7 @@ func (r *Repo) ListByCategory(ctx context.Context, user docsbot.UserID, cat docs
 	rows, err := r.ListDocumentsByCategory(ctx, ListDocumentsByCategoryParams{
 		UserID:   uid,
 		Category: string(cat),
+		Known:    knownCategories(),
 		Lim:      int32(limit),
 		Off:      int32(offset),
 	})
@@ -298,6 +302,16 @@ func (r *Repo) ListByCategory(ctx context.Context, user docsbot.UserID, cat docs
 		return nil, fmt.Errorf("list documents by category: %w", err)
 	}
 	return toDocuments(rows), nil
+}
+
+// knownCategories are the current category slugs; "other" also collects the rows
+// whose slug is not among them.
+func knownCategories() []string {
+	out := make([]string, len(docsbot.AllCategories))
+	for i, c := range docsbot.AllCategories {
+		out[i] = string(c)
+	}
+	return out
 }
 
 // likeEscaper escapes the LIKE metacharacters so user input matches literally;
@@ -348,6 +362,22 @@ func (r *Repo) SetSyncStatus(ctx context.Context, user docsbot.UserID, id docsbo
 		return fmt.Errorf("set sync status: %w", err)
 	}
 	return nil
+}
+
+// TransitionSyncStatus moves sync_status from -> to for a backed-up document and
+// reports whether the row still had the from status and the checked Drive file.
+func (r *Repo) TransitionSyncStatus(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, remoteID string, from, to docsbot.SyncStatus) (bool, error) {
+	docID, uid, err := ids(id, user)
+	if err != nil {
+		return false, err
+	}
+	n, err := r.Queries.TransitionSyncStatus(ctx, TransitionSyncStatusParams{
+		ID: docID, UserID: uid, FromStatus: string(from), ToStatus: string(to), DriveFileID: pgtype.Text{String: remoteID, Valid: true},
+	})
+	if err != nil {
+		return false, fmt.Errorf("transition sync status: %w", err)
+	}
+	return n > 0, nil
 }
 
 // ClaimTransferable atomically moves every saved none/failed document to
@@ -436,6 +466,9 @@ func toDocument(d Document) docsbot.Document {
 		TgFileUniqueID:  d.TgFileUniqueID,
 		DriveFileID:     d.DriveFileID.String,
 		FileSize:        d.FileSize.Int64,
+		PageCount:       int(d.PageCount.Int32),
+		Width:           int(d.ImageWidth.Int32),
+		Height:          int(d.ImageHeight.Int32),
 		MIME:            d.MimeType.String,
 		MediaGroupID:    d.MediaGroupID.String,
 		BackupStatus:    docsbot.BackupStatus(d.BackupStatus),

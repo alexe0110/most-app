@@ -26,6 +26,16 @@ const (
 	minDimension  = 32 // don't shrink below this
 )
 
+// ImageSize reads the pixel size of a JPEG, PNG or WEBP from its header, without
+// decoding the picture. ok is false for any other or unreadable data.
+func ImageSize(data []byte) (width, height int, ok bool) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+		return 0, 0, false
+	}
+	return cfg.Width, cfg.Height, true
+}
+
 // decodeUpright decodes bytes, checks the pixel limit, and applies EXIF
 // rotation. A decode failure (e.g. HEIC) maps to ErrUnsupportedFormat.
 func decodeUpright(data []byte) (image.Image, error) {

@@ -279,3 +279,136 @@ func TestDocuments_markUploadingKeepsUpdatedAt(t *testing.T) {
 	require.Equal(t, "failed", status)
 	require.True(t, at.After(old), "SetBackupStatus must bump updated_at")
 }
+
+func TestDocuments_pageCount(t *testing.T) {
+	repo, user := domainRepo(t)
+	ctx := t.Context()
+	load := func(id docsbot.DocumentID) int {
+		t.Helper()
+		d, err := repo.DocumentByID(ctx, user, id)
+		require.NoError(t, err)
+		return d.PageCount
+	}
+
+	known, err := repo.CreateDocument(ctx, docsbot.IncomingFile{
+		UserID: user, Kind: docsbot.KindDocument, Title: "a", FileID: "f1", FileUniqueID: "u1", MIME: "application/pdf", PageCount: 3,
+		Width: 1280, Height: 960,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 3, known.PageCount)
+	require.Equal(t, [2]int{1280, 960}, [2]int{known.Width, known.Height})
+	require.Equal(t, 3, load(known.ID))
+
+	unknown, err := repo.CreateDocument(ctx, docsbot.IncomingFile{UserID: user, Kind: docsbot.KindDocument, Title: "b", FileID: "f2", FileUniqueID: "u2"})
+	require.NoError(t, err)
+	require.Zero(t, load(unknown.ID), "0 is stored as null and reads back as unknown")
+	got, err := repo.DocumentByID(ctx, user, unknown.ID)
+	require.NoError(t, err)
+	require.Zero(t, got.Width)
+	require.Zero(t, got.Height)
+}
+
+func TestSyncs_pageCountOnBackedUpAndReplace(t *testing.T) {
+	e := newSyncEnv(t)
+	ctx := t.Context()
+
+	// MarkBackedUp records pages when known and keeps the stored value otherwise.
+	id := e.seed(t, e.user, "pg1", "uploading", "ok")
+	_, err := e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", 0, 5, noInsert)
+	require.NoError(t, err)
+	require.Equal(t, 5, e.pages(t, id))
+
+	id2 := e.seed(t, e.user, "pg2", "uploading", "ok")
+	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, id2, "drive-2", 0, 0, noInsert)
+	require.NoError(t, err)
+	require.Zero(t, e.pages(t, id2), "unknown stays unknown")
+
+	// coalesce: an unknown count never wipes a known one.
+	id3 := e.seed(t, e.user, "pg3", "uploading", "ok")
+	_, err = e.pool.Exec(ctx, `update documents set page_count = 9 where id = $1::uuid`, string(id3))
+	require.NoError(t, err)
+	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, id3, "drive-3", 0, 0, noInsert)
+	require.NoError(t, err)
+	require.Equal(t, 9, e.pages(t, id3))
+
+	// ReplaceContent swaps the file, so its page count follows the new file, known or not.
+	id4 := e.seed(t, e.user, "pg4", "none", "ok")
+	_, err = e.pool.Exec(ctx, `update documents set page_count = 9 where id = $1::uuid`, string(id4))
+	require.NoError(t, err)
+	in := docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "n1", FileUniqueID: "n1u", MIME: "application/pdf", PageCount: 2}
+	replaced, err := e.repo.ReplaceContentForSync(ctx, e.user, id4, in, false, noInsert)
+	require.NoError(t, err)
+	require.True(t, replaced)
+	require.Equal(t, 2, e.pages(t, id4))
+	_, err = e.pool.Exec(ctx, `update documents set image_width = 800, image_height = 600 where id = $1::uuid`, string(id4))
+	require.NoError(t, err)
+	in = docsbot.IncomingFile{Kind: docsbot.KindPhoto, FileID: "n2", FileUniqueID: "n2u"}
+	replaced, err = e.repo.ReplaceContentForSync(ctx, e.user, id4, in, false, noInsert)
+	require.NoError(t, err)
+	require.True(t, replaced)
+	require.Zero(t, e.pages(t, id4), "a file of unknown length does not keep the old file's pages")
+	var w, h *int
+	require.NoError(t, e.pool.QueryRow(ctx, `select image_width, image_height from documents where id = $1::uuid`, string(id4)).Scan(&w, &h))
+	require.Nil(t, w, "a replaced file never shows the old pixel size")
+	require.Nil(t, h)
+}
+
+// pages reads the stored page count (0 for null).
+func (e syncEnv) pages(t *testing.T, id docsbot.DocumentID) int {
+	t.Helper()
+	var n *int
+	require.NoError(t, e.pool.QueryRow(t.Context(), `select page_count from documents where id = $1::uuid`, string(id)).Scan(&n))
+	if n == nil {
+		return 0
+	}
+	return *n
+}
+
+// A row saved under a retired slug (before the category set changed) is "Другое":
+// listed there, counted there, and in no other category.
+func TestDocuments_retiredSlugBelongsToOther(t *testing.T) {
+	repo, user := domainRepo(t)
+	ctx := t.Context()
+	mk := func(unique, title string, cat docsbot.Category) docsbot.DocumentID {
+		t.Helper()
+		d, err := repo.CreateDocument(ctx, docsbot.IncomingFile{UserID: user, Kind: docsbot.KindDocument, Title: title, FileID: "f" + unique, FileUniqueID: unique})
+		require.NoError(t, err)
+		saved, err := repo.SaveDocument(ctx, user, d.ID, cat)
+		require.NoError(t, err)
+		require.True(t, saved)
+		return d.ID
+	}
+	retired := mk("r1", "Старый договор", "contracts")
+	retired2 := mk("r2", "Старая работа", "edu_work")
+	other := mk("o1", "Просто другое", docsbot.CatOther)
+	passport := mk("p1", "Паспорт", docsbot.CatPassport)
+
+	ids := func(cat docsbot.Category) []docsbot.DocumentID {
+		t.Helper()
+		docs, err := repo.ListByCategory(ctx, user, cat, 50, 0)
+		require.NoError(t, err)
+		var out []docsbot.DocumentID
+		for _, d := range docs {
+			out = append(out, d.ID)
+		}
+		return out
+	}
+	require.ElementsMatch(t, []docsbot.DocumentID{retired, retired2, other}, ids(docsbot.CatOther))
+	require.ElementsMatch(t, []docsbot.DocumentID{passport}, ids(docsbot.CatPassport))
+	for _, c := range docsbot.AllCategories {
+		if c == docsbot.CatOther || c == docsbot.CatPassport {
+			continue
+		}
+		require.Empty(t, ids(c), string(c))
+	}
+	counts, err := repo.CategoryCounts(ctx, user)
+	require.NoError(t, err)
+	got := map[docsbot.Category]int{}
+	for _, c := range counts {
+		got[c.Category] += c.Count
+	}
+	require.Equal(t, 1, got[docsbot.CatPassport])
+	require.Equal(t, 1, got["contracts"], "the raw count keeps the slug; the service folds it into other")
+	require.Equal(t, 1, got["edu_work"])
+	require.Equal(t, 1, got[docsbot.CatOther])
+}

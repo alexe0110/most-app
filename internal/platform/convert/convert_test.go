@@ -218,3 +218,31 @@ func TestToJPEG_rejectsUnknownFormat(t *testing.T) {
 	_, err := ToJPEG([]byte("ftypheic not an image"))
 	require.ErrorIs(t, err, ErrUnsupportedFormat)
 }
+
+func TestImageSize(t *testing.T) {
+	var jpg bytes.Buffer
+	require.NoError(t, jpeg.Encode(&jpg, image.NewRGBA(image.Rect(0, 0, 40, 30)), nil))
+	var pn bytes.Buffer
+	require.NoError(t, png.Encode(&pn, image.NewRGBA(image.Rect(0, 0, 7, 9))))
+
+	tests := []struct {
+		name   string
+		data   []byte
+		w, h   int
+		wantOK bool
+	}{
+		{"jpeg", jpg.Bytes(), 40, 30, true},
+		{"png", pn.Bytes(), 7, 9, true},
+		{"not an image", []byte("%PDF-1.4"), 0, 0, false},
+		{"truncated", jpg.Bytes()[:5], 0, 0, false},
+		{"empty", nil, 0, 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w, h, ok := ImageSize(tt.data)
+			require.Equal(t, tt.wantOK, ok)
+			require.Equal(t, tt.w, w)
+			require.Equal(t, tt.h, h)
+		})
+	}
+}

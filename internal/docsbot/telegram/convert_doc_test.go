@@ -99,7 +99,7 @@ func TestConvertDoc_pendingSourceSavedInOther(t *testing.T) {
 		if id != src.ID {
 			require.Equal(t, docsbot.StatusSaved, d.Status, "no category question")
 			require.Equal(t, docsbot.CatOther, d.Category)
-			require.Equal(t, "Паспорт-сжатый.jpg", d.Title)
+			require.Equal(t, "Паспорт-сжатый", d.Title, "the title carries no extension")
 		}
 	}
 }

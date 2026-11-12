@@ -87,6 +87,8 @@ type Notifier struct {
 	svc   statusService
 	log   *slog.Logger
 
+	renames *renameStore // shared with the docs handlers; nil when not wired
+
 	mu        sync.Mutex
 	lastEdit  map[docsbot.StatusMessageID]time.Time
 	revokedAt map[docsbot.UserID]time.Time // last reconnect prompt per user
@@ -97,9 +99,28 @@ type Notifier struct {
 const reconnectDebounce = 10 * time.Minute
 
 // NewNotifier builds the Telegram Notifier that the upload worker reports to.
-func NewNotifier(b *tg.Bot, users userLookup, auth Authorizer, svc statusService, log *slog.Logger) *Notifier {
-	return &Notifier{bot: b, users: users, auth: auth, svc: svc, log: log,
+func NewNotifier(b *tg.Bot, users userLookup, auth Authorizer, svc statusService, log *slog.Logger, opts ...NotifierOption) *Notifier {
+	n := &Notifier{bot: b, users: users, auth: auth, svc: svc, log: log,
 		lastEdit: map[docsbot.StatusMessageID]time.Time{}, revokedAt: map[docsbot.UserID]time.Time{}}
+	for _, opt := range opts {
+		opt(n)
+	}
+	return n
+}
+
+// NotifierOption tunes a Notifier at construction.
+type NotifierOption func(*Notifier)
+
+// WithNotifierRenames shares the rename state with the docs handlers (see Renames).
+func WithNotifierRenames(r *Renames) NotifierOption {
+	return func(n *Notifier) { n.renames = r.store }
+}
+
+// dropRename ends a rename prompt shown on a message the Notifier is about to redraw.
+func (n *Notifier) dropRename(chat int64, msg int) {
+	if n.renames != nil {
+		n.renames.dropMessage(chat, msg)
+	}
 }
 
 // UploadOutcome reflects a document's final upload state: it refreshes the batch
@@ -115,7 +136,9 @@ func (n *Notifier) UploadOutcome(ctx context.Context, user docsbot.UserID, doc d
 	}
 	text, kb := renderStatusMessage(view.Message, view.Lines, view.FolderByCat)
 	n.throttle(view.Message.ID)
+	n.dropRename(view.Message.ChatID, view.Message.MessageID) // the redraw overwrites a prompt shown here
 	err = n.bot.EditHTML(ctx, view.Message.ChatID, view.Message.MessageID, text, kb)
+	n.dropRename(view.Message.ChatID, view.Message.MessageID)
 	switch msg := strings.ToLower(errString(err)); {
 	case err == nil, strings.Contains(msg, "message is not modified"):
 	case strings.Contains(msg, "message to edit not found"), strings.Contains(msg, "message can't be edited"):
@@ -185,7 +208,8 @@ func (n *Notifier) SyncOutcome(ctx context.Context, user docsbot.UserID, doc doc
 			url = ""
 		}
 	}
-	return ignoreBlocked(n.bot.SendMarkup(ctx, chatID, cardText(card.Doc), cardKeyboardWith(card.Doc, "", "", url)))
+	_, err = n.bot.SendHTML(ctx, chatID, cardText(card.Doc), cardKeyboardWith(card.Doc, "", "", url))
+	return ignoreBlocked(err)
 }
 
 // RemoteKept tells the user a deleted document's Drive file could not be trashed.

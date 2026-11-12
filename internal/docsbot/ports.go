@@ -57,6 +57,12 @@ type Repo interface {
 	MarkSynced(ctx context.Context, user UserID, id DocumentID, metaVersion int) (bool, error)
 	// SetSyncStatus sets sync_status and sync_reason ("" clears it).
 	SetSyncStatus(ctx context.Context, user UserID, id DocumentID, s SyncStatus, reason string) error
+	// TransitionSyncStatus moves a backed-up document from one sync_status to
+	// another, clearing sync_reason, only while it still has the from status. It
+	// reports false when the status moved on (e.g. an edit queued a sync), the
+	// row now points at another Drive file than remoteID, or the document is gone,
+	// so a stale check never overwrites newer state.
+	TransitionSyncStatus(ctx context.Context, user UserID, id DocumentID, remoteID string, from, to SyncStatus) (bool, error)
 	// ClaimTransferable atomically moves every saved document that is not on Drive
 	// (none or failed) to pending and returns their ids, oldest first. Concurrent
 	// callers never receive the same document.
@@ -121,6 +127,10 @@ type Drive interface {
 	Move(ctx context.Context, user UserID, remoteID string, cat Category) error
 	// Trash moves the remote file to the provider's trash, never deleting it for good.
 	Trash(ctx context.Context, user UserID, remoteID string) error
+	// FileExists reports whether the remote file is still there; a file in the
+	// provider's trash counts as gone. A revoked grant returns ErrDriveRevoked,
+	// a disconnect ErrDriveDisconnected.
+	FileExists(ctx context.Context, user UserID, remoteID string) (bool, error)
 	// Replace overwrites the remote file's content, keeping its id, name and folder.
 	Replace(ctx context.Context, user UserID, remoteID, mime string, data []byte) error
 }
@@ -138,6 +148,12 @@ type DriveUpload struct {
 type DriveFile struct {
 	ID   string
 	Link string
+}
+
+// PageCounter counts the pages of a PDF; declared by the domain, implemented in
+// wiring over platform/convert (the domain does not import it).
+type PageCounter interface {
+	PageCount(ctx context.Context, data []byte) (int, error)
 }
 
 // FileSource downloads a stored Telegram file by its file_id. A file above the
@@ -181,8 +197,9 @@ type Syncs interface {
 	// MarkBackedUp records a successful Drive upload (backup_status=backed_up +
 	// drive_file_id) and, in the same transaction, marks the document sync-pending and queues a sync when
 	// its meta_version differs from startVersion (title or category changed during
-	// the upload). ErrNotFound if the document was deleted meanwhile.
-	MarkBackedUp(ctx context.Context, user UserID, id DocumentID, driveFileID string, startVersion int) (queued bool, err error)
+	// the upload). pages > 0 records the PDF's page count (0: unknown, keep the stored one).
+	// ErrNotFound if the document was deleted meanwhile.
+	MarkBackedUp(ctx context.Context, user UserID, id DocumentID, driveFileID string, startVersion, pages int) (queued bool, err error)
 	// ReplaceContent swaps the document's file for in (file ids, size, MIME) and
 	// bumps meta_version; a backed-up document also goes content_dirty and
 	// sync-pending with a sync queued, all in one transaction; without cloud (Drive

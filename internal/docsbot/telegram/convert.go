@@ -1058,11 +1058,22 @@ func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 		c.removeKeyboard(ctx, b, chatID, msg)
 		return true
 	}
+	pages, width, height := 0, 0, 0
+	if w, h, ok := convert.ImageSize(data); ok { // header only; other formats stay unknown
+		width, height = w, h
+	}
+	if msg.Document.MimeType == "application/pdf" || strings.EqualFold(filepath.Ext(filename), ".pdf") {
+		// The result is already in memory; a failed count only leaves the page count unknown.
+		if n, err := convert.PageCount(ctx, data); err == nil {
+			pages = n
+		}
+	}
 	c.results.put(token, convResult{
 		tgUser: tgUser, user: user, sourceDoc: sourceDoc, suffix: suffix,
 		file: docsbot.IncomingFile{
 			Kind: docsbot.KindDocument, FileID: msg.Document.FileID, FileUniqueID: msg.Document.FileUniqueID,
-			Title: filename, FileSize: msg.Document.FileSize, MIME: msg.Document.MimeType,
+			Title: docsbot.TrimExt(filename), FileSize: msg.Document.FileSize, MIME: msg.Document.MimeType, PageCount: pages,
+			Width: width, Height: height,
 		},
 	})
 	return true

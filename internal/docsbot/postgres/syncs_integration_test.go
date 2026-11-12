@@ -207,7 +207,7 @@ func TestSyncs_failedInsertRollsBackTheChange(t *testing.T) {
 	require.False(t, replaced)
 	require.Equal(t, "file-a", e.row(t, id).TgFile)
 
-	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, e.seed(t, e.user, "u", "uploading", "ok"), "drive-x", -1, m.insert)
+	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, e.seed(t, e.user, "u", "uploading", "ok"), "drive-x", -1, 0, m.insert)
 	require.ErrorIs(t, err, boom)
 }
 
@@ -235,7 +235,7 @@ func TestSyncs_markBackedUpComparesVersion(t *testing.T) {
 			}
 
 			m := &marker{pool: e.pool}
-			queued, err := e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", start, m.insert)
+			queued, err := e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", start, 0, m.insert)
 
 			require.NoError(t, err)
 			require.Equal(t, tt.wantQueued, queued)
@@ -254,15 +254,15 @@ func TestSyncs_markBackedUpGoneAndForeign(t *testing.T) {
 	id := e.seed(t, e.user, "a", "uploading", "ok")
 	m := &marker{pool: e.pool}
 
-	_, err := e.repo.MarkBackedUpForSync(ctx, e.otherUser, id, "drive-1", 0, m.insert)
+	_, err := e.repo.MarkBackedUpForSync(ctx, e.otherUser, id, "drive-1", 0, 0, m.insert)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
 	require.Equal(t, "uploading", e.row(t, id).Backup)
 	require.Empty(t, e.row(t, id).DriveFile)
 
 	require.NoError(t, e.repo.DeleteDocument(ctx, e.user, id))
-	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", 0, m.insert)
+	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", 0, 0, m.insert)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
-	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", 0, noInsert)
+	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", 0, 0, noInsert)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
 	require.Zero(t, m.calls)
 }
@@ -620,4 +620,49 @@ func TestSyncs_claimFailedRetryKeepsClockFresh(t *testing.T) {
 	var fresh bool
 	require.NoError(t, e.pool.QueryRow(t.Context(), `select updated_at > now() - interval '1 minute' from documents where id = $1::uuid`, string(id)).Scan(&fresh))
 	require.True(t, fresh)
+}
+
+func TestSyncs_transitionSyncStatusIsConditional(t *testing.T) {
+	e := newSyncEnv(t)
+	ctx := t.Context()
+	tests := []struct {
+		name       string
+		backup     string
+		sync       string
+		from, to   docsbot.SyncStatus
+		wantMoved  bool
+		wantStatus string
+		remote     string // the Drive file id checked; "" means the row's own
+	}{
+		{"ok -> missing", "backed_up", "ok", docsbot.SyncOK, docsbot.SyncMissing, true, "missing", ""},
+		{"missing -> ok", "backed_up", "missing", docsbot.SyncMissing, docsbot.SyncOK, true, "ok", ""},
+		{"pending is not overwritten", "backed_up", "pending", docsbot.SyncOK, docsbot.SyncMissing, false, "pending", ""},
+		{"failed is not overwritten", "backed_up", "failed", docsbot.SyncOK, docsbot.SyncMissing, false, "failed", ""},
+		{"not backed up is untouched", "failed", "ok", docsbot.SyncOK, docsbot.SyncMissing, false, "ok", ""},
+		{"re-uploaded file is not marked missing", "backed_up", "ok", docsbot.SyncOK, docsbot.SyncMissing, false, "ok", "remote-old"},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			unique := "tr" + string(rune('a'+i))
+			id := e.seed(t, e.user, unique, tt.backup, tt.sync)
+			before := e.row(t, id)
+			remote := tt.remote
+			if remote == "" {
+				remote = "remote-" + unique
+			}
+
+			moved, err := e.repo.TransitionSyncStatus(ctx, e.user, id, remote, tt.from, tt.to)
+
+			require.NoError(t, err)
+			require.Equal(t, tt.wantMoved, moved)
+			got := e.row(t, id)
+			require.Equal(t, tt.wantStatus, got.Sync)
+			require.Equal(t, before.Meta, got.Meta, "meta_version is not bumped")
+
+			// A foreign user never moves it.
+			moved, err = e.repo.TransitionSyncStatus(ctx, e.otherUser, id, remote, docsbot.SyncOK, docsbot.SyncMissing)
+			require.NoError(t, err)
+			require.False(t, moved)
+		})
+	}
 }

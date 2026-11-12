@@ -21,7 +21,6 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/jobs"
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
-	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 	"github.com/alexe0110/most-app/internal/platform/gdrive"
 	pjobs "github.com/alexe0110/most-app/internal/platform/jobs"
@@ -112,7 +111,7 @@ func (raceDrive) Connected(context.Context, docsbot.UserID) (bool, error) { retu
 func (d raceDrive) Upload(ctx context.Context, user docsbot.UserID, in docsbot.DriveUpload) (docsbot.DriveFile, error) {
 	f, err := d.gd.Upload(ctx, string(user), gdrive.Upload{
 		CacheKey:   string(in.Category),
-		FolderName: telegram.CategoryLabel(in.Category),
+		FolderName: in.Category.FolderName(),
 		Name:       in.Name,
 		MIME:       in.MIME,
 		Data:       in.Data,
@@ -128,6 +127,10 @@ func (raceDrive) Rename(context.Context, docsbot.UserID, string, string) error {
 func (raceDrive) Move(context.Context, docsbot.UserID, string, docsbot.Category) error { return nil }
 
 func (raceDrive) Trash(context.Context, docsbot.UserID, string) error { return nil }
+
+func (raceDrive) FileExists(context.Context, docsbot.UserID, string) (bool, error) {
+	return true, nil
+}
 
 func (raceDrive) Replace(context.Context, docsbot.UserID, string, string, []byte) error { return nil }
 
@@ -192,6 +195,6 @@ func TestUploadDocument_batchCreatesFoldersOnce(t *testing.T) {
 
 	require.Equal(t, 1, fd.createdCount("Most Docs"))
 	for _, cat := range used {
-		require.Equal(t, 1, fd.createdCount(telegram.CategoryLabel(cat)), string(cat))
+		require.Equal(t, 1, fd.createdCount(cat.FolderName()), string(cat))
 	}
 }

@@ -32,7 +32,7 @@ func TestBackups_markAndList(t *testing.T) {
 	a := savedDoc(t, repo, user, "a")
 	b := savedDoc(t, repo, user, "b")
 
-	_, err := repo.MarkBackedUpForSync(ctx, user, a.ID, "drive-a", 0, noInsert)
+	_, err := repo.MarkBackedUpForSync(ctx, user, a.ID, "drive-a", 0, 0, noInsert)
 	require.NoError(t, err)
 	got, err := repo.DocumentByID(ctx, user, a.ID)
 	require.NoError(t, err)

@@ -83,8 +83,9 @@ func (r *Repo) SetCategoryForSync(ctx context.Context, user docsbot.UserID, id d
 
 // MarkBackedUpForSync records a finished upload and, when meta_version moved
 // since startVersion, leaves the document sync-pending and runs insert in the
-// same transaction. ErrNotFound if the document is gone.
-func (r *Repo) MarkBackedUpForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion int, insert func(ctx context.Context, tx pgx.Tx) error) (queued bool, err error) {
+// same transaction. pages > 0 records the PDF's page count. ErrNotFound if the
+// document is gone.
+func (r *Repo) MarkBackedUpForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion, pages int, insert func(ctx context.Context, tx pgx.Tx) error) (queued bool, err error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return false, err
@@ -95,6 +96,7 @@ func (r *Repo) MarkBackedUpForSync(ctx context.Context, user docsbot.UserID, id 
 			UserID:       uid,
 			DriveFileID:  pgtype.Text{String: driveFileID, Valid: true},
 			StartVersion: int32(startVersion),
+			PageCount:    pgtype.Int4{Int32: int32(pages), Valid: pages > 0},
 		})
 		if err != nil {
 			return notFoundOr(err, "mark document backed up")
@@ -126,6 +128,9 @@ func (r *Repo) ReplaceContentForSync(ctx context.Context, user docsbot.UserID, i
 			TgFileUniqueID: in.FileUniqueID,
 			FileSize:       pgtype.Int8{Int64: in.FileSize, Valid: in.FileSize > 0},
 			MimeType:       pgtype.Text{String: in.MIME, Valid: in.MIME != ""},
+			PageCount:      int32(in.PageCount),
+			ImageWidth:     int32(in.Width),
+			ImageHeight:    int32(in.Height),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil

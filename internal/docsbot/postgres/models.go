@@ -29,6 +29,9 @@ type Document struct {
 	SyncReason      pgtype.Text
 	MetaVersion     int32
 	ContentDirty    bool
+	PageCount       pgtype.Int4
+	ImageWidth      pgtype.Int4
+	ImageHeight     pgtype.Int4
 }
 
 type DriveFolder struct {

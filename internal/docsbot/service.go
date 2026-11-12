@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -39,6 +40,10 @@ const (
 	intakeWindow = time.Minute
 	// pendingTTL is how long a document may wait for a category before it is purged.
 	pendingTTL = 24 * time.Hour
+	// remoteCheckTimeout bounds the Drive existence check made when a card opens.
+	remoteCheckTimeout = 3 * time.Second
+	// remoteCheckEvery is the minimum gap between existence checks of one document.
+	remoteCheckEvery = time.Minute
 )
 
 // Service holds the Most Docs use cases. It depends only on ports, never on
@@ -52,8 +57,14 @@ type Service struct {
 	status  StatusMessages
 	syncs   Syncs
 	now     func() time.Time
-	name    func(Category) string
 	loc     *time.Location
+
+	// checks remembers when each document's Drive file was last looked up, to
+	// throttle OpenCard; guarded by checksMu.
+	checksMu sync.Mutex
+	checks   map[DocumentID]time.Time
+
+	pages PageCounter // nil: pages are not counted
 }
 
 // Option tunes a Service at construction.
@@ -64,10 +75,10 @@ func WithClock(now func() time.Time) Option {
 	return func(s *Service) { s.now = now }
 }
 
-// WithCategoryNamer sets how a category slug is turned into the display name
-// used in a document's default title. Injected from the telegram adapter.
-func WithCategoryNamer(fn func(Category) string) Option {
-	return func(s *Service) { s.name = fn }
+// WithPageCounter sets how the pages of a PDF are counted when it is backed up.
+// Without it the page count of such a document stays unknown.
+func WithPageCounter(pc PageCounter) Option {
+	return func(s *Service) { s.pages = pc }
 }
 
 // WithLocation sets the time zone used for the date in default titles.
@@ -79,9 +90,10 @@ func WithLocation(loc *time.Location) Option {
 func NewService(repo Repo, drive Drive, files FileSource, uploads Uploads, folders Folders, status StatusMessages, syncs Syncs, opts ...Option) *Service {
 	s := &Service{
 		repo: repo, drive: drive, files: files, uploads: uploads, folders: folders, status: status, syncs: syncs,
-		now:  time.Now,
-		name: func(c Category) string { return string(c) },
-		loc:  defaultLocation(),
+		now: time.Now,
+		loc: defaultLocation(),
+
+		checks: make(map[DocumentID]time.Time),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -317,7 +329,7 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 // defaultTitle builds "<category> — dd.mm.yyyy", adding " (n)" until it is unique
 // within the user's category.
 func (s *Service) defaultTitle(ctx context.Context, user UserID, cat Category) (string, error) {
-	base := s.name(cat) + " — " + s.now().In(s.loc).Format("02.01.2006")
+	base := cat.Label() + " — " + s.now().In(s.loc).Format("02.01.2006")
 	title := base
 	for i := 2; i <= maxTitleSuffix; i++ {
 		exists, err := s.repo.TitleExistsInCategory(ctx, user, cat, title)
@@ -382,6 +394,7 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 		return BackupResult{}, fmt.Errorf("download file: %w", err)
 	}
 
+	pages := s.countPages(ctx, doc, mime, data)
 	name := RemoteName(doc.Title, doc.MIME, doc.Kind)
 	file, err := s.drive.Upload(ctx, user, DriveUpload{Category: doc.Category, Name: name, MIME: mime, Data: data, DocID: string(id)})
 	if errors.Is(err, ErrDriveDisconnected) {
@@ -398,7 +411,7 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 		return BackupResult{}, fmt.Errorf("upload to drive: %w", err)
 	}
 
-	queued, err := s.syncs.MarkBackedUp(ctx, user, id, file.ID, startVersion)
+	queued, err := s.syncs.MarkBackedUp(ctx, user, id, file.ID, startVersion, pages)
 	if errors.Is(err, ErrNotFound) {
 		// Deleted while the file was uploading: nobody references the file, so
 		// trash it (best effort; a failure leaves an orphan the user can delete
@@ -410,10 +423,27 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 	}
 	doc.BackupStatus = BackupBackedUp
 	doc.DriveFileID = file.ID
+	if pages > 0 {
+		doc.PageCount = pages
+	}
 	if queued {
 		doc.SyncStatus = SyncPending
 	}
 	return BackupResult{Doc: doc}, nil
+}
+
+// countPages counts a PDF's pages for the card; 0 means unknown (not a PDF, no
+// counter configured, or the file could not be read). A failure is not an error:
+// the page count is decoration and must not hold up the upload.
+func (s *Service) countPages(ctx context.Context, doc Document, mime string, data []byte) int {
+	if s.pages == nil || (doc.MIME != "application/pdf" && mime != "application/pdf") {
+		return 0
+	}
+	n, err := s.pages.PageCount(ctx, data)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // ReplaceContent swaps the file of a saved document for in (a converted copy of
@@ -845,12 +875,86 @@ func (s *Service) Card(ctx context.Context, user UserID, id DocumentID) (Card, e
 	return Card{Doc: doc, CategoryFolderID: folderID}, nil
 }
 
-// Rename changes a document's title to a normalized, non-blank value. When Drive
-// is connected a backed-up document's file is renamed by the sync worker.
+// OpenCard is Card for a card the user opens from a list or search: when the
+// document has a live Drive file it also checks, at most once a minute and within
+// remoteCheckTimeout, that the file still exists, and flips the sync status
+// ok <-> missing accordingly. A failure of the check itself (network, timeout,
+// revoked or disconnected Drive) is not an error: the card stays as it is. A
+// database error comes back together with the card read so far (Card.Doc.ID set),
+// which the caller may still show; nothing is re-uploaded here.
+func (s *Service) OpenCard(ctx context.Context, user UserID, id DocumentID) (Card, error) {
+	card, err := s.Card(ctx, user, id)
+	if err != nil {
+		return Card{}, err
+	}
+	doc := card.Doc
+	if !doc.InDrive() || doc.DriveFileID == "" || (doc.SyncStatus != SyncOK && doc.SyncStatus != SyncMissing) {
+		return card, nil
+	}
+	if !s.allowRemoteCheck(doc.ID) {
+		return card, nil
+	}
+	connected, err := s.drive.Connected(ctx, user)
+	if err != nil {
+		return card, fmt.Errorf("drive status: %w", err)
+	}
+	if !connected {
+		return card, nil
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, remoteCheckTimeout)
+	defer cancel()
+	exists, err := s.drive.FileExists(checkCtx, user, doc.DriveFileID)
+	if err != nil {
+		return card, nil
+	}
+
+	from, to := SyncOK, SyncMissing
+	if exists {
+		from, to = SyncMissing, SyncOK
+	}
+	if doc.SyncStatus != from {
+		return card, nil
+	}
+	moved, err := s.repo.TransitionSyncStatus(ctx, user, doc.ID, doc.DriveFileID, from, to)
+	if err != nil {
+		return card, fmt.Errorf("transition sync status: %w", err)
+	}
+	if !moved {
+		return card, nil
+	}
+	card.Doc.SyncStatus, card.Doc.SyncReason = to, ""
+	return card, nil
+}
+
+// allowRemoteCheck reports whether the document's Drive file may be checked now,
+// and records the attempt. Entries older than the throttle window are dropped on
+// the way, so the map does not grow without bound.
+func (s *Service) allowRemoteCheck(id DocumentID) bool {
+	now := s.now()
+	s.checksMu.Lock()
+	defer s.checksMu.Unlock()
+	for k, t := range s.checks {
+		if now.Sub(t) >= remoteCheckEvery {
+			delete(s.checks, k)
+		}
+	}
+	if _, recent := s.checks[id]; recent {
+		return false
+	}
+	s.checks[id] = now
+	return true
+}
+
+// Rename changes a document's title to a normalized, non-blank value of at most
+// MaxTitleRunes runes: a longer title is refused (ErrTitleTooLong), not cut. When
+// Drive is connected a backed-up document's file is renamed by the sync worker.
 func (s *Service) Rename(ctx context.Context, user UserID, id DocumentID, title string) (Card, error) {
-	title = NormalizeTitle(title)
+	title = collapseTitle(title)
 	if title == "" {
 		return Card{}, ErrEmptyTitle
+	}
+	if len([]rune(title)) > MaxTitleRunes {
+		return Card{}, ErrTitleTooLong
 	}
 	connected, err := s.drive.Connected(ctx, user)
 	if err != nil {
@@ -936,7 +1040,7 @@ func (s *Service) Catalog(ctx context.Context, user UserID) (Catalog, error) {
 			return Catalog{}, fmt.Errorf("count not backed up: %w", err)
 		}
 	}
-	return Catalog{Counts: counts, NotInDrive: notInDrive, DriveConnected: connected}, nil
+	return Catalog{Counts: foldCategoryCounts(counts), NotInDrive: notInDrive, DriveConnected: connected}, nil
 }
 
 // CategoryPage returns one page (pageSize) of a category, newest first. page is
@@ -996,7 +1100,7 @@ func (s *Service) categoryTotal(ctx context.Context, user UserID, cat Category) 
 	if err != nil {
 		return 0, fmt.Errorf("category counts: %w", err)
 	}
-	for _, c := range counts {
+	for _, c := range foldCategoryCounts(counts) {
 		if c.Category == cat {
 			return c.Count, nil
 		}

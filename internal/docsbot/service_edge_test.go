@@ -377,9 +377,38 @@ func TestService_Rename_normalizes(t *testing.T) {
 	require.ErrorIs(t, err, docsbot.ErrEmptyTitle)
 	require.Equal(t, "old", repo.docs[doc.ID].Title, "old title stays")
 
-	card, err := svc.Rename(t.Context(), user, doc.ID, "  a\nb  "+strings.Repeat("я", 500))
+	card, err := svc.Rename(t.Context(), user, doc.ID, "  a\nb  "+strings.Repeat("я", docsbot.MaxTitleRunes-4))
 	require.NoError(t, err)
 	require.Equal(t, "a b "+strings.Repeat("я", docsbot.MaxTitleRunes-4), card.Doc.Title)
+}
+
+func TestService_Rename_tooLongIsRefusedNotCut(t *testing.T) {
+	tests := []struct {
+		name    string
+		title   string
+		wantErr error
+	}{
+		{"exactly the limit", strings.Repeat("я", docsbot.MaxTitleRunes), nil},
+		{"one over", strings.Repeat("я", docsbot.MaxTitleRunes+1), docsbot.ErrTitleTooLong},
+		{"far over", strings.Repeat("я", 500), docsbot.ErrTitleTooLong},
+		{"whitespace does not count", "  " + strings.Repeat("я ", 3) + "\n" + strings.Repeat(" ", 300), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "old"})
+			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+
+			_, err := svc.Rename(t.Context(), user, doc.ID, tt.title)
+
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				require.Equal(t, "old", repo.docs[doc.ID].Title, "nothing is stored")
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestService_Receive_normalizesTitle(t *testing.T) {
@@ -415,7 +444,6 @@ func TestService_defaultTitle_usesLocation(t *testing.T) {
 			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "u"})
 			opts := append([]docsbot.Option{
 				docsbot.WithClock(func() time.Time { return now }),
-				docsbot.WithCategoryNamer(func(docsbot.Category) string { return "Медицина" }),
 			}, tt.opts...)
 			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, opts...)
 

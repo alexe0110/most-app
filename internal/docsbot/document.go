@@ -11,42 +11,6 @@ type DocumentID string
 // StatusMessageID is a batch status message's internal (UUID) identifier.
 type StatusMessageID string
 
-// Category is a document bucket. The stored value is a stable slug; the Russian
-// label shown to the user lives in the telegram adapter (texts.go).
-type Category string
-
-// MVP categories (product.md).
-const (
-	CatPassport  Category = "passport"
-	CatContracts Category = "contracts"
-	CatReceipts  Category = "receipts"
-	CatAuto      Category = "auto"
-	CatMedical   Category = "medical"
-	CatEduWork   Category = "edu_work"
-	CatOther     Category = "other"
-)
-
-// AllCategories lists the categories in display order (product.md).
-var AllCategories = []Category{
-	CatPassport, CatContracts, CatReceipts, CatAuto, CatMedical, CatEduWork, CatOther,
-}
-
-// Valid reports whether c is one of the known categories.
-func (c Category) Valid() bool {
-	for _, k := range AllCategories {
-		if c == k {
-			return true
-		}
-	}
-	return false
-}
-
-// ParseCategory turns a stored or callback string into a Category.
-func ParseCategory(s string) (Category, bool) {
-	c := Category(s)
-	return c, c.Valid()
-}
-
 // Status is the document's own lifecycle, independent of Drive.
 type Status string
 
@@ -115,9 +79,13 @@ type Document struct {
 	TgFileUniqueID string
 	DriveFileID    string
 	// FileSize is the size in bytes, 0 if unknown.
-	FileSize     int64
-	MIME         string
-	BackupStatus BackupStatus
+	FileSize int64
+	// PageCount is the number of pages of a PDF, 0 if unknown.
+	PageCount int
+	// Width and Height are the pixel size of an image, 0 if unknown.
+	Width, Height int
+	MIME          string
+	BackupStatus  BackupStatus
 	// SyncStatus is the state of the Drive copy relative to the row; SyncReason
 	// explains a failed sync ("" or SyncReasonRevoked).
 	SyncStatus SyncStatus
@@ -167,6 +135,10 @@ type IncomingFile struct {
 	// FileSize is the size in bytes, 0 if unknown.
 	FileSize int64
 	MIME     string
+	// PageCount is the number of pages of a PDF, 0 if unknown.
+	PageCount int
+	// Width and Height are the pixel size of an image, 0 if unknown.
+	Width, Height int
 	// MediaGroupID is the Telegram album the file belongs to, "" for a single file.
 	MediaGroupID string
 }

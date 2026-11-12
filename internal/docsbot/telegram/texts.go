@@ -32,8 +32,9 @@ const (
 	textGroupTooLarge       = "Слишком большие для Drive, остались в Telegram: %d" // %d = files
 	textAlreadySaved        = "Этот файл уже сохранён."
 
-	textRenamePrompt = "Пришли новое название документа."
-	textRenameEmpty  = "Название пустое. Нажми «Имя» и пришли название ещё раз."
+	textRenamePrompt  = "Пришли новое название"
+	textRenameEmpty   = "Название пустое. Пришли новое название или нажми «Отмена»."
+	textRenameTooLong = "Название слишком длинное, максимум %d символов. Пришли покороче или нажми «Отмена»." // docsbot.MaxTitleRunes
 
 	textDeleteConfirm = "Удалить этот документ? Отменить будет нельзя."
 	// textDeleteConfirmDrive is shown for a document in a connected Drive.
@@ -72,15 +73,15 @@ const (
 	textTransferAllDone   = "Готово: %d в Drive"         // %d = backed up
 
 	textStoragePending      = "⏳ Загружаю в Drive…"
-	textStorageInDrive      = "☁️ В Google Drive"
+	textStorageInDrive      = "☁️ Google Drive · копия в Telegram"
 	textStorageFailed       = "❌ Не удалось выгрузить в Drive"
 	textStorageTooLarge     = "📥 Слишком большой для Drive"
 	textStorageSyncing      = "⏳ Обновляю в Drive…"
 	textStorageSyncFailed   = "⚠️ Не удалось обновить в Drive"
 	textStorageSyncRevoked  = "⚠️ Не удалось обновить в Drive: доступ отозван"
-	textStorageMissing      = "⚠️ Файл удалён в Drive"
+	textStorageMissing      = "📥 Файл удалён в Drive, копия осталась в Telegram"
 	textDriveFileStayed     = "В Drive файл остался в прежней папке"
-	textStorageTelegramOnly = "📥 Только в Telegram, ещё не в Drive"
+	textStorageTelegramOnly = "📥 Только в Telegram"
 
 	// textGroupNotice is sent once to a group the bot was added to, right before it leaves.
 	textGroupNotice = "Я работаю только в личных сообщениях: документы не должны попадать в общий чат. Напиши мне в личку."
@@ -101,13 +102,14 @@ const (
 	textNoFailed = "Документов с ошибкой выгрузки нет."
 
 	textExportEmpty     = "Пока нечего присылать — сохранённых документов нет."
+	textExportRunning   = "Присылаю документы — подожди, пока закончу."
 	textExportStart     = "Присылаю твои документы…"
-	textExportDone      = "Готово — прислал %d документов."                                                     // %d = count
-	textExportTruncated = "Прислал %d из %d. Нажми «Прислать все документы» ещё раз, чтобы получить остальные." // sent, total
+	textExportDone      = "Готово — прислал %d документов."                                      // %d = count
+	textExportTruncated = "Прислал %d из %d. Отправь /export ещё раз, чтобы получить остальные." // sent, total
 
 	textDeleteDataPrompt = "Это удалит все твои данные у бота: документы, категории и подключение Google Drive.\n\n" +
 		"Файлы, уже выгруженные на твой Google Drive, останутся у тебя. Сообщения в этом чате бот удалить не может.\n\n" +
-		"Советую сначала нажать «Прислать все документы».\n\n" +
+		"Советую сначала забрать документы: кнопка ниже или команда /export.\n\n" +
 		"Чтобы подтвердить, пришли слово УДАЛИТЬ."
 	textDataDeleted = "Данные удалены. Файлы на Google Drive остались у тебя; сообщения в этом чате можно удалить вручную.\n\n" +
 		"Напиши /start, чтобы начать заново."
@@ -117,7 +119,8 @@ const (
 // Inline button labels for the core flow.
 const (
 	btnConnectDrive       = "☁️ Подключить Google Drive"
-	btnSendFile           = "📤 Прислать файл"
+	btnCardSend           = "📤 Прислать"
+	btnCardOpen           = "☁️ Открыть"
 	btnOpenDrive          = "☁️ Открыть в Drive"
 	btnOpenFolder         = "📁 Папка в Drive"
 	btnOpenCategoryFolder = "📁 Папка категории"
@@ -126,6 +129,7 @@ const (
 	btnDelete             = "🗑 Удалить"
 	btnDeleteYes          = "Да, удалить"
 	btnDeleteNo           = "Отмена"
+	btnRenameCancel       = "Отмена"
 	btnTransfer           = "📤 Перенести в Drive"
 	btnBack               = "⬅️ Назад"
 	btnMyDocs             = "📂 Мои документы"
@@ -137,7 +141,7 @@ const (
 	btnReconnect          = "☁️ Переподключить Google Drive"
 	btnDisconnect         = "🔌 Отключить Google Drive"
 	btnRetryAll           = "🔁 Повторить выгрузку"
-	btnExportAll          = "📨 Прислать все документы"
+	btnExportAll          = "📨 Сначала прислать все документы"
 	btnDeleteData         = "🗑 Удалить мои данные"
 )
 

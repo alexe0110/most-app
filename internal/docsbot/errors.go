@@ -11,6 +11,8 @@ var (
 	ErrUnknownCategory = errors.New("unknown category")
 	// ErrEmptyTitle means a rename was given a blank title.
 	ErrEmptyTitle = errors.New("empty title")
+	// ErrTitleTooLong means a rename was given a title above MaxTitleRunes.
+	ErrTitleTooLong = errors.New("title too long")
 	// ErrFileTooLarge means the file is above Telegram's download limit, so it cannot be backed up to Drive.
 	ErrFileTooLarge = errors.New("file too large for drive")
 	// ErrDriveRevoked means the user's Drive access was revoked; they must reconnect.

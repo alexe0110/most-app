@@ -14,6 +14,15 @@ const MaxTitleRunes = 100
 // spaces, whitespace runs collapse, the result is trimmed and capped at
 // MaxTitleRunes runes (a rune is never split). Blank input yields "".
 func NormalizeTitle(s string) string {
+	s = collapseTitle(s)
+	if r := []rune(s); len(r) > MaxTitleRunes {
+		s = strings.TrimSpace(string(r[:MaxTitleRunes]))
+	}
+	return s
+}
+
+// collapseTitle is NormalizeTitle without the length cap.
+func collapseTitle(s string) string {
 	s = strings.Map(func(r rune) rune {
 		if unicode.IsSpace(r) || unicode.IsControl(r) || isInvisibleFormat(r) {
 			return ' '
@@ -23,9 +32,6 @@ func NormalizeTitle(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if strings.Trim(s, " \u200d") == "" { // only joiners left: visually blank
 		return ""
-	}
-	if r := []rune(s); len(r) > MaxTitleRunes {
-		s = strings.TrimSpace(string(r[:MaxTitleRunes]))
 	}
 	return s
 }
@@ -43,14 +49,30 @@ func isInvisibleFormat(r rune) bool {
 	return false
 }
 
+// TrimExt drops a trailing file extension from a file name ("ВНЖ.pdf" -> "ВНЖ").
+// A tail that is not extension-like ("Отчёт 2026", "v1.2025") stays, and so does a
+// name that would become empty (".pdf").
+func TrimExt(name string) string {
+	if base := stripExt(name); base != "" {
+		return base
+	}
+	return name
+}
+
+// stripExt drops an extension-like tail; the result may be empty.
+func stripExt(name string) string {
+	ext := filepath.Ext(name)
+	if !looksLikeExt(strings.TrimPrefix(ext, ".")) {
+		return name
+	}
+	return strings.TrimSpace(strings.TrimSuffix(name, ext))
+}
+
 // DerivedTitle names a document made from src (a compressed copy, a PDF): the
 // file extension is dropped and suffix appended. The result fits MaxTitleRunes
 // by trimming the base, never the suffix.
 func DerivedTitle(src, suffix string) string {
-	base := NormalizeTitle(src)
-	if ext := filepath.Ext(base); looksLikeExt(strings.TrimPrefix(ext, ".")) {
-		base = strings.TrimSpace(strings.TrimSuffix(base, ext))
-	}
+	base := stripExt(NormalizeTitle(src))
 	suffix = strings.TrimSpace(suffix)
 	if base == "" {
 		return suffix

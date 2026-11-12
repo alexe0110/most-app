@@ -20,6 +20,7 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
 	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/config"
+	"github.com/alexe0110/most-app/internal/platform/convert"
 	"github.com/alexe0110/most-app/internal/platform/db"
 	"github.com/alexe0110/most-app/internal/platform/gdrive"
 	"github.com/alexe0110/most-app/internal/platform/jobs"
@@ -84,6 +85,7 @@ func run() error {
 	// oauth.Service and the bot each need the other (the bot shows the consent
 	// link; oauth notifies the bot when Drive connects). tgbot is filled just
 	// below, and both closures run only after startup, so the cycle is safe.
+	renames := telegram.NewRenames() // shared by the bot handlers and the notifier
 	var (
 		tgbot *tg.Bot
 		svc   *docsbot.Service
@@ -103,7 +105,7 @@ func run() error {
 
 	gdriveSvc := gdrive.New(gdriveClients{oauth: oauthSvc}, repo, gdrive.WithLogger(log))
 	driveAdapter := driveBridge{oauth: oauthSvc, gd: gdriveSvc}
-	svc = docsbot.NewService(repo, driveAdapter, files, enq, repo, repo, enq, docsbot.WithCategoryNamer(telegram.CategoryLabel))
+	svc = docsbot.NewService(repo, driveAdapter, files, enq, repo, repo, enq, docsbot.WithPageCounter(pageCounter{}))
 
 	tgbot, err = tg.New(tg.Config{
 		Token:         cfg.TelegramToken,
@@ -111,12 +113,12 @@ func run() error {
 		PublicURL:     cfg.PublicURL,
 		WebhookSecret: cfg.TelegramWebhookSecret,
 		GroupNotice:   telegram.GroupNotice(),
-	}, repo, log, func(b *bot.Bot) { telegram.Register(b, log, svc, oauthSvc) })
+	}, repo, log, func(b *bot.Bot) { telegram.Register(b, log, svc, oauthSvc, telegram.WithRenames(renames)) })
 	if err != nil {
 		return err
 	}
 	files.bot = tgbot
-	notifier := telegram.NewNotifier(tgbot, repo, oauthSvc, svc, log)
+	notifier := telegram.NewNotifier(tgbot, repo, oauthSvc, svc, log, telegram.WithNotifierRenames(renames))
 	bindUpload(svc, notifier)
 	bindSync(svc, notifier)
 	bindTrash(svc, notifier)
@@ -202,7 +204,7 @@ func (d driveBridge) Connected(ctx context.Context, user docsbot.UserID) (bool, 
 func (d driveBridge) Upload(ctx context.Context, user docsbot.UserID, in docsbot.DriveUpload) (docsbot.DriveFile, error) {
 	f, err := d.gd.Upload(ctx, string(user), gdrive.Upload{
 		CacheKey:   string(in.Category),
-		FolderName: telegram.CategoryLabel(in.Category),
+		FolderName: in.Category.FolderName(),
 		Name:       in.Name,
 		MIME:       in.MIME,
 		Data:       in.Data,
@@ -219,15 +221,27 @@ func (d driveBridge) Rename(ctx context.Context, user docsbot.UserID, remoteID, 
 }
 
 func (d driveBridge) Move(ctx context.Context, user docsbot.UserID, remoteID string, cat docsbot.Category) error {
-	return driveErr(d.gd.Move(ctx, string(user), remoteID, string(cat), telegram.CategoryLabel(cat)))
+	return driveErr(d.gd.Move(ctx, string(user), remoteID, string(cat), cat.FolderName()))
 }
 
 func (d driveBridge) Trash(ctx context.Context, user docsbot.UserID, remoteID string) error {
 	return driveErr(d.gd.Trash(ctx, string(user), remoteID))
 }
 
+func (d driveBridge) FileExists(ctx context.Context, user docsbot.UserID, remoteID string) (bool, error) {
+	ok, err := d.gd.Exists(ctx, string(user), remoteID)
+	return ok, driveErr(err)
+}
+
 func (d driveBridge) Replace(ctx context.Context, user docsbot.UserID, remoteID, mime string, data []byte) error {
 	return driveErr(d.gd.Replace(ctx, string(user), remoteID, mime, data))
+}
+
+// pageCounter counts PDF pages for the domain over platform/convert.
+type pageCounter struct{}
+
+func (pageCounter) PageCount(ctx context.Context, data []byte) (int, error) {
+	return convert.PageCount(ctx, data)
 }
 
 // driveErr translates gdrive and oauth errors into domain errors; others pass through.

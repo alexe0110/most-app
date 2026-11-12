@@ -35,13 +35,13 @@ func pdfPages(t *testing.T, data []byte) int {
 	return n
 }
 
-// seedPDF stores a saved 3-page PDF "Договор.pdf" in contracts.
+// seedPDF stores a saved 3-page PDF "Договор.pdf" in certificates.
 func seedPDF(t *testing.T, h *convHarness) docsbot.Document {
 	t.Helper()
 	h.serve("pdf-src", testPDF(t, 3))
 	return h.repo.seed(docsbot.Document{
 		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "application/pdf",
-		Category: docsbot.CatContracts, Title: "Договор.pdf", TgFileID: "pdf-src", TgFileUniqueID: "pdf-uniq",
+		Category: docsbot.CatCertificates, Title: "Договор.pdf", TgFileID: "pdf-src", TgFileUniqueID: "pdf-uniq",
 	})
 }
 
@@ -83,7 +83,8 @@ func TestConvertPDF_menuAndRotate(t *testing.T) {
 	for id, d := range h.repo.docs {
 		if id != src.ID {
 			require.Equal(t, "Договор (изменён)", d.Title)
-			require.Equal(t, docsbot.CatContracts, d.Category)
+			require.Equal(t, 3, d.PageCount, "the converter counts the pages of its PDF result")
+			require.Equal(t, docsbot.CatCertificates, d.Category)
 			require.Equal(t, docsbot.StatusSaved, d.Status)
 		}
 	}

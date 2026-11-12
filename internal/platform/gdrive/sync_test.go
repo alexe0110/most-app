@@ -193,3 +193,38 @@ func TestReplace(t *testing.T) {
 	d = &syncDrive{fileStatus: http.StatusUnauthorized}
 	require.ErrorIs(t, newSyncSvc(t, d, fakeClients{}).Replace(context.Background(), "u1", "f1", "", nil), ErrAccessRevoked)
 }
+
+func TestExists(t *testing.T) {
+	tests := []struct {
+		name    string
+		drive   *syncDrive
+		clients Clients
+		want    bool
+		wantErr error
+		anyErr  bool // some error other than a missing file is expected
+	}{
+		{"alive", &syncDrive{}, fakeClients{}, true, nil, false},
+		{"trashed", &syncDrive{trashed: true}, fakeClients{}, false, nil, false},
+		{"404", &syncDrive{fileStatus: http.StatusNotFound}, fakeClients{}, false, nil, false},
+		{"401 is revoked", &syncDrive{fileStatus: http.StatusUnauthorized}, fakeClients{}, false, ErrAccessRevoked, false},
+		{"403 is an error", &syncDrive{fileStatus: http.StatusForbidden}, fakeClients{}, false, nil, true},
+		{"500 is an error", &syncDrive{fileStatus: http.StatusInternalServerError}, fakeClients{}, false, nil, true},
+		{"oauth revoked", &syncDrive{}, fakeClients{err: oauth.ErrAccessRevoked}, false, ErrAccessRevoked, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := newSyncSvc(t, tt.drive, tt.clients).Exists(context.Background(), "u1", "f1")
+			switch {
+			case tt.anyErr:
+				require.Error(t, err)
+				require.NotErrorIs(t, err, ErrFileNotFound)
+			case tt.wantErr != nil:
+				require.ErrorIs(t, err, tt.wantErr)
+			default:
+				require.NoError(t, err)
+			}
+			require.Equal(t, tt.want, got)
+			require.Empty(t, tt.drive.patches, "a check never writes")
+		})
+	}
+}

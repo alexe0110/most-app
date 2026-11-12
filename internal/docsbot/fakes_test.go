@@ -33,6 +33,13 @@ type fakeDrive struct {
 	trashErr   error
 	replaceErr error
 	uploadedAs *string // last Upload name, when set
+
+	// FileExists: existsRes is the answer, existsErr the failure; checks counts
+	// calls and checkDeadline records the context's remaining time on each call.
+	existsRes     bool
+	existsErr     error
+	existsCalls   *int
+	checkDeadline *time.Duration
 }
 
 func (d fakeDrive) record(op string) {
@@ -54,6 +61,17 @@ func (d fakeDrive) Move(_ context.Context, _ docsbot.UserID, remoteID string, ca
 func (d fakeDrive) Trash(_ context.Context, _ docsbot.UserID, remoteID string) error {
 	d.record("trash:" + remoteID)
 	return d.trashErr
+}
+
+func (d fakeDrive) FileExists(ctx context.Context, _ docsbot.UserID, remoteID string) (bool, error) {
+	d.record("exists:" + remoteID)
+	if d.existsCalls != nil {
+		*d.existsCalls++
+	}
+	if dl, ok := ctx.Deadline(); ok && d.checkDeadline != nil {
+		*d.checkDeadline = time.Until(dl)
+	}
+	return d.existsRes, d.existsErr
 }
 
 func (d fakeDrive) Replace(_ context.Context, _ docsbot.UserID, remoteID, _ string, _ []byte) error {
@@ -216,7 +234,7 @@ func (s *fakeSyncs) EnqueueSync(_ context.Context, user docsbot.UserID, id docsb
 	return nil
 }
 
-func (s *fakeSyncs) MarkBackedUp(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion int) (bool, error) {
+func (s *fakeSyncs) MarkBackedUp(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion, pages int) (bool, error) {
 	if s.err != nil {
 		return false, s.err
 	}
@@ -227,6 +245,9 @@ func (s *fakeSyncs) MarkBackedUp(_ context.Context, user docsbot.UserID, id docs
 		return false, docsbot.ErrNotFound
 	}
 	d.BackupStatus, d.DriveFileID = docsbot.BackupBackedUp, driveFileID
+	if pages > 0 {
+		d.PageCount = pages
+	}
 	queued := d.MetaVersion != startVersion
 	if queued {
 		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
@@ -257,7 +278,8 @@ func (s *fakeSyncs) ReplaceContent(_ context.Context, user docsbot.UserID, id do
 			return false, docsbot.ErrDuplicateFile
 		}
 	}
-	d.Kind, d.TgFileID, d.TgFileUniqueID, d.FileSize, d.MIME = in.Kind, in.FileID, in.FileUniqueID, in.FileSize, in.MIME
+	d.Kind, d.TgFileID, d.TgFileUniqueID, d.FileSize, d.MIME, d.PageCount = in.Kind, in.FileID, in.FileUniqueID, in.FileSize, in.MIME, in.PageCount
+	d.Width, d.Height = in.Width, in.Height
 	d.MetaVersion++
 	backedUp := cloud && d.BackupStatus == docsbot.BackupBackedUp
 	d.ContentDirty = backedUp
@@ -363,7 +385,7 @@ func (r *fakeRepo) CreateDocument(_ context.Context, in docsbot.IncomingFile) (d
 	return r.seedLocked(docsbot.Document{
 		UserID: in.UserID, Status: docsbot.StatusPending, Kind: in.Kind, Title: in.Title,
 		TgFileID: in.FileID, TgFileUniqueID: in.FileUniqueID, BackupStatus: docsbot.BackupNone,
-		MediaGroupID: in.MediaGroupID, FileSize: in.FileSize,
+		MediaGroupID: in.MediaGroupID, FileSize: in.FileSize, PageCount: in.PageCount, Width: in.Width, Height: in.Height,
 	}), nil
 }
 
@@ -615,10 +637,8 @@ func (r *fakeRepo) CategoryCounts(_ context.Context, user docsbot.UserID) ([]doc
 		byCat[d.Category]++
 	}
 	var out []docsbot.CategoryCount
-	for _, c := range docsbot.AllCategories {
-		if n, ok := byCat[c]; ok {
-			out = append(out, docsbot.CategoryCount{Category: c, Count: n})
-		}
+	for c, n := range byCat { // raw and unordered, like the SQL: the service folds and sorts
+		out = append(out, docsbot.CategoryCount{Category: c, Count: n})
 	}
 	return out, nil
 }
@@ -628,7 +648,7 @@ func (r *fakeRepo) ListByCategory(_ context.Context, user docsbot.UserID, cat do
 	defer r.mu.Unlock()
 	var all []docsbot.Document
 	for _, d := range r.savedFor(user) {
-		if d.Category == cat {
+		if d.Category == cat || (cat == docsbot.CatOther && !d.Category.Valid()) {
 			all = append(all, d)
 		}
 	}
@@ -668,6 +688,19 @@ func (r *fakeRepo) MarkSynced(_ context.Context, user docsbot.UserID, id docsbot
 		return false, nil
 	}
 	d.SyncStatus, d.SyncReason, d.ContentDirty = docsbot.SyncOK, "", false
+	r.docs[id] = d
+	return true, nil
+}
+
+// TransitionSyncStatus mirrors the conditional UPDATE.
+func (r *fakeRepo) TransitionSyncStatus(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, remoteID string, from, to docsbot.SyncStatus) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	d, ok := r.docs[id]
+	if !ok || d.UserID != user || d.SyncStatus != from || d.BackupStatus != docsbot.BackupBackedUp || d.DriveFileID != remoteID {
+		return false, nil
+	}
+	d.SyncStatus, d.SyncReason = to, ""
 	r.docs[id] = d
 	return true, nil
 }

@@ -162,7 +162,7 @@ func TestService_ChooseCategory_defaultTitle(t *testing.T) {
 				repo.seed(d)
 			}
 			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: tt.title, TgFileUniqueID: "u"})
-			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }), docsbot.WithCategoryNamer(func(docsbot.Category) string { return "Медицина" }))
+			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
 
 			got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatMedical)
 			require.NoError(t, err)

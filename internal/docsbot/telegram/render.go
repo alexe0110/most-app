@@ -3,7 +3,6 @@ package telegram
 import (
 	"fmt"
 	"html"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,7 +23,8 @@ const (
 	actSetCategory   = "sc"  // change an existing document's category
 	actChangeCat     = "chc" // show the category picker for a card
 	actSend          = "snd" // resend the original file
-	actRename        = "rn"  // ask for a new title (force reply)
+	actRename        = "rn"  // ask for a new title: the card message becomes the prompt
+	actRenameCancel  = "rnc" // cancel the rename prompt: d:rnc:<docID>
 	actDeleteAsk     = "del" // ask to confirm deletion
 	actDeleteYes     = "dy"  // confirm deletion
 	actDeleteNo      = "dn"  // cancel deletion
@@ -45,43 +45,23 @@ const (
 	actNoop          = "noop"
 )
 
-// categoryLabels are the Russian names shown to the user (product.md). The
-// stored value is the slug.
-var categoryLabels = map[docsbot.Category]string{
-	docsbot.CatPassport:  "Паспорт и ID",
-	docsbot.CatContracts: "Договоры",
-	docsbot.CatReceipts:  "Чеки и гарантии",
-	docsbot.CatAuto:      "Авто",
-	docsbot.CatMedical:   "Медицина",
-	docsbot.CatEduWork:   "Учёба и работа",
-	docsbot.CatOther:     "Другое",
-}
-
-func categoryLabel(c docsbot.Category) string {
-	if label, ok := categoryLabels[c]; ok {
-		return label
-	}
-	return string(c)
-}
-
-// CategoryLabel is the Russian display name for a category.
-func CategoryLabel(c docsbot.Category) string { return categoryLabel(c) }
-
 // cb builds "d:<action>:<docID>".
 func cb(action string, id docsbot.DocumentID) string {
 	return fmt.Sprintf("%s%s:%s", cbPrefix, action, id)
 }
 
-// categoryKeyboard offers every category, two per row. action is actCategory for
-// a new document or actSetCategory when changing one.
-func categoryKeyboard(action string, id docsbot.DocumentID) *models.InlineKeyboardMarkup {
+// categoryRows lays category buttons out two per row, with «Другое» alone in the
+// last row.
+func categoryRows(cats []docsbot.Category, button func(docsbot.Category) models.InlineKeyboardButton) [][]models.InlineKeyboardButton {
 	var rows [][]models.InlineKeyboardButton
 	var line []models.InlineKeyboardButton
-	for _, c := range docsbot.AllCategories {
-		line = append(line, models.InlineKeyboardButton{
-			Text:         categoryLabel(c),
-			CallbackData: fmt.Sprintf("%s%s:%s:%s", cbPrefix, action, id, c),
-		})
+	var other []models.InlineKeyboardButton
+	for _, c := range cats {
+		if c == docsbot.CatOther {
+			other = []models.InlineKeyboardButton{button(c)}
+			continue
+		}
+		line = append(line, button(c))
 		if len(line) == 2 {
 			rows = append(rows, line)
 			line = nil
@@ -90,6 +70,21 @@ func categoryKeyboard(action string, id docsbot.DocumentID) *models.InlineKeyboa
 	if len(line) > 0 {
 		rows = append(rows, line)
 	}
+	if other != nil {
+		rows = append(rows, other)
+	}
+	return rows
+}
+
+// categoryKeyboard offers every category, two per row. action is actCategory for
+// a new document or actSetCategory when changing one.
+func categoryKeyboard(action string, id docsbot.DocumentID) *models.InlineKeyboardMarkup {
+	rows := categoryRows(docsbot.AllCategories, func(c docsbot.Category) models.InlineKeyboardButton {
+		return models.InlineKeyboardButton{
+			Text:         c.Label(),
+			CallbackData: fmt.Sprintf("%s%s:%s:%s", cbPrefix, action, id, c),
+		}
+	})
 	return &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
@@ -118,6 +113,13 @@ func albumChoiceKeyboard(token string, pickDoc docsbot.DocumentID) *models.Inlin
 // convertRow is a one-button row opening the convert menu of a document.
 func convertRow(id docsbot.DocumentID, label string) []models.InlineKeyboardButton {
 	return []models.InlineKeyboardButton{{Text: label, CallbackData: cbDocPrefix + string(id)}}
+}
+
+// renameCancelKeyboard is the single "Отмена" button under the rename prompt.
+func renameCancelKeyboard(id docsbot.DocumentID) *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: btnRenameCancel, CallbackData: cb(actRenameCancel, id)},
+	}}}
 }
 
 func connectKeyboard(url string) *models.InlineKeyboardMarkup {
@@ -151,24 +153,37 @@ func reconnectKeyboard(url string) *models.InlineKeyboardMarkup {
 	}}}
 }
 
-// cardText describes one document: name, category, date, and where it lives.
-func cardText(doc docsbot.Document) string { return cardBody(doc.Title, doc) }
-
-// cardBody is cardText with a caller-prepared title (HTML-escaped for HTML messages).
-func cardBody(title string, doc docsbot.Document) string {
+// cardText describes one document as HTML (every dynamic part is escaped):
+//
+//	📄 <b>ВНЖ</b>
+//	🗂 Паспорт и ID · PDF · 3 стр. · 194 КБ
+//	📅 10.11.2026
+//	☁️ Google Drive · копия в Telegram
+func cardText(doc docsbot.Document) string {
 	b := &strings.Builder{}
-	fmt.Fprintf(b, "📄 %s\n", title)
-	fmt.Fprintf(b, "Категория: %s\n", categoryLabel(doc.Category))
-	fmt.Fprintf(b, "Добавлен: %s", formatDate(doc.CreatedAt))
+	fmt.Fprintf(b, "%s <b>%s</b>\n", typeIcon(doc), html.EscapeString(doc.Title))
+	b.WriteString("🗂 " + html.EscapeString(strings.Join(cardFacts(doc), " · ")) + "\n")
+	b.WriteString("📅 " + formatDate(doc.CreatedAt) + "\n")
+	b.WriteString(html.EscapeString(storageLine(doc)))
+	return b.String()
+}
+
+// cardFacts are the details after the category: type, pixel size, pages, file size; unknown ones are left out.
+func cardFacts(doc docsbot.Document) []string {
+	facts := []string{doc.Category.Label()}
 	if t := fileType(doc); t != "" {
-		b.WriteString(" · " + t)
+		facts = append(facts, t)
+	}
+	if doc.Width > 0 && doc.Height > 0 {
+		facts = append(facts, fmt.Sprintf("%d×%d", doc.Width, doc.Height))
+	}
+	if doc.PageCount > 0 {
+		facts = append(facts, fmt.Sprintf("%d стр.", doc.PageCount))
 	}
 	if sz := humanSize(doc.FileSize); sz != "" {
-		b.WriteString(" · " + sz)
+		facts = append(facts, sz)
 	}
-	b.WriteString("\n")
-	b.WriteString(storageLine(doc))
-	return b.String()
+	return facts
 }
 
 // storageLine says where the document lives right now (plain text).
@@ -195,40 +210,36 @@ func storageLine(doc docsbot.Document) string {
 	}
 }
 
-// fileType is a short label of the file kind; "" when unknown.
+// mimeTypeLabels names the content types a card shows, by MIME.
+var mimeTypeLabels = map[string]string{
+	"application/pdf":    "PDF",
+	"image/jpeg":         "JPG",
+	"image/jpg":          "JPG",
+	"image/png":          "PNG",
+	"image/webp":         "WEBP",
+	"image/heic":         "HEIC",
+	"image/heif":         "HEIC",
+	"application/msword": "DOC",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": "DOCX",
+	"application/vnd.ms-excel": "XLS",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         "XLSX",
+	"application/vnd.ms-powerpoint":                                             "PPT",
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation": "PPTX",
+	"text/plain":      "TXT",
+	"application/zip": "ZIP",
+}
+
+// fileType is a short label of the file kind, decided by its MIME type only (a
+// title is free text); "" when unknown. A photo has no MIME and reads "Фото".
 func fileType(doc docsbot.Document) string {
-	switch doc.MIME {
-	case "application/pdf":
-		return "PDF"
-	case "image/jpeg", "image/jpg":
-		return "JPG"
-	case "image/png":
-		return "PNG"
-	}
-	if ext := strings.TrimPrefix(filepath.Ext(doc.Title), "."); looksLikeExt(ext) {
-		return strings.ToUpper(ext)
+	mime := strings.ToLower(strings.TrimSpace(strings.SplitN(doc.MIME, ";", 2)[0]))
+	if label, ok := mimeTypeLabels[mime]; ok {
+		return label
 	}
 	if doc.Kind == docsbot.KindPhoto {
 		return "Фото"
 	}
 	return ""
-}
-
-// looksLikeExt reports whether s is plausibly a file extension: 1-5 ASCII
-// letters or digits with at least one letter (so a year like "2026" is not one).
-func looksLikeExt(s string) bool {
-	if len(s) < 1 || len(s) > 5 {
-		return false
-	}
-	letter := false
-	for _, r := range s {
-		isLetter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
-		if !isLetter && (r < '0' || r > '9') {
-			return false
-		}
-		letter = letter || isLetter
-	}
-	return letter
 }
 
 // humanSize formats a byte count in KB or MB; "" when the size is unknown.
@@ -261,10 +272,10 @@ func revoked(doc docsbot.Document) bool {
 // "Повторить" on a card whose sync failed because access was revoked; without a
 // link such a card has no retry button.
 func cardKeyboardWith(doc docsbot.Document, folderID, orig, reconnectURL string) *models.InlineKeyboardMarkup {
-	// At most two buttons per row: more are cut off on narrow screens.
-	top := []models.InlineKeyboardButton{{Text: btnSendFile, CallbackData: cb(actSend, doc.ID)}}
+	// At most two buttons per row, short labels: more are cut off on narrow screens.
+	top := []models.InlineKeyboardButton{{Text: btnCardSend, CallbackData: cb(actSend, doc.ID)}}
 	if doc.InDrive() && doc.SyncStatus != docsbot.SyncMissing {
-		top = append(top, models.InlineKeyboardButton{Text: btnOpenDrive, URL: driveURL(doc.DriveFileID)})
+		top = append(top, models.InlineKeyboardButton{Text: btnCardOpen, URL: driveURL(doc.DriveFileID)})
 	}
 	rows := [][]models.InlineKeyboardButton{top}
 	if doc.InDrive() {
@@ -283,17 +294,16 @@ func cardKeyboardWith(doc docsbot.Document, folderID, orig, reconnectURL string)
 	if folderID != "" {
 		rows = append(rows, []models.InlineKeyboardButton{{Text: btnOpenFolder, URL: folderURL(folderID)}})
 	}
-	last := []models.InlineKeyboardButton{{Text: btnDelete, CallbackData: cb(actDeleteAsk, doc.ID)}}
+	rows = append(rows, []models.InlineKeyboardButton{
+		{Text: btnRename, CallbackData: cb(actRename, doc.ID)},
+		{Text: btnChangeCat, CallbackData: cb(actChangeCat, doc.ID)},
+	})
+	var last []models.InlineKeyboardButton
 	if convertible(doc) {
 		last = append(last, convertRow(doc.ID, btnConvertCard)...)
 	}
-	rows = append(rows,
-		[]models.InlineKeyboardButton{
-			{Text: btnRename, CallbackData: cb(actRename, doc.ID)},
-			{Text: btnChangeCat, CallbackData: cb(actChangeCat, doc.ID)},
-		},
-		last,
-	)
+	last = append(last, models.InlineKeyboardButton{Text: btnDelete, CallbackData: cb(actDeleteAsk, doc.ID)})
+	rows = append(rows, last)
 	if back := backFromOrig(orig); back != "" {
 		rows = append(rows, []models.InlineKeyboardButton{{Text: btnBack, CallbackData: back}})
 	}
@@ -322,17 +332,30 @@ func renderCatalog(c docsbot.Catalog) (string, *models.InlineKeyboardMarkup) {
 	if c.DriveConnected && c.NotInDrive > 0 {
 		fmt.Fprintf(b, "\n\n📥 %d ещё не в Drive", c.NotInDrive)
 	}
-	var rows [][]models.InlineKeyboardButton
+	counts := make(map[docsbot.Category]int, len(c.Counts))
+	cats := make([]docsbot.Category, 0, len(c.Counts))
 	for _, cc := range c.Counts {
-		rows = append(rows, []models.InlineKeyboardButton{{
-			Text:         fmt.Sprintf("%s (%d)", categoryLabel(cc.Category), cc.Count),
-			CallbackData: fmt.Sprintf("%s%s:%s:1", cbPrefix, actListCat, cc.Category),
-		}})
+		counts[cc.Category] = cc.Count
+		cats = append(cats, cc.Category)
 	}
+	rows := categoryRows(cats, func(cat docsbot.Category) models.InlineKeyboardButton {
+		return models.InlineKeyboardButton{
+			Text:         fmt.Sprintf("%s (%d)", cat.Label(), counts[cat]),
+			CallbackData: fmt.Sprintf("%s%s:%s:1", cbPrefix, actListCat, cat),
+		}
+	})
 	if c.DriveConnected && c.NotInDrive > 0 {
 		rows = append(rows, []models.InlineKeyboardButton{{Text: btnTransfer, CallbackData: cbPrefix + actTransfer}})
 	}
 	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+// exportFirstKeyboard is the button under the delete-data prompt: get everything
+// back first, then confirm.
+func exportFirstKeyboard() *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: btnExportAll, CallbackData: cbPrefix + actExport},
+	}}}
 }
 
 // renderSettings draws the /settings screen: Drive state, document counts, and
@@ -372,27 +395,17 @@ func renderSettings(v docsbot.SettingsView, connectURL string, haveURL bool) (st
 			Text: fmt.Sprintf("%s (%d)", btnRetryAll, v.Failed), CallbackData: cbPrefix + actRetryAll,
 		}})
 	}
-	if v.Total > 0 {
-		rows = append(rows, []models.InlineKeyboardButton{{Text: btnExportAll, CallbackData: cbPrefix + actExport}})
-	}
 	rows = append(rows, []models.InlineKeyboardButton{{Text: btnDeleteData, CallbackData: cbPrefix + actDeleteData}})
 	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
 // renderCategoryPage lists one page of a category, a card-opening button per document.
 func renderCategoryPage(p docsbot.CategoryPage) (string, *models.InlineKeyboardMarkup) {
-	text := fmt.Sprintf("%s — %d", categoryLabel(p.Category), p.Total)
+	text := fmt.Sprintf("%s — %d", p.Category.Label(), p.Total)
 	var rows [][]models.InlineKeyboardButton
 	for _, doc := range p.Docs {
-		prefix := "📄 "
-		if p.DriveConnected {
-			prefix = "📥 "
-			if doc.InDrive() {
-				prefix = "☁️ "
-			}
-		}
 		rows = append(rows, []models.InlineKeyboardButton{{
-			Text:         prefix + truncate(doc.Title, 32) + " · " + doc.CreatedAt.Format("02.01"),
+			Text:         listLabel(doc),
 			CallbackData: fmt.Sprintf("%s%s:%s:l:%s:%d", cbPrefix, actOpenCard, doc.ID, p.Category, p.Page),
 		}})
 	}
@@ -439,7 +452,7 @@ func renderFound(f docsbot.Found) (string, *models.InlineKeyboardMarkup) {
 	var rows [][]models.InlineKeyboardButton
 	for _, doc := range f.Docs {
 		rows = append(rows, []models.InlineKeyboardButton{{
-			Text:         "📄 " + truncate(doc.Title, 32) + " · " + categoryLabel(doc.Category),
+			Text:         listLabel(doc),
 			CallbackData: fmt.Sprintf("%s%s:%s:s", cbPrefix, actOpenCard, doc.ID),
 		}})
 	}
@@ -455,6 +468,7 @@ func incomingFile(m *models.Message, user docsbot.UserID) (docsbot.IncomingFile,
 			UserID: user, Kind: docsbot.KindPhoto,
 			FileID: p.FileID, FileUniqueID: p.FileUniqueID, Title: photoTitle(m),
 			FileSize: int64(p.FileSize), MIME: "", MediaGroupID: m.MediaGroupID,
+			Width: p.Width, Height: p.Height,
 		}, true
 	case m.Document != nil:
 		return docsbot.IncomingFile{
@@ -467,11 +481,11 @@ func incomingFile(m *models.Message, user docsbot.UserID) (docsbot.IncomingFile,
 	}
 }
 
-// documentTitle is the file name or caption; "" when neither exists (the domain
+// documentTitle is the file name without its extension, or the caption; "" when neither exists (the domain
 // then assigns a default name).
 func documentTitle(m *models.Message) string {
 	if m.Document.FileName != "" {
-		return m.Document.FileName
+		return docsbot.TrimExt(m.Document.FileName)
 	}
 	return m.Caption
 }
@@ -487,6 +501,46 @@ func driveURL(fileID string) string {
 
 func formatDate(t time.Time) string {
 	return t.Format("02.01.2006")
+}
+
+// listTitleRunes is how many runes of a title one list or search button shows.
+const listTitleRunes = 30
+
+// listLabel is a document's button text in a list or search result:
+// "<storage> <type> <title>", e.g. "☁️ 📄 ВНЖ". The storage icon says where the
+// file lives (☁️ in Drive, 📥 only in Telegram, also when its Drive file is gone),
+// the type icon what it is (🖼 image, 📄 anything else).
+func listLabel(doc docsbot.Document) string {
+	return storageIcon(doc) + " " + typeIcon(doc) + " " + truncateMiddle(doc.Title, listTitleRunes)
+}
+
+func storageIcon(doc docsbot.Document) string {
+	if doc.InDrive() && doc.SyncStatus != docsbot.SyncMissing {
+		return "☁️"
+	}
+	return "📥"
+}
+
+func typeIcon(doc docsbot.Document) string {
+	if doc.Kind == docsbot.KindPhoto || strings.HasPrefix(doc.MIME, "image/") {
+		return "🖼"
+	}
+	return "📄"
+}
+
+// truncateMiddle shortens s to n runes by cutting the middle, so both the start
+// and the end (often a number or a year) stay visible: "Договор аренды…2026".
+func truncateMiddle(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n < 3 {
+		return truncate(s, n)
+	}
+	tail := (n - 1) / 2
+	head := n - 1 - tail
+	return strings.TrimRight(string(r[:head]), " ") + "…" + strings.TrimLeft(string(r[len(r)-tail:]), " ")
 }
 
 // truncate shortens s to n runes, adding an ellipsis.
@@ -556,7 +610,7 @@ func renderSingleStatus(sm docsbot.StatusMessage, doc docsbot.Document, folderBy
 	if doc.BackupStatus == docsbot.BackupFailed {
 		kb.InlineKeyboard = append(kb.InlineKeyboard, retryBatchKeyboard(sm.ID).InlineKeyboard...)
 	}
-	return cardBody(html.EscapeString(doc.Title), doc), kb
+	return cardText(doc), kb
 }
 
 func retryBatchKeyboard(id docsbot.StatusMessageID) *models.InlineKeyboardMarkup {
@@ -569,7 +623,7 @@ func statusLine(d docsbot.Document, folderByCat map[docsbot.Category]string) str
 	name := html.EscapeString(truncate(d.Title, statusNameLimit))
 	switch d.BackupStatus {
 	case docsbot.BackupBackedUp:
-		line := fmt.Sprintf("✅ %s · %s · <a href=%q>файл</a>", name, categoryLabel(d.Category), driveURL(d.DriveFileID))
+		line := fmt.Sprintf("✅ %s · %s · <a href=%q>файл</a>", name, d.Category.Label(), driveURL(d.DriveFileID))
 		if id := folderByCat[d.Category]; id != "" {
 			line += fmt.Sprintf(" <a href=%q>папка</a>", folderURL(id))
 		}
@@ -579,7 +633,7 @@ func statusLine(d docsbot.Document, folderByCat map[docsbot.Category]string) str
 	case docsbot.BackupTooLarge:
 		return "📥 " + name + " · слишком большой для Drive"
 	default:
-		return fmt.Sprintf("⏳ %s · %s", name, categoryLabel(d.Category))
+		return fmt.Sprintf("⏳ %s · %s", name, d.Category.Label())
 	}
 }
 

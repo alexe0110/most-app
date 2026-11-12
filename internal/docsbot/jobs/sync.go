@@ -133,8 +133,8 @@ func (e *Enqueuer) EnqueueSync(ctx context.Context, user docsbot.UserID, id docs
 }
 
 // MarkBackedUp implements docsbot.Syncs.
-func (e *Enqueuer) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion int) (bool, error) {
-	return e.store.MarkBackedUpForSync(ctx, user, id, driveFileID, startVersion, e.insertSync(user, id))
+func (e *Enqueuer) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion, pages int) (bool, error) {
+	return e.store.MarkBackedUpForSync(ctx, user, id, driveFileID, startVersion, pages, e.insertSync(user, id))
 }
 
 // ReplaceContent implements docsbot.Syncs.

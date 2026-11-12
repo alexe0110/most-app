@@ -35,6 +35,11 @@ type docs struct {
 	// registerAlbum remembers an album's images for the "one PDF" button and
 	// returns its token; set by Register (the converter owns the PDF work).
 	registerAlbum func(user docsbot.UserID, group string, images []albumImage) string
+	// pauseFile and pauseAlbum space out export sends under the Bot API rate limit.
+	pauseFile, pauseAlbum time.Duration
+	// exports holds the users with an export in flight: one at a time per user.
+	exportsMu sync.Mutex
+	exports   map[docsbot.UserID]bool
 }
 
 func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Option) *docs {
@@ -45,6 +50,9 @@ func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Op
 		searches: newSearchStore(time.Now),
 		origins:  newOriginStore(time.Now),
 		albums:   newAlbumBuffer(),
+
+		pauseFile: exportPause, pauseAlbum: exportPerFilePause,
+		exports: map[docsbot.UserID]bool{},
 	}
 	for _, opt := range opts {
 		opt(d)
@@ -190,7 +198,8 @@ func (d *docs) logReceived(ctx context.Context, user docsbot.UserID, rep docsbot
 	}
 }
 
-// onText handles any non-command text: a pending rename, otherwise a search.
+// onText handles any non-command text: a pending rename, otherwise a search. A
+// text sent after the rename expired (or the bot restarted) is just a search.
 func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 	if u.Message == nil || u.Message.From == nil {
 		return
@@ -208,14 +217,8 @@ func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.onDeleteConfirm(ctx, b, chatID, user, u.Message.Text)
 		return
 	}
-	if id, chat, msg, ok := d.renames.take(u.Message.From.ID); ok {
-		d.applyRename(ctx, b, chatID, user, id, chat, msg, u.Message.Text)
-		return
-	}
-	// A reply to the rename prompt with no armed rename: the bot restarted or
-	// the rename expired. Don't treat the new name as a search query.
-	if rp := u.Message.ReplyToMessage; rp != nil && rp.Text == textRenamePrompt {
-		reply(ctx, b, d.log, chatID, textStale)
+	if e, ok := d.renames.take(u.Message.From.ID); ok {
+		d.applyRename(ctx, b, user, e, u.Message)
 		return
 	}
 	d.searches.set(u.Message.From.ID, u.Message.Text)
@@ -248,6 +251,10 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 	if len(parts) < 2 {
 		return
 	}
+	if parts[1] != actRenameCancel {
+		// Any other button abandons a rename prompt that sits on another message.
+		d.releaseRename(ctx, b, user, u)
+	}
 	switch parts[1] {
 	case actCategory:
 		d.onCategory(ctx, b, u, user, parts)
@@ -263,6 +270,8 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.onSend(ctx, b, u, user, parts)
 	case actRename:
 		d.onRenamePrompt(ctx, b, u, parts)
+	case actRenameCancel:
+		d.onRenameCancel(ctx, b, u, user, parts)
 	case actDeleteAsk:
 		d.onDeleteAsk(ctx, b, u, user, parts)
 	case actDeleteYes:
@@ -355,13 +364,37 @@ func (d *docs) onRetryAll(ctx context.Context, b *bot.Bot, u *models.Update, use
 	d.redrawStatus(ctx, b, user, view)
 }
 
-// onExport resends the user's stored documents from Telegram, paced under the
-// Bot API rate limit, up to the service's per-request cap.
+// onExport is the "send all documents" button.
 func (d *docs) onExport(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
 	chatID, ok := callbackChat(u)
 	if !ok {
 		return
 	}
+	// The button is spent: a second tap must not start another export.
+	if _, msgID, ok := callbackMessage(u); ok {
+		d.editMarkup(ctx, b, chatID, msgID, &models.InlineKeyboardMarkup{})
+	}
+	d.export(ctx, b, chatID, user)
+}
+
+// exportCmd is the /export command.
+func (d *docs) exportCmd(ctx context.Context, b *bot.Bot, u *models.Update) {
+	user, ok := userID(ctx)
+	if !ok {
+		return
+	}
+	d.export(ctx, b, u.Message.Chat.ID, user)
+}
+
+// export resends the user's stored documents from Telegram, up to the service's
+// per-request cap: photos and documents go in albums of up to maxAlbumFiles, paced
+// under the Bot API rate limit.
+func (d *docs) export(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID) {
+	if !d.startExport(user) {
+		reply(ctx, b, d.log, chatID, textExportRunning)
+		return
+	}
+	defer d.finishExport(user)
 	exp, err := d.svc.ExportAll(ctx, user)
 	if err != nil {
 		d.fail(ctx, b, chatID, "export", err)
@@ -373,17 +406,118 @@ func (d *docs) onExport(ctx context.Context, b *bot.Bot, u *models.Update, user 
 	}
 	d.log.InfoContext(ctx, "export started", "user_id", user, "count", len(exp.Docs))
 	reply(ctx, b, d.log, chatID, textExportStart)
-	for i, doc := range exp.Docs {
-		if i > 0 && !pause(ctx, exportPause) {
+	sent, prev := 0, 0
+	for i, batch := range exportBatches(exp.Docs) {
+		if i > 0 && !pause(ctx, d.exportGap(prev)) {
 			return // context cancelled; stop sending
 		}
-		d.sendFile(ctx, b, chatID, doc)
+		prev = len(batch)
+		if len(batch) == 1 {
+			if d.sendFile(ctx, b, chatID, batch[0]) {
+				sent++
+			}
+			continue
+		}
+		sent += d.sendAlbum(ctx, b, chatID, batch)
 	}
 	if exp.Truncated {
-		reply(ctx, b, d.log, chatID, fmt.Sprintf(textExportTruncated, len(exp.Docs), exp.Total))
+		reply(ctx, b, d.log, chatID, fmt.Sprintf(textExportTruncated, sent, exp.Total))
 		return
 	}
-	reply(ctx, b, d.log, chatID, fmt.Sprintf(textExportDone, len(exp.Docs)))
+	reply(ctx, b, d.log, chatID, fmt.Sprintf(textExportDone, sent))
+}
+
+// exportGap is the pause after a batch of n files. Telegram lets a bot send about
+// one message a second into a chat, and an album of n counts as n, so the pause
+// grows with the album; a single file only needs the short one.
+func (d *docs) exportGap(n int) time.Duration {
+	if n <= 1 {
+		return d.pauseFile
+	}
+	return d.pauseAlbum * time.Duration(n)
+}
+
+// startExport marks the user's export as running; false if one already is.
+func (d *docs) startExport(user docsbot.UserID) bool {
+	d.exportsMu.Lock()
+	defer d.exportsMu.Unlock()
+	if d.exports[user] {
+		return false
+	}
+	d.exports[user] = true
+	return true
+}
+
+func (d *docs) finishExport(user docsbot.UserID) {
+	d.exportsMu.Lock()
+	defer d.exportsMu.Unlock()
+	delete(d.exports, user)
+}
+
+// maxRetryAfter caps how long one rate-limit wait may last.
+const maxRetryAfter = 60 * time.Second
+
+// retryOnRateLimit runs send and, when Telegram answers 429, waits the retry_after
+// it asks for (capped) and runs it once more.
+func (d *docs) retryOnRateLimit(ctx context.Context, send func() error) error {
+	err := send()
+	var limited *bot.TooManyRequestsError
+	if !errors.As(err, &limited) {
+		return err
+	}
+	wait := min(time.Duration(limited.RetryAfter)*time.Second, maxRetryAfter)
+	d.log.WarnContext(ctx, "telegram rate limit", "retry_after_s", limited.RetryAfter)
+	if !pause(ctx, wait) {
+		return fmt.Errorf("wait for rate limit: %w", ctx.Err())
+	}
+	return send()
+}
+
+// maxAlbumFiles is the most files Telegram takes in one media group.
+const maxAlbumFiles = 10
+
+// exportBatches splits documents, in order, into runs of one kind (photo or
+// document: Telegram does not mix them in an album) of at most maxAlbumFiles.
+func exportBatches(docs []docsbot.Document) [][]docsbot.Document {
+	var out [][]docsbot.Document
+	for _, doc := range docs {
+		if n := len(out); n > 0 {
+			last := out[n-1]
+			if len(last) < maxAlbumFiles && (last[0].Kind == docsbot.KindPhoto) == (doc.Kind == docsbot.KindPhoto) {
+				out[n-1] = append(last, doc)
+				continue
+			}
+		}
+		out = append(out, []docsbot.Document{doc})
+	}
+	return out
+}
+
+// sendAlbum resends 2-10 stored files of one kind as a media group by file_id and
+// returns how many went out (0 on failure).
+func (d *docs) sendAlbum(ctx context.Context, b *bot.Bot, chatID int64, batch []docsbot.Document) int {
+	media := make([]models.InputMedia, 0, len(batch))
+	for _, doc := range batch {
+		caption := doc.Title + " · " + doc.Category.Label()
+		if doc.Kind == docsbot.KindPhoto {
+			media = append(media, &models.InputMediaPhoto{Media: doc.TgFileID, Caption: caption})
+		} else {
+			media = append(media, &models.InputMediaDocument{Media: doc.TgFileID, Caption: caption})
+		}
+	}
+	start := time.Now()
+	err := d.retryOnRateLimit(ctx, func() error {
+		_, err := b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{ChatID: chatID, Media: media})
+		return err
+	})
+	traceAPI(ctx, d.log, "sendMediaGroup", start)
+	if err != nil {
+		d.log.ErrorContext(ctx, "send album", "err", err, "user_id", batch[0].UserID, "count", len(batch))
+		reply(ctx, b, d.log, chatID, textSendFailed)
+		return 0
+	}
+	d.log.InfoContext(ctx, "album sent", "user_id", batch[0].UserID, "count", len(batch))
+	return len(batch)
 }
 
 // onDeleteData arms the "type УДАЛИТЬ" confirmation and explains what is removed.
@@ -396,7 +530,7 @@ func (d *docs) onDeleteData(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.log.InfoContext(ctx, "delete data requested", "user_id", user)
 	}
 	d.confirms.arm(u.CallbackQuery.From.ID)
-	reply(ctx, b, d.log, chatID, textDeleteDataPrompt)
+	d.send(ctx, b, chatID, textDeleteDataPrompt, exportFirstKeyboard())
 }
 
 // onDeleteConfirm deletes everything once the user typed the exact word.
@@ -592,7 +726,7 @@ func (d *docs) onCategoryGroup(ctx context.Context, b *bot.Bot, u *models.Update
 	case len(group.Docs) == 1:
 		d.editCard(ctx, b, chatID, msgID, group.Docs[0], "", "")
 	default:
-		text := fmt.Sprintf(textGroupSaved, len(group.Docs), plural(len(group.Docs), "файл", "файла", "файлов"), categoryLabel(cat))
+		text := fmt.Sprintf(textGroupSaved, len(group.Docs), plural(len(group.Docs), "файл", "файла", "файлов"), cat.Label())
 		if tooLarge > 0 {
 			text += "\n" + fmt.Sprintf(textGroupTooLarge, tooLarge)
 		}
@@ -684,7 +818,12 @@ func (d *docs) redrawStatus(ctx context.Context, b *bot.Bot, user docsbot.UserID
 		return
 	}
 	text, kb := renderStatusMessage(view.Message, view.Lines, view.FolderByCat)
+	// A redraw replaces a rename prompt shown on this message; the armed rename
+	// must not outlive it. Dropped on both sides of the edit: a prompt armed while
+	// it is in flight is overwritten by it too.
+	d.renames.dropMessage(view.Message.ChatID, view.Message.MessageID)
 	d.editHTML(ctx, b, view.Message.ChatID, view.Message.MessageID, text, kb)
+	d.renames.dropMessage(view.Message.ChatID, view.Message.MessageID)
 	if view.AllTerminal {
 		if err := d.svc.CloseStatus(ctx, user, view.Message.ID); err != nil {
 			d.log.ErrorContext(ctx, "close status message", "err", err, "user_id", user)
@@ -715,7 +854,8 @@ func (d *docs) onRetryBatch(ctx context.Context, b *bot.Bot, u *models.Update, u
 	d.redrawStatus(ctx, b, user, view)
 }
 
-// editHTML rewrites an HTML message; "message is not modified" is not an error.
+// editHTML rewrites an HTML message (a card, a status message, a rename prompt);
+// "message is not modified" is not an error.
 func (d *docs) editHTML(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup) {
 	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text, ParseMode: models.ParseModeHTML}
 	if kb == nil {
@@ -727,7 +867,7 @@ func (d *docs) editHTML(ctx context.Context, b *bot.Bot, chatID int64, msgID int
 	_, err := b.EditMessageText(ctx, params)
 	traceAPI(ctx, d.log, "editMessageText", start)
 	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
-		d.log.ErrorContext(ctx, "edit status message", "err", err)
+		d.log.ErrorContext(ctx, "edit html message", "err", err)
 	}
 }
 
@@ -794,7 +934,8 @@ func (d *docs) onSend(ctx context.Context, b *bot.Bot, u *models.Update, user do
 	d.sendFile(ctx, b, chatID, card.Doc)
 }
 
-// onRenamePrompt arms the rename and asks for the new name via force reply.
+// onRenamePrompt arms the rename and turns the card's own message into the
+// prompt, with a cancel button. Typing the name is the next text message.
 func (d *docs) onRenamePrompt(ctx context.Context, b *bot.Bot, u *models.Update, parts []string) {
 	id, ok := docID(parts)
 	if !ok {
@@ -805,31 +946,102 @@ func (d *docs) onRenamePrompt(ctx context.Context, b *bot.Bot, u *models.Update,
 		return
 	}
 	d.renames.set(u.CallbackQuery.From.ID, id, chatID, msgID)
-	start := time.Now()
-	_, err := b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:      chatID,
-		Text:        textRenamePrompt,
-		ReplyMarkup: &models.ForceReply{ForceReply: true, InputFieldPlaceholder: "Новое имя"},
-	})
-	traceAPI(ctx, d.log, "sendMessage", start)
+	d.editHTML(ctx, b, chatID, msgID, textRenamePrompt, renameCancelKeyboard(id))
+}
+
+// onRenameCancel drops the rename armed on this message, if any, and puts the
+// card back. Repeating it, or pressing it on a stale prompt, only redraws the card.
+func (d *docs) onRenameCancel(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
+	id, ok := docID(parts)
+	if !ok {
+		return
+	}
+	chatID, msgID, ok := callbackMessage(u)
+	if !ok {
+		return
+	}
+	d.renames.drop(u.CallbackQuery.From.ID, chatID, msgID)
+	d.restoreCard(ctx, b, user, chatID, msgID, id)
+}
+
+// releaseRename ends the user's armed rename when they press a button on another
+// message and returns that message to the card it was.
+func (d *docs) releaseRename(ctx context.Context, b *bot.Bot, user docsbot.UserID, u *models.Update) {
+	e, ok := d.renames.take(u.CallbackQuery.From.ID)
+	if !ok {
+		return
+	}
+	if chatID, msgID, ok := callbackMessage(u); ok && e.chat == chatID && e.msg == msgID {
+		return
+	}
+	d.restoreCard(ctx, b, user, e.chat, e.msg, e.id)
+}
+
+// restoreCard redraws a message as the document's card, keeping where it was
+// opened from. A vanished document turns the message into the "gone" note.
+func (d *docs) restoreCard(ctx context.Context, b *bot.Bot, user docsbot.UserID, chatID int64, msgID int, id docsbot.DocumentID) {
+	card, err := d.svc.Card(ctx, user, id)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		d.gone(ctx, b, chatID, msgID)
+		return
+	}
 	if err != nil {
-		d.log.Error("send rename prompt", "err", err)
+		d.log.ErrorContext(ctx, "restore card", "err", err, "user_id", user)
+		return
+	}
+	orig, _ := d.origins.get(chatID, msgID)
+	d.showCard(ctx, b, user, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
+}
+
+// showCard puts a document's card on a message. A message that is the live status
+// message of the document gets the status rendering instead, so its retry row and
+// storage line stay; anything else gets the plain card.
+func (d *docs) showCard(ctx context.Context, b *bot.Bot, user docsbot.UserID, chatID int64, msgID int, doc docsbot.Document, folderID, orig string) {
+	if view, err := d.svc.StatusView(ctx, user, doc.ID); err == nil && view.Grouped &&
+		view.Message.ChatID == chatID && view.Message.MessageID == msgID {
+		text, kb := renderStatusMessage(view.Message, view.Lines, view.FolderByCat)
+		d.editHTML(ctx, b, chatID, msgID, text, kb)
+		return
+	}
+	d.editCard(ctx, b, chatID, msgID, doc, folderID, orig)
+}
+
+// applyRename takes the typed name: the user's message is removed (the chat stays
+// clean), then the prompt message becomes the renamed card, or shows a hint and
+// keeps waiting when the name is unusable.
+func (d *docs) applyRename(ctx context.Context, b *bot.Bot, user docsbot.UserID, e renameEntry, m *models.Message) {
+	d.deleteUserMessage(ctx, b, m.Chat.ID, m.ID)
+	card, err := d.svc.Rename(ctx, user, e.id, m.Text)
+	switch {
+	case errors.Is(err, docsbot.ErrEmptyTitle):
+		d.renameHint(ctx, b, m.From.ID, e, textRenameEmpty)
+	case errors.Is(err, docsbot.ErrTitleTooLong):
+		d.renameHint(ctx, b, m.From.ID, e, fmt.Sprintf(textRenameTooLong, docsbot.MaxTitleRunes))
+	case errors.Is(err, docsbot.ErrNotFound):
+		d.gone(ctx, b, e.chat, e.msg)
+	case err != nil:
+		d.fail(ctx, b, e.chat, "rename", err)
+	default:
+		d.log.InfoContext(ctx, "document renamed", "user_id", user, "doc_id", e.id)
+		orig, _ := d.origins.get(e.chat, e.msg)
+		d.showCard(ctx, b, user, e.chat, e.msg, card.Doc, card.CategoryFolderID, orig)
 	}
 }
 
-func (d *docs) applyRename(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID, cardChat int64, cardMsg int, title string) {
-	card, err := d.svc.Rename(ctx, user, id, title)
-	switch {
-	case errors.Is(err, docsbot.ErrEmptyTitle):
-		reply(ctx, b, d.log, chatID, textRenameEmpty)
-	case errors.Is(err, docsbot.ErrNotFound):
-		reply(ctx, b, d.log, chatID, textGone)
-	case err != nil:
-		d.fail(ctx, b, chatID, "rename", err)
-	default:
-		d.log.InfoContext(ctx, "document renamed", "user_id", user, "doc_id", id)
-		orig, _ := d.origins.get(cardChat, cardMsg)
-		d.editCard(ctx, b, cardChat, cardMsg, card.Doc, card.CategoryFolderID, orig)
+// renameHint re-arms the rename and tells, in the prompt message itself, what was wrong.
+func (d *docs) renameHint(ctx context.Context, b *bot.Bot, tgUser int64, e renameEntry, hint string) {
+	d.renames.set(tgUser, e.id, e.chat, e.msg)
+	d.editHTML(ctx, b, e.chat, e.msg, hint, renameCancelKeyboard(e.id))
+}
+
+// deleteUserMessage removes the user's message from the chat. It is cosmetic: a
+// failure (too old, no right) is only logged.
+func (d *docs) deleteUserMessage(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
+	start := time.Now()
+	_, err := b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: msgID})
+	traceAPI(ctx, d.log, "deleteMessage", start)
+	if err != nil {
+		d.log.WarnContext(ctx, "delete user message", "err", err)
 	}
 }
 
@@ -1034,25 +1246,30 @@ func (d *docs) connectURL(ctx context.Context, user docsbot.UserID) (string, boo
 }
 
 // sendFile resends a stored file with the method matching how it arrived.
-func (d *docs) sendFile(ctx context.Context, b *bot.Bot, chatID int64, doc docsbot.Document) {
-	var err error
-	caption := doc.Title + " · " + categoryLabel(doc.Category)
+// It reports whether the file went out.
+func (d *docs) sendFile(ctx context.Context, b *bot.Bot, chatID int64, doc docsbot.Document) bool {
+	caption := doc.Title + " · " + doc.Category.Label()
 	op := "sendDocument"
 	start := time.Now()
-	switch doc.Kind {
-	case docsbot.KindPhoto:
-		op = "sendPhoto"
-		_, err = b.SendPhoto(ctx, &bot.SendPhotoParams{ChatID: chatID, Photo: &models.InputFileString{Data: doc.TgFileID}, Caption: caption})
-	default:
-		_, err = b.SendDocument(ctx, &bot.SendDocumentParams{ChatID: chatID, Document: &models.InputFileString{Data: doc.TgFileID}, Caption: caption})
-	}
+	err := d.retryOnRateLimit(ctx, func() error {
+		var err error
+		switch doc.Kind {
+		case docsbot.KindPhoto:
+			op = "sendPhoto"
+			_, err = b.SendPhoto(ctx, &bot.SendPhotoParams{ChatID: chatID, Photo: &models.InputFileString{Data: doc.TgFileID}, Caption: caption})
+		default:
+			_, err = b.SendDocument(ctx, &bot.SendDocumentParams{ChatID: chatID, Document: &models.InputFileString{Data: doc.TgFileID}, Caption: caption})
+		}
+		return err
+	})
 	traceAPI(ctx, d.log, op, start)
 	if err != nil {
 		d.log.ErrorContext(ctx, "send file", "err", err, "user_id", doc.UserID, "doc_id", doc.ID)
 		reply(ctx, b, d.log, chatID, textSendFailed)
-		return
+		return false
 	}
 	d.log.InfoContext(ctx, "document sent", "user_id", doc.UserID, "doc_id", doc.ID)
+	return true
 }
 
 func (d *docs) sendCard(ctx context.Context, b *bot.Bot, chatID int64, doc docsbot.Document, header, folderID string) {
@@ -1060,7 +1277,7 @@ func (d *docs) sendCard(ctx context.Context, b *bot.Bot, chatID int64, doc docsb
 	if header != "" {
 		text = header + "\n\n" + text
 	}
-	d.send(ctx, b, chatID, text, d.cardKB(ctx, doc, folderID, ""))
+	d.sendHTML(ctx, b, chatID, text, d.cardKB(ctx, doc, folderID, ""))
 }
 
 // editCard replaces a message with a document's card and remembers where the
@@ -1069,8 +1286,9 @@ func (d *docs) editCard(ctx context.Context, b *bot.Bot, chatID int64, msgID int
 	d.editCardText(ctx, b, chatID, msgID, cardText(doc), d.cardKB(ctx, doc, folderID, orig), orig)
 }
 
+// editCardText is editCard with a prepared HTML text (the card plus a note).
 func (d *docs) editCardText(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup, orig string) {
-	d.editMessage(ctx, b, chatID, msgID, text, kb)
+	d.editHTML(ctx, b, chatID, msgID, text, kb)
 	d.origins.set(chatID, msgID, orig)
 }
 
@@ -1100,14 +1318,18 @@ func (d *docs) onOpenCard(ctx context.Context, b *bot.Bot, u *models.Update, use
 	if !ok {
 		return
 	}
-	card, err := d.svc.Card(ctx, user, id)
+	card, err := d.svc.OpenCard(ctx, user, id)
 	if errors.Is(err, docsbot.ErrNotFound) {
 		d.gone(ctx, b, chatID, msgID)
 		return
 	}
-	if err != nil {
+	if err != nil && card.Doc.ID == "" {
 		d.fail(ctx, b, chatID, "load card", err)
 		return
+	}
+	if err != nil {
+		// The Drive check failed on our side; the card read so far is still right to show.
+		d.log.ErrorContext(ctx, "open card", "err", err, "user_id", user)
 	}
 	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, strings.Join(parts[3:], ":"))
 }
@@ -1139,6 +1361,20 @@ func (d *docs) onSearchBack(ctx context.Context, b *bot.Bot, u *models.Update, u
 	d.editMessage(ctx, b, chatID, msgID, text, kb)
 }
 
+// sendHTML posts an HTML message, with an inline keyboard when kb is non-nil.
+func (d *docs) sendHTML(ctx context.Context, b *bot.Bot, chatID int64, text string, kb *models.InlineKeyboardMarkup) {
+	params := &bot.SendMessageParams{ChatID: chatID, Text: text, ParseMode: models.ParseModeHTML}
+	if kb != nil {
+		params.ReplyMarkup = kb
+	}
+	start := time.Now()
+	_, err := b.SendMessage(ctx, params)
+	traceAPI(ctx, d.log, "sendMessage", start)
+	if err != nil {
+		d.log.ErrorContext(ctx, "send telegram message", "err", err)
+	}
+}
+
 // send posts a message, with an inline keyboard when kb is non-nil.
 func (d *docs) send(ctx context.Context, b *bot.Bot, chatID int64, text string, kb *models.InlineKeyboardMarkup) {
 	params := &bot.SendMessageParams{ChatID: chatID, Text: text}
@@ -1164,7 +1400,7 @@ func (d *docs) editMessage(ctx context.Context, b *bot.Bot, chatID int64, msgID 
 	start := time.Now()
 	_, err := b.EditMessageText(ctx, params)
 	traceAPI(ctx, d.log, "editMessageText", start)
-	if err != nil {
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
 		d.log.Error("edit telegram message", "err", err)
 	}
 }
@@ -1247,8 +1483,9 @@ func deepLinkConnected(text string) bool {
 	return strings.TrimSpace(arg) == "connected"
 }
 
-// renameStore remembers which document a user is renaming. In memory only: a
-// restart drops it, and a stale arm (older than the TTL) is ignored.
+// renameStore remembers which document a user is renaming and on which message
+// the prompt sits. In memory only: a restart drops it, and a stale arm (older
+// than the TTL) is ignored.
 type renameStore struct {
 	mu  sync.Mutex
 	m   map[int64]renameEntry
@@ -1257,7 +1494,7 @@ type renameStore struct {
 
 type renameEntry struct {
 	id   docsbot.DocumentID
-	chat int64 // the card's message, edited in place after the rename
+	chat int64 // the card's message: it shows the prompt, then the renamed card
 	msg  int
 	at   time.Time
 }
@@ -1274,19 +1511,49 @@ func (s *renameStore) set(user int64, id docsbot.DocumentID, chat int64, msg int
 	s.m[user] = renameEntry{id: id, chat: chat, msg: msg, at: s.now()}
 }
 
-// take removes and returns the armed document, if any and not expired.
-func (s *renameStore) take(user int64) (id docsbot.DocumentID, chat int64, msg int, ok bool) {
+// take removes and returns the armed rename, if any and not expired.
+func (s *renameStore) take(user int64) (renameEntry, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, found := s.m[user]
 	if !found {
-		return "", 0, 0, false
+		return renameEntry{}, false
 	}
 	delete(s.m, user)
 	if s.now().Sub(e.at) > renameTTL {
-		return "", 0, 0, false
+		return renameEntry{}, false
 	}
-	return e.id, e.chat, e.msg, true
+	return e, true
+}
+
+// dropMessage forgets every rename armed on that message, whoever armed it. A
+// message that is redrawn (a status message) no longer shows the prompt.
+func (s *renameStore) dropMessage(chat int64, msg int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for user, e := range s.m {
+		if e.chat == chat && e.msg == msg {
+			delete(s.m, user)
+		}
+	}
+}
+
+// Renames is the rename state shared by the docs handlers and the Notifier: the
+// worker redraws status messages, and a redraw ends a rename prompt shown on one.
+type Renames struct{ store *renameStore }
+
+// NewRenames makes the shared rename state; pass it to Register (WithRenames) and
+// to NewNotifier (WithNotifierRenames).
+func NewRenames() *Renames { return &Renames{store: newRenameStore(time.Now)} }
+
+// drop forgets the user's rename if it is armed on that message; one armed on
+// another message (a newer prompt) is left alone.
+func (s *renameStore) drop(user int64, chat int64, msg int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e, ok := s.m[user]; ok && e.chat == chat && e.msg == msg {
+		delete(s.m, user)
+	}
 }
 
 // originStore remembers where each card message was opened from (a list page, the
@@ -1380,8 +1647,12 @@ func (s *searchStore) take(user int64) (string, bool) {
 // confirmWord is the exact word the user must type to delete all their data.
 const confirmWord = "УДАЛИТЬ"
 
-// exportPause spaces out resent files to stay under Telegram's rate limit.
-const exportPause = 50 * time.Millisecond
+// exportPause follows a single resent file; after an album the pause is
+// exportPerFilePause per file in it (see exportGap).
+const (
+	exportPause        = 50 * time.Millisecond
+	exportPerFilePause = time.Second
+)
 
 // pause waits for d, returning false if ctx is cancelled first.
 func pause(ctx context.Context, d time.Duration) bool {
