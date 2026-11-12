@@ -783,7 +783,11 @@ func (s *Service) Settings(ctx context.Context, user UserID) (SettingsView, erro
 	if err != nil {
 		return SettingsView{}, fmt.Errorf("backup status counts: %w", err)
 	}
-	view := SettingsView{DriveConnected: connected}
+	inline, err := s.repo.InlineEnabled(ctx, user)
+	if err != nil {
+		return SettingsView{}, fmt.Errorf("inline enabled: %w", err)
+	}
+	view := SettingsView{DriveConnected: connected, InlineEnabled: inline}
 	for _, c := range counts {
 		view.Total += c.Count
 		switch c.Status {
@@ -1080,10 +1084,7 @@ func (s *Service) CategoryPage(ctx context.Context, user UserID, cat Category, p
 // Search finds up to searchLimit saved documents matching query. The query is
 // trimmed and cut to maxQueryRunes; a blank one is not searched (BlankQuery).
 func (s *Service) Search(ctx context.Context, user UserID, query string) (Found, error) {
-	query = strings.TrimSpace(query)
-	if r := []rune(query); len(r) > maxQueryRunes {
-		query = strings.TrimSpace(string(r[:maxQueryRunes]))
-	}
+	query = normalizeQuery(query)
 	if query == "" {
 		return Found{BlankQuery: true}, nil
 	}
@@ -1092,6 +1093,15 @@ func (s *Service) Search(ctx context.Context, user UserID, query string) (Found,
 		return Found{}, fmt.Errorf("search documents: %w", err)
 	}
 	return Found{Query: query, Docs: docs}, nil
+}
+
+// normalizeQuery trims a search query and cuts it to maxQueryRunes.
+func normalizeQuery(query string) string {
+	query = strings.TrimSpace(query)
+	if r := []rune(query); len(r) > maxQueryRunes {
+		query = strings.TrimSpace(string(r[:maxQueryRunes]))
+	}
+	return query
 }
 
 // categoryTotal reads the saved-document count for one category.

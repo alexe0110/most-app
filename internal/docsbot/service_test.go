@@ -398,7 +398,7 @@ func TestService_Settings(t *testing.T) {
 	view, err := svc.Settings(t.Context(), user)
 	require.NoError(t, err)
 	require.Equal(t, docsbot.SettingsView{
-		DriveConnected: true, Total: 6, InDrive: 2, OnlyTelegram: 3, Failed: 1,
+		DriveConnected: true, Total: 6, InDrive: 2, OnlyTelegram: 3, Failed: 1, InlineEnabled: true,
 	}, view)
 }
 

@@ -42,6 +42,7 @@ const (
 	actRetryBatch    = "rsm" // retry failed docs in a status message: d:rsm:<smID>
 	actOpenCard      = "oc"  // open a card: d:oc:<docID>:<l|s>[:<cat>:<page>]
 	actSearchBack    = "sb"  // re-run the last search
+	actInline        = "inl" // switch inline mode: d:inl:<1|0> is the wanted state
 	actNoop          = "noop"
 )
 
@@ -395,8 +396,61 @@ func renderSettings(v docsbot.SettingsView, connectURL string, haveURL bool) (st
 			Text: fmt.Sprintf("%s (%d)", btnRetryAll, v.Failed), CallbackData: cbPrefix + actRetryAll,
 		}})
 	}
+	rows = append(rows, inlineToggleRow(v.InlineEnabled))
 	rows = append(rows, []models.InlineKeyboardButton{{Text: btnDeleteData, CallbackData: cbPrefix + actDeleteData}})
 	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+// inlineToggleRow is the «send from any chat» switch: it shows the current state,
+// a tap asks for the opposite one.
+func inlineToggleRow(enabled bool) []models.InlineKeyboardButton {
+	if enabled {
+		return []models.InlineKeyboardButton{{Text: btnInlineOn, CallbackData: cbPrefix + actInline + ":0"}}
+	}
+	return []models.InlineKeyboardButton{{Text: btnInlineOff, CallbackData: cbPrefix + actInline + ":1"}}
+}
+
+// renderInline turns an inline answer into Telegram results and, for the states
+// that have nothing to show, the button above them that opens the bot. Results
+// carry no caption: the file is sent as it is stored.
+func renderInline(res docsbot.InlineResult) ([]models.InlineQueryResult, *models.InlineQueryResultsButton) {
+	results := make([]models.InlineQueryResult, 0, len(res.Docs))
+	for _, doc := range res.Docs {
+		desc := inlineDescription(doc)
+		if doc.Kind == docsbot.KindPhoto {
+			results = append(results, &models.InlineQueryResultCachedPhoto{
+				ID: string(doc.ID), PhotoFileID: doc.TgFileID, Title: doc.Title, Description: desc,
+			})
+			continue
+		}
+		results = append(results, &models.InlineQueryResultCachedDocument{
+			ID: string(doc.ID), DocumentFileID: doc.TgFileID, Title: doc.Title, Description: desc,
+		})
+	}
+	var text string
+	switch res.State {
+	case docsbot.InlineUnknown:
+		text = btnInlineUnknown
+	case docsbot.InlineEmpty:
+		text = btnInlineEmpty
+	case docsbot.InlineDisabled:
+		text = btnInlineDisabled
+	default:
+		return results, nil
+	}
+	return results, &models.InlineQueryResultsButton{Text: text, StartParameter: startInline}
+}
+
+// inlineDescription is the grey line under a result: «Category · type · size».
+func inlineDescription(doc docsbot.Document) string {
+	parts := []string{doc.Category.Label()}
+	if t := fileType(doc); t != "" {
+		parts = append(parts, t)
+	}
+	if sz := humanSize(doc.FileSize); sz != "" {
+		parts = append(parts, sz)
+	}
+	return strings.Join(parts, " · ")
 }
 
 // renderCategoryPage lists one page of a category, a card-opening button per document.

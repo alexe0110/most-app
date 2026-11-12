@@ -8,6 +8,12 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type DocsSetting struct {
+	UserID        pgtype.UUID
+	InlineEnabled bool
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type Document struct {
 	ID              pgtype.UUID
 	UserID          pgtype.UUID
