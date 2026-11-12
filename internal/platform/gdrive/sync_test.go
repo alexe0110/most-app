@@ -81,11 +81,11 @@ func serve(t *testing.T, d *syncDrive) string {
 	return srv.URL
 }
 
-func newSyncSvc(t *testing.T, d *syncDrive, clients Clients) *Service {
+func newSyncSvc(t *testing.T, d *syncDrive, clients Clients, opts ...Option) *Service {
 	t.Helper()
 	srv := httptest.NewServer(d)
 	t.Cleanup(srv.Close)
-	return New(clients, newFakeCache(), WithBaseURL(srv.URL))
+	return New(clients, newFakeCache(), append([]Option{WithBaseURL(srv.URL)}, opts...)...)
 }
 
 func TestRename(t *testing.T) {

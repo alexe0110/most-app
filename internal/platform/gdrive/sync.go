@@ -42,7 +42,7 @@ func (s *Service) Rename(ctx context.Context, userID, fileID, name string) error
 	return s.patch(ctx, httpc, "files.rename", fileID, "", map[string]any{"name": final})
 }
 
-// Move puts the file into "Most Docs/<folderName>", creating folders as needed.
+// Move puts the file into "<root>/<folderName>", creating folders as needed.
 // A file that is already there is left alone.
 func (s *Service) Move(ctx context.Context, userID, fileID, cacheKey, folderName string) error {
 	httpc, err := s.client(ctx, userID)
@@ -134,7 +134,7 @@ func (s *Service) Replace(ctx context.Context, userID, fileID, mime string, data
 }
 
 func (s *Service) resolveFolder(ctx context.Context, httpc *http.Client, userID, cacheKey, folderName string) (string, error) {
-	rootID, err := s.ensureFolder(ctx, httpc, userID, "", rootFolderName, "root")
+	rootID, err := s.ensureFolder(ctx, httpc, userID, "", s.rootFolder, "root")
 	if err != nil {
 		return "", fmt.Errorf("ensure root folder: %w", err)
 	}

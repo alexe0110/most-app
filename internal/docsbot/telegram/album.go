@@ -41,6 +41,16 @@ func WithExportPace(file, perAlbumFile time.Duration) Option {
 	return func(d *docs) { d.pauseFile, d.pauseAlbum = file, perAlbumFile }
 }
 
+// WithDriveFolder sets the Drive root folder name shown in /start; an empty
+// name keeps the default.
+func WithDriveFolder(name string) Option {
+	return func(d *docs) {
+		if name != "" {
+			d.driveFolder = name
+		}
+	}
+}
+
 func realAfterFunc(d time.Duration, f func()) func() bool {
 	return time.AfterFunc(d, f).Stop
 }

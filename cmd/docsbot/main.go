@@ -103,7 +103,7 @@ func run() error {
 		return fmt.Errorf("new oauth service: %w", err)
 	}
 
-	gdriveSvc := gdrive.New(gdriveClients{oauth: oauthSvc}, repo, gdrive.WithLogger(log))
+	gdriveSvc := gdrive.New(gdriveClients{oauth: oauthSvc}, repo, gdrive.WithLogger(log), gdrive.WithRootFolder(cfg.DriveRootFolder))
 	driveAdapter := driveBridge{oauth: oauthSvc, gd: gdriveSvc}
 	svc = docsbot.NewService(repo, driveAdapter, files, enq, repo, repo, enq, docsbot.WithPageCounter(pageCounter{}))
 
@@ -113,7 +113,9 @@ func run() error {
 		PublicURL:     cfg.PublicURL,
 		WebhookSecret: cfg.TelegramWebhookSecret,
 		GroupNotice:   telegram.GroupNotice(),
-	}, repo, log, func(b *bot.Bot) { telegram.Register(b, log, svc, oauthSvc, telegram.WithRenames(renames)) })
+	}, repo, log, func(b *bot.Bot) {
+		telegram.Register(b, log, svc, oauthSvc, telegram.WithRenames(renames), telegram.WithDriveFolder(cfg.DriveRootFolder))
+	})
 	if err != nil {
 		return err
 	}

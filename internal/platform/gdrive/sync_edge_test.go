@@ -110,6 +110,33 @@ func TestMove_multipleParentsAreAllRemoved(t *testing.T) {
 	require.Contains(t, d.patches[0].query, "removeParents=a%2Cb")
 }
 
+func TestMove_rootFolder(t *testing.T) {
+	tests := []struct {
+		name     string
+		opts     []Option
+		wantRoot string
+	}{
+		{"default", nil, `name='Most Docs'`},
+		{"custom", []Option{WithRootFolder("Most Docs Test")}, `name='Most Docs Test'`},
+		{"empty keeps default", []Option{WithRootFolder("")}, `name='Most Docs'`},
+		{"apostrophe is escaped", []Option{WithRootFolder("Bob's Docs")}, `name='Bob\'s Docs'`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := &syncDrive{parents: []string{"old"}, folderID: "target"}
+			svc := newSyncSvc(t, d, fakeClients{}, tt.opts...)
+
+			require.NoError(t, svc.Move(context.Background(), "u1", "f1", "passport", "Паспорт"))
+
+			require.NotEmpty(t, d.listQs)
+			require.Contains(t, d.listQs[0], tt.wantRoot, "first lookup is the root folder")
+			require.Contains(t, d.listQs[0], "'root' in parents")
+			require.Len(t, d.patches, 1)
+			require.Contains(t, d.patches[0].query, "addParents=target")
+		})
+	}
+}
+
 func TestMove_twiceIsIdempotent(t *testing.T) {
 	d := &syncDrive{parents: []string{"target"}, folderID: "target"}
 	svc := newSyncSvc(t, d, fakeClients{})

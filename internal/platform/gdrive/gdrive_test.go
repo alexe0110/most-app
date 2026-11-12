@@ -171,12 +171,12 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func newService(t *testing.T, d *fakeDrive, clients Clients, cache FolderCache) *Service {
+func newService(t *testing.T, d *fakeDrive, clients Clients, cache FolderCache, opts ...Option) *Service {
 	t.Helper()
 	d.t = t
 	srv := httptest.NewServer(d)
 	t.Cleanup(srv.Close)
-	return New(clients, cache, WithBaseURL(srv.URL))
+	return New(clients, cache, append([]Option{WithBaseURL(srv.URL)}, opts...)...)
 }
 
 func testUpload() Upload {
@@ -192,7 +192,7 @@ func TestUpload_happyPath(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, File{ID: "file-1", Link: d.webViewLink}, f)
-	require.Equal(t, []string{rootFolderName, "Паспорт и ID"}, d.created)
+	require.Equal(t, []string{DefaultRootFolder, "Паспорт и ID"}, d.created)
 	require.Equal(t, "folder-Паспорт и ID", d.uploadParent)
 	require.Equal(t, "scan.pdf", d.uploadedName)
 	require.Equal(t, "pdf-bytes", d.uploadedBody)
@@ -200,6 +200,29 @@ func TestUpload_happyPath(t *testing.T) {
 	require.False(t, d.hasAppProps, "no appProperties without DocID")
 	require.Equal(t, []string{"passport"}, cache.saved)
 	require.Equal(t, "folder-Паспорт и ID", cache.ids["passport"])
+}
+
+func TestUpload_rootFolder(t *testing.T) {
+	tests := []struct {
+		name     string
+		opts     []Option
+		wantRoot string
+	}{
+		{name: "default", wantRoot: DefaultRootFolder},
+		{name: "custom", opts: []Option{WithRootFolder("Most Docs Test")}, wantRoot: "Most Docs Test"},
+		{name: "empty keeps default", opts: []Option{WithRootFolder("")}, wantRoot: DefaultRootFolder},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := &fakeDrive{}
+			svc := newService(t, d, fakeClients{}, newFakeCache(), tt.opts...)
+
+			_, err := svc.Upload(context.Background(), "user-1", testUpload())
+
+			require.NoError(t, err)
+			require.Equal(t, []string{tt.wantRoot, "Паспорт и ID"}, d.created)
+		})
+	}
 }
 
 func TestUpload_cachedFolderGone(t *testing.T) {
@@ -228,7 +251,7 @@ func TestUpload_cachedFolderGone(t *testing.T) {
 
 func TestUpload_findFolderPicksOldest(t *testing.T) {
 	d := &fakeDrive{folders: []map[string]string{
-		{"id": "root", "name": rootFolderName},
+		{"id": "root", "name": DefaultRootFolder},
 		{"id": "old", "name": "Паспорт и ID"},
 		{"id": "new", "name": "Паспорт и ID"},
 	}}
@@ -250,7 +273,7 @@ func TestUpload_findFolderPicksOldest(t *testing.T) {
 // root is simply absent, which TestUpload_happyPath already covers.
 func TestUpload_trashedRootIsIgnored(t *testing.T) {
 	d := &fakeDrive{folders: []map[string]string{
-		{"id": "old-root", "name": rootFolderName, "trashed": "true"},
+		{"id": "old-root", "name": DefaultRootFolder, "trashed": "true"},
 	}}
 	cache := newFakeCache()
 	svc := newService(t, d, fakeClients{}, cache)
@@ -258,7 +281,7 @@ func TestUpload_trashedRootIsIgnored(t *testing.T) {
 	_, err := svc.Upload(context.Background(), "user-1", testUpload())
 
 	require.NoError(t, err)
-	require.Equal(t, []string{rootFolderName, "Паспорт и ID"}, d.created)
+	require.Equal(t, []string{DefaultRootFolder, "Паспорт и ID"}, d.created)
 	require.Equal(t, "folder-Паспорт и ID", d.uploadParent)
 	require.Equal(t, []string{"passport"}, cache.saved, "only the category is cached, never the root")
 }
@@ -268,7 +291,7 @@ func TestUpload_trashedRootIsIgnored(t *testing.T) {
 func TestUpload_trashedCategoryKeepsRoot(t *testing.T) {
 	d := &fakeDrive{
 		trashed: map[string]bool{"stale": true},
-		folders: []map[string]string{{"id": "live-root", "name": rootFolderName}},
+		folders: []map[string]string{{"id": "live-root", "name": DefaultRootFolder}},
 	}
 	cache := newFakeCache()
 	cache.ids["passport"] = "stale"
@@ -286,8 +309,8 @@ func TestUpload_trashedCategoryKeepsRoot(t *testing.T) {
 // created later); the oldest wins and no new root is created.
 func TestUpload_findFolderPicksOldestRoot(t *testing.T) {
 	d := &fakeDrive{folders: []map[string]string{
-		{"id": "old-root", "name": rootFolderName},
-		{"id": "new-root", "name": rootFolderName},
+		{"id": "old-root", "name": DefaultRootFolder},
+		{"id": "new-root", "name": DefaultRootFolder},
 	}}
 	svc := newService(t, d, fakeClients{}, newFakeCache())
 

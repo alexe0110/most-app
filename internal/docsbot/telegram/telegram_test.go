@@ -182,7 +182,7 @@ func TestRegister_routing(t *testing.T) {
 		update   *models.Update
 		wantText string
 	}{
-		{"start", commandUpdate(100, "start"), "Most Docs"},
+		{"start", commandUpdate(100, "start"), "«Most Docs»"},
 		{"help", commandUpdate(100, "help"), "умею"},
 		{"unknown command", commandUpdate(100, "foo"), "Не понимаю"},
 	}
@@ -193,6 +193,14 @@ func TestRegister_routing(t *testing.T) {
 			require.True(t, has(sent.texts, tt.wantText), "sent %q", sent.texts)
 		})
 	}
+}
+
+func TestStart_driveFolder(t *testing.T) {
+	b, sent, _ := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithDriveFolder("Most Docs Test"))
+
+	b.ProcessUpdate(t.Context(), commandUpdate(100, "start"))
+
+	require.True(t, has(sent.texts, "«Most Docs Test»"), "sent %q", sent.texts)
 }
 
 func TestReceive_asksCategory(t *testing.T) {
