@@ -144,6 +144,15 @@ const (
 	btnRetryAll           = "🔁 Повторить выгрузку"
 	btnExportAll          = "📨 Сначала прислать все документы"
 	btnDeleteData         = "🗑 Удалить мои данные"
+	btnInlineOn           = "💬 Отправка из любого чата: вкл"
+	btnInlineOff          = "💬 Отправка из любого чата: выкл"
+)
+
+// Inline mode: the button on top of the inline results (Telegram allows ~64 chars).
+const (
+	btnInlineUnknown  = "Открыть Most Files"
+	btnInlineEmpty    = "Добавить документ"
+	btnInlineDisabled = "Включить в настройках"
 )
 
 // Converter mode (/convert) texts.

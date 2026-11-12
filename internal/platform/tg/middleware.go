@@ -12,6 +12,9 @@ import (
 // declared here, at the consumer; docsbot/postgres implements it.
 type Users interface {
 	Ensure(ctx context.Context, tgUserID int64, lang string) (string, error)
+	// Lookup finds an existing user without creating one. Soft-deleted users
+	// are reported as not found.
+	Lookup(ctx context.Context, tgUserID int64) (id string, found bool, err error)
 }
 
 // ctxKey is unexported so no other package can collide with our context values.
@@ -54,10 +57,16 @@ type leaveFunc func(ctx context.Context, b *bot.Bot, chatID int64)
 // privateOnly lets only private-chat updates through, so documents never leak
 // into a group. In a group or supergroup it calls leave (notice + leave the
 // chat); channel posts and updates without a chat are dropped silently. It runs
-// before ensureUser, so nothing is stored for them.
+// before ensureUser, so nothing is stored for them. Inline queries pass: they
+// carry no chat and answer only to the sender.
 func privateOnly(leave leaveFunc, log *slog.Logger) bot.Middleware {
 	return func(next bot.HandlerFunc) bot.HandlerFunc {
 		return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+			if update.InlineQuery != nil {
+				// An inline query has no chat: the user is typing in some other chat.
+				next(ctx, b, update)
+				return
+			}
 			chat := chatOf(update)
 			switch {
 			case chat != nil && chat.Type == models.ChatTypePrivate:
@@ -142,10 +151,28 @@ func logUpdate(log *slog.Logger) bot.Middleware {
 }
 
 // ensureUser upserts the sender and stashes the internal user id in ctx.
-// Senderless updates pass through; a storage error drops the update.
+// Senderless updates pass through; a storage error drops the update. An inline
+// query only looks the user up: a stranger is not created, the handler just
+// gets no id.
 func ensureUser(users Users, log *slog.Logger) bot.Middleware {
 	return func(next bot.HandlerFunc) bot.HandlerFunc {
 		return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+			if q := update.InlineQuery; q != nil {
+				if q.From == nil {
+					next(ctx, b, update)
+					return
+				}
+				id, found, err := users.Lookup(ctx, q.From.ID)
+				if err != nil {
+					log.ErrorContext(ctx, "lookup user", "err", err)
+					return
+				}
+				if found {
+					ctx = context.WithValue(ctx, userIDKey, id)
+				}
+				next(ctx, b, update)
+				return
+			}
 			from := sender(update)
 			if from == nil {
 				next(ctx, b, update)
@@ -180,6 +207,8 @@ func updateKind(update *models.Update) string {
 		return "message"
 	case update.CallbackQuery != nil:
 		return "callback"
+	case update.InlineQuery != nil:
+		return "inline_query"
 	default:
 		return "other"
 	}

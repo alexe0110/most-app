@@ -115,6 +115,8 @@ type SettingsView struct {
 	InDrive        int
 	OnlyTelegram   int
 	Failed         int
+	// InlineEnabled is the «send from any chat» switch.
+	InlineEnabled bool
 }
 
 // Export is the set of documents to resend from Telegram. Truncated is true when

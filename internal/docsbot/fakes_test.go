@@ -342,12 +342,13 @@ func (s *fakeSyncs) RequeueSync(_ context.Context, _ docsbot.UserID, id docsbot.
 
 // fakeRepo is an in-memory docsbot.Repo for unit tests.
 type fakeRepo struct {
-	mu      sync.Mutex                  // guards every field below; fakes are used by parallel tests
-	folders map[docsbot.Category]string // cached Drive folder ids by category
-	docs    map[docsbot.DocumentID]docsbot.Document
-	seq     int
-	deleted []docsbot.UserID                 // users passed to DeleteUserData
-	updated map[docsbot.DocumentID]time.Time // last update time, set by tests for the sweeper
+	mu        sync.Mutex                  // guards every field below; fakes are used by parallel tests
+	folders   map[docsbot.Category]string // cached Drive folder ids by category
+	docs      map[docsbot.DocumentID]docsbot.Document
+	seq       int
+	deleted   []docsbot.UserID                 // users passed to DeleteUserData
+	updated   map[docsbot.DocumentID]time.Time // last update time, set by tests for the sweeper
+	inlineOff map[docsbot.UserID]bool          // users who turned inline mode off
 }
 
 var _ docsbot.Repo = (*fakeRepo)(nil)
@@ -677,6 +678,65 @@ func (r *fakeRepo) Search(_ context.Context, user docsbot.UserID, q string, limi
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// recentFor lists the user's saved documents, newest first (ties by id), like the SQL.
+func (r *fakeRepo) recentFor(user docsbot.UserID) []docsbot.Document {
+	out := r.savedFor(user)
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID > out[j].ID
+	})
+	return out
+}
+
+// page applies limit/offset like the SQL.
+func page(docs []docsbot.Document, limit, offset int) []docsbot.Document {
+	if offset >= len(docs) {
+		return nil
+	}
+	docs = docs[offset:]
+	if len(docs) > limit {
+		docs = docs[:limit]
+	}
+	return docs
+}
+
+func (r *fakeRepo) InlineSearch(_ context.Context, user docsbot.UserID, q string, cats []docsbot.Category, limit, offset int) ([]docsbot.Document, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	q = strings.ToLower(q)
+	var match []docsbot.Document
+	for _, d := range r.recentFor(user) {
+		if strings.Contains(strings.ToLower(d.Title), q) || slices.Contains(cats, d.Category) {
+			match = append(match, d)
+		}
+	}
+	return page(match, limit, offset), nil
+}
+
+func (r *fakeRepo) RecentSaved(_ context.Context, user docsbot.UserID, limit, offset int) ([]docsbot.Document, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return page(r.recentFor(user), limit, offset), nil
+}
+
+func (r *fakeRepo) InlineEnabled(_ context.Context, user docsbot.UserID) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return !r.inlineOff[user], nil
+}
+
+func (r *fakeRepo) SetInlineEnabled(_ context.Context, user docsbot.UserID, on bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.inlineOff == nil {
+		r.inlineOff = map[docsbot.UserID]bool{}
+	}
+	r.inlineOff[user] = !on
+	return nil
 }
 
 // MarkSynced mirrors MarkSynced: only a pending sync at the same meta_version.

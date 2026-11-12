@@ -2,7 +2,10 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // defaultLang matches the users.lang column default and is used when Telegram
@@ -20,6 +23,20 @@ func (r *Repo) Ensure(ctx context.Context, tgUserID int64, lang string) (string,
 		return "", fmt.Errorf("ensure user: %w", err)
 	}
 	return u.ID.String(), nil
+}
+
+// Lookup finds an active user by Telegram id without creating one. A missing or
+// soft-deleted user is reported as not found. It implements the platform/tg
+// Users port.
+func (r *Repo) Lookup(ctx context.Context, tgUserID int64) (string, bool, error) {
+	u, err := r.GetUserByTgID(ctx, tgUserID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("lookup user: %w", err)
+	}
+	return u.ID.String(), true, nil
 }
 
 // TgUserID resolves an internal user id (UUID) to its Telegram id, for sending

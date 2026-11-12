@@ -55,6 +55,9 @@ type fakeRepo struct {
 	docs    map[docsbot.DocumentID]docsbot.Document
 	status  *fakeStatus // set by fakeDepsWith
 	seq     int
+	// inlineOff is set by tests to turn inline mode off for a user.
+	inlineOff map[docsbot.UserID]bool
+	inlineErr error // returned by InlineEnabled
 }
 
 var _ docsbot.Repo = (*fakeRepo)(nil)
@@ -301,6 +304,58 @@ func (r *fakeRepo) Search(_ context.Context, user docsbot.UserID, q string, limi
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (r *fakeRepo) recentFor(user docsbot.UserID) []docsbot.Document {
+	out := r.savedFor(user)
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID > out[j].ID
+	})
+	return out
+}
+
+func page(docs []docsbot.Document, limit, offset int) []docsbot.Document {
+	if offset >= len(docs) {
+		return nil
+	}
+	docs = docs[offset:]
+	if len(docs) > limit {
+		docs = docs[:limit]
+	}
+	return docs
+}
+
+func (r *fakeRepo) InlineSearch(_ context.Context, user docsbot.UserID, q string, cats []docsbot.Category, limit, offset int) ([]docsbot.Document, error) {
+	q = strings.ToLower(q)
+	var match []docsbot.Document
+	for _, d := range r.recentFor(user) {
+		if strings.Contains(strings.ToLower(d.Title), q) || slices.Contains(cats, d.Category) {
+			match = append(match, d)
+		}
+	}
+	return page(match, limit, offset), nil
+}
+
+func (r *fakeRepo) RecentSaved(_ context.Context, user docsbot.UserID, limit, offset int) ([]docsbot.Document, error) {
+	return page(r.recentFor(user), limit, offset), nil
+}
+
+func (r *fakeRepo) InlineEnabled(_ context.Context, user docsbot.UserID) (bool, error) {
+	if r.inlineErr != nil {
+		return false, r.inlineErr
+	}
+	return !r.inlineOff[user], nil
+}
+
+func (r *fakeRepo) SetInlineEnabled(_ context.Context, user docsbot.UserID, on bool) error {
+	if r.inlineOff == nil {
+		r.inlineOff = map[docsbot.UserID]bool{}
+	}
+	r.inlineOff[user] = !on
+	return nil
 }
 
 // fakeUploads is a no-op Uploads port: handler tests assert on the repo and the

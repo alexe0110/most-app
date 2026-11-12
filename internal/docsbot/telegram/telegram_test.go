@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,21 +28,22 @@ import (
 // capture records what the bot sent to the fake Bot API, split by method.
 type capture struct {
 	mu          sync.Mutex
-	texts       []string // sendMessage
-	edits       []string // editMessageText
-	markups     []string // sendMessage reply_markup
-	editMarkups []string // editMessageText reply_markup
-	files       []string // sendDocument/sendPhoto caption
-	deletes     int      // deleteMessage calls
-	deleteIDs   []int    // message_id of each deleteMessage
-	editIDs     []int    // message_id of each editMessageText
-	answers     []string // answerCallbackQuery toast texts
-	groups      []string // sendMediaGroup "media" JSON, one per album
-	markupEdits []string // editMessageReplyMarkup reply_markup
-	mediaLimit  int      // the next N sendMediaGroup calls answer 429 (retry_after 0)
-	mediaDown   bool     // every sendMediaGroup fails with 400
-	sendModes   []string // sendMessage parse_mode
-	editModes   []string // editMessageText parse_mode
+	texts       []string     // sendMessage
+	edits       []string     // editMessageText
+	markups     []string     // sendMessage reply_markup
+	editMarkups []string     // editMessageText reply_markup
+	files       []string     // sendDocument/sendPhoto caption
+	deletes     int          // deleteMessage calls
+	deleteIDs   []int        // message_id of each deleteMessage
+	editIDs     []int        // message_id of each editMessageText
+	answers     []string     // answerCallbackQuery toast texts
+	groups      []string     // sendMediaGroup "media" JSON, one per album
+	markupEdits []string     // editMessageReplyMarkup reply_markup
+	mediaLimit  int          // the next N sendMediaGroup calls answer 429 (retry_after 0)
+	mediaDown   bool         // every sendMediaGroup fails with 400
+	sendModes   []string     // sendMessage parse_mode
+	editModes   []string     // editMessageText parse_mode
+	inlines     []url.Values // answerInlineQuery form fields
 }
 
 func (c *capture) record(bucket *[]string, s string) {
@@ -125,6 +127,14 @@ func newBotOpts(t *testing.T, log *slog.Logger, drive fakeDrive, opts ...telegra
 			sent.mu.Lock()
 			sent.deletes++
 			sent.deleteIDs = append(sent.deleteIDs, formInt(r, "message_id"))
+			sent.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"ok":true,"result":true}`)
+			return
+		case strings.HasSuffix(r.URL.Path, "/answerInlineQuery"):
+			_ = r.ParseMultipartForm(1 << 20)
+			sent.mu.Lock()
+			sent.inlines = append(sent.inlines, r.Form)
 			sent.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"ok":true,"result":true}`)

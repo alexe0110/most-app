@@ -36,6 +36,7 @@ func Register(b *bot.Bot, log *slog.Logger, svc *docsbot.Service, auth Authorize
 	b.RegisterHandler(bot.HandlerTypeMessageText, "export", bot.MatchTypeCommand, d.exportCmd) // not in Commands(): reached from the delete-data prompt
 	b.RegisterHandler(bot.HandlerTypeMessageText, "convert", bot.MatchTypeCommand, conv.start)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "cancel", bot.MatchTypeCommand, conv.cancel)
+	b.RegisterHandlerMatchFunc(ownsInline, d.inline)
 	b.RegisterHandlerMatchFunc(conv.ownsCallback, conv.callback)
 	b.RegisterHandlerMatchFunc(conv.ownsMessage, conv.message)
 	b.RegisterHandlerMatchFunc(d.ownsCallback, d.callback)

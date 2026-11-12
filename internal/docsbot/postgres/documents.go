@@ -336,6 +336,44 @@ func (r *Repo) Search(ctx context.Context, user docsbot.UserID, query string, li
 	return toDocuments(rows), nil
 }
 
+// InlineSearch finds saved documents whose title matches query or whose category
+// is in cats, best match first.
+func (r *Repo) InlineSearch(ctx context.Context, user docsbot.UserID, query string, cats []docsbot.Category, limit, offset int) ([]docsbot.Document, error) {
+	uid, err := parseUUID(string(user))
+	if err != nil {
+		return nil, err
+	}
+	slugs := make([]string, len(cats))
+	for i, c := range cats {
+		slugs[i] = string(c)
+	}
+	rows, err := r.InlineSearchDocuments(ctx, InlineSearchDocumentsParams{
+		UserID:  uid,
+		Pattern: pgtype.Text{String: likeEscaper.Replace(query), Valid: true},
+		Query:   query,
+		Cats:    slugs,
+		Lim:     int32(limit),
+		Off:     int32(offset),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("inline search documents: %w", err)
+	}
+	return toDocuments(rows), nil
+}
+
+// RecentSaved lists the user's saved documents, newest first.
+func (r *Repo) RecentSaved(ctx context.Context, user docsbot.UserID, limit, offset int) ([]docsbot.Document, error) {
+	uid, err := parseUUID(string(user))
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.RecentSavedDocuments(ctx, RecentSavedDocumentsParams{UserID: uid, Lim: int32(limit), Off: int32(offset)})
+	if err != nil {
+		return nil, fmt.Errorf("recent saved documents: %w", err)
+	}
+	return toDocuments(rows), nil
+}
+
 // MarkSynced records a finished sync if the document is unchanged since version.
 func (r *Repo) MarkSynced(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, version int) (bool, error) {
 	docID, uid, err := ids(id, user)

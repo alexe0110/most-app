@@ -44,8 +44,8 @@ func (r *Repo) SavedForExport(ctx context.Context, user docsbot.UserID, limit in
 	return toDocuments(rows), nil
 }
 
-// DeleteUserData deletes the user's documents, drive_folders and integrations and
-// soft-deletes the user, all in one transaction.
+// DeleteUserData deletes the user's documents, drive_folders, integrations and
+// settings and soft-deletes the user, all in one transaction.
 func (r *Repo) DeleteUserData(ctx context.Context, user docsbot.UserID) error {
 	uid, err := parseUUID(string(user))
 	if err != nil {
@@ -64,9 +64,38 @@ func (r *Repo) DeleteUserData(ctx context.Context, user docsbot.UserID) error {
 		if err := q.DeleteUserStatusMessages(ctx, uid); err != nil {
 			return fmt.Errorf("delete user status messages: %w", err)
 		}
+		if err := q.DeleteUserDocsSettings(ctx, uid); err != nil {
+			return fmt.Errorf("delete user docs settings: %w", err)
+		}
 		if err := q.SoftDeleteUser(ctx, uid); err != nil {
 			return fmt.Errorf("soft delete user: %w", err)
 		}
 		return nil
 	})
+}
+
+// InlineEnabled reports whether the user allows sending documents from any chat;
+// a user without a settings row has it on.
+func (r *Repo) InlineEnabled(ctx context.Context, user docsbot.UserID) (bool, error) {
+	uid, err := parseUUID(string(user))
+	if err != nil {
+		return false, err
+	}
+	on, err := r.GetInlineEnabled(ctx, uid)
+	if err != nil {
+		return false, fmt.Errorf("get inline enabled: %w", err)
+	}
+	return on, nil
+}
+
+// SetInlineEnabled stores the user's inline-mode switch.
+func (r *Repo) SetInlineEnabled(ctx context.Context, user docsbot.UserID, on bool) error {
+	uid, err := parseUUID(string(user))
+	if err != nil {
+		return err
+	}
+	if err := r.Queries.SetInlineEnabled(ctx, SetInlineEnabledParams{UserID: uid, InlineEnabled: on}); err != nil {
+		return fmt.Errorf("set inline enabled: %w", err)
+	}
+	return nil
 }

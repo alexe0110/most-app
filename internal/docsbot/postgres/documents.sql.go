@@ -396,6 +396,82 @@ func (q *Queries) GetDocumentByUniqueID(ctx context.Context, arg GetDocumentByUn
 	return i, err
 }
 
+const inlineSearchDocuments = `-- name: InlineSearchDocuments :many
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height
+from documents
+where user_id = $1
+  and status = 'saved'
+  and (
+      title ilike '%' || $2 || '%' escape '\'
+      or similarity(title, $3) > 0.3
+      or category = any($4::text[])
+  )
+order by similarity(title, $3) desc, created_at desc, id desc
+limit $6 offset $5
+`
+
+type InlineSearchDocumentsParams struct {
+	UserID  pgtype.UUID
+	Pattern pgtype.Text
+	Query   string
+	Cats    []string
+	Off     int32
+	Lim     int32
+}
+
+// Inline-mode search: the title matches like SearchDocuments, or the category is
+// one of @cats (categories whose label matched the query). @pattern is the escaped query.
+func (q *Queries) InlineSearchDocuments(ctx context.Context, arg InlineSearchDocumentsParams) ([]Document, error) {
+	rows, err := q.db.Query(ctx, inlineSearchDocuments,
+		arg.UserID,
+		arg.Pattern,
+		arg.Query,
+		arg.Cats,
+		arg.Off,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Document{}
+	for rows.Next() {
+		var i Document
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Status,
+			&i.Category,
+			&i.Title,
+			&i.TgFileID,
+			&i.TgFileUniqueID,
+			&i.DriveFileID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Kind,
+			&i.BackupStatus,
+			&i.StatusMessageID,
+			&i.FileSize,
+			&i.MimeType,
+			&i.MediaGroupID,
+			&i.SyncStatus,
+			&i.SyncReason,
+			&i.MetaVersion,
+			&i.ContentDirty,
+			&i.PageCount,
+			&i.ImageWidth,
+			&i.ImageHeight,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertDocument = `-- name: InsertDocument :one
 insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, file_size, mime_type, media_group_id, page_count, image_width, image_height)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, nullif($11::integer, 0), nullif($12::integer, 0), nullif($13::integer, 0))
@@ -755,6 +831,65 @@ func (q *Queries) MarkSynced(ctx context.Context, arg MarkSyncedParams) (int64, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recentSavedDocuments = `-- name: RecentSavedDocuments :many
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height
+from documents
+where user_id = $1
+  and status = 'saved'
+order by created_at desc, id desc
+limit $3 offset $2
+`
+
+type RecentSavedDocumentsParams struct {
+	UserID pgtype.UUID
+	Off    int32
+	Lim    int32
+}
+
+func (q *Queries) RecentSavedDocuments(ctx context.Context, arg RecentSavedDocumentsParams) ([]Document, error) {
+	rows, err := q.db.Query(ctx, recentSavedDocuments, arg.UserID, arg.Off, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Document{}
+	for rows.Next() {
+		var i Document
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Status,
+			&i.Category,
+			&i.Title,
+			&i.TgFileID,
+			&i.TgFileUniqueID,
+			&i.DriveFileID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Kind,
+			&i.BackupStatus,
+			&i.StatusMessageID,
+			&i.FileSize,
+			&i.MimeType,
+			&i.MediaGroupID,
+			&i.SyncStatus,
+			&i.SyncReason,
+			&i.MetaVersion,
+			&i.ContentDirty,
+			&i.PageCount,
+			&i.ImageWidth,
+			&i.ImageHeight,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const replaceDocumentContent = `-- name: ReplaceDocumentContent :one
