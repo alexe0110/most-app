@@ -20,6 +20,11 @@ import (
 // botName identifies this bot in the shared integrations/oauth tables.
 const botName = "docs"
 
+// defaultDriveFolder is the Drive root folder name shown in /start unless
+// WithDriveFolder overrides it. Mirrors the gdrive default (the adapter does
+// not import platform/gdrive).
+const defaultDriveFolder = "Most Docs"
+
 // docs is the inbound adapter for the core document flow: it turns updates into
 // Service calls and renders the replies. State is the domain's; the only local
 // state is which document a user is renaming (force-reply).
@@ -32,6 +37,8 @@ type docs struct {
 	searches *searchStore
 	origins  *originStore
 	albums   *albumBuffer
+	// driveFolder is the Drive root folder name shown in /start.
+	driveFolder string
 	// registerAlbum remembers an album's images for the "one PDF" button and
 	// returns its token; set by Register (the converter owns the PDF work).
 	registerAlbum func(user docsbot.UserID, group string, images []albumImage) string
@@ -50,6 +57,8 @@ func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Op
 		searches: newSearchStore(time.Now),
 		origins:  newOriginStore(time.Now),
 		albums:   newAlbumBuffer(),
+
+		driveFolder: defaultDriveFolder,
 
 		pauseFile: exportPause, pauseAlbum: exportPerFilePause,
 		exports: map[docsbot.UserID]bool{},
@@ -91,7 +100,7 @@ func (d *docs) start(ctx context.Context, b *bot.Bot, u *models.Update) {
 		reply(ctx, b, d.log, chatID, textDriveConnected)
 		return
 	}
-	reply(ctx, b, d.log, chatID, textStart)
+	reply(ctx, b, d.log, chatID, fmt.Sprintf(textStart, d.driveFolder))
 }
 
 // settings shows the Drive connection state, document counts, and the data

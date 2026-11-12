@@ -21,12 +21,13 @@ import (
 )
 
 const (
-	rootFolderName = "Most Docs"
-	defaultBaseURL = "https://www.googleapis.com"
-	folderMIME     = "application/vnd.google-apps.folder"
-	maxNameTries   = 50
-	docIDProperty  = "most_doc_id" // appProperties key marking the source document
-	maxErrBody     = 2 << 10
+	// DefaultRootFolder is the root folder name used unless WithRootFolder says otherwise.
+	DefaultRootFolder = "Most Docs"
+	defaultBaseURL    = "https://www.googleapis.com"
+	folderMIME        = "application/vnd.google-apps.folder"
+	maxNameTries      = 50
+	docIDProperty     = "most_doc_id" // appProperties key marking the source document
+	maxErrBody        = 2 << 10
 )
 
 // Clients hands out an authenticated *http.Client for a user. Token refresh and
@@ -64,6 +65,8 @@ type Service struct {
 	cache   FolderCache
 	baseURL string
 	log     *slog.Logger
+
+	rootFolder string // Drive root folder name
 }
 
 // Option overrides a Service default.
@@ -75,9 +78,19 @@ func WithBaseURL(u string) Option { return func(s *Service) { s.baseURL = u } }
 // WithLogger sets the logger for Drive API call traces (Debug level).
 func WithLogger(l *slog.Logger) Option { return func(s *Service) { s.log = l } }
 
+// WithRootFolder sets the name of the Drive root folder. An empty name keeps
+// DefaultRootFolder.
+func WithRootFolder(name string) Option {
+	return func(s *Service) {
+		if name != "" {
+			s.rootFolder = name
+		}
+	}
+}
+
 // New builds the Service.
 func New(clients Clients, cache FolderCache, opts ...Option) *Service {
-	s := &Service{clients: clients, cache: cache, baseURL: defaultBaseURL}
+	s := &Service{clients: clients, cache: cache, baseURL: defaultBaseURL, rootFolder: DefaultRootFolder}
 	for _, o := range opts {
 		o(s)
 	}
@@ -87,10 +100,10 @@ func New(clients Clients, cache FolderCache, opts ...Option) *Service {
 	return s
 }
 
-// Upload is a file to put into "Most Docs/<FolderName>".
+// Upload is a file to put into "<root>/<FolderName>".
 type Upload struct {
 	CacheKey   string // stable key for FolderCache (the category slug)
-	FolderName string // human folder name under "Most Docs" (e.g. "Паспорт и ID")
+	FolderName string // human folder name under the root folder (e.g. "Паспорт и ID")
 	Name       string // desired file name
 	MIME       string // content type of Data (may be "")
 	Data       []byte
@@ -114,7 +127,7 @@ func (s *Service) Upload(ctx context.Context, userID string, up Upload) (File, e
 	if errors.Is(err, errNotFound) {
 		// A cached folder passed the alive-check but vanished before use (race):
 		// drop the category cache and retry the whole resolve+upload once.
-		// The root "Most Docs" folder is not cached (its cacheKey is empty), so the
+		// The root folder is not cached (its cacheKey is empty), so the
 		// retry re-resolves it via findFolder and needs no separate cache reset.
 		if up.CacheKey != "" {
 			if derr := s.cache.DeleteFolderID(ctx, userID, up.CacheKey); derr != nil {
@@ -148,7 +161,7 @@ func (s *Service) client(ctx context.Context, userID string) (*http.Client, erro
 // resolveAndUpload resolves the root and category folders, then uploads the
 // file unless a previous attempt already did.
 func (s *Service) resolveAndUpload(ctx context.Context, httpc *http.Client, userID string, up Upload) (File, error) {
-	rootID, err := s.ensureFolder(ctx, httpc, userID, "", rootFolderName, "root")
+	rootID, err := s.ensureFolder(ctx, httpc, userID, "", s.rootFolder, "root")
 	if err != nil {
 		return File{}, fmt.Errorf("ensure root folder: %w", err)
 	}

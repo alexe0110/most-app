@@ -33,6 +33,7 @@ func TestLoad(t *testing.T) {
 				GoogleClientID:     "gid",
 				GoogleClientSecret: "gsecret",
 				TokenEncKey:        "key",
+				DriveRootFolder:    "Most Docs",
 			},
 		},
 		{
@@ -44,6 +45,7 @@ func TestLoad(t *testing.T) {
 				"TELEGRAM_WEBHOOK_SECRET": "sec", "TELEGRAM_BOT_USERNAME": "most_files_bot",
 				"PUBLIC_URL":       "https://most.example",
 				"GOOGLE_CLIENT_ID": "gid", "GOOGLE_CLIENT_SECRET": "gsecret", "TOKEN_ENC_KEY": "key",
+				"DRIVE_ROOT_FOLDER": "Most Docs Test",
 			},
 			want: Config{
 				Env: "prod", LogLevel: "debug", HTTPAddr: ":3000", DatabaseURL: "postgres://u:p@db:5432/x",
@@ -53,6 +55,24 @@ func TestLoad(t *testing.T) {
 				GoogleClientID:     "gid",
 				GoogleClientSecret: "gsecret",
 				TokenEncKey:        "key",
+				DriveRootFolder:    "Most Docs Test",
+			},
+		},
+		{
+			name: "empty drive root folder falls back to default",
+			env: map[string]string{
+				"TELEGRAM_TOKEN": "t", "GOOGLE_CLIENT_ID": "gid", "GOOGLE_CLIENT_SECRET": "gsecret",
+				"TOKEN_ENC_KEY": "key", "DRIVE_ROOT_FOLDER": "",
+			},
+			want: Config{
+				Env: "dev", LogLevel: "info", HTTPAddr: ":8080",
+				DatabaseURL:   "postgres://most:most@localhost:5432/most?sslmode=disable",
+				TelegramToken: "t", TelegramMode: "polling",
+				PublicURL:          "http://localhost:8080",
+				GoogleClientID:     "gid",
+				GoogleClientSecret: "gsecret",
+				TokenEncKey:        "key",
+				DriveRootFolder:    "Most Docs",
 			},
 		},
 		{
@@ -110,6 +130,7 @@ func TestLoad(t *testing.T) {
 				"APP_ENV", "LOG_LEVEL", "PORT", "DATABASE_URL",
 				"TELEGRAM_TOKEN", "TELEGRAM_MODE", "TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_BOT_USERNAME",
 				"PUBLIC_URL", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "TOKEN_ENC_KEY",
+				"DRIVE_ROOT_FOLDER",
 			} {
 				t.Setenv(k, "")
 			}

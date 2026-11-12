@@ -27,6 +27,8 @@ type Config struct {
 	GoogleClientID     string // required
 	GoogleClientSecret string // required
 	TokenEncKey        string // base64-encoded 32-byte key, required
+
+	DriveRootFolder string // Drive root folder name, default "Most Docs"
 }
 
 // Load reads settings from env, applies defaults and validates them.
@@ -43,6 +45,8 @@ func Load() (Config, error) {
 		LogLevel:    getenv("LOG_LEVEL", "info"),
 		HTTPAddr:    ":" + getenv("PORT", "8080"),
 		DatabaseURL: getenv("DATABASE_URL", "postgres://most:most@localhost:5432/most?sslmode=disable"),
+
+		DriveRootFolder: getenv("DRIVE_ROOT_FOLDER", "Most Docs"),
 
 		TelegramToken:         os.Getenv("TELEGRAM_TOKEN"),
 		TelegramMode:          getenv("TELEGRAM_MODE", "polling"),
