@@ -1288,7 +1288,7 @@ func (d *docs) sendHTML(ctx context.Context, b *bot.Bot, chatID int64, text stri
 	_, err := b.SendMessage(ctx, params)
 	traceAPI(ctx, d.log, "sendMessage", start)
 	if err != nil {
-		d.log.Error("send telegram message", "err", err)
+		d.log.ErrorContext(ctx, "send telegram message", "err", err)
 	}
 }
 

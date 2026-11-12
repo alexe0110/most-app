@@ -3,7 +3,6 @@ package telegram
 import (
 	"fmt"
 	"html"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -211,40 +210,36 @@ func storageLine(doc docsbot.Document) string {
 	}
 }
 
-// fileType is a short label of the file kind; "" when unknown.
+// mimeTypeLabels names the content types a card shows, by MIME.
+var mimeTypeLabels = map[string]string{
+	"application/pdf":    "PDF",
+	"image/jpeg":         "JPG",
+	"image/jpg":          "JPG",
+	"image/png":          "PNG",
+	"image/webp":         "WEBP",
+	"image/heic":         "HEIC",
+	"image/heif":         "HEIC",
+	"application/msword": "DOC",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": "DOCX",
+	"application/vnd.ms-excel": "XLS",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         "XLSX",
+	"application/vnd.ms-powerpoint":                                             "PPT",
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation": "PPTX",
+	"text/plain":      "TXT",
+	"application/zip": "ZIP",
+}
+
+// fileType is a short label of the file kind, decided by its MIME type only (a
+// title is free text); "" when unknown. A photo has no MIME and reads "Фото".
 func fileType(doc docsbot.Document) string {
-	switch doc.MIME {
-	case "application/pdf":
-		return "PDF"
-	case "image/jpeg", "image/jpg":
-		return "JPG"
-	case "image/png":
-		return "PNG"
-	}
-	if ext := strings.TrimPrefix(filepath.Ext(doc.Title), "."); looksLikeExt(ext) {
-		return strings.ToUpper(ext)
+	mime := strings.ToLower(strings.TrimSpace(strings.SplitN(doc.MIME, ";", 2)[0]))
+	if label, ok := mimeTypeLabels[mime]; ok {
+		return label
 	}
 	if doc.Kind == docsbot.KindPhoto {
 		return "Фото"
 	}
 	return ""
-}
-
-// looksLikeExt reports whether s is plausibly a file extension: 1-5 ASCII
-// letters or digits with at least one letter (so a year like "2026" is not one).
-func looksLikeExt(s string) bool {
-	if len(s) < 1 || len(s) > 5 {
-		return false
-	}
-	letter := false
-	for _, r := range s {
-		isLetter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
-		if !isLetter && (r < '0' || r > '9') {
-			return false
-		}
-		letter = letter || isLetter
-	}
-	return letter
 }
 
 // humanSize formats a byte count in KB or MB; "" when the size is unknown.

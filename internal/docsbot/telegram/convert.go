@@ -5,9 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"image"
-	_ "image/jpeg" // register decoders for image.DecodeConfig
-	_ "image/png"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1062,9 +1059,8 @@ func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 		return true
 	}
 	pages, width, height := 0, 0, 0
-	if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
-		// Cheap: only the header is read. Formats without a decoder stay unknown.
-		width, height = cfg.Width, cfg.Height
+	if w, h, ok := convert.ImageSize(data); ok { // header only; other formats stay unknown
+		width, height = w, h
 	}
 	if msg.Document.MimeType == "application/pdf" || strings.EqualFold(filepath.Ext(filename), ".pdf") {
 		// The result is already in memory; a failed count only leaves the page count unknown.
