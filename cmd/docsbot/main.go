@@ -85,6 +85,7 @@ func run() error {
 	// oauth.Service and the bot each need the other (the bot shows the consent
 	// link; oauth notifies the bot when Drive connects). tgbot is filled just
 	// below, and both closures run only after startup, so the cycle is safe.
+	renames := telegram.NewRenames() // shared by the bot handlers and the notifier
 	var (
 		tgbot *tg.Bot
 		svc   *docsbot.Service
@@ -112,12 +113,12 @@ func run() error {
 		PublicURL:     cfg.PublicURL,
 		WebhookSecret: cfg.TelegramWebhookSecret,
 		GroupNotice:   telegram.GroupNotice(),
-	}, repo, log, func(b *bot.Bot) { telegram.Register(b, log, svc, oauthSvc) })
+	}, repo, log, func(b *bot.Bot) { telegram.Register(b, log, svc, oauthSvc, telegram.WithRenames(renames)) })
 	if err != nil {
 		return err
 	}
 	files.bot = tgbot
-	notifier := telegram.NewNotifier(tgbot, repo, oauthSvc, svc, log)
+	notifier := telegram.NewNotifier(tgbot, repo, oauthSvc, svc, log, telegram.WithNotifierRenames(renames))
 	bindUpload(svc, notifier)
 	bindSync(svc, notifier)
 	bindTrash(svc, notifier)

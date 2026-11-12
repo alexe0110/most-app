@@ -102,6 +102,7 @@ const (
 	textNoFailed = "Документов с ошибкой выгрузки нет."
 
 	textExportEmpty     = "Пока нечего присылать — сохранённых документов нет."
+	textExportRunning   = "Присылаю документы — подожди, пока закончу."
 	textExportStart     = "Присылаю твои документы…"
 	textExportDone      = "Готово — прислал %d документов."                                      // %d = count
 	textExportTruncated = "Прислал %d из %d. Отправь /export ещё раз, чтобы получить остальные." // sent, total

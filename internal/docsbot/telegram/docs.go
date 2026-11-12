@@ -37,6 +37,9 @@ type docs struct {
 	registerAlbum func(user docsbot.UserID, group string, images []albumImage) string
 	// pauseFile and pauseAlbum space out export sends under the Bot API rate limit.
 	pauseFile, pauseAlbum time.Duration
+	// exports holds the users with an export in flight: one at a time per user.
+	exportsMu sync.Mutex
+	exports   map[docsbot.UserID]bool
 }
 
 func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Option) *docs {
@@ -48,7 +51,8 @@ func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Op
 		origins:  newOriginStore(time.Now),
 		albums:   newAlbumBuffer(),
 
-		pauseFile: exportPause, pauseAlbum: exportAlbumPause,
+		pauseFile: exportPause, pauseAlbum: exportPerFilePause,
+		exports: map[docsbot.UserID]bool{},
 	}
 	for _, opt := range opts {
 		opt(d)
@@ -366,6 +370,10 @@ func (d *docs) onExport(ctx context.Context, b *bot.Bot, u *models.Update, user 
 	if !ok {
 		return
 	}
+	// The button is spent: a second tap must not start another export.
+	if _, msgID, ok := callbackMessage(u); ok {
+		d.editMarkup(ctx, b, chatID, msgID, &models.InlineKeyboardMarkup{})
+	}
 	d.export(ctx, b, chatID, user)
 }
 
@@ -382,6 +390,11 @@ func (d *docs) exportCmd(ctx context.Context, b *bot.Bot, u *models.Update) {
 // per-request cap: photos and documents go in albums of up to maxAlbumFiles, paced
 // under the Bot API rate limit.
 func (d *docs) export(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID) {
+	if !d.startExport(user) {
+		reply(ctx, b, d.log, chatID, textExportRunning)
+		return
+	}
+	defer d.finishExport(user)
 	exp, err := d.svc.ExportAll(ctx, user)
 	if err != nil {
 		d.fail(ctx, b, chatID, "export", err)
@@ -393,29 +406,71 @@ func (d *docs) export(ctx context.Context, b *bot.Bot, chatID int64, user docsbo
 	}
 	d.log.InfoContext(ctx, "export started", "user_id", user, "count", len(exp.Docs))
 	reply(ctx, b, d.log, chatID, textExportStart)
-	prev := 0
+	sent, prev := 0, 0
 	for i, batch := range exportBatches(exp.Docs) {
-		if i > 0 {
-			gap := d.pauseFile
-			if len(batch) > 1 || prev > 1 {
-				gap = d.pauseAlbum
-			}
-			if !pause(ctx, gap) {
-				return // context cancelled; stop sending
-			}
+		if i > 0 && !pause(ctx, d.exportGap(prev)) {
+			return // context cancelled; stop sending
 		}
 		prev = len(batch)
 		if len(batch) == 1 {
-			d.sendFile(ctx, b, chatID, batch[0])
+			if d.sendFile(ctx, b, chatID, batch[0]) {
+				sent++
+			}
 			continue
 		}
-		d.sendAlbum(ctx, b, chatID, batch)
+		sent += d.sendAlbum(ctx, b, chatID, batch)
 	}
 	if exp.Truncated {
-		reply(ctx, b, d.log, chatID, fmt.Sprintf(textExportTruncated, len(exp.Docs), exp.Total))
+		reply(ctx, b, d.log, chatID, fmt.Sprintf(textExportTruncated, sent, exp.Total))
 		return
 	}
-	reply(ctx, b, d.log, chatID, fmt.Sprintf(textExportDone, len(exp.Docs)))
+	reply(ctx, b, d.log, chatID, fmt.Sprintf(textExportDone, sent))
+}
+
+// exportGap is the pause after a batch of n files. Telegram lets a bot send about
+// one message a second into a chat, and an album of n counts as n, so the pause
+// grows with the album; a single file only needs the short one.
+func (d *docs) exportGap(n int) time.Duration {
+	if n <= 1 {
+		return d.pauseFile
+	}
+	return d.pauseAlbum * time.Duration(n)
+}
+
+// startExport marks the user's export as running; false if one already is.
+func (d *docs) startExport(user docsbot.UserID) bool {
+	d.exportsMu.Lock()
+	defer d.exportsMu.Unlock()
+	if d.exports[user] {
+		return false
+	}
+	d.exports[user] = true
+	return true
+}
+
+func (d *docs) finishExport(user docsbot.UserID) {
+	d.exportsMu.Lock()
+	defer d.exportsMu.Unlock()
+	delete(d.exports, user)
+}
+
+// maxRetryAfter caps how long one rate-limit wait may last.
+const maxRetryAfter = 60 * time.Second
+
+// retryOnRateLimit runs send and, when Telegram answers 429, waits the retry_after
+// it asks for (capped) and runs it once more.
+func (d *docs) retryOnRateLimit(ctx context.Context, send func() error) error {
+	err := send()
+	var limited *bot.TooManyRequestsError
+	if !errors.As(err, &limited) {
+		return err
+	}
+	wait := min(time.Duration(limited.RetryAfter)*time.Second, maxRetryAfter)
+	d.log.WarnContext(ctx, "telegram rate limit", "retry_after_s", limited.RetryAfter)
+	if !pause(ctx, wait) {
+		return fmt.Errorf("wait for rate limit: %w", ctx.Err())
+	}
+	return send()
 }
 
 // maxAlbumFiles is the most files Telegram takes in one media group.
@@ -438,8 +493,9 @@ func exportBatches(docs []docsbot.Document) [][]docsbot.Document {
 	return out
 }
 
-// sendAlbum resends 2-10 stored files of one kind as a media group by file_id.
-func (d *docs) sendAlbum(ctx context.Context, b *bot.Bot, chatID int64, batch []docsbot.Document) {
+// sendAlbum resends 2-10 stored files of one kind as a media group by file_id and
+// returns how many went out (0 on failure).
+func (d *docs) sendAlbum(ctx context.Context, b *bot.Bot, chatID int64, batch []docsbot.Document) int {
 	media := make([]models.InputMedia, 0, len(batch))
 	for _, doc := range batch {
 		caption := doc.Title + " · " + doc.Category.Label()
@@ -450,14 +506,18 @@ func (d *docs) sendAlbum(ctx context.Context, b *bot.Bot, chatID int64, batch []
 		}
 	}
 	start := time.Now()
-	_, err := b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{ChatID: chatID, Media: media})
+	err := d.retryOnRateLimit(ctx, func() error {
+		_, err := b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{ChatID: chatID, Media: media})
+		return err
+	})
 	traceAPI(ctx, d.log, "sendMediaGroup", start)
 	if err != nil {
 		d.log.ErrorContext(ctx, "send album", "err", err, "user_id", batch[0].UserID, "count", len(batch))
 		reply(ctx, b, d.log, chatID, textSendFailed)
-		return
+		return 0
 	}
 	d.log.InfoContext(ctx, "album sent", "user_id", batch[0].UserID, "count", len(batch))
+	return len(batch)
 }
 
 // onDeleteData arms the "type УДАЛИТЬ" confirmation and explains what is removed.
@@ -758,7 +818,12 @@ func (d *docs) redrawStatus(ctx context.Context, b *bot.Bot, user docsbot.UserID
 		return
 	}
 	text, kb := renderStatusMessage(view.Message, view.Lines, view.FolderByCat)
+	// A redraw replaces a rename prompt shown on this message; the armed rename
+	// must not outlive it. Dropped on both sides of the edit: a prompt armed while
+	// it is in flight is overwritten by it too.
+	d.renames.dropMessage(view.Message.ChatID, view.Message.MessageID)
 	d.editHTML(ctx, b, view.Message.ChatID, view.Message.MessageID, text, kb)
+	d.renames.dropMessage(view.Message.ChatID, view.Message.MessageID)
 	if view.AllTerminal {
 		if err := d.svc.CloseStatus(ctx, user, view.Message.ID); err != nil {
 			d.log.ErrorContext(ctx, "close status message", "err", err, "user_id", user)
@@ -925,7 +990,20 @@ func (d *docs) restoreCard(ctx context.Context, b *bot.Bot, user docsbot.UserID,
 		return
 	}
 	orig, _ := d.origins.get(chatID, msgID)
-	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
+	d.showCard(ctx, b, user, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
+}
+
+// showCard puts a document's card on a message. A message that is the live status
+// message of the document gets the status rendering instead, so its retry row and
+// storage line stay; anything else gets the plain card.
+func (d *docs) showCard(ctx context.Context, b *bot.Bot, user docsbot.UserID, chatID int64, msgID int, doc docsbot.Document, folderID, orig string) {
+	if view, err := d.svc.StatusView(ctx, user, doc.ID); err == nil && view.Grouped &&
+		view.Message.ChatID == chatID && view.Message.MessageID == msgID {
+		text, kb := renderStatusMessage(view.Message, view.Lines, view.FolderByCat)
+		d.editHTML(ctx, b, chatID, msgID, text, kb)
+		return
+	}
+	d.editCard(ctx, b, chatID, msgID, doc, folderID, orig)
 }
 
 // applyRename takes the typed name: the user's message is removed (the chat stays
@@ -946,7 +1024,7 @@ func (d *docs) applyRename(ctx context.Context, b *bot.Bot, user docsbot.UserID,
 	default:
 		d.log.InfoContext(ctx, "document renamed", "user_id", user, "doc_id", e.id)
 		orig, _ := d.origins.get(e.chat, e.msg)
-		d.editCard(ctx, b, e.chat, e.msg, card.Doc, card.CategoryFolderID, orig)
+		d.showCard(ctx, b, user, e.chat, e.msg, card.Doc, card.CategoryFolderID, orig)
 	}
 }
 
@@ -1168,25 +1246,30 @@ func (d *docs) connectURL(ctx context.Context, user docsbot.UserID) (string, boo
 }
 
 // sendFile resends a stored file with the method matching how it arrived.
-func (d *docs) sendFile(ctx context.Context, b *bot.Bot, chatID int64, doc docsbot.Document) {
-	var err error
+// It reports whether the file went out.
+func (d *docs) sendFile(ctx context.Context, b *bot.Bot, chatID int64, doc docsbot.Document) bool {
 	caption := doc.Title + " · " + doc.Category.Label()
 	op := "sendDocument"
 	start := time.Now()
-	switch doc.Kind {
-	case docsbot.KindPhoto:
-		op = "sendPhoto"
-		_, err = b.SendPhoto(ctx, &bot.SendPhotoParams{ChatID: chatID, Photo: &models.InputFileString{Data: doc.TgFileID}, Caption: caption})
-	default:
-		_, err = b.SendDocument(ctx, &bot.SendDocumentParams{ChatID: chatID, Document: &models.InputFileString{Data: doc.TgFileID}, Caption: caption})
-	}
+	err := d.retryOnRateLimit(ctx, func() error {
+		var err error
+		switch doc.Kind {
+		case docsbot.KindPhoto:
+			op = "sendPhoto"
+			_, err = b.SendPhoto(ctx, &bot.SendPhotoParams{ChatID: chatID, Photo: &models.InputFileString{Data: doc.TgFileID}, Caption: caption})
+		default:
+			_, err = b.SendDocument(ctx, &bot.SendDocumentParams{ChatID: chatID, Document: &models.InputFileString{Data: doc.TgFileID}, Caption: caption})
+		}
+		return err
+	})
 	traceAPI(ctx, d.log, op, start)
 	if err != nil {
 		d.log.ErrorContext(ctx, "send file", "err", err, "user_id", doc.UserID, "doc_id", doc.ID)
 		reply(ctx, b, d.log, chatID, textSendFailed)
-		return
+		return false
 	}
 	d.log.InfoContext(ctx, "document sent", "user_id", doc.UserID, "doc_id", doc.ID)
+	return true
 }
 
 func (d *docs) sendCard(ctx context.Context, b *bot.Bot, chatID int64, doc docsbot.Document, header, folderID string) {
@@ -1443,6 +1526,26 @@ func (s *renameStore) take(user int64) (renameEntry, bool) {
 	return e, true
 }
 
+// dropMessage forgets every rename armed on that message, whoever armed it. A
+// message that is redrawn (a status message) no longer shows the prompt.
+func (s *renameStore) dropMessage(chat int64, msg int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for user, e := range s.m {
+		if e.chat == chat && e.msg == msg {
+			delete(s.m, user)
+		}
+	}
+}
+
+// Renames is the rename state shared by the docs handlers and the Notifier: the
+// worker redraws status messages, and a redraw ends a rename prompt shown on one.
+type Renames struct{ store *renameStore }
+
+// NewRenames makes the shared rename state; pass it to Register (WithRenames) and
+// to NewNotifier (WithNotifierRenames).
+func NewRenames() *Renames { return &Renames{store: newRenameStore(time.Now)} }
+
 // drop forgets the user's rename if it is armed on that message; one armed on
 // another message (a newer prompt) is left alone.
 func (s *renameStore) drop(user int64, chat int64, msg int) {
@@ -1544,11 +1647,11 @@ func (s *searchStore) take(user int64) (string, bool) {
 // confirmWord is the exact word the user must type to delete all their data.
 const confirmWord = "УДАЛИТЬ"
 
-// exportPause spaces out resent single files, and exportAlbumPause albums, to
-// stay under Telegram's rate limit (about 20 messages a minute into one chat).
+// exportPause follows a single resent file; after an album the pause is
+// exportPerFilePause per file in it (see exportGap).
 const (
-	exportPause      = 50 * time.Millisecond
-	exportAlbumPause = time.Second
+	exportPause        = 50 * time.Millisecond
+	exportPerFilePause = time.Second
 )
 
 // pause waits for d, returning false if ctx is cancelled first.

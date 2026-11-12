@@ -29,9 +29,16 @@ func WithAlbumTimer(after AfterFunc) Option {
 	return func(d *docs) { d.albums.after = after }
 }
 
-// WithExportPace replaces the pauses between exported files and albums; used by tests.
-func WithExportPace(file, album time.Duration) Option {
-	return func(d *docs) { d.pauseFile, d.pauseAlbum = file, album }
+// WithRenames shares rename state with a Notifier so a status-message redraw can
+// end a rename prompt shown on that message.
+func WithRenames(r *Renames) Option {
+	return func(d *docs) { d.renames = r.store }
+}
+
+// WithExportPace replaces the pauses of an export: file follows a single file,
+// perAlbumFile is multiplied by the size of the album before it; used by tests.
+func WithExportPace(file, perAlbumFile time.Duration) Option {
+	return func(d *docs) { d.pauseFile, d.pauseAlbum = file, perAlbumFile }
 }
 
 func realAfterFunc(d time.Duration, f func()) func() bool {

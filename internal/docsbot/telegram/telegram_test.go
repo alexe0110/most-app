@@ -37,6 +37,9 @@ type capture struct {
 	editIDs     []int    // message_id of each editMessageText
 	answers     []string // answerCallbackQuery toast texts
 	groups      []string // sendMediaGroup "media" JSON, one per album
+	markupEdits []string // editMessageReplyMarkup reply_markup
+	mediaLimit  int      // the next N sendMediaGroup calls answer 429 (retry_after 0)
+	mediaDown   bool     // every sendMediaGroup fails with 400
 	sendModes   []string // sendMessage parse_mode
 	editModes   []string // editMessageText parse_mode
 }
@@ -95,9 +98,27 @@ func newBotOpts(t *testing.T, log *slog.Logger, drive fakeDrive, opts ...telegra
 			sent.record(&sent.markups, r.FormValue("reply_markup"))
 		case strings.HasSuffix(r.URL.Path, "/sendDocument"), strings.HasSuffix(r.URL.Path, "/sendPhoto"):
 			sent.record(&sent.files, r.FormValue("caption"))
+		case strings.HasSuffix(r.URL.Path, "/editMessageReplyMarkup"):
+			sent.record(&sent.markupEdits, r.FormValue("reply_markup"))
 		case strings.HasSuffix(r.URL.Path, "/sendMediaGroup"):
-			sent.record(&sent.groups, r.FormValue("media"))
+			sent.mu.Lock()
+			limited, down := sent.mediaLimit > 0, sent.mediaDown
+			if limited {
+				sent.mediaLimit--
+			}
+			sent.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
+			if limited {
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = io.WriteString(w, `{"ok":false,"error_code":429,"description":"Too Many Requests: retry after 0","parameters":{"retry_after":0}}`)
+				return
+			}
+			if down {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"ok":false,"error_code":400,"description":"Bad Request: wrong file identifier"}`)
+				return
+			}
+			sent.record(&sent.groups, r.FormValue("media"))
 			_, _ = io.WriteString(w, `{"ok":true,"result":[]}`)
 			return
 		case strings.HasSuffix(r.URL.Path, "/deleteMessage"):
