@@ -67,6 +67,33 @@ make lint   # golangci-lint, включая depguard (правила завис�
 
 Перед push: `make lint && make test` должны быть зелёными.
 
+## Деплой
+
+Railway, сервис `files-bot`, окружения `dev` и `production`. Автодеплой из GitHub в Railway отключён — раскатывают только GitHub Actions через Railway CLI.
+
+- **dev** — автоматически после merge в `main`: workflow `Deploy dev` гонит `Tests` и `Linters`, затем `railway up`.
+- **prod** — вручную: Actions → **Deploy prod** → Run workflow → указать `ref` (ветка/тег/SHA, по умолчанию `main`) → подтвердить запуск в environment `production`.
+
+Миграции применяются при старте сервиса.
+
+### Откат
+
+- Railway → сервис → Deployments → **Redeploy** предыдущего деплоя, или
+- Actions → **Deploy prod** с прежним `ref` (тег или SHA).
+
+⚠️ Миграции назад не откатываются: старая версия должна работать с текущей схемой БД.
+
+### Секреты и переменные (GitHub → Settings → Environments)
+
+| Environment | Тип | Имя | Значение |
+|---|---|---|---|
+| `dev` | secret | `RAILWAY_TOKEN` | Project token Railway для окружения `dev` |
+| `dev` | variable | `RAILWAY_SERVICE` | `files-bot` |
+| `production` | secret | `RAILWAY_TOKEN` | Project token Railway для окружения `production` |
+| `production` | variable | `RAILWAY_SERVICE` | `files-bot` |
+
+В `production` включены **Required reviewers**.
+
 ## Команды
 
 ```bash

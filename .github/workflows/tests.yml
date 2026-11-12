@@ -2,11 +2,20 @@ name: Tests
 
 on:
   pull_request:
-  push:
-    branches: [main]
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to check out (empty = the triggering ref)
+        type: string
+        default: ""
 
+permissions:
+  contents: read
+
+# In a called workflow github.workflow is the caller's name, so the suffix keeps
+# Tests and Linters from cancelling each other inside one deploy run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-tests-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -14,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -28,6 +39,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -38,6 +51,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod

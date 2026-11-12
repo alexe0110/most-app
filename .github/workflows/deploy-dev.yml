@@ -1,0 +1,35 @@
+name: Deploy dev
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
+  linters:
+    uses: ./.github/workflows/linters.yml
+
+  deploy:
+    needs: [tests, linters]
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      RAILWAY_CLI_VERSION: 5.71.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Railway CLI
+        run: npm install --global "@railway/cli@${RAILWAY_CLI_VERSION}"
+      - name: Deploy to Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE: ${{ vars.RAILWAY_SERVICE }}
+        run: railway up --service "$RAILWAY_SERVICE" --ci

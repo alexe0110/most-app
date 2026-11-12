@@ -1,0 +1,11 @@
+# `railway up` already honours .gitignore; this trims what the image build does not need.
+.env
+.env.*
+.git/
+.github/
+.claude/
+.idea/
+.vscode/
+docs/
+*.md
+tmp/
