@@ -11,6 +11,35 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
+func statusDoc(title string, st docsbot.BackupStatus) docsbot.Document {
+	return docsbot.Document{ID: "d", Title: title, Category: docsbot.CatPassport, BackupStatus: st, DriveFileID: "F1"}
+}
+
+func TestRenderStatusMessage_single(t *testing.T) {
+	sm := docsbot.StatusMessage{ID: "sm", Kind: docsbot.StatusSingle}
+
+	text, kb := renderStatusMessage(sm, []docsbot.Document{statusDoc("<a>.pdf", docsbot.BackupPending)}, nil)
+	require.Contains(t, text, "📄 <b>&lt;a&gt;.pdf</b>")
+	require.Contains(t, text, "🗂 Паспорт и ID")
+	require.Contains(t, text, "⏳ Загружаю на Google Диск…")
+	require.Equal(t, cb(actSend, "d"), kb.InlineKeyboard[0][0].CallbackData)
+	require.Len(t, kb.InlineKeyboard, 3, "card buttons only")
+
+	text, kb = renderStatusMessage(sm, []docsbot.Document{statusDoc("a.pdf", docsbot.BackupBackedUp)},
+		map[docsbot.Category]string{docsbot.CatPassport: "FOLD"})
+	require.Contains(t, text, "☁️ Google Диск · копия в Telegram")
+	require.Equal(t, btnCardOpen, kb.InlineKeyboard[0][1].Text)
+	require.Equal(t, btnOpenFolder, kb.InlineKeyboard[1][0].Text)
+
+	_, kb = renderStatusMessage(sm, []docsbot.Document{statusDoc("a.pdf", docsbot.BackupFailed)}, nil)
+	last := kb.InlineKeyboard[len(kb.InlineKeyboard)-1]
+	require.Equal(t, btnRetryBackup, last[0].Text)
+	require.Equal(t, "d:rsm:sm", last[0].CallbackData)
+
+	text, _ = renderStatusMessage(sm, []docsbot.Document{statusDoc("a", docsbot.BackupPending), statusDoc("b", docsbot.BackupPending)}, nil)
+	require.True(t, strings.HasPrefix(text, "⏳ Переношу на Google Диск · 0 из 2"), "more than one line falls back to a batch")
+}
+
 func TestRenderStatusMessage_tooLargeOnly(t *testing.T) {
 	text, kb := renderStatusMessage(batchMsg, []docsbot.Document{
 		batchDoc("a", docsbot.CatWork, docsbot.BackupTooLarge, ""),
