@@ -182,7 +182,7 @@ func TestCard_convertRowOnlyForConvertible(t *testing.T) {
 			tt.doc.Title, tt.doc.TgFileID, tt.doc.TgFileUniqueID = "Файл", "f", "u"
 			doc := repo.seed(tt.doc)
 
-			b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(doc.ID)+":s"))
+			b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(doc.ID)+":s"))
 
 			require.Len(t, sent.editMarkups, 1)
 			require.Equal(t, tt.want, strings.Contains(sent.editMarkups[0], "conv:doc:"+string(doc.ID)), "%q", sent.editMarkups[0])

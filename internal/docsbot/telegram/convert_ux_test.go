@@ -70,7 +70,7 @@ func TestConvertCompress_formatQuestionOnlyForPNG(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newConvHarness(t)
 			if tt.png {
-				h.servePNG("large")
+				h.servePNG()
 			}
 			ctx := t.Context()
 			h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))

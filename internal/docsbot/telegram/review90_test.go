@@ -27,13 +27,13 @@ func TestRename_onStatusCardKeepsStatusRendering(t *testing.T) {
 			d.BackupStatus = docsbot.BackupFailed
 			repo.docs[id] = d
 
-			b.ProcessUpdate(ctx, dataCallbackMsg(100, 11, "d:rn:"+string(id)))
+			b.ProcessUpdate(ctx, dataCallbackMsg(11, "d:rn:"+string(id)))
 			require.Equal(t, "Пришли новое название", sent.edits[len(sent.edits)-1])
 
 			if finish == "cancel" {
-				b.ProcessUpdate(ctx, dataCallbackMsg(100, 11, "d:rnc:"+string(id)))
+				b.ProcessUpdate(ctx, dataCallbackMsg(11, "d:rnc:"+string(id)))
 			} else {
-				b.ProcessUpdate(ctx, textUpdateID(100, 50, "Новое имя"))
+				b.ProcessUpdate(ctx, textUpdateID(50, "Новое имя"))
 				require.Equal(t, "Новое имя", repo.docs[id].Title)
 			}
 
@@ -59,10 +59,10 @@ func TestRename_statusRedrawEndsThePrompt(t *testing.T) {
 	_, docs := e.batch(t, docsbot.BackupBackedUp)
 
 	// The prompt is armed on the status message (chat 100, message 70).
-	b.ProcessUpdate(ctx, dataCallbackMsg(100, 70, "d:rn:"+string(doc.ID)))
+	b.ProcessUpdate(ctx, dataCallbackMsg(70, "d:rn:"+string(doc.ID)))
 	require.NoError(t, n.UploadOutcome(t.Context(), testUserID, docs[0].ID))
 
-	b.ProcessUpdate(ctx, textUpdateID(100, 51, "Случайный текст"))
+	b.ProcessUpdate(ctx, textUpdateID(51, "Случайный текст"))
 
 	require.Equal(t, "Старое", repo.docs[doc.ID].Title, "the text is a search, not a rename")
 	require.Empty(t, e.api.callsOf("deleteMessage"), "the message is not eaten")
@@ -119,12 +119,12 @@ func TestExport_buttonIsSpentAndASecondRunIsRefused(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		b.ProcessUpdate(runCtx, dataCallbackMsg(100, 9, "d:exp")) // blocks in the pause after the first file
+		b.ProcessUpdate(runCtx, dataCallbackMsg(9, "d:exp")) // blocks in the pause after the first file
 	}()
 	require.Eventually(t, func() bool { return len(sent.snapshot(&sent.files)) == 1 }, 5*time.Second, 5*time.Millisecond)
 
 	b.ProcessUpdate(ctx, commandUpdate(100, "export")) // a parallel run
-	b.ProcessUpdate(ctx, dataCallbackMsg(100, 9, "d:exp"))
+	b.ProcessUpdate(ctx, dataCallbackMsg(9, "d:exp"))
 	stop()
 	<-done
 

@@ -16,13 +16,13 @@ import (
 
 var albumToken = regexp.MustCompile(`conv:alb:([0-9a-f]+)`)
 
-// albumImageUpdate is album photo n (message id n), sent as part of group.
-func albumImageUpdate(group string, n int, size int) *models.Update {
+// albumImageUpdate is album photo n (message id n), sent as part of album "alb".
+func albumImageUpdate(n, size int) *models.Update {
 	return &models.Update{Message: &models.Message{
 		ID:           n,
 		From:         &models.User{ID: testUser},
 		Chat:         models.Chat{ID: testChat, Type: models.ChatTypePrivate},
-		MediaGroupID: group,
+		MediaGroupID: "alb",
 		Photo:        []models.PhotoSize{{FileID: fmt.Sprintf("img%02d", n), FileUniqueID: fmt.Sprintf("u%02d", n), FileSize: size}},
 	}}
 }
@@ -37,7 +37,7 @@ func TestConvertAlbum_shuffledPhotosMakeOnePDFInOrder(t *testing.T) {
 	h, ft := albumHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 	for _, n := range []int{3, 1, 4, 2} {
-		h.bot.ProcessUpdate(ctx, albumImageUpdate("alb", n, 1000))
+		h.bot.ProcessUpdate(ctx, albumImageUpdate(n, 1000))
 	}
 	ft.fire()
 	require.Len(t, h.repo.docs, 4)
@@ -60,7 +60,7 @@ func TestConvertAlbum_saveOneByOneShowsGroupPicker(t *testing.T) {
 	h, ft := albumHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 	for n := 1; n <= 2; n++ {
-		h.bot.ProcessUpdate(ctx, albumImageUpdate("alb", n, 1000))
+		h.bot.ProcessUpdate(ctx, albumImageUpdate(n, 1000))
 	}
 	ft.fire()
 	m := regexp.MustCompile(`d:gpk:([^"]+)"`).FindStringSubmatch(h.albumMarkup())
@@ -79,7 +79,7 @@ func TestConvertAlbum_tooBigRefused(t *testing.T) {
 	h, ft := albumHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 	for n := 1; n <= 2; n++ {
-		h.bot.ProcessUpdate(ctx, albumImageUpdate("alb", n, 11<<20))
+		h.bot.ProcessUpdate(ctx, albumImageUpdate(n, 11<<20))
 	}
 	ft.fire()
 	tok := albumToken.FindStringSubmatch(h.albumMarkup())
@@ -97,7 +97,7 @@ func TestConvertAlbum_tooManyPhotosKeepsOldPicker(t *testing.T) {
 	h, ft := albumHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 	for n := 1; n <= 21; n++ {
-		h.bot.ProcessUpdate(ctx, albumImageUpdate("alb", n, 1000))
+		h.bot.ProcessUpdate(ctx, albumImageUpdate(n, 1000))
 	}
 	ft.fire()
 
@@ -109,8 +109,8 @@ func TestConvertAlbum_tooManyPhotosKeepsOldPicker(t *testing.T) {
 func TestConvertAlbum_mixedAlbumKeepsOldPicker(t *testing.T) {
 	h, ft := albumHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	h.bot.ProcessUpdate(ctx, albumImageUpdate("alb", 1, 1000))
-	h.bot.ProcessUpdate(ctx, albumImageUpdate("alb", 2, 1000))
+	h.bot.ProcessUpdate(ctx, albumImageUpdate(1, 1000))
+	h.bot.ProcessUpdate(ctx, albumImageUpdate(2, 1000))
 	h.bot.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
 		ID: 3, From: &models.User{ID: testUser}, Chat: models.Chat{ID: testChat, Type: models.ChatTypePrivate}, MediaGroupID: "alb",
 		Document: &models.Document{FileID: "pdf", FileUniqueID: "updf", MimeType: "application/pdf"},
