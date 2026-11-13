@@ -223,7 +223,7 @@ func (d *docs) editHTML(ctx context.Context, b *bot.Bot, chatID int64, msgID int
 	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text, ParseMode: models.ParseModeHTML}
 	if kb == nil {
 		// An omitted reply_markup keeps the old keyboard; an empty one clears it.
-		kb = &models.InlineKeyboardMarkup{}
+		kb = tg.EmptyKeyboard()
 	}
 	params.ReplyMarkup = kb
 	start := time.Now()
@@ -286,7 +286,7 @@ func (d *docs) editMessage(ctx context.Context, b *bot.Bot, chatID int64, msgID 
 	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text}
 	if kb == nil {
 		// An omitted reply_markup keeps the old keyboard; an empty one clears it.
-		kb = &models.InlineKeyboardMarkup{}
+		kb = tg.EmptyKeyboard()
 	}
 	params.ReplyMarkup = kb
 	start := time.Now()

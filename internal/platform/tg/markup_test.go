@@ -1,6 +1,7 @@
 package tg
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,15 @@ import (
 	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
 )
+
+func TestEmptyKeyboard_marshalsToEmptyArray(t *testing.T) {
+	t.Parallel()
+
+	raw, err := json.Marshal(EmptyKeyboard())
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"inline_keyboard":[]`)
+	require.NotContains(t, string(raw), `"inline_keyboard":null`, "Telegram rejects a null inline_keyboard")
+}
 
 func TestMarkupOrNil(t *testing.T) {
 	t.Parallel()

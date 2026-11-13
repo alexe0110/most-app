@@ -28,7 +28,7 @@ func (c *converter) clearButtons(ctx context.Context, b *bot.Bot, update *models
 // stripKeyboard removes the keyboard from a message, best effort.
 func (c *converter) stripKeyboard(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
 	_, err := b.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
-		ChatID: chatID, MessageID: msgID, ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}},
+		ChatID: chatID, MessageID: msgID, ReplyMarkup: tg.EmptyKeyboard(),
 	})
 	if err != nil {
 		c.log.ErrorContext(ctx, "clear buttons", "err", err)

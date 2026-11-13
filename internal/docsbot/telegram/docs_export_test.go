@@ -184,3 +184,16 @@ func TestExport_exactlyTenDocumentsIsOneAlbumAndElevenSplits(t *testing.T) {
 		require.True(t, has(sent.texts, fmt.Sprintf("прислал %d", tt.n)), "texts %q", sent.texts)
 	}
 }
+
+func TestExport_spentButtonKeyboardIsClearedWithEmptyArray(t *testing.T) {
+	b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithExportPace(0, 0))
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "a"})
+
+	b.ProcessUpdate(ctx, dataCallback("d:exp"))
+
+	edits := sent.snapshot(&sent.markupEdits)
+	require.NotEmpty(t, edits, "the tapped button's keyboard is removed")
+	require.Contains(t, edits[0], `"inline_keyboard":[]`, "an empty array clears the keyboard")
+	require.NotContains(t, edits[0], `"inline_keyboard":null`, "Telegram rejects a null inline_keyboard")
+}

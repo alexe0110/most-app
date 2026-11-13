@@ -104,3 +104,17 @@ func TestDeleteData_promptOffersExportFirst(t *testing.T) {
 	require.Contains(t, sent.markups[0], "d:exp")
 	require.Contains(t, sent.markups[0], "Сначала прислать все документы")
 }
+
+func TestDisconnect_clearsKeyboardWithEmptyArray(t *testing.T) {
+	b, sent, _ := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{})
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	b.ProcessUpdate(ctx, dataCallback("d:dc"))
+
+	require.True(t, has(sent.edits, "Google Диск отключён"), "edits %q", sent.edits)
+	markups := sent.snapshot(&sent.editMarkups)
+	require.NotEmpty(t, markups)
+	last := markups[len(markups)-1]
+	require.Contains(t, last, `"inline_keyboard":[]`, "an empty array clears the keyboard")
+	require.NotContains(t, last, `"inline_keyboard":null`, "Telegram rejects a null inline_keyboard")
+}

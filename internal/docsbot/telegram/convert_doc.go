@@ -11,6 +11,7 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/platform/convert"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // loadDoc reads the user's document (the domain checks ownership) and answers
@@ -246,7 +247,7 @@ func (c *converter) editResultCaption(ctx context.Context, b *bot.Bot, update *m
 		return
 	}
 	if kb == nil {
-		kb = &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}}
+		kb = tg.EmptyKeyboard()
 	}
 	_, err := b.EditMessageCaption(ctx, &bot.EditMessageCaptionParams{
 		ChatID: chatID, MessageID: m.ID, Caption: caption, ReplyMarkup: kb,

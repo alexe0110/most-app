@@ -11,6 +11,7 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // onExport is the "send all documents" button.
@@ -21,7 +22,7 @@ func (d *docs) onExport(ctx context.Context, b *bot.Bot, u *models.Update, user 
 	}
 	// The button is spent: a second tap must not start another export.
 	if _, msgID, ok := callbackMessage(u); ok {
-		d.editMarkup(ctx, b, chatID, msgID, &models.InlineKeyboardMarkup{})
+		d.editMarkup(ctx, b, chatID, msgID, tg.EmptyKeyboard())
 	}
 	d.export(ctx, b, chatID, user)
 }
