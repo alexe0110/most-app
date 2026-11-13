@@ -94,6 +94,10 @@ func TestConvertDialogue_resultReplacesProgress(t *testing.T) {
 			require.Contains(t, h.editTexts, fmt.Sprintf("%d:⏳ Обрабатываю…", dialogue))
 			require.Equal(t, tt.wantDeleted, slices.Contains(h.deleted, dialogue))
 			require.Equal(t, tt.wantDone, slices.Contains(h.editTexts, fmt.Sprintf("%d:Готово ✅", dialogue)))
+			if tt.wantDone {
+				// An omitted reply_markup is how show keeps the old keyboard.
+				require.Contains(t, h.editMarkups, fmt.Sprintf("%d:Готово ✅|", dialogue), "no reply_markup field")
+			}
 		})
 	}
 }

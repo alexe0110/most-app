@@ -50,6 +50,26 @@ type capture struct {
 	sendModes   []string     // sendMessage parse_mode
 	editModes   []string     // editMessageText parse_mode
 	inlines     []url.Values // answerInlineQuery form fields
+	forbidden   bool         // message calls answer 403 "bot was blocked by the user"
+	refused     []string     // methods refused with 403, in order
+}
+
+// messageMethods are the calls a blocked user makes Telegram refuse.
+var messageMethods = []string{"sendMessage", "editMessageText", "editMessageReplyMarkup", "deleteMessage", "answerCallbackQuery"}
+
+// refuse answers 403 to a message call while forbidden is set, and reports whether it did.
+func (c *capture) refuse(w http.ResponseWriter, path string) bool {
+	method := path[strings.LastIndex(path, "/")+1:]
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.forbidden || !slices.Contains(messageMethods, method) {
+		return false
+	}
+	c.refused = append(c.refused, method)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = io.WriteString(w, `{"ok":false,"error_code":403,"description":"Forbidden: bot was blocked by the user"}`)
+	return true
 }
 
 func (c *capture) record(bucket *[]string, s string) {
@@ -99,6 +119,9 @@ func newBotOpts(t *testing.T, log *slog.Logger, drive fakeDrive, opts ...telegra
 	sent := &capture{}
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if sent.refuse(w, r.URL.Path) {
+			return
+		}
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/sendMessage"):
 			sent.record(&sent.texts, r.FormValue("text"))

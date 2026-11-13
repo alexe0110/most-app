@@ -52,6 +52,9 @@ type convHarness struct {
 	noDocument bool
 	// editTexts are the texts of editMessageText calls, in order, as "id:text".
 	editTexts []string
+	// editMarkups are the reply markups of editMessageText calls, in order, as
+	// "id:text|markup"; an empty markup means the field was omitted.
+	editMarkups []string
 	// editCaptions are the editMessageCaption calls, in order, as "id:caption|markup".
 	editCaptions []string
 	// deleted lists the message ids the bot deleted.
@@ -152,6 +155,7 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 			fail := h.failEdits
 			if !fail {
 				h.editTexts = append(h.editTexts, r.FormValue("message_id")+":"+r.FormValue("text"))
+				h.editMarkups = append(h.editMarkups, r.FormValue("message_id")+":"+r.FormValue("text")+"|"+r.FormValue("reply_markup"))
 				h.events = append(h.events, "edit:"+r.FormValue("message_id")+":"+r.FormValue("text"))
 			}
 			h.mu.Unlock()
