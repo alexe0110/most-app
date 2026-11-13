@@ -15,6 +15,65 @@ import (
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
+func TestExport_rateLimitIsRetriedOnceAndSentIsCounted(t *testing.T) {
+	tests := []struct {
+		name      string
+		limited   int
+		down      bool
+		wantAlbum int
+		wantDone  string
+	}{
+		{"one 429 is waited out and retried", 1, false, 1, "Готово — прислал 3"},
+		{"two 429s: the second is not retried", 2, false, 0, "Готово — прислал 0"},
+		{"failed album is not counted", 0, true, 0, "Готово — прислал 0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithExportPace(0, 0))
+			sent.mediaLimit, sent.mediaDown = tt.limited, tt.down
+			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			seedExport(repo, docsbot.KindDocument, 3, "d", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+
+			b.ProcessUpdate(ctx, commandUpdate(100, "export"))
+
+			require.Len(t, sent.groups, tt.wantAlbum)
+			require.True(t, has(sent.texts, tt.wantDone), "texts %q", sent.texts)
+		})
+	}
+}
+
+func TestExport_buttonIsSpentAndASecondRunIsRefused(t *testing.T) {
+	b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithExportPace(time.Hour, time.Hour))
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedExport(repo, docsbot.KindPhoto, 1, "p", base)
+	seedExport(repo, docsbot.KindDocument, 1, "d", base.Add(time.Hour))
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		b.ProcessUpdate(runCtx, dataCallbackMsg(9, "d:exp")) // blocks in the pause after the first file
+	}()
+	require.Eventually(t, func() bool { return len(sent.snapshot(&sent.files)) == 1 }, 5*time.Second, 5*time.Millisecond)
+
+	b.ProcessUpdate(ctx, commandUpdate(100, "export")) // a parallel run
+	b.ProcessUpdate(ctx, dataCallbackMsg(9, "d:exp"))
+	stop()
+	<-done
+
+	require.Len(t, sent.snapshot(&sent.files), 1, "nothing was sent twice")
+	refused := 0
+	for _, text := range sent.snapshot(&sent.texts) {
+		if strings.Contains(text, "подожди, пока закончу") {
+			refused++
+		}
+	}
+	require.Equal(t, 2, refused, "both the command and the second tap are told to wait")
+	require.NotEmpty(t, sent.snapshot(&sent.markupEdits), "the tapped button's keyboard is removed")
+}
+
 // seedExport stores n saved documents of one kind, oldest first.
 func seedExport(repo *fakeRepo, kind docsbot.Kind, n int, prefix string, base time.Time) {
 	for i := range n {

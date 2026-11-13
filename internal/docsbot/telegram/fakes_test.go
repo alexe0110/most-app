@@ -24,6 +24,13 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 )
 
+// snapshot copies a capture bucket under the lock (handlers may run concurrently).
+func (c *capture) snapshot(bucket *[]string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), *bucket...)
+}
+
 // capture records what the bot sent to the fake Bot API, split by method.
 type capture struct {
 	mu          sync.Mutex
