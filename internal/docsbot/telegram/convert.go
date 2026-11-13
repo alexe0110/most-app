@@ -172,7 +172,7 @@ func (c *converter) cancel(ctx context.Context, b *bot.Bot, update *models.Updat
 			c.stripKeyboard(ctx, b, update.Message.Chat.ID, sess.msgID)
 		}
 	}
-	reply(ctx, b, c.log, update.Message.Chat.ID, text)
+	_, _ = c.out(b).send(ctx, update.Message.Chat.ID, text)
 }
 
 // message routes an in-session message by content and step.
@@ -189,7 +189,7 @@ func (c *converter) message(ctx context.Context, b *bot.Bot, update *models.Upda
 
 	switch {
 	case len(update.Message.Photo) > 0 && awaitsPDF(sess.step):
-		reply(ctx, b, c.log, chatID, textPDFNotPDF)
+		_, _ = c.out(b).send(ctx, chatID, textPDFNotPDF)
 	case len(update.Message.Photo) > 0:
 		photo := largestPhoto(update.Message.Photo)
 		c.onImage(ctx, b, update, photo.FileID, int64(photo.FileSize))
@@ -198,7 +198,7 @@ func (c *converter) message(ctx context.Context, b *bot.Bot, update *models.Upda
 	case update.Message.Text != "":
 		c.onText(ctx, b, update, sess.step)
 	default:
-		reply(ctx, b, c.log, chatID, textConvertUnsupported)
+		_, _ = c.out(b).send(ctx, chatID, textConvertUnsupported)
 	}
 }
 

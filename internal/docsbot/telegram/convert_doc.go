@@ -19,12 +19,12 @@ import (
 func (c *converter) loadDoc(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID) (docsbot.Document, bool) {
 	card, err := c.svc.Card(ctx, user, id)
 	if errors.Is(err, docsbot.ErrNotFound) {
-		reply(ctx, b, c.log, chatID, textGone)
+		_, _ = c.out(b).send(ctx, chatID, textGone)
 		return docsbot.Document{}, false
 	}
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert load document", "err", err, "user_id", user, "doc_id", id)
-		reply(ctx, b, c.log, chatID, textError)
+		_, _ = c.out(b).send(ctx, chatID, textError)
 		return docsbot.Document{}, false
 	}
 	return card.Doc, true
@@ -46,7 +46,7 @@ func (c *converter) onMenu(ctx context.Context, b *bot.Bot, chatID int64, id doc
 	case convertible(doc):
 		sendMarkup(ctx, b, c.log, chatID, textConvertMenu, quickKeyboard(id, isWebP(doc)))
 	default:
-		reply(ctx, b, c.log, chatID, unsupportedText(doc))
+		_, _ = c.out(b).send(ctx, chatID, unsupportedText(doc))
 	}
 }
 
@@ -64,7 +64,7 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 	release, ok := c.claimMenu(chatID, callbackMessageID(update))
 	if !ok {
 		// The running tap owns the message: only tell the user, keep its buttons.
-		reply(ctx, b, c.log, chatID, textStale)
+		_, _ = c.out(b).send(ctx, chatID, textStale)
 		return
 	}
 	defer release()
@@ -75,7 +75,7 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 		return
 	}
 	if !convertible(doc) {
-		reply(ctx, b, c.log, chatID, unsupportedText(doc))
+		_, _ = c.out(b).send(ctx, chatID, unsupportedText(doc))
 		return
 	}
 	if isPDF(doc) {
@@ -119,7 +119,7 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, update *models.Upda
 	c.log.InfoContext(ctx, "document converted", "user_id", user, "doc_id", id, "op", op,
 		"in_bytes", len(src), "out_bytes", len(out))
 	if known && len(out) > maxBytes {
-		reply(ctx, b, c.log, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
+		_, _ = c.out(b).send(ctx, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
 	}
 	if !c.sendResult(ctx, b, chatID, update.CallbackQuery.From.ID, name, out, id, suffix) {
 		c.show(ctx, b, chatID, msgID, textSendFailed, menu)
@@ -133,19 +133,19 @@ func (c *converter) onSave(ctx context.Context, b *bot.Bot, update *models.Updat
 	token := strings.TrimPrefix(update.CallbackQuery.Data, cbSavePrefix)
 	res, ok := c.results.take(token, update.CallbackQuery.From.ID)
 	if !ok {
-		reply(ctx, b, c.log, chatID, textConvertResultOld)
+		_, _ = c.out(b).send(ctx, chatID, textConvertResultOld)
 		return
 	}
 	c.clearButtons(ctx, b, update, chatID)
 
 	rep, err := c.svc.SaveDerived(ctx, res.user, res.sourceDoc, res.file, res.suffix)
 	if errors.Is(err, docsbot.ErrNotFound) {
-		reply(ctx, b, c.log, chatID, textGone)
+		_, _ = c.out(b).send(ctx, chatID, textGone)
 		return
 	}
 	if err != nil {
 		c.log.ErrorContext(ctx, "save converted file", "err", err, "user_id", res.user)
-		reply(ctx, b, c.log, chatID, textError)
+		_, _ = c.out(b).send(ctx, chatID, textError)
 		return
 	}
 
@@ -165,7 +165,7 @@ func (c *converter) onSave(ctx context.Context, b *bot.Bot, update *models.Updat
 		c.sendAlreadySaved(ctx, b, chatID, res.user, r.Doc.ID)
 	default:
 		if text, ok := rejectionText(rep); ok {
-			reply(ctx, b, c.log, chatID, text)
+			_, _ = c.out(b).send(ctx, chatID, text)
 		}
 	}
 }
@@ -176,7 +176,7 @@ func (c *converter) onReplaceAsk(ctx context.Context, b *bot.Bot, update *models
 	token := strings.TrimPrefix(update.CallbackQuery.Data, cbRepAsk)
 	res, ok := c.results.peek(token, update.CallbackQuery.From.ID)
 	if !ok || res.sourceDoc == "" {
-		reply(ctx, b, c.log, chatID, textConvertResultOld)
+		_, _ = c.out(b).send(ctx, chatID, textConvertResultOld)
 		return
 	}
 	c.editResultCaption(ctx, b, update, chatID, textReplaceConfirm, replaceKeyboard(token))
@@ -186,7 +186,7 @@ func (c *converter) onReplaceAsk(ctx context.Context, b *bot.Bot, update *models
 func (c *converter) onReplaceCancel(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
 	token := strings.TrimPrefix(update.CallbackQuery.Data, cbRepNo)
 	if _, ok := c.results.peek(token, update.CallbackQuery.From.ID); !ok {
-		reply(ctx, b, c.log, chatID, textConvertResultOld)
+		_, _ = c.out(b).send(ctx, chatID, textConvertResultOld)
 		return
 	}
 	c.editResultCaption(ctx, b, update, chatID, "", saveKeyboard(token, true))
@@ -199,19 +199,19 @@ func (c *converter) onReplace(ctx context.Context, b *bot.Bot, update *models.Up
 	token := strings.TrimPrefix(update.CallbackQuery.Data, cbRepYes)
 	res, ok := c.results.take(token, update.CallbackQuery.From.ID)
 	if !ok || res.sourceDoc == "" {
-		reply(ctx, b, c.log, chatID, textConvertResultOld)
+		_, _ = c.out(b).send(ctx, chatID, textConvertResultOld)
 		return
 	}
 	retry := func(text string) {
 		c.results.put(token, res)
 		c.editResultCaption(ctx, b, update, chatID, "", saveKeyboard(token, true))
-		reply(ctx, b, c.log, chatID, text)
+		_, _ = c.out(b).send(ctx, chatID, text)
 	}
 
 	rep, err := c.svc.ReplaceContent(ctx, res.user, res.sourceDoc, res.file)
 	if errors.Is(err, docsbot.ErrNotFound) {
 		c.editResultCaption(ctx, b, update, chatID, "", nil)
-		reply(ctx, b, c.log, chatID, textGone)
+		_, _ = c.out(b).send(ctx, chatID, textGone)
 		return
 	}
 	if err != nil {
@@ -234,7 +234,7 @@ func (c *converter) onReplace(ctx context.Context, b *bot.Bot, update *models.Up
 	default:
 		c.editResultCaption(ctx, b, update, chatID, "", nil)
 		if text, ok := rejectionText(rep); ok {
-			reply(ctx, b, c.log, chatID, text)
+			_, _ = c.out(b).send(ctx, chatID, text)
 		}
 	}
 }

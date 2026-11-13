@@ -21,7 +21,7 @@ func (c *converter) onDocument(ctx context.Context, b *bot.Bot, update *models.U
 	}
 	user, _ := messageUser(update)
 	if sess, ok := c.sessions.live(user); ok && awaitsPDF(sess.step) {
-		reply(ctx, b, c.log, update.Message.Chat.ID, textPDFNotPDF)
+		_, _ = c.out(b).send(ctx, update.Message.Chat.ID, textPDFNotPDF)
 		return
 	}
 	if !supportedImageMIME(doc.MimeType) {
@@ -29,7 +29,7 @@ func (c *converter) onDocument(ctx context.Context, b *bot.Bot, update *models.U
 		if unsupportedImage(doc.MimeType, doc.FileName) {
 			text = textConvertFormatNotSupported
 		}
-		reply(ctx, b, c.log, update.Message.Chat.ID, text)
+		_, _ = c.out(b).send(ctx, update.Message.Chat.ID, text)
 		return
 	}
 	c.onImage(ctx, b, update, doc.FileID, doc.FileSize)
@@ -51,14 +51,14 @@ func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Upda
 		return
 	case stepAwaitImage:
 	default:
-		reply(ctx, b, c.log, chatID, textConvertTapButton)
+		_, _ = c.out(b).send(ctx, chatID, textConvertTapButton)
 		return
 	}
 
 	data, err := c.download(ctx, b, fileID)
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert download image", "err", err)
-		reply(ctx, b, c.log, chatID, textConvertDownloadFailed)
+		_, _ = c.out(b).send(ctx, chatID, textConvertDownloadFailed)
 		return
 	}
 
@@ -109,7 +109,7 @@ func (c *converter) addPage(ctx context.Context, b *bot.Bot, update *models.Upda
 	})
 	switch {
 	case refusal != "":
-		reply(ctx, b, c.log, chatID, refusal)
+		_, _ = c.out(b).send(ctx, chatID, refusal)
 	case pages > 0 && !c.dialogue.busy(user):
 		// Photos of an album arrive in parallel: only the last one waiting shows
 		// the total, so the chat gets one message, not one per photo.
@@ -149,13 +149,13 @@ func (c *converter) onText(ctx context.Context, b *bot.Bot, update *models.Updat
 		return
 	}
 	if at != stepCustomLimit {
-		reply(ctx, b, c.log, chatID, textConvertTapButton)
+		_, _ = c.out(b).send(ctx, chatID, textConvertTapButton)
 		return
 	}
 
 	kb, ok := parseLimitKB(update.Message.Text)
 	if !ok {
-		reply(ctx, b, c.log, chatID, textConvertBadNumber)
+		_, _ = c.out(b).send(ctx, chatID, textConvertBadNumber)
 		return
 	}
 	user, _ := messageUser(update)

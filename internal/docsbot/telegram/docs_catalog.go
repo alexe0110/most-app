@@ -22,7 +22,7 @@ func (d *docs) list(ctx context.Context, b *bot.Bot, u *models.Update) {
 		return
 	}
 	text, kb := renderCatalog(cat)
-	d.send(ctx, b, u.Message.Chat.ID, text, kb)
+	_, _ = d.out(b).send(ctx, u.Message.Chat.ID, text, withKeyboard(kb))
 }
 
 func (d *docs) runSearch(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, query string) {
@@ -32,7 +32,7 @@ func (d *docs) runSearch(ctx context.Context, b *bot.Bot, chatID int64, user doc
 		return
 	}
 	text, kb := renderFound(found)
-	d.send(ctx, b, chatID, text, kb)
+	_, _ = d.out(b).send(ctx, chatID, text, withKeyboard(kb))
 }
 
 // onInlineSwitch applies the wanted inline-mode state from d:inl:<1|0> and
@@ -55,7 +55,7 @@ func (d *docs) onInlineSwitch(ctx context.Context, b *bot.Bot, u *models.Update,
 	d.log.InfoContext(ctx, "inline mode switched", "user_id", user, "enabled", on)
 	url, haveURL := d.connectURL(ctx, user)
 	text, kb := renderSettings(view, url, haveURL)
-	d.editHTML(ctx, b, chatID, msgID, text, kb)
+	_ = d.out(b).edit(ctx, chatID, msgID, text, withHTML(), withKeyboard(kb))
 	d.settingsMsgs.set(chatID, msgID)
 }
 
@@ -74,7 +74,7 @@ func (d *docs) editCatalog(ctx context.Context, b *bot.Bot, user docsbot.UserID,
 		return
 	}
 	text, kb := renderCatalog(cat)
-	d.editMessage(ctx, b, chatID, msgID, text, kb)
+	_ = d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(kb))
 }
 
 // onListCat opens (or pages) a category, editing the list message in place.
@@ -97,7 +97,7 @@ func (d *docs) onListCat(ctx context.Context, b *bot.Bot, u *models.Update, user
 		return
 	}
 	text, kb := renderCategoryPage(p)
-	d.editMessage(ctx, b, chatID, msgID, text, kb)
+	_ = d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(kb))
 }
 
 func (d *docs) onListBack(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
@@ -111,7 +111,7 @@ func (d *docs) onListBack(ctx context.Context, b *bot.Bot, u *models.Update, use
 		return
 	}
 	text, kb := renderCatalog(cat)
-	d.editMessage(ctx, b, chatID, msgID, text, kb)
+	_ = d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(kb))
 }
 
 // onSearchBack re-runs the user's last search in place of the card; without a
@@ -129,7 +129,7 @@ func (d *docs) onSearchBack(ctx context.Context, b *bot.Bot, u *models.Update, u
 			return
 		}
 		text, kb := renderCatalog(cat)
-		d.editMessage(ctx, b, chatID, msgID, text, kb)
+		_ = d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(kb))
 		return
 	}
 	found, err := d.svc.Search(ctx, user, q)
@@ -138,5 +138,5 @@ func (d *docs) onSearchBack(ctx context.Context, b *bot.Bot, u *models.Update, u
 		return
 	}
 	text, kb := renderFound(found)
-	d.editMessage(ctx, b, chatID, msgID, text, kb)
+	_ = d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(kb))
 }

@@ -82,7 +82,7 @@ func (d *docs) ownsUnsupported(u *models.Update) bool {
 
 // onUnsupported tells the user which media the bot takes.
 func (d *docs) onUnsupported(ctx context.Context, b *bot.Bot, u *models.Update) {
-	reply(ctx, b, d.log, u.Message.Chat.ID, textUnsupported)
+	_, _ = d.out(b).send(ctx, u.Message.Chat.ID, textUnsupported)
 }
 
 // onText handles any non-command text: a pending rename, otherwise a search. A
@@ -93,7 +93,7 @@ func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 	}
 	chatID := u.Message.Chat.ID
 	if strings.HasPrefix(u.Message.Text, "/") {
-		reply(ctx, b, d.log, chatID, textUnknown)
+		_, _ = d.out(b).send(ctx, chatID, textUnknown)
 		return
 	}
 	user, ok := userID(ctx)
@@ -116,12 +116,12 @@ func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 	parts := strings.Split(u.CallbackQuery.Data, ":") // d:<action>[:docID[:arg]]
 	if !answersItself(parts) {
-		d.answerText(ctx, b, u.CallbackQuery.ID, toastFor(parts))
+		_ = d.out(b).answer(ctx, u.CallbackQuery.ID, withToast(toastFor(parts)))
 	}
 	user, ok := userID(ctx)
 	if !ok {
 		if answersItself(parts) {
-			d.answerText(ctx, b, u.CallbackQuery.ID, "") // never leave the button spinning
+			_ = d.out(b).answer(ctx, u.CallbackQuery.ID, withToast("")) // never leave the button spinning
 		}
 		return
 	}
@@ -207,122 +207,8 @@ func toastFor(parts []string) string {
 	return ""
 }
 
-// deleteMessage removes a message; failures are logged, not shown.
-func (d *docs) deleteMessage(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
-	start := time.Now()
-	_, err := b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: msgID})
-	traceAPI(ctx, d.log, "deleteMessage", start)
-	if err != nil {
-		d.log.ErrorContext(ctx, "delete message", "err", err)
-	}
-}
-
-// editHTML rewrites an HTML message (a card, a status message, a rename prompt);
-// "message is not modified" is not an error.
-func (d *docs) editHTML(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup) {
-	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text, ParseMode: models.ParseModeHTML}
-	if kb == nil {
-		// An omitted reply_markup keeps the old keyboard; an empty one clears it.
-		kb = tg.EmptyKeyboard()
-	}
-	params.ReplyMarkup = kb
-	start := time.Now()
-	_, err := b.EditMessageText(ctx, params)
-	traceAPI(ctx, d.log, "editMessageText", start)
-	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
-		d.log.ErrorContext(ctx, "edit html message", "err", err)
-	}
-}
-
-// deleteUserMessage removes the user's message from the chat. It is cosmetic: a
-// failure (too old, no right) is only logged.
-func (d *docs) deleteUserMessage(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
-	start := time.Now()
-	_, err := b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: msgID})
-	traceAPI(ctx, d.log, "deleteMessage", start)
-	if err != nil {
-		d.log.WarnContext(ctx, "delete user message", "err", err)
-	}
-}
-
-// sendHTML posts an HTML message, with an inline keyboard when kb is non-nil.
-func (d *docs) sendHTML(ctx context.Context, b *bot.Bot, chatID int64, text string, kb *models.InlineKeyboardMarkup) {
-	params := &bot.SendMessageParams{ChatID: chatID, Text: text, ParseMode: models.ParseModeHTML}
-	if kb != nil {
-		params.ReplyMarkup = kb
-	}
-	start := time.Now()
-	_, err := b.SendMessage(ctx, params)
-	traceAPI(ctx, d.log, "sendMessage", start)
-	if err != nil {
-		d.log.ErrorContext(ctx, "send telegram message", "err", err)
-	}
-}
-
-// send posts a message, with an inline keyboard when kb is non-nil.
-func (d *docs) send(ctx context.Context, b *bot.Bot, chatID int64, text string, kb *models.InlineKeyboardMarkup) (int, bool) {
-	return d.sendWith(ctx, b, chatID, text, "", kb)
-}
-
-// sendWith is send with a parse mode ("" for plain text). It returns the id of
-// the sent message; ok is false when the send failed (logged here).
-func (d *docs) sendWith(ctx context.Context, b *bot.Bot, chatID int64, text string, mode models.ParseMode, kb *models.InlineKeyboardMarkup) (int, bool) {
-	params := &bot.SendMessageParams{ChatID: chatID, Text: text, ParseMode: mode}
-	if kb != nil {
-		params.ReplyMarkup = kb
-	}
-	start := time.Now()
-	msg, err := b.SendMessage(ctx, params)
-	traceAPI(ctx, d.log, "sendMessage", start)
-	if err != nil {
-		d.log.ErrorContext(ctx, "send telegram message", "err", err)
-		return 0, false
-	}
-	return msg.ID, true
-}
-
-// editMessage rewrites a message's text and keyboard in place (used for paging).
-func (d *docs) editMessage(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup) {
-	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text}
-	if kb == nil {
-		// An omitted reply_markup keeps the old keyboard; an empty one clears it.
-		kb = tg.EmptyKeyboard()
-	}
-	params.ReplyMarkup = kb
-	start := time.Now()
-	_, err := b.EditMessageText(ctx, params)
-	traceAPI(ctx, d.log, "editMessageText", start)
-	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
-		d.log.ErrorContext(ctx, "edit telegram message", "err", err)
-	}
-}
-
-// editText rewrites a message's text and drops its keyboard (retiring buttons).
-func (d *docs) editText(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string) {
-	d.editMessage(ctx, b, chatID, msgID, text, nil)
-}
-
-// editMarkup replaces a message's inline keyboard, keeping its text.
-func (d *docs) editMarkup(ctx context.Context, b *bot.Bot, chatID int64, msgID int, kb *models.InlineKeyboardMarkup) {
-	start := time.Now()
-	_, err := b.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
-		ChatID: chatID, MessageID: msgID, ReplyMarkup: kb,
-	})
-	traceAPI(ctx, d.log, "editMessageReplyMarkup", start)
-	if err != nil {
-		d.log.ErrorContext(ctx, "edit telegram markup", "err", err)
-	}
-}
-
-// answerText stops the button's loading spinner, showing text as a toast if set.
-func (d *docs) answerText(ctx context.Context, b *bot.Bot, callbackID, text string) {
-	start := time.Now()
-	_, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: callbackID, Text: text})
-	traceAPI(ctx, d.log, "answerCallbackQuery", start)
-	if err != nil {
-		d.log.ErrorContext(ctx, "answer callback", "err", err)
-	}
-}
+// out is the one way this handler talks to Telegram's message API.
+func (d *docs) out(b *bot.Bot) sender { return sender{api: b, log: d.log} }
 
 // fail logs the real error once and shows the user a generic message.
 func (d *docs) fail(ctx context.Context, b *bot.Bot, chatID int64, what string, err error) {
@@ -331,7 +217,7 @@ func (d *docs) fail(ctx context.Context, b *bot.Bot, chatID int64, what string, 
 	} else {
 		d.log.ErrorContext(ctx, what, "err", err)
 	}
-	reply(ctx, b, d.log, chatID, textError)
+	_, _ = d.out(b).send(ctx, chatID, textError)
 }
 
 // userID reads the internal user id the ensureUser middleware put in ctx.

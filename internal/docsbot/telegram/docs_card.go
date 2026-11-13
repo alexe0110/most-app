@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -52,7 +53,7 @@ func (d *docs) onChangeCat(ctx context.Context, b *bot.Bot, u *models.Update, pa
 	if !ok {
 		return
 	}
-	d.editMarkup(ctx, b, chatID, msgID, categoryKeyboard(actSetCategory, id))
+	_ = d.out(b).setKeyboard(ctx, chatID, msgID, categoryKeyboard(actSetCategory, id))
 }
 
 // onSend resends the original file from Telegram by its file_id.
@@ -67,7 +68,7 @@ func (d *docs) onSend(ctx context.Context, b *bot.Bot, u *models.Update, user do
 	}
 	card, err := d.svc.Card(ctx, user, id)
 	if errors.Is(err, docsbot.ErrNotFound) {
-		reply(ctx, b, d.log, chatID, textGone)
+		_, _ = d.out(b).send(ctx, chatID, textGone)
 		return
 	}
 	if err != nil {
@@ -89,7 +90,7 @@ func (d *docs) onRenamePrompt(ctx context.Context, b *bot.Bot, u *models.Update,
 		return
 	}
 	d.renames.set(u.CallbackQuery.From.ID, id, chatID, msgID)
-	d.editHTML(ctx, b, chatID, msgID, textRenamePrompt, renameCancelKeyboard(id))
+	_ = d.out(b).edit(ctx, chatID, msgID, textRenamePrompt, withHTML(), withKeyboard(renameCancelKeyboard(id)))
 }
 
 // onRenameCancel drops the rename armed on this message, if any, and puts the
@@ -143,7 +144,7 @@ func (d *docs) showCard(ctx context.Context, b *bot.Bot, user docsbot.UserID, ch
 	if view, err := d.svc.StatusView(ctx, user, doc.ID); err == nil && view.Grouped &&
 		view.Message.ChatID == chatID && view.Message.MessageID == msgID {
 		text, kb := renderStatusMessage(view.Message, view.Lines, view.FolderByCat)
-		d.editHTML(ctx, b, chatID, msgID, text, kb)
+		_ = d.out(b).edit(ctx, chatID, msgID, text, withHTML(), withKeyboard(kb))
 		return
 	}
 	d.editCard(ctx, b, chatID, msgID, doc, folderID, orig)
@@ -153,7 +154,9 @@ func (d *docs) showCard(ctx context.Context, b *bot.Bot, user docsbot.UserID, ch
 // clean), then the prompt message becomes the renamed card, or shows a hint and
 // keeps waiting when the name is unusable.
 func (d *docs) applyRename(ctx context.Context, b *bot.Bot, user docsbot.UserID, e renameEntry, m *models.Message) {
-	d.deleteUserMessage(ctx, b, m.Chat.ID, m.ID)
+	// Cosmetic: a failure (too old, no right) is no reason to fail the rename.
+	out := d.out(b)
+	out.logFailure(ctx, slog.LevelWarn, "delete user message", out.delete(ctx, m.Chat.ID, m.ID, quiet()))
 	card, err := d.svc.Rename(ctx, user, e.id, m.Text)
 	switch {
 	case errors.Is(err, docsbot.ErrEmptyTitle):
@@ -174,7 +177,7 @@ func (d *docs) applyRename(ctx context.Context, b *bot.Bot, user docsbot.UserID,
 // renameHint re-arms the rename and tells, in the prompt message itself, what was wrong.
 func (d *docs) renameHint(ctx context.Context, b *bot.Bot, tgUser int64, e renameEntry, hint string) {
 	d.renames.set(tgUser, e.id, e.chat, e.msg)
-	d.editHTML(ctx, b, e.chat, e.msg, hint, renameCancelKeyboard(e.id))
+	_ = d.out(b).edit(ctx, e.chat, e.msg, hint, withHTML(), withKeyboard(renameCancelKeyboard(e.id)))
 }
 
 // onDeleteAsk asks to confirm before deleting.
@@ -191,7 +194,7 @@ func (d *docs) onDeleteAsk(ctx context.Context, b *bot.Bot, u *models.Update, us
 		{Text: btnDeleteYes, CallbackData: cb(actDeleteYes, id)},
 		{Text: btnDeleteNo, CallbackData: cb(actDeleteNo, id)},
 	}}}
-	d.editMessage(ctx, b, chatID, msgID, d.deleteConfirmText(ctx, user, id), kb)
+	_ = d.out(b).edit(ctx, chatID, msgID, d.deleteConfirmText(ctx, user, id), withKeyboard(kb))
 }
 
 // deleteConfirmText warns that the Drive file goes to the trash when the document
@@ -224,7 +227,7 @@ func (d *docs) onDeleteYes(ctx context.Context, b *bot.Bot, u *models.Update, us
 	d.log.InfoContext(ctx, "document deleted", "user_id", user, "doc_id", id, "remote_kept", deleted.RemoteKept)
 	if deleted.RemoteKept {
 		// The Drive file stays: say so on the "deleted" note instead of returning to the list.
-		d.editMessage(ctx, b, chatID, msgID, textDeletedRemoteKept, myDocsKeyboard())
+		_ = d.out(b).edit(ctx, chatID, msgID, textDeletedRemoteKept, withKeyboard(myDocsKeyboard()))
 		return
 	}
 	d.returnToOrigin(ctx, b, u, user, chatID, msgID)
@@ -250,7 +253,7 @@ func (d *docs) returnToOrigin(ctx context.Context, b *bot.Bot, u *models.Update,
 		}
 		if p.Total > 0 {
 			text, kb := renderCategoryPage(p)
-			d.editMessage(ctx, b, chatID, msgID, text, kb)
+			_ = d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(kb))
 			return
 		}
 		d.editCatalog(ctx, b, user, chatID, msgID)
@@ -266,7 +269,7 @@ func (d *docs) returnToOrigin(ctx context.Context, b *bot.Bot, u *models.Update,
 			return
 		}
 		text, kb := renderFound(found)
-		d.editMessage(ctx, b, chatID, msgID, text, kb)
+		_ = d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(kb))
 	default:
 		d.editDeleted(ctx, b, chatID, msgID)
 	}
@@ -274,7 +277,7 @@ func (d *docs) returnToOrigin(ctx context.Context, b *bot.Bot, u *models.Update,
 
 // editDeleted shows the "deleted" note with a way back to the catalog.
 func (d *docs) editDeleted(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
-	d.editMessage(ctx, b, chatID, msgID, textDeleted, myDocsKeyboard())
+	_ = d.out(b).edit(ctx, chatID, msgID, textDeleted, withKeyboard(myDocsKeyboard()))
 }
 
 // onDeleteNo puts the card back in place of the confirmation.
@@ -320,7 +323,7 @@ func (d *docs) sendFile(ctx context.Context, b *bot.Bot, chatID int64, doc docsb
 	traceAPI(ctx, d.log, op, start)
 	if err != nil {
 		d.log.ErrorContext(ctx, "send file", "err", err, "user_id", doc.UserID, "doc_id", doc.ID)
-		reply(ctx, b, d.log, chatID, textSendFailed)
+		_, _ = d.out(b).send(ctx, chatID, textSendFailed)
 		return false
 	}
 	d.log.InfoContext(ctx, "document sent", "user_id", doc.UserID, "doc_id", doc.ID)
@@ -332,7 +335,7 @@ func (d *docs) sendCard(ctx context.Context, b *bot.Bot, chatID int64, doc docsb
 	if header != "" {
 		text = header + "\n\n" + text
 	}
-	d.sendHTML(ctx, b, chatID, text, d.cardKB(ctx, doc, folderID, ""))
+	_, _ = d.out(b).send(ctx, chatID, text, withHTML(), withKeyboard(d.cardKB(ctx, doc, folderID, "")))
 }
 
 // editCard replaces a message with a document's card and remembers where the
@@ -343,7 +346,7 @@ func (d *docs) editCard(ctx context.Context, b *bot.Bot, chatID int64, msgID int
 
 // editCardText is editCard with a prepared HTML text (the card plus a note).
 func (d *docs) editCardText(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup, orig string) {
-	d.editHTML(ctx, b, chatID, msgID, text, kb)
+	_ = d.out(b).edit(ctx, chatID, msgID, text, withHTML(), withKeyboard(kb))
 	d.origins.set(chatID, msgID, orig)
 }
 
@@ -359,7 +362,7 @@ func (d *docs) cardKB(ctx context.Context, doc docsbot.Document, folderID, orig 
 
 // gone replaces a message about a vanished document with a way back to the catalog.
 func (d *docs) gone(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
-	d.editMessage(ctx, b, chatID, msgID, textGone, myDocsKeyboard())
+	_ = d.out(b).edit(ctx, chatID, msgID, textGone, withKeyboard(myDocsKeyboard()))
 }
 
 // onOpenCard renders a document's card in place of the list/search message, with

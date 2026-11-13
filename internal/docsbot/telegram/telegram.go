@@ -5,7 +5,6 @@ package telegram
 import (
 	"context"
 	"log/slog"
-	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -57,15 +56,5 @@ func Commands() []models.BotCommand {
 		{Command: "convert", Description: cmdDescConvert},
 		{Command: "settings", Description: cmdDescSettings},
 		{Command: "help", Description: cmdDescHelp},
-	}
-}
-
-// reply sends text and logs a send failure; a handler can do nothing more.
-func reply(ctx context.Context, b *bot.Bot, log *slog.Logger, chatID int64, text string) {
-	start := time.Now()
-	_, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text})
-	traceAPI(ctx, log, "sendMessage", start)
-	if err != nil {
-		log.ErrorContext(ctx, "send telegram message", "err", err)
 	}
 }

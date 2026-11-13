@@ -100,7 +100,7 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 			return
 		}
 		c.clearButtons(ctx, b, update, chatID)
-		reply(ctx, b, c.log, chatID, textConvertCancelled)
+		_, _ = c.out(b).send(ctx, chatID, textConvertCancelled)
 	case cbLimit1, cbLimit2, cbLimit5:
 		sess, ok := c.sessions.advance(user, msgID, []step{stepChooseLimit}, func(s *session) {
 			s.maxBytes = limitBytes(data)
@@ -131,11 +131,14 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 	}
 }
 
+// out is the one way this handler talks to Telegram's message API.
+func (c *converter) out(b *bot.Bot) sender { return sender{api: b, log: c.log} }
+
 // stale answers a press that no longer applies (an old message, a wrong step,
 // an ended session, a double tap) and strips the message's buttons. It does
 // nothing else.
 func (c *converter) stale(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
-	reply(ctx, b, c.log, chatID, textStale)
+	_, _ = c.out(b).send(ctx, chatID, textStale)
 	c.clearButtons(ctx, b, update, chatID)
 }
 
