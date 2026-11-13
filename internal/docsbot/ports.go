@@ -156,10 +156,9 @@ type DriveUpload struct {
 	DocID    string // stable document id, written to Drive appProperties for idempotent re-upload
 }
 
-// DriveFile is a stored Drive file: its id and a shareable link.
+// DriveFile is a stored Drive file.
 type DriveFile struct {
-	ID   string
-	Link string
+	ID string
 }
 
 // PageCounter counts the pages of a PDF; declared by the domain, implemented in

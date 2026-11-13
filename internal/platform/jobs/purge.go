@@ -35,7 +35,7 @@ func (w *purgeUsersWorker) Work(ctx context.Context, _ *river.Job[PurgeUsersArgs
 	if err != nil {
 		return fmt.Errorf("purge soft-deleted users: %w", err)
 	}
-	w.log.Info("purged soft-deleted users", "count", tag.RowsAffected())
+	w.log.InfoContext(ctx, "purged soft-deleted users", "count", tag.RowsAffected())
 	return nil
 }
 

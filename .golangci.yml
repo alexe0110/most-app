@@ -10,6 +10,8 @@ linters:
     - revive
     - bodyclose
     - noctx
+    - unused
+    - unparam
   settings:
     depguard:
       rules:

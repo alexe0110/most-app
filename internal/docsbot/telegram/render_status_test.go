@@ -173,9 +173,9 @@ func TestRenderStatusMessage_failures(t *testing.T) {
 	}
 }
 
-// A redraw after the retry must not keep the stale retry button (#84): the
+// A redraw after the retry must not keep the stale retry button: the
 // requeued documents are pending again, so the keyboard comes back nil, which
-// the send paths turn into an explicit "clear keyboard" (#86).
+// the send paths turn into an explicit "clear keyboard".
 func TestRenderStatusMessage_afterRetryNoStaleButton(t *testing.T) {
 	_, kb := renderStatusMessage(batchMsg, []docsbot.Document{
 		batchDoc("a", docsbot.CatWork, docsbot.BackupPending, ""),

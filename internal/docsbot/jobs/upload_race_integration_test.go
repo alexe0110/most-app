@@ -120,7 +120,7 @@ func (d raceDrive) Upload(ctx context.Context, user docsbot.UserID, in docsbot.D
 	if err != nil {
 		return docsbot.DriveFile{}, err
 	}
-	return docsbot.DriveFile{ID: f.ID, Link: f.Link}, nil
+	return docsbot.DriveFile{ID: f.ID}, nil
 }
 func (raceDrive) Rename(context.Context, docsbot.UserID, string, string) error { return nil }
 

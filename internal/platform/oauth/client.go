@@ -45,7 +45,7 @@ func (s *Service) tokenSource(ctx context.Context, userID, bot string) (oauth2.T
 	if _, err := src.Token(); err != nil {
 		if isInvalidGrant(err) {
 			if uErr := s.store.UpdateIntegrationStatus(ctx, userID, bot, provider, statusRevoked); uErr != nil {
-				s.log.Error("mark integration revoked", "err", uErr, "user_id", userID)
+				s.log.ErrorContext(ctx, "mark integration revoked", "err", uErr, "user_id", userID)
 			}
 			return nil, ErrAccessRevoked
 		}
@@ -88,7 +88,7 @@ func (s *Service) RevokeBestEffort(ctx context.Context, userID, bot string) erro
 	if err == nil || errors.Is(err, ErrNoIntegration) {
 		return nil
 	}
-	s.log.Warn("drive revoke failed; forcing local revoke", "err", err, "user_id", userID)
+	s.log.WarnContext(ctx, "drive revoke failed; forcing local revoke", "err", err, "user_id", userID)
 	if mErr := s.store.UpdateIntegrationStatus(ctx, userID, bot, provider, statusRevoked); mErr != nil {
 		return fmt.Errorf("mark integration revoked: %w", mErr)
 	}
@@ -103,7 +103,7 @@ func (s *Service) DisconnectBestEffort(ctx context.Context, userID, bot string) 
 	if err == nil || errors.Is(err, ErrNoIntegration) {
 		return nil
 	}
-	s.log.Warn("drive disconnect failed; forcing local disconnect", "err", err, "user_id", userID)
+	s.log.WarnContext(ctx, "drive disconnect failed; forcing local disconnect", "err", err, "user_id", userID)
 	if mErr := s.store.UpdateIntegrationStatus(ctx, userID, bot, provider, statusDisconnected); mErr != nil {
 		return fmt.Errorf("mark integration disconnected: %w", mErr)
 	}

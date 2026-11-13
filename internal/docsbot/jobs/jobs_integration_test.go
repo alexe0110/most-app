@@ -25,7 +25,7 @@ type fakeDrive struct{}
 
 func (fakeDrive) Connected(context.Context, docsbot.UserID) (bool, error) { return true, nil }
 func (fakeDrive) Upload(context.Context, docsbot.UserID, docsbot.DriveUpload) (docsbot.DriveFile, error) {
-	return docsbot.DriveFile{ID: "drive-1", Link: "https://drive/1"}, nil
+	return docsbot.DriveFile{ID: "drive-1"}, nil
 }
 func (fakeDrive) Rename(context.Context, docsbot.UserID, string, string) error { return nil }
 

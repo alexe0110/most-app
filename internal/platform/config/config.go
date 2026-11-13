@@ -4,6 +4,8 @@ package config
 import (
 	"fmt"
 	"os"
+
+	"github.com/alexe0110/most-app/internal/platform/gdrive"
 )
 
 // Config holds all application settings.
@@ -28,7 +30,7 @@ type Config struct {
 	GoogleClientSecret string // required
 	TokenEncKey        string // base64-encoded 32-byte key, required
 
-	DriveRootFolder string // Drive root folder name, default "Most Docs"
+	DriveRootFolder string // Drive root folder name, default gdrive.DefaultRootFolder
 }
 
 // Load reads settings from env, applies defaults and validates them.
@@ -46,7 +48,7 @@ func Load() (Config, error) {
 		HTTPAddr:    ":" + getenv("PORT", "8080"),
 		DatabaseURL: getenv("DATABASE_URL", "postgres://most:most@localhost:5432/most?sslmode=disable"),
 
-		DriveRootFolder: getenv("DRIVE_ROOT_FOLDER", "Most Docs"),
+		DriveRootFolder: getenv("DRIVE_ROOT_FOLDER", gdrive.DefaultRootFolder),
 
 		TelegramToken:         os.Getenv("TELEGRAM_TOKEN"),
 		TelegramMode:          getenv("TELEGRAM_MODE", "polling"),

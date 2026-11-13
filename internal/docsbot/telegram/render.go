@@ -31,7 +31,7 @@ const (
 	actDeleteNo      = "dn"  // cancel deletion
 	actListCat       = "lc"  // open a category page: d:lc:<slug>:<page>
 	actListBack      = "lb"  // back to the category list
-	actTransfer      = "tr"  // transfer saved documents to Drive (#11)
+	actTransfer      = "tr"  // transfer saved documents to Drive
 	actTransferYes   = "try" // confirm the transfer offer
 	actTransferNo    = "trn" // decline the transfer offer
 	actRetry         = "rt"  // retry a failed backup: d:rt:<docID>
@@ -180,7 +180,7 @@ func cardFacts(doc docsbot.Document) []string {
 		facts = append(facts, fmt.Sprintf("%d×%d", doc.Width, doc.Height))
 	}
 	if doc.PageCount > 0 {
-		facts = append(facts, fmt.Sprintf("%d стр.", doc.PageCount))
+		facts = append(facts, fmt.Sprintf(textFactPages, doc.PageCount))
 	}
 	if sz := humanSize(doc.FileSize); sz != "" {
 		facts = append(facts, sz)
@@ -239,7 +239,7 @@ func fileType(doc docsbot.Document) string {
 		return label
 	}
 	if doc.Kind == docsbot.KindPhoto {
-		return "Фото"
+		return textFactPhoto
 	}
 	return ""
 }
@@ -250,9 +250,9 @@ func humanSize(n int64) string {
 		return ""
 	}
 	if kb := (n + 1023) / 1024; kb < 1024 {
-		return fmt.Sprintf("%d КБ", kb)
+		return fmt.Sprintf(textSizeKB, kb)
 	}
-	return strings.ReplaceAll(fmt.Sprintf("%.1f", float64(n)/(1<<20)), ".", ",") + " МБ"
+	return strings.ReplaceAll(fmt.Sprintf("%.1f", float64(n)/(1<<20)), ".", ",") + textSizeMBSuffix
 }
 
 // folderURL is the Drive web link to a folder.
@@ -330,7 +330,7 @@ func renderCatalog(c docsbot.Catalog) (string, *models.InlineKeyboardMarkup) {
 		return textCatalogEmpty, nil
 	}
 	b := &strings.Builder{}
-	b.WriteString("Твои документы:")
+	b.WriteString(textCatalogTitle)
 	if c.DriveConnected && c.NotInDrive > 0 {
 		fmt.Fprintf(b, "\n\n"+textNotInDrive, c.NotInDrive)
 	}
@@ -511,7 +511,7 @@ func renderFound(f docsbot.Found) (string, *models.InlineKeyboardMarkup) {
 			CallbackData: fmt.Sprintf("%s%s:%s:s", cbPrefix, actOpenCard, doc.ID),
 		}})
 	}
-	return fmt.Sprintf("Нашёл (%d):", len(f.Docs)), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+	return fmt.Sprintf(textFoundTitle, len(f.Docs)), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
 // incomingFile reads the file out of a message; ok is false for a non-file one.
@@ -589,9 +589,6 @@ func truncateMiddle(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
 		return s
-	}
-	if n < 3 {
-		return truncate(s, n)
 	}
 	tail := (n - 1) / 2
 	head := n - 1 - tail
@@ -699,7 +696,7 @@ func statusText(st statusTally, folderByCat map[docsbot.Category]string, titleCa
 	case st.done < st.total || st.total == 0:
 		parts = append(parts, fmt.Sprintf(textStatusProgress, st.done, st.total)+"\n"+progressBar(st.done, st.total))
 	case st.backedUp > 0:
-		parts = append(parts, fmt.Sprintf(textStatusDone, st.backedUp, plural(st.backedUp, "документ", "документа", "документов")))
+		parts = append(parts, fmt.Sprintf(textStatusDone, st.backedUp, plural(st.backedUp, pluralDocumentOne, pluralDocumentFew, pluralDocumentMany)))
 	}
 	if block := errorBlock(st); block != "" {
 		parts = append(parts, block)

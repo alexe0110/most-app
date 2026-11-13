@@ -27,15 +27,6 @@ func Connect(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// MustConnect is Connect for startup wiring: a failure here is fatal.
-func MustConnect(ctx context.Context, dsn string) *pgxpool.Pool {
-	pool, err := Connect(ctx, dsn)
-	if err != nil {
-		panic(err)
-	}
-	return pool
-}
-
 // Migrate applies pending migrations. goose needs a *sql.DB, so it opens a
 // short-lived connection via the pgx stdlib driver and closes it; the pool is
 // untouched.

@@ -4,7 +4,7 @@ package telegram
 // (product.md): documents are "хранятся в Telegram" / "ещё не на Google Диске", the
 // goal is the user's Google Drive; never "временно".
 
-// Core flow texts (#9, #10, #12, #13, #14).
+// Core flow texts.
 const (
 	// textStart is a format string: %s = Drive root folder name.
 	textStart = "Привет! Я Most Docs. Пришли документ — фото, PDF или файл, — " +
@@ -43,7 +43,6 @@ const (
 	// textDeletedRemoteKept: the Drive file could not be trashed and stays.
 	textDeletedRemoteKept = "Документ удалён. На Google Диске файл остался — удали его вручную."
 	textDeleted           = "Документ удалён 🗑"
-	textDeleteCancelled   = "Удаление отменено."
 	textGone              = "Этого документа уже нет."
 	textStale             = "Кнопка устарела, открой заново."
 
@@ -92,7 +91,41 @@ const (
 	textSendFailed     = "Не удалось отправить файл. Попробуй ещё раз."
 )
 
-// Settings, disconnect, export and delete texts (#15).
+// Plural forms (one, few, many) for plural().
+const (
+	pluralDocumentOne  = "документ"
+	pluralDocumentFew  = "документа"
+	pluralDocumentMany = "документов"
+
+	pluralFileOne  = "файл"
+	pluralFileFew  = "файла"
+	pluralFileMany = "файлов"
+
+	pluralImageOne  = "изображение"
+	pluralImageFew  = "изображения"
+	pluralImageMany = "изображений"
+)
+
+// Document card facts, catalog and search headings.
+const (
+	textFactPages    = "%d стр."
+	textFactPhoto    = "Фото"
+	textSizeKB       = "%d КБ"
+	textSizeMBSuffix = " МБ"
+	textCatalogTitle = "Твои документы:"
+	textFoundTitle   = "Нашёл (%d):" // %d = results
+)
+
+// Command menu descriptions (setMyCommands).
+const (
+	cmdDescStart    = "Начать работу"
+	cmdDescList     = "Мои документы по категориям"
+	cmdDescConvert  = "Фото → PDF или сжать изображение"
+	cmdDescSettings = "Подключить Google Диск"
+	cmdDescHelp     = "Что умеет бот"
+)
+
+// Settings, disconnect, export and delete texts.
 const (
 	textDisconnected = "Google Диск отключён. Новые документы останутся в Telegram, " +
 		"а уже выгруженные файлы и ссылки на них сохранены."
@@ -281,7 +314,7 @@ const (
 	btnAlbumEach = "💾 Сохранить по одному"
 )
 
-// Batch status message (#99) and /settings.
+// Batch status message and /settings.
 const (
 	textStatusProgress    = "⏳ Переношу на Google Диск · %d из %d" // done, total
 	textStatusDone        = "✅ Перенёс на Google Диск — %d %s"     // backed up, plural("документ")

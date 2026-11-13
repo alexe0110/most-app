@@ -1,6 +1,6 @@
 # CLAUDE.md — Most
 
-Most is a series of Telegram bots built on a shared Go core. The first bot, Most Docs, saves documents to the user's own Google Drive; until Drive is connected, documents are kept in Telegram.
+Most is a series of Telegram bots built on a shared Go core. The first bot, Most Files (`docsbot`), saves documents to the user's own Google Drive; until Drive is connected, documents are kept in Telegram.
 
 Docs (read only what the task needs, not everything): `docs/code_conventions.md` (read before writing code; skim the relevant sections), `docs/product.md`, `docs/architecture.md`, `docs/model.md`. Tasks: GitHub Issues (milestone MVP).
 
@@ -8,7 +8,7 @@ Docs (read only what the task needs, not everything): `docs/code_conventions.md`
 
 - `internal/<bot>/` — domain: entities, `Service` with use cases, ports in `ports.go`.
 - `internal/<bot>/<adapter>/` — adapters: `telegram/`, `jobs/` (inbound), `postgres/` (outbound).
-- `internal/platform/` — shared core for all bots (config, log, db, jobs, tg, oauth, gdrive, httpx, billing).
+- `internal/platform/` — shared core for all bots (config, logging, db, jobs, tg, oauth, gdrive, convert).
 - `cmd/<bot>/main.go` — manual dependency wiring, no DI frameworks.
 - Use cases return the meaning of a reply (`docsbot.Reply`); the channel adapter renders buttons and texts.
 
@@ -24,6 +24,19 @@ Docs (read only what the task needs, not everything): `docs/code_conventions.md`
 7. Never log tokens, document contents, file captions, IIN or document numbers.
 8. No `utils`, `common`, `helpers` or `models` packages.
 9. No new dependencies in `go.mod` unless explicitly asked.
+
+## Code rules
+
+1. Comments explain why, not what. No ticket numbers or change history in code, names or tests (only `TODO(#N)`); that lives in the commit and PR.
+2. Grep for an existing helper before writing a new one; reuse it.
+3. Keep files under ~400 lines, functions under ~60, at most 5 parameters (more: a struct). Split by meaning, don't append.
+4. Tests sit next to the code and are named by behavior: `foo.go` -> `foo_test.go`. No new `*_qa_test.go`, `*_edge_test.go`, `review*_test.go` (existing ones get folded in); a new case is a row in an existing table.
+5. Several writes (DB twice, or DB and queue) are one transaction, one port method. Before the PR answer: what remains if the process dies between the steps?
+6. In-memory state needs a TTL, a size cap and cleanup, never file bytes; losing it on restart must be harmless and covered in `restart_test.go`.
+7. Every external call has a timeout; `http.DefaultClient` is forbidden; heavy CPU or memory work goes under a semaphore.
+8. Never drop an error silently: `_ = f()` only with a log next to it or a comment saying why it cannot fail.
+9. No cleverness: generics only for containers, no `init()`, no package-level mutable variables, no callbacks in port signatures. An exception needs a comment saying why.
+10. When you replace something, delete the old query, constant, text or error. One value, one constant (bot name, folder name, 20 MB); a copy forced by layering says so in a comment. Update `docs/` in the same PR when packages, tables or flow change.
 
 ## Adding a feature
 

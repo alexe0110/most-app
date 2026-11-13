@@ -22,7 +22,7 @@ import (
 // any error. Each test gets a fresh database, so no cleanup is needed.
 func makeUser(t *testing.T, repo *postgres.Repo, tgID int64) postgres.User {
 	t.Helper()
-	u, err := repo.CreateUser(t.Context(), postgres.CreateUserParams{TgUserID: tgID, Lang: "ru"})
+	u, err := repo.EnsureUser(t.Context(), postgres.EnsureUserParams{TgUserID: tgID, Lang: "ru"})
 	require.NoError(t, err)
 	return u
 }

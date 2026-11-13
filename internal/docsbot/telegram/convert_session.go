@@ -46,7 +46,7 @@ type session struct {
 	msgID    int            // the dialogue message whose buttons drive the session; 0 until known
 	images   []pendingImage // PDF from photos: the pages collected so far
 	imageSum int64          // PDF from photos: declared size of images
-	source   []byte         // compress: the one image, already checked to be a photo (at most maxFileBytes)
+	source   []byte         // compress: the one image, already checked to be a photo (at most tg.MaxFileBytes)
 	maxBytes int
 	inputPNG bool // compress: the image is a PNG, so the format is worth asking
 	updated  time.Time

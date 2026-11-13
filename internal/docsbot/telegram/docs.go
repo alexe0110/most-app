@@ -14,16 +14,9 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/platform/gdrive"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
-
-// botName identifies this bot in the shared integrations/oauth tables.
-const botName = "docs"
-
-// defaultDriveFolder is the Drive root folder name shown in /start unless
-// WithDriveFolder overrides it. Mirrors the gdrive default (the adapter does
-// not import platform/gdrive).
-const defaultDriveFolder = "Most Docs"
 
 // docs is the inbound adapter for the core document flow: it turns updates into
 // Service calls and renders the replies. State is the domain's; the only local
@@ -61,7 +54,7 @@ func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Op
 		settingsMsgs: newSettingsStore(time.Now),
 		albums:       newAlbumBuffer(),
 
-		driveFolder: defaultDriveFolder,
+		driveFolder: gdrive.DefaultRootFolder,
 
 		pauseFile: exportPause, pauseAlbum: exportPerFilePause,
 		exports: map[docsbot.UserID]bool{},
@@ -789,7 +782,7 @@ func (d *docs) onCategoryGroup(ctx context.Context, b *bot.Bot, u *models.Update
 	case len(group.Docs) == 1:
 		d.editCard(ctx, b, chatID, msgID, group.Docs[0], "", "")
 	default:
-		text := fmt.Sprintf(textGroupSaved, len(group.Docs), plural(len(group.Docs), "файл", "файла", "файлов"), cat.Label())
+		text := fmt.Sprintf(textGroupSaved, len(group.Docs), plural(len(group.Docs), pluralFileOne, pluralFileFew, pluralFileMany), cat.Label())
 		if tooLarge > 0 {
 			text += "\n" + fmt.Sprintf(textGroupTooLarge, tooLarge)
 		}
@@ -1297,12 +1290,12 @@ func (d *docs) offerDrive(ctx context.Context, b *bot.Bot, chatID int64, user do
 
 // connectURL builds the Google consent URL for the user, false if unavailable.
 func (d *docs) connectURL(ctx context.Context, user docsbot.UserID) (string, bool) {
-	if d.auth == nil || user == "" {
+	if user == "" {
 		return "", false
 	}
-	url, err := d.auth.AuthURL(ctx, string(user), botName)
+	url, err := d.auth.AuthURL(ctx, string(user), docsbot.BotName)
 	if err != nil {
-		d.log.Error("build auth url", "err", err)
+		d.log.ErrorContext(ctx, "build auth url", "err", err)
 		return "", false
 	}
 	return url, true
@@ -1472,7 +1465,7 @@ func (d *docs) editMessage(ctx context.Context, b *bot.Bot, chatID int64, msgID 
 	_, err := b.EditMessageText(ctx, params)
 	traceAPI(ctx, d.log, "editMessageText", start)
 	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
-		d.log.Error("edit telegram message", "err", err)
+		d.log.ErrorContext(ctx, "edit telegram message", "err", err)
 	}
 }
 
@@ -1489,7 +1482,7 @@ func (d *docs) editMarkup(ctx context.Context, b *bot.Bot, chatID int64, msgID i
 	})
 	traceAPI(ctx, d.log, "editMessageReplyMarkup", start)
 	if err != nil {
-		d.log.Error("edit telegram markup", "err", err)
+		d.log.ErrorContext(ctx, "edit telegram markup", "err", err)
 	}
 }
 
@@ -1499,7 +1492,7 @@ func (d *docs) answerText(ctx context.Context, b *bot.Bot, callbackID, text stri
 	_, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: callbackID, Text: text})
 	traceAPI(ctx, d.log, "answerCallbackQuery", start)
 	if err != nil {
-		d.log.Error("answer callback", "err", err)
+		d.log.ErrorContext(ctx, "answer callback", "err", err)
 	}
 }
 

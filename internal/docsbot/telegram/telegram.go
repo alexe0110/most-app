@@ -52,11 +52,11 @@ func GroupNotice() string { return textGroupNotice }
 // (same for dev and prod, so BotFather is never edited by hand).
 func Commands() []models.BotCommand {
 	return []models.BotCommand{
-		{Command: "start", Description: "Начать работу"},
-		{Command: "list", Description: "Мои документы по категориям"},
-		{Command: "convert", Description: "Фото → PDF или сжать изображение"},
-		{Command: "settings", Description: "Подключить Google Диск"},
-		{Command: "help", Description: "Что умеет бот"},
+		{Command: "start", Description: cmdDescStart},
+		{Command: "list", Description: cmdDescList},
+		{Command: "convert", Description: cmdDescConvert},
+		{Command: "settings", Description: cmdDescSettings},
+		{Command: "help", Description: cmdDescHelp},
 	}
 }
 
@@ -66,7 +66,7 @@ func reply(ctx context.Context, b *bot.Bot, log *slog.Logger, chatID int64, text
 	_, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text})
 	traceAPI(ctx, log, "sendMessage", start)
 	if err != nil {
-		log.Error("send telegram message", "err", err)
+		log.ErrorContext(ctx, "send telegram message", "err", err)
 	}
 }
 

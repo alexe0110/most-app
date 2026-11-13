@@ -18,7 +18,7 @@ func (s *Service) Callback() http.HandlerFunc {
 		if reason := q.Get("error"); reason != "" {
 			// The user declined consent (or Google refused). reason is a short
 			// code such as "access_denied" — safe to log.
-			s.log.Info("oauth consent not granted", "reason", reason)
+			s.log.InfoContext(ctx, "oauth consent not granted", "reason", reason)
 			s.redirect(w, r)
 			return
 		}
@@ -26,7 +26,7 @@ func (s *Service) Callback() http.HandlerFunc {
 		code := q.Get("code")
 		state := q.Get("state")
 		if code == "" || state == "" {
-			s.log.Warn("oauth callback missing code or state")
+			s.log.WarnContext(ctx, "oauth callback missing code or state")
 			s.redirect(w, r)
 			return
 		}
@@ -34,36 +34,36 @@ func (s *Service) Callback() http.HandlerFunc {
 		st, err := s.store.TakeState(ctx, state)
 		if err != nil {
 			// Unknown, already used, or otherwise invalid state.
-			s.log.Warn("oauth callback rejected", "err", err)
+			s.log.WarnContext(ctx, "oauth callback rejected", "err", err)
 			s.redirect(w, r)
 			return
 		}
 		if time.Now().After(st.ExpiresAt) {
-			s.log.Warn("oauth callback rejected", "err", ErrStateExpired)
+			s.log.WarnContext(ctx, "oauth callback rejected", "err", ErrStateExpired)
 			s.redirect(w, r)
 			return
 		}
 
 		tok, err := s.config().Exchange(s.tokenCtx(ctx), code, oauth2.VerifierOption(st.Verifier))
 		if err != nil {
-			s.log.Error("oauth code exchange failed", "err", err)
+			s.log.ErrorContext(ctx, "oauth code exchange failed", "err", err)
 			s.redirect(w, r)
 			return
 		}
 		if tok.RefreshToken == "" {
-			s.log.Error("oauth exchange returned no refresh token", "user_id", st.UserID)
+			s.log.ErrorContext(ctx, "oauth exchange returned no refresh token", "user_id", st.UserID)
 			s.redirect(w, r)
 			return
 		}
 
 		enc, err := s.enc.encrypt([]byte(tok.RefreshToken))
 		if err != nil {
-			s.log.Error("encrypt refresh token", "err", err)
+			s.log.ErrorContext(ctx, "encrypt refresh token", "err", err)
 			s.redirect(w, r)
 			return
 		}
 		if err := s.store.SaveIntegration(ctx, st.UserID, st.Bot, provider, statusActive, enc); err != nil {
-			s.log.Error("save integration", "err", err, "user_id", st.UserID)
+			s.log.ErrorContext(ctx, "save integration", "err", err, "user_id", st.UserID)
 			s.redirect(w, r)
 			return
 		}
@@ -72,7 +72,7 @@ func (s *Service) Callback() http.HandlerFunc {
 			if err := s.onConnected(ctx, st.UserID); err != nil {
 				// Non-fatal: the integration is stored; the user just missed the
 				// Telegram ping.
-				s.log.Error("notify connected", "err", err, "user_id", st.UserID)
+				s.log.ErrorContext(ctx, "notify connected", "err", err, "user_id", st.UserID)
 			}
 		}
 

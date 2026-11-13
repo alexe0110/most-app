@@ -59,8 +59,7 @@ type fakeDrive struct {
 	existingName string              // a file name already present in the category folder
 	folders      []map[string]string // folders Drive already has, oldest first (as orderBy=createdTime returns them)
 	lastOrderBy  string              // orderBy of the last folder query
-	webViewLink  string
-	created      []string // folder names created, in order
+	created      []string            // folder names created, in order
 	uploadedName string
 	uploadedBody string
 	uploadedMIME string
@@ -125,11 +124,7 @@ func (d *fakeDrive) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"id": "folder-" + in.Name})
 	case r.Method == http.MethodPost && r.URL.Path == "/upload/drive/v3/files":
 		d.readUpload(r)
-		resp := map[string]string{"id": "file-" + strconv.Itoa(len(d.stored))}
-		if d.webViewLink != "" {
-			resp["webViewLink"] = d.webViewLink
-		}
-		writeJSON(w, resp)
+		writeJSON(w, map[string]string{"id": "file-" + strconv.Itoa(len(d.stored))})
 	default:
 		d.t.Errorf("unexpected request %s %s", r.Method, r.URL)
 		http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -184,14 +179,14 @@ func testUpload() Upload {
 }
 
 func TestUpload_happyPath(t *testing.T) {
-	d := &fakeDrive{webViewLink: "https://drive.google.com/file/d/file-1/view?usp=drivesdk"}
+	d := &fakeDrive{}
 	cache := newFakeCache()
 	svc := newService(t, d, fakeClients{}, cache)
 
 	f, err := svc.Upload(context.Background(), "user-1", testUpload())
 
 	require.NoError(t, err)
-	require.Equal(t, File{ID: "file-1", Link: d.webViewLink}, f)
+	require.Equal(t, File{ID: "file-1"}, f)
 	require.Equal(t, []string{DefaultRootFolder, "Паспорт и ID"}, d.created)
 	require.Equal(t, "folder-Паспорт и ID", d.uploadParent)
 	require.Equal(t, "scan.pdf", d.uploadedName)
@@ -355,18 +350,8 @@ func TestUpload_revoked(t *testing.T) {
 	require.ErrorIs(t, err, ErrAccessRevoked)
 }
 
-func TestUpload_linkFallback(t *testing.T) {
-	d := &fakeDrive{}
-	svc := newService(t, d, fakeClients{}, newFakeCache())
-
-	f, err := svc.Upload(context.Background(), "user-1", testUpload())
-
-	require.NoError(t, err)
-	require.Equal(t, "https://drive.google.com/file/d/file-1/view", f.Link)
-}
-
 func TestUpload_idempotentByDocID(t *testing.T) {
-	d := &fakeDrive{webViewLink: "https://drive.google.com/file/d/file-1/view?usp=drivesdk"}
+	d := &fakeDrive{}
 	svc := newService(t, d, fakeClients{}, newFakeCache())
 	up := testUpload()
 	up.DocID = "doc-1"
@@ -379,7 +364,6 @@ func TestUpload_idempotentByDocID(t *testing.T) {
 	second, err := svc.Upload(context.Background(), "user-1", up)
 	require.NoError(t, err)
 	require.Equal(t, first.ID, second.ID)
-	require.Equal(t, "https://drive.google.com/file/d/file-1/view", second.Link)
 	require.Equal(t, 1, d.uploads)
 	require.Contains(t, d.lastFileQ, "trashed=false")
 	require.Contains(t, d.lastFileQ, "value='doc-1'")

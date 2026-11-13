@@ -153,7 +153,7 @@ func (d *docs) collectAlbum(ctx context.Context, b *bot.Bot, chatID int64, user 
 func (d *docs) flushAlbum(ctx context.Context, b *bot.Bot, st albumState) {
 	switch {
 	case d.offersPDF(st):
-		text := fmt.Sprintf(textAlbumChoice, st.fresh, plural(st.fresh, "изображение", "изображения", "изображений"))
+		text := fmt.Sprintf(textAlbumChoice, st.fresh, plural(st.fresh, pluralImageOne, pluralImageFew, pluralImageMany))
 		if st.dups > 0 {
 			text += "\n\n" + fmt.Sprintf(textAlbumDuplicates, st.dups)
 		}
@@ -162,7 +162,7 @@ func (d *docs) flushAlbum(ctx context.Context, b *bot.Bot, st albumState) {
 	case st.fresh > 0:
 		text := textChooseCategory
 		if st.fresh > 1 {
-			text = fmt.Sprintf(textChooseCategoryGroup, st.fresh, plural(st.fresh, "файл", "файла", "файлов"))
+			text = fmt.Sprintf(textChooseCategoryGroup, st.fresh, plural(st.fresh, pluralFileOne, pluralFileFew, pluralFileMany))
 		}
 		if st.dups > 0 {
 			text += "\n\n" + fmt.Sprintf(textAlbumDuplicates, st.dups)

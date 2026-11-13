@@ -45,7 +45,7 @@ func recoverPanic(log *slog.Logger) bot.Middleware {
 		return func(ctx context.Context, b *bot.Bot, update *models.Update) {
 			defer func() {
 				if r := recover(); r != nil {
-					log.Error("panic in telegram handler", "recover", r, "update_id", update.ID)
+					log.ErrorContext(ctx, "panic in telegram handler", "recover", r, "update_id", update.ID)
 				}
 			}()
 			next(ctx, b, update)
@@ -72,7 +72,7 @@ func withTimeout(d time.Duration, unbounded func(*models.Update) bool, log *slog
 			defer cancel()
 			next(ctx, b, update)
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				log.Warn("telegram handler timed out", "update_id", update.ID, "kind", updateKind(update))
+				log.WarnContext(ctx, "telegram handler timed out", "update_id", update.ID, "kind", updateKind(update))
 			}
 		}
 	}
@@ -101,13 +101,13 @@ func privateOnly(leave leaveFunc, log *slog.Logger) bot.Middleware {
 			case chat != nil && (chat.Type == models.ChatTypeGroup || chat.Type == models.ChatTypeSupergroup):
 				if botRemoved(update) {
 					// Our own leave (or a kick) echoes back as my_chat_member: leaving again would 403.
-					log.Debug("bot removed from group", "update_id", update.ID, "chat_type", chat.Type)
+					log.DebugContext(ctx, "bot removed from group", "update_id", update.ID, "chat_type", chat.Type)
 					return
 				}
-				log.Info("update from group chat dropped", "update_id", update.ID, "chat_type", chat.Type)
+				log.InfoContext(ctx, "update from group chat dropped", "update_id", update.ID, "chat_type", chat.Type)
 				leave(ctx, b, chat.ID)
 			default:
-				log.Debug("non-private update dropped", "update_id", update.ID, "kind", updateKind(update))
+				log.DebugContext(ctx, "non-private update dropped", "update_id", update.ID, "kind", updateKind(update))
 			}
 		}
 	}
@@ -132,11 +132,11 @@ func leaveGroup(notice string, log *slog.Logger) leaveFunc {
 	return func(ctx context.Context, b *bot.Bot, chatID int64) {
 		if notice != "" {
 			if _, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: notice}); err != nil {
-				log.Warn("send group notice", "err", err)
+				log.WarnContext(ctx, "send group notice", "err", err)
 			}
 		}
 		if _, err := b.LeaveChat(ctx, &bot.LeaveChatParams{ChatID: chatID}); err != nil {
-			log.Warn("leave group chat", "err", err)
+			log.WarnContext(ctx, "leave group chat", "err", err)
 		}
 	}
 }
@@ -171,7 +171,7 @@ func chatOf(update *models.Update) *models.Chat {
 func logUpdate(log *slog.Logger) bot.Middleware {
 	return func(next bot.HandlerFunc) bot.HandlerFunc {
 		return func(ctx context.Context, b *bot.Bot, update *models.Update) {
-			log.Info("message from telegram", "update_id", update.ID, "kind", updateKind(update))
+			log.InfoContext(ctx, "message from telegram", "update_id", update.ID, "kind", updateKind(update))
 			next(ctx, b, update)
 		}
 	}
@@ -207,7 +207,7 @@ func ensureUser(users Users, log *slog.Logger) bot.Middleware {
 			}
 			id, err := users.Ensure(ctx, from.ID, from.LanguageCode)
 			if err != nil {
-				log.Error("ensure user", "err", err)
+				log.ErrorContext(ctx, "ensure user", "err", err)
 				return
 			}
 			next(context.WithValue(ctx, userIDKey, id), b, update)

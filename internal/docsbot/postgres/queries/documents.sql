@@ -172,7 +172,7 @@ order by created_at desc, id desc
 limit @lim offset @off;
 
 -- name: MarkDocumentBackedUpSync :one
--- Like MarkDocumentBackedUp, and in the same statement queues a sync when the
+-- Marks the document backed up and, in the same statement, queues a sync when the
 -- title or category changed since the upload started (meta_version differs).
 update documents
 set backup_status = 'backed_up',

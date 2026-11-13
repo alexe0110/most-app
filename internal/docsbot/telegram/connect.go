@@ -106,7 +106,7 @@ func (c connectSettings) refresh(ctx context.Context, b *tg.Bot, log *slog.Logge
 		haveURL bool
 	)
 	if c.auth != nil {
-		if u, err := c.auth.AuthURL(ctx, string(user), botName); err != nil {
+		if u, err := c.auth.AuthURL(ctx, string(user), docsbot.BotName); err != nil {
 			log.WarnContext(ctx, "build auth url after connect", "err", err, "user_id", user)
 		} else {
 			url, haveURL = u, true
@@ -266,8 +266,8 @@ func (n *Notifier) SyncOutcome(ctx context.Context, user docsbot.UserID, doc doc
 	var url string
 	if revoked(card.Doc) {
 		var uErr error
-		if url, uErr = n.auth.AuthURL(ctx, string(user), botName); uErr != nil {
-			n.log.Error("build auth url", "err", uErr)
+		if url, uErr = n.auth.AuthURL(ctx, string(user), docsbot.BotName); uErr != nil {
+			n.log.ErrorContext(ctx, "build auth url", "err", uErr)
 			url = ""
 		}
 	}
@@ -324,8 +324,8 @@ func (n *Notifier) Reconnect(ctx context.Context, user docsbot.UserID) error {
 	if err != nil {
 		return fmt.Errorf("resolve tg user: %w", err)
 	}
-	if url, uErr := n.auth.AuthURL(ctx, string(user), botName); uErr != nil {
-		n.log.Error("build auth url", "err", uErr)
+	if url, uErr := n.auth.AuthURL(ctx, string(user), docsbot.BotName); uErr != nil {
+		n.log.ErrorContext(ctx, "build auth url", "err", uErr)
 		err = n.bot.Send(ctx, chatID, textReconnect)
 	} else {
 		err = n.bot.SendMarkup(ctx, chatID, textReconnect, reconnectKeyboard(url))
