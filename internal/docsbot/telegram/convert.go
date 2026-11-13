@@ -193,7 +193,8 @@ func (c *converter) message(ctx context.Context, b *bot.Bot, update *models.Upda
 	case len(update.Message.Photo) > 0 && awaitsPDF(sess.step):
 		reply(ctx, b, c.log, chatID, textPDFNotPDF)
 	case len(update.Message.Photo) > 0:
-		c.onImage(ctx, b, update, largestPhoto(update.Message.Photo).FileID)
+		photo := largestPhoto(update.Message.Photo)
+		c.onImage(ctx, b, update, photo.FileID, int64(photo.FileSize))
 	case update.Message.Document != nil:
 		c.onDocument(ctx, b, update)
 	case update.Message.Text != "":
@@ -223,11 +224,12 @@ func (c *converter) onDocument(ctx context.Context, b *bot.Bot, update *models.U
 		reply(ctx, b, c.log, update.Message.Chat.ID, text)
 		return
 	}
-	c.onImage(ctx, b, update, doc.FileID)
+	c.onImage(ctx, b, update, doc.FileID, doc.FileSize)
 }
 
-// onImage downloads an image and adds it to the current step.
-func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Update, fileID string) {
+// onImage adds an image to the current step. For a PDF only its id and size are
+// kept; compress downloads it now, since the format question depends on its bytes.
+func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Update, fileID string, size int64) {
 	user, _ := messageUser(update)
 	chatID := update.Message.Chat.ID
 
@@ -235,41 +237,67 @@ func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Upda
 	if !ok {
 		return
 	}
-	if sess.step != stepCollectPDF && sess.step != stepAwaitImage {
+	switch sess.step {
+	case stepCollectPDF:
+		c.addPage(ctx, b, update, fileID, size)
+		return
+	case stepAwaitImage:
+	default:
 		reply(ctx, b, c.log, chatID, textConvertTapButton)
 		return
 	}
 
 	data, err := c.download(ctx, b, fileID)
 	if err != nil {
-		c.log.Error("convert download image", "err", err)
+		c.log.ErrorContext(ctx, "convert download image", "err", err)
 		reply(ctx, b, c.log, chatID, textConvertDownloadFailed)
 		return
 	}
 
 	unlock := c.dialogue.lock(user)
 	defer unlock()
-	toCompress, pages := false, 0
+	if !c.sessions.update(user, func(s *session) {
+		if s.step != stepAwaitImage {
+			return
+		}
+		s.source = data
+		s.step = stepChooseLimit
+		s.inputPNG = isPNG(data)
+		s.sourceTitle = ""
+		if d := update.Message.Document; d != nil {
+			s.sourceTitle = d.FileName
+		}
+	}) {
+		return
+	}
+	c.moveDown(ctx, b, chatID, user, textConvertChooseLimit+c.fileTip(user, update), limitKeyboard())
+}
+
+// addPage adds a photo to a PDF in progress without downloading it. The limits
+// are those of an album PDF; a photo over them is refused and the session goes on.
+func (c *converter) addPage(ctx context.Context, b *bot.Bot, update *models.Update, fileID string, size int64) {
+	user, _ := messageUser(update)
+	chatID := update.Message.Chat.ID
+
+	unlock := c.dialogue.lock(user)
+	defer unlock()
+	pages, refusal := 0, ""
 	c.sessions.update(user, func(s *session) {
-		switch s.step {
-		case stepAwaitImage:
-			s.images = []pendingImage{{msgID: update.Message.ID, data: data}}
-			s.step = stepChooseLimit
-			s.inputPNG = isPNG(data)
-			s.sourceTitle = ""
-			if d := update.Message.Document; d != nil {
-				s.sourceTitle = d.FileName
-			}
-			toCompress = true
-		case stepCollectPDF:
-			s.images = append(s.images, pendingImage{msgID: update.Message.ID, data: data})
+		switch {
+		case s.step != stepCollectPDF:
+		case len(s.images) >= maxAlbumPages:
+			refusal = fmt.Sprintf(textPhotosTooMany, maxAlbumPages)
+		case s.imageSum+size > maxAlbumBytes:
+			refusal = fmt.Sprintf(textPhotosTooBig, maxAlbumBytes>>20)
+		default:
+			s.images = append(s.images, pendingImage{msgID: update.Message.ID, fileID: fileID, size: size})
+			s.imageSum += size
 			pages = len(s.images)
 		}
 	})
 	switch {
-	case toCompress:
-		text := textConvertChooseLimit + c.fileTip(user, update)
-		c.moveDown(ctx, b, chatID, user, text, limitKeyboard())
+	case refusal != "":
+		reply(ctx, b, c.log, chatID, refusal)
 	case pages > 0 && !c.dialogue.busy(user):
 		// Photos of an album arrive in parallel: only the last one waiting shows
 		// the total, so the chat gets one message, not one per photo.
@@ -585,8 +613,8 @@ func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, update *models.Up
 		c.stale(ctx, b, update, chatID)
 		return
 	}
-	images := sess.orderedImages()
-	if len(images) == 0 {
+	pending := sess.orderedImages()
+	if len(pending) == 0 {
 		unlock()
 		c.retry(ctx, b, chatID, user, sess, msgID, textConvertNoImages, pdfKeyboard())
 		return
@@ -594,9 +622,26 @@ func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, update *models.Up
 	msgID = c.show(ctx, b, chatID, msgID, textConvertProgress, nil)
 	unlock()
 
+	// The declared sizes are not trusted: the real total is checked as the pages arrive.
+	images := make([][]byte, 0, len(pending))
+	total := 0
+	for _, img := range pending {
+		data, err := c.download(ctx, b, img.fileID)
+		if err != nil {
+			c.log.ErrorContext(ctx, "convert download photo", "err", err, "user_id", user)
+			c.retry(ctx, b, chatID, user, sess, msgID, textConvertDownloadFailed, pdfKeyboard())
+			return
+		}
+		if total += len(data); total > maxAlbumBytes {
+			c.retry(ctx, b, chatID, user, sess, msgID, fmt.Sprintf(textPhotosOverLimit, maxAlbumBytes>>20), cancelKeyboard())
+			return
+		}
+		images = append(images, data)
+	}
+
 	pdf, err := convert.ImagesToPDF(images)
 	if err != nil {
-		c.log.ErrorContext(ctx, "convert images to pdf", "err", err, "pages", len(images))
+		c.log.ErrorContext(ctx, "convert images to pdf", "err", err, "user_id", user, "pages", len(images))
 		c.retry(ctx, b, chatID, user, sess, msgID, convertErrorText(err), pdfKeyboard())
 		return
 	}
@@ -627,12 +672,12 @@ func (c *converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64
 		unlock()
 		return false
 	}
-	if len(sess.images) == 0 {
+	if len(sess.source) == 0 {
 		c.sessions.restore(user, sess)
 		unlock()
 		return false
 	}
-	src := sess.images[0].data
+	src := sess.source
 	maxBytes := sess.maxBytes
 	msgID := c.show(ctx, b, chatID, sess.msgID, textConvertProgress, nil)
 	unlock()

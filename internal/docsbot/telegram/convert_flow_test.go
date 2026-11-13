@@ -443,3 +443,62 @@ func TestConvert_cancelReturnsToMainScenario(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "foobar"))
 	require.Contains(t, h.lastText(), "Не понимаю")
 }
+
+// The 21st photo is refused with a clear text; the session stays alive and the
+// first twenty still become a PDF. Photos are not downloaded while collecting.
+func TestConvert_photosToPDF_pageLimit(t *testing.T) {
+	h := newConvHarness(t)
+	ctx := t.Context()
+
+	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:pdf"))
+	for i := 1; i <= 21; i++ {
+		h.bot.ProcessUpdate(ctx, photoUpdate(i))
+	}
+
+	require.Empty(t, h.downloads, "photos are downloaded only when the PDF is built")
+	require.Contains(t, h.allTexts(), "не больше 20 страниц")
+
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
+
+	require.Len(t, h.docs, 1, "the session survived the refusal")
+	require.Contains(t, string(h.docs[0].data), "/Count 20")
+	require.Len(t, h.downloads, 20)
+}
+
+func TestConvert_photosToPDF_sizeLimit(t *testing.T) {
+	h := newConvHarness(t)
+	ctx := t.Context()
+
+	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:pdf"))
+	big := photoUpdate(1)
+	big.Message.Photo[1].FileSize = 21 << 20
+	h.bot.ProcessUpdate(ctx, big)
+	h.bot.ProcessUpdate(ctx, photoUpdate(2))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
+
+	require.Contains(t, h.allTexts(), "больше 20 МБ")
+	require.Len(t, h.docs, 1)
+	require.Contains(t, string(h.docs[0].data), "/Count 1", "only the photo that fit")
+}
+
+func TestIsExport(t *testing.T) {
+	tests := []struct {
+		name string
+		u    *models.Update
+		want bool
+	}{
+		{"command", convText("/export"), true},
+		{"command with bot name", convText("/export@most_bot"), true},
+		{"export button", callbackUpdate("d:exp"), true},
+		{"other command", convText("/list"), false},
+		{"similar command", convText("/exports"), false},
+		{"other button", callbackUpdate("d:del"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, telegram.IsExport(tt.u))
+		})
+	}
+}

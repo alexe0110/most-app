@@ -30,18 +30,23 @@ const (
 	stepPDFMenu                  // PDF actions: choosing the operation
 )
 
-// pendingImage is a downloaded image. msgID keeps album order (album photos
-// arrive as separate updates).
+// pendingImage is an image collected for a PDF. Only the Telegram file id and the
+// size are kept: the bytes are downloaded when the PDF is built, so a session
+// full of photos holds no image data in memory. msgID keeps album order (album
+// photos arrive as separate updates). The file id is never logged.
 type pendingImage struct {
-	msgID int
-	data  []byte
+	msgID  int
+	fileID string
+	size   int64 // as Telegram declared it; 0 when unknown
 }
 
 // session is one user's in-progress conversion, held only in memory.
 type session struct {
 	step     step
-	msgID    int // the dialogue message whose buttons drive the session; 0 until known
-	images   []pendingImage
+	msgID    int            // the dialogue message whose buttons drive the session; 0 until known
+	images   []pendingImage // PDF from photos: the pages collected so far
+	imageSum int64          // PDF from photos: declared size of images
+	source   []byte         // compress: the one image, already checked to be a photo (at most maxFileBytes)
 	maxBytes int
 	inputPNG bool // compress: the image is a PNG, so the format is worth asking
 	updated  time.Time
@@ -62,17 +67,11 @@ type pdfPart struct {
 	size   int
 }
 
-// orderedImages returns the image bytes in arrival order.
-func (s *session) orderedImages() [][]byte {
-	sorted := make([]pendingImage, len(s.images))
-	copy(sorted, s.images)
+// orderedImages returns the collected images in arrival order.
+func (s *session) orderedImages() []pendingImage {
+	sorted := slices.Clone(s.images)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].msgID < sorted[j].msgID })
-
-	out := make([][]byte, len(sorted))
-	for i, img := range sorted {
-		out[i] = img.data
-	}
-	return out
+	return sorted
 }
 
 // sessionStore holds sessions by Telegram user id. Safe for concurrent use:
@@ -95,7 +94,11 @@ func (s *sessionStore) live(user int64) (*session, bool) {
 	return s.liveLocked(user)
 }
 
+// liveLocked is live for a caller that holds the lock. Every access also drops
+// all timed-out sessions, so abandoned ones (and the image ids they hold) don't
+// pile up until their owners come back.
 func (s *sessionStore) liveLocked(user int64) (*session, bool) {
+	s.sweepLocked()
 	sess, ok := s.byUser[user]
 	if !ok {
 		return nil, false
@@ -105,6 +108,16 @@ func (s *sessionStore) liveLocked(user int64) (*session, bool) {
 		return nil, false
 	}
 	return sess, true
+}
+
+// sweepLocked deletes every session idle for longer than the TTL.
+func (s *sessionStore) sweepLocked() {
+	now := s.now()
+	for user, sess := range s.byUser {
+		if now.Sub(sess.updated) > s.ttl {
+			delete(s.byUser, user)
+		}
+	}
 }
 
 // has reports whether the user has a live session.
@@ -117,6 +130,7 @@ func (s *sessionStore) has(user int64) bool {
 func (s *sessionStore) start(user int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.sweepLocked()
 	s.byUser[user] = &session{step: stepChooseAction, updated: s.now()}
 }
 
@@ -185,6 +199,7 @@ func (s *sessionStore) claim(user int64, msgID int, at ...step) (session, bool) 
 func (s *sessionStore) restore(user int64, sess session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.sweepLocked()
 	if _, taken := s.byUser[user]; taken {
 		return
 	}
