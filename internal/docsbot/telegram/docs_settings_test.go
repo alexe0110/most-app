@@ -1,6 +1,8 @@
 package telegram_test
 
 import (
+	"bytes"
+	"errors"
 	"log/slog"
 	"testing"
 
@@ -10,6 +12,44 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
+
+func TestDeleteData_revokeFailureStillConfirms(t *testing.T) {
+	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{revokeErr: errors.New("google down")})
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Title: "p", TgFileUniqueID: "u1"})
+
+	b.ProcessUpdate(ctx, dataCallback("d:dd"))
+	b.ProcessUpdate(ctx, textUpdate("УДАЛИТЬ"))
+
+	require.True(t, has(sent.texts, "Данные удалены"), "sent %q", sent.texts)
+	require.False(t, has(sent.texts, "Что-то пошло не так"))
+	require.Empty(t, repo.docs)
+}
+
+func TestDisconnect_driveFailureIsShown(t *testing.T) {
+	b, sent, _ := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{revokeErr: errors.New("google down")})
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	b.ProcessUpdate(ctx, dataCallback("d:dc"))
+
+	require.False(t, has(sent.edits, "Google Диск отключён"), "the integration is still active: %q", sent.edits)
+	require.True(t, has(sent.texts, "Что-то пошло не так"), "texts %q", sent.texts)
+}
+
+func TestDeleteData_revokeFailureIsWarnedAndConfirmed(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	b, sent, _ := newBotWith(t, log, fakeDrive{revokeErr: errors.New("google down")})
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	b.ProcessUpdate(ctx, dataCallback("d:dd"))
+	b.ProcessUpdate(ctx, textUpdate("УДАЛИТЬ"))
+
+	require.True(t, has(sent.texts, "Данные удалены"), "sent %q", sent.texts)
+	require.Contains(t, buf.String(), `"level":"WARN"`)
+	require.Contains(t, buf.String(), "drive revoke incomplete")
+	require.NotContains(t, buf.String(), "delete all data", "not treated as a failure")
+}
 
 func TestStart_driveFolder(t *testing.T) {
 	b, sent, _ := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithDriveFolder("Most Docs Test"))

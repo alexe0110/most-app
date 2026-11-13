@@ -10,6 +10,17 @@ import (
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
+func TestSearch_blankQueryShowsHint(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Title: "Паспорт", Category: docsbot.CatPassport})
+
+	b.ProcessUpdate(ctx, textUpdate("   "))
+
+	require.True(t, has(sent.texts, "Напиши, что искать"), "sent %q", sent.texts)
+	require.False(t, has(sent.texts, "Ничего не нашёл"))
+}
+
 func TestSearch_findsSavedDocument(t *testing.T) {
 	b, sent, repo := newBot(t)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)

@@ -11,6 +11,48 @@ import (
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
+func TestSetCategory_backedUpCard(t *testing.T) {
+	tests := []struct {
+		name      string
+		connected bool
+		want      string
+	}{
+		{"connected: file follows via sync", true, "Обновляю на Google Диске"},
+		{"not connected: file stays in the old folder", false, "На Google Диске файл остался в прежней папке"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: tt.connected})
+			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			doc := repo.seed(docsbot.Document{
+				UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther,
+				BackupStatus: docsbot.BackupBackedUp, DriveFileID: "file-1", Title: "a",
+			})
+
+			b.ProcessUpdate(ctx, dataCallback("d:sc:"+string(doc.ID)+":auto"))
+
+			require.Equal(t, docsbot.CatAuto, repo.docs[doc.ID].Category)
+			require.True(t, has(sent.edits, tt.want), "edits %q", sent.edits)
+			require.False(t, has(sent.edits, "прежней папке") && tt.connected, "edits %q", sent.edits)
+		})
+	}
+}
+
+func TestOpenCard_backedUpShowsFileButNoFolder(t *testing.T) {
+	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: true})
+	repo.folders = map[docsbot.Category]string{docsbot.CatAuto: "folder-1"}
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := repo.seed(docsbot.Document{
+		UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatAuto,
+		BackupStatus: docsbot.BackupBackedUp, DriveFileID: "file-1", Title: "a",
+	})
+
+	b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(doc.ID)+":s"))
+
+	require.NotEmpty(t, sent.edits)
+	require.False(t, has(sent.edits, "прежней папке"), "the note is one-shot")
+}
+
 func TestOpenCard_editsMessageWithBack(t *testing.T) {
 	tests := []struct {
 		name     string

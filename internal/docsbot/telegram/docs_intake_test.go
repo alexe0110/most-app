@@ -10,6 +10,15 @@ import (
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
+func TestCategory_missingDocumentSaysGone(t *testing.T) {
+	b, sent, _ := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	b.ProcessUpdate(ctx, dataCallback("d:cat:missing:"+string(docsbot.CatOther)))
+
+	require.Contains(t, sent.edits[len(sent.edits)-1], "Этого документа уже нет")
+}
+
 func TestReceive_asksCategory(t *testing.T) {
 	b, sent, _ := newBot(t)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
