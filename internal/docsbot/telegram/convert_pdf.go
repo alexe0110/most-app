@@ -107,7 +107,7 @@ func (c *converter) runPDFOp(ctx context.Context, b *bot.Bot, chatID, tgUser int
 	if prev, ok := c.sessions.live(tgUser); ok {
 		c.sessions.end(tgUser)
 		if prev.msgID != 0 {
-			c.stripKeyboard(ctx, b, chatID, prev.msgID)
+			_ = c.out(b).clearKeyboard(ctx, chatID, prev.msgID)
 		}
 		_, _ = c.out(b).send(ctx, chatID, textPDFPrevCancelled)
 	}

@@ -153,10 +153,11 @@ func (c *converter) start(ctx context.Context, b *bot.Bot, update *models.Update
 	unlock := c.dialogue.lock(user)
 	defer unlock()
 	if prev, ok := c.sessions.live(user); ok && prev.msgID != 0 {
-		c.stripKeyboard(ctx, b, update.Message.Chat.ID, prev.msgID)
+		_ = c.out(b).clearKeyboard(ctx, update.Message.Chat.ID, prev.msgID)
 	}
 	c.sessions.start(user)
-	c.sessions.setMsg(user, c.send(ctx, b, update.Message.Chat.ID, textConvertStart, actionKeyboard()))
+	id, _ := c.out(b).send(ctx, update.Message.Chat.ID, textConvertStart, withKeyboard(actionKeyboard())) // a failed send is logged there; id 0 means no dialogue message
+	c.sessions.setMsg(user, id)
 }
 
 // cancel leaves converter mode.
@@ -169,7 +170,7 @@ func (c *converter) cancel(ctx context.Context, b *bot.Bot, update *models.Updat
 	if sess, ok := c.sessions.claim(user, 0); ok {
 		text = textConvertCancelled
 		if sess.msgID != 0 {
-			c.stripKeyboard(ctx, b, update.Message.Chat.ID, sess.msgID)
+			_ = c.out(b).clearKeyboard(ctx, update.Message.Chat.ID, sess.msgID)
 		}
 	}
 	_, _ = c.out(b).send(ctx, update.Message.Chat.ID, text)
@@ -335,23 +336,4 @@ func callbackChat(update *models.Update) (int64, bool) {
 		return 0, false
 	}
 	return update.CallbackQuery.Message.Message.Chat.ID, true
-}
-
-// sendMarkup sends text with an inline keyboard.
-func sendMarkup(ctx context.Context, b *bot.Bot, log *slog.Logger, chatID int64, text string, markup models.ReplyMarkup) {
-	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ReplyMarkup: markup}); err != nil {
-		log.ErrorContext(ctx, "send telegram message", "err", err)
-	}
-}
-
-// send is sendMarkup that returns the sent message's id (0 on failure).
-func (c *converter) send(ctx context.Context, b *bot.Bot, chatID int64, text string, markup models.ReplyMarkup) int {
-	msg, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ReplyMarkup: markup})
-	if err != nil || msg == nil {
-		if err != nil {
-			c.log.ErrorContext(ctx, "send telegram message", "err", err)
-		}
-		return 0
-	}
-	return msg.ID
 }

@@ -21,28 +21,14 @@ import (
 // clearButtons removes the keyboard from the message a button was pressed on.
 func (c *converter) clearButtons(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
 	if m := update.CallbackQuery.Message.Message; m != nil {
-		c.stripKeyboard(ctx, b, chatID, m.ID)
-	}
-}
-
-// stripKeyboard removes the keyboard from a message, best effort.
-func (c *converter) stripKeyboard(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
-	_, err := b.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
-		ChatID: chatID, MessageID: msgID, ReplyMarkup: tg.EmptyKeyboard(),
-	})
-	if err != nil {
-		c.log.ErrorContext(ctx, "clear buttons", "err", err)
+		_ = c.out(b).clearKeyboard(ctx, chatID, m.ID)
 	}
 }
 
 // deleteCallbackMessage removes the message a button was pressed on.
 func (c *converter) deleteCallbackMessage(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
-	m := update.CallbackQuery.Message.Message
-	if m == nil {
-		return
-	}
-	if _, err := b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: m.ID}); err != nil {
-		c.log.ErrorContext(ctx, "delete message", "err", err)
+	if m := update.CallbackQuery.Message.Message; m != nil {
+		_ = c.out(b).delete(ctx, chatID, m.ID)
 	}
 }
 
@@ -99,7 +85,7 @@ func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 // removeKeyboard strips the buttons from a sent message, when there is one.
 func (c *converter) removeKeyboard(ctx context.Context, b *bot.Bot, chatID int64, msg *models.Message) {
 	if msg != nil {
-		c.stripKeyboard(ctx, b, chatID, msg.ID)
+		_ = c.out(b).clearKeyboard(ctx, chatID, msg.ID)
 	}
 }
 
@@ -134,13 +120,6 @@ func (c *converter) download(ctx context.Context, b *bot.Bot, fileID string) ([]
 		return nil, errors.New("file exceeds download limit")
 	}
 	return data, nil
-}
-
-// answer stops the button's loading spinner.
-func (c *converter) answer(ctx context.Context, b *bot.Bot, callbackID string) {
-	if _, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: callbackID}); err != nil {
-		c.log.ErrorContext(ctx, "answer callback", "err", err)
-	}
 }
 
 // resultFileName is the file name of a converted document: the title without its

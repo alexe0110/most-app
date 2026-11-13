@@ -11,7 +11,6 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/platform/convert"
-	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // loadDoc reads the user's document (the domain checks ownership) and answers
@@ -42,9 +41,9 @@ func (c *converter) onMenu(ctx context.Context, b *bot.Bot, chatID int64, id doc
 	}
 	switch {
 	case isPDF(doc):
-		sendMarkup(ctx, b, c.log, chatID, textConvertMenu, pdfMenuKeyboard(id))
+		_, _ = c.out(b).send(ctx, chatID, textConvertMenu, withKeyboard(pdfMenuKeyboard(id)))
 	case convertible(doc):
-		sendMarkup(ctx, b, c.log, chatID, textConvertMenu, quickKeyboard(id, isWebP(doc)))
+		_, _ = c.out(b).send(ctx, chatID, textConvertMenu, withKeyboard(quickKeyboard(id, isWebP(doc))))
 	default:
 		_, _ = c.out(b).send(ctx, chatID, unsupportedText(doc))
 	}
@@ -153,14 +152,13 @@ func (c *converter) onSave(ctx context.Context, b *bot.Bot, update *models.Updat
 	case docsbot.Saved:
 		// The result message is a file, which can't be edited into a card: the
 		// card replaces a fresh placeholder instead.
-		msg, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: textConvertSaving})
+		id, err := c.out(b).send(ctx, chatID, textConvertSaving)
 		if err != nil {
-			c.log.ErrorContext(ctx, "send telegram message", "err", err)
 			return
 		}
-		c.renderSaved(ctx, b, chatID, msg.ID, res.user, r)
+		c.renderSaved(ctx, b, chatID, id, res.user, r)
 	case docsbot.NeedCategory:
-		sendMarkup(ctx, b, c.log, chatID, textChooseCategory, categoryKeyboard(actCategory, r.Doc.ID))
+		_, _ = c.out(b).send(ctx, chatID, textChooseCategory, withKeyboard(categoryKeyboard(actCategory, r.Doc.ID)))
 	case docsbot.AlreadySaved:
 		c.sendAlreadySaved(ctx, b, chatID, res.user, r.Doc.ID)
 	default:
@@ -246,13 +244,5 @@ func (c *converter) editResultCaption(ctx context.Context, b *bot.Bot, update *m
 	if m == nil {
 		return
 	}
-	if kb == nil {
-		kb = tg.EmptyKeyboard()
-	}
-	_, err := b.EditMessageCaption(ctx, &bot.EditMessageCaptionParams{
-		ChatID: chatID, MessageID: m.ID, Caption: caption, ReplyMarkup: kb,
-	})
-	if err != nil && !isNotModified(err) {
-		c.log.ErrorContext(ctx, "edit result caption", "err", err)
-	}
+	_ = c.out(b).edit(ctx, chatID, m.ID, caption, onCaption(), withKeyboard(kb))
 }
