@@ -12,6 +12,15 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
+const user docsbot.UserID = "user-1"
+
+func incoming(unique string) docsbot.IncomingFile {
+	return docsbot.IncomingFile{
+		UserID: user, Kind: docsbot.KindDocument, FileID: "f-" + unique,
+		FileUniqueID: unique, Title: "Паспорт",
+	}
+}
+
 // fakeDrive reports a configurable connection state and upload outcome.
 type fakeDrive struct {
 	connected  bool
