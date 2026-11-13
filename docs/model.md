@@ -73,7 +73,7 @@ erDiagram
         uuid id PK
         uuid user_id FK
         text kind
-        timestamptz closed_at
+        timestamptz closed_at "nullable"
     }
     docs_settings {
         uuid user_id PK

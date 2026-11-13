@@ -91,8 +91,12 @@ const (
 	textSendFailed     = "Не удалось отправить файл. Попробуй ещё раз."
 )
 
-// Plural forms of "file" and "image" (one, few, many) for plural().
+// Plural forms (one, few, many) for plural().
 const (
+	pluralDocumentOne  = "документ"
+	pluralDocumentFew  = "документа"
+	pluralDocumentMany = "документов"
+
 	pluralFileOne  = "файл"
 	pluralFileFew  = "файла"
 	pluralFileMany = "файлов"
@@ -330,11 +334,4 @@ const (
 	textSettingsInDrive  = "☁️ На Google Диске: %d"  // %d = backed up
 	textSettingsTelegram = "📥 Только в Telegram: %d" // %d = documents
 	textSettingsFailed   = "⚠️ Не выгрузились: %d"   // %d = documents
-)
-
-// Plural forms of "document" (one, few, many) for plural().
-const (
-	pluralDocumentOne  = "документ"
-	pluralDocumentFew  = "документа"
-	pluralDocumentMany = "документов"
 )

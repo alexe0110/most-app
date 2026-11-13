@@ -30,13 +30,13 @@ Docs (read only what the task needs, not everything): `docs/code_conventions.md`
 1. Comments explain why, not what. No ticket numbers or change history in code, names or tests (only `TODO(#N)`); that lives in the commit and PR.
 2. Grep for an existing helper before writing a new one; reuse it.
 3. Keep files under ~400 lines, functions under ~60, at most 5 parameters (more: a struct). Split by meaning, don't append.
-4. Tests sit next to the code and are named by behavior: `foo.go` -> `foo_test.go`. No `*_qa_test.go`, `*_edge_test.go`, `review*_test.go`; a new case is a row in an existing table.
+4. Tests sit next to the code and are named by behavior: `foo.go` -> `foo_test.go`. No new `*_qa_test.go`, `*_edge_test.go`, `review*_test.go` (existing ones get folded in); a new case is a row in an existing table.
 5. Several writes (DB twice, or DB and queue) are one transaction, one port method. Before the PR answer: what remains if the process dies between the steps?
 6. In-memory state needs a TTL, a size cap and cleanup, never file bytes; losing it on restart must be harmless and covered in `restart_test.go`.
 7. Every external call has a timeout; `http.DefaultClient` is forbidden; heavy CPU or memory work goes under a semaphore.
 8. Never drop an error silently: `_ = f()` only with a log next to it or a comment saying why it cannot fail.
 9. No cleverness: generics only for containers, no `init()`, no package-level mutable variables, no callbacks in port signatures. An exception needs a comment saying why.
-10. When you replace something, delete the old query, constant, text or error. One value, one constant (bot name, 20 MB, folder name). Update `docs/` in the same PR when packages, tables or flow change.
+10. When you replace something, delete the old query, constant, text or error. One value, one constant (bot name, folder name, 20 MB); a copy forced by layering says so in a comment. Update `docs/` in the same PR when packages, tables or flow change.
 
 ## Adding a feature
 
