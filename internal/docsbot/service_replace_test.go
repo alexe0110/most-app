@@ -11,6 +11,28 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
+func TestService_race_doubleTapReplaceQueuesOneSync(t *testing.T) {
+	repo := newFakeRepo()
+	doc := backedUpDoc(repo, func(d *docsbot.Document) { d.TgFileID, d.TgFileUniqueID = "tg-cur", "uniq-cur" })
+	svc, syncs := syncService(repo, fakeDrive{connected: true}, fakeFiles{})
+	in := docsbot.IncomingFile{FileID: "tg-new", FileUniqueID: "uniq-new", MIME: "application/pdf"}
+
+	parallel(6, func(int) {
+		rep, err := svc.ReplaceContent(t.Context(), user, doc.ID, in)
+		require.NoError(t, err)
+		switch rep.(type) {
+		case docsbot.Replaced, docsbot.ReplaceBusy:
+		default:
+			t.Errorf("unexpected reply %T", rep)
+		}
+	})
+
+	got := repo.docs[doc.ID]
+	require.Equal(t, "tg-new", got.TgFileID)
+	require.Equal(t, 1, got.MetaVersion, "swapped exactly once")
+	require.Len(t, syncs.jobs, 1)
+}
+
 func TestService_ReplaceContent(t *testing.T) {
 	newFile := docsbot.IncomingFile{FileID: "tg-new", FileUniqueID: "uniq-new", FileSize: 99, MIME: "application/pdf"}
 

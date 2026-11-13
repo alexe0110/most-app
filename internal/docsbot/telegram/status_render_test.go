@@ -6,11 +6,103 @@ import (
 	"testing"
 
 	"github.com/go-telegram/bot/models"
-
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
+
+func statusDoc(title string, st docsbot.BackupStatus) docsbot.Document {
+	return docsbot.Document{ID: "d", Title: title, Category: docsbot.CatPassport, BackupStatus: st, DriveFileID: "F1"}
+}
+
+func TestRenderStatusMessage_single(t *testing.T) {
+	sm := docsbot.StatusMessage{ID: "sm", Kind: docsbot.StatusSingle}
+
+	text, kb := renderStatusMessage(sm, []docsbot.Document{statusDoc("<a>.pdf", docsbot.BackupPending)}, nil)
+	require.Contains(t, text, "📄 <b>&lt;a&gt;.pdf</b>")
+	require.Contains(t, text, "🗂 Паспорт и ID")
+	require.Contains(t, text, "⏳ Загружаю на Google Диск…")
+	require.Equal(t, cb(actSend, "d"), kb.InlineKeyboard[0][0].CallbackData)
+	require.Len(t, kb.InlineKeyboard, 3, "card buttons only")
+
+	text, kb = renderStatusMessage(sm, []docsbot.Document{statusDoc("a.pdf", docsbot.BackupBackedUp)},
+		map[docsbot.Category]string{docsbot.CatPassport: "FOLD"})
+	require.Contains(t, text, "☁️ Google Диск · копия в Telegram")
+	require.Equal(t, btnCardOpen, kb.InlineKeyboard[0][1].Text)
+	require.Equal(t, btnOpenFolder, kb.InlineKeyboard[1][0].Text)
+
+	_, kb = renderStatusMessage(sm, []docsbot.Document{statusDoc("a.pdf", docsbot.BackupFailed)}, nil)
+	last := kb.InlineKeyboard[len(kb.InlineKeyboard)-1]
+	require.Equal(t, btnRetryBackup, last[0].Text)
+	require.Equal(t, "d:rsm:sm", last[0].CallbackData)
+
+	text, _ = renderStatusMessage(sm, []docsbot.Document{statusDoc("a", docsbot.BackupPending), statusDoc("b", docsbot.BackupPending)}, nil)
+	require.True(t, strings.HasPrefix(text, "⏳ Переношу на Google Диск · 0 из 2"), "more than one line falls back to a batch")
+}
+
+func TestRenderStatusMessage_tooLargeOnly(t *testing.T) {
+	text, kb := renderStatusMessage(batchMsg, []docsbot.Document{
+		batchDoc("a", docsbot.CatWork, docsbot.BackupTooLarge, ""),
+		batchDoc("b", docsbot.CatWork, docsbot.BackupTooLarge, ""),
+	}, nil)
+	require.Equal(t, "⚠️ Не перенёс 2: больше 20 МБ", text)
+	require.NotNil(t, kb)
+	require.Equal(t, [][]string{{btnMyDocs}}, buttonTexts(kb.InlineKeyboard), "nothing to retry")
+}
+
+func TestRenderStatusMessage_folderIDIsEscapedInLink(t *testing.T) {
+	text, _ := renderStatusMessage(batchMsg, []docsbot.Document{
+		batchDoc("a", docsbot.CatWork, docsbot.BackupBackedUp, ""),
+	}, map[docsbot.Category]string{docsbot.CatWork: `x"><b>`})
+	require.NotContains(t, text, `"><b>`)
+	require.Contains(t, text, "<a href=")
+}
+
+func TestStatusDonePlural(t *testing.T) {
+	tests := []struct {
+		n    int
+		want string
+	}{
+		{1, "1 документ"}, {2, "2 документа"}, {4, "4 документа"}, {5, "5 документов"},
+		{11, "11 документов"}, {12, "12 документов"}, {21, "21 документ"}, {22, "22 документа"},
+		{101, "101 документ"}, {111, "111 документов"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			lines := make([]docsbot.Document, tt.n)
+			for i := range lines {
+				lines[i] = batchDoc("d", docsbot.CatWork, docsbot.BackupBackedUp, "")
+			}
+			text, _ := renderStatusMessage(batchMsg, lines, nil)
+			require.True(t, strings.HasPrefix(text, "✅ Перенёс на Google Диск — "+tt.want+"\n"), text)
+		})
+	}
+}
+
+// Worst case: every category full of long escaped titles, every error reason,
+// a long folder id, still running. Header, error block and buttons must survive.
+func TestRenderStatusMessage_worstCaseKeepsEssentials(t *testing.T) {
+	folders := map[docsbot.Category]string{}
+	var lines []docsbot.Document
+	for _, cat := range docsbot.AllCategories {
+		folders[cat] = strings.Repeat("f", 100)
+		for i := 0; i < 300; i++ {
+			lines = append(lines, batchDoc(strings.Repeat("&<>\"😀", 20), cat, docsbot.BackupBackedUp, ""))
+		}
+	}
+	for _, r := range []docsbot.BackupReason{docsbot.BackupReasonQuota, docsbot.BackupReasonRevoked, docsbot.BackupReasonUnavailable} {
+		lines = append(lines, batchDoc("x", docsbot.CatWork, docsbot.BackupFailed, r))
+	}
+	lines = append(lines, batchDoc("big", docsbot.CatWork, docsbot.BackupTooLarge, ""), batchDoc("p", docsbot.CatWork, docsbot.BackupPending, ""))
+
+	text, kb := renderStatusMessage(batchMsg, lines, folders)
+
+	require.LessOrEqual(t, utf16Len(text), statusTextLimit)
+	require.True(t, strings.HasPrefix(text, fmt.Sprintf("⏳ Переношу на Google Диск · %d из %d\n", len(lines)-1, len(lines))))
+	require.Contains(t, text, "⚠️ Не перенёс 4:")
+	require.NotNil(t, kb)
+	require.Equal(t, [][]string{{"🔁 Повторить (3)"}}, buttonTexts(kb.InlineKeyboard))
+}
 
 func batchDoc(title string, cat docsbot.Category, st docsbot.BackupStatus, reason docsbot.BackupReason) docsbot.Document {
 	return docsbot.Document{ID: "d", Title: title, Category: cat, BackupStatus: st, BackupReason: reason}

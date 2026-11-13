@@ -69,3 +69,52 @@ func TestRenameStore_dropMessage(t *testing.T) {
 	_, ok = s.take(3)
 	require.True(t, ok, "another message is untouched")
 }
+
+func TestExportBatches(t *testing.T) {
+	photo := func(n int) []docsbot.Document { return repeatDocs(docsbot.KindPhoto, n) }
+	file := func(n int) []docsbot.Document { return repeatDocs(docsbot.KindDocument, n) }
+	cat := func(parts ...[]docsbot.Document) []docsbot.Document {
+		var out []docsbot.Document
+		for _, p := range parts {
+			out = append(out, p...)
+		}
+		return out
+	}
+	tests := []struct {
+		name string
+		in   []docsbot.Document
+		want []int // batch sizes
+	}{
+		{"nothing", nil, nil},
+		{"one", photo(1), []int{1}},
+		{"ten fit one album", photo(10), []int{10}},
+		{"eleven split", photo(11), []int{10, 1}},
+		{"twenty five", file(25), []int{10, 10, 5}},
+		{"kinds are never mixed", cat(photo(3), file(2), photo(1)), []int{3, 2, 1}},
+		{"alternating", cat(photo(1), file(1), photo(1), file(1)), []int{1, 1, 1, 1}},
+		{"run continues after a switch", cat(file(1), photo(12)), []int{1, 10, 2}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []int
+			total := 0
+			for _, batch := range exportBatches(tt.in) {
+				got = append(got, len(batch))
+				total += len(batch)
+				for _, d := range batch {
+					require.Equal(t, batch[0].Kind == docsbot.KindPhoto, d.Kind == docsbot.KindPhoto)
+				}
+			}
+			require.Equal(t, tt.want, got)
+			require.Equal(t, len(tt.in), total, "nothing lost")
+		})
+	}
+}
+
+func repeatDocs(kind docsbot.Kind, n int) []docsbot.Document {
+	out := make([]docsbot.Document, n)
+	for i := range out {
+		out[i] = docsbot.Document{Kind: kind}
+	}
+	return out
+}
