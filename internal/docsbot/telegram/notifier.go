@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -31,7 +30,7 @@ const editInterval = time.Second
 // Notifier posts upload outcomes to the user in Telegram. It satisfies
 // docsbot/jobs.Notifier (checked where it is bound to the worker in cmd).
 type Notifier struct {
-	bot   *tg.Bot
+	out   sender
 	users userLookup
 	auth  Authorizer
 	svc   statusService
@@ -50,7 +49,7 @@ const reconnectDebounce = 10 * time.Minute
 
 // NewNotifier builds the Telegram Notifier that the upload worker reports to.
 func NewNotifier(b *tg.Bot, users userLookup, auth Authorizer, svc statusService, log *slog.Logger, opts ...NotifierOption) *Notifier {
-	n := &Notifier{bot: b, users: users, auth: auth, svc: svc, log: log,
+	n := &Notifier{out: sender{api: b.Client(), log: log}, users: users, auth: auth, svc: svc, log: log,
 		lastEdit: map[docsbot.StatusMessageID]time.Time{}, revokedAt: map[docsbot.UserID]time.Time{}}
 	for _, opt := range opts {
 		opt(n)
@@ -87,21 +86,20 @@ func (n *Notifier) UploadOutcome(ctx context.Context, user docsbot.UserID, doc d
 	text, kb := renderStatusMessage(view.Message, view.Lines, view.FolderByCat)
 	n.throttle(view.Message.ID)
 	n.dropRename(view.Message.ChatID, view.Message.MessageID) // the redraw overwrites a prompt shown here
-	err = n.bot.EditHTML(ctx, view.Message.ChatID, view.Message.MessageID, text, kb)
+	err = n.out.edit(ctx, view.Message.ChatID, view.Message.MessageID, text, withHTML(), withKeyboard(kb), quiet())
 	n.dropRename(view.Message.ChatID, view.Message.MessageID)
 	var errs []error
-	switch msg := strings.ToLower(errString(err)); {
-	case err == nil, strings.Contains(msg, "message is not modified"):
-	case strings.Contains(msg, "message to edit not found"), strings.Contains(msg, "message can't be edited"):
-		mid, serr := n.bot.SendHTML(ctx, view.Message.ChatID, text, kb)
-		if serr != nil {
-			if !errors.Is(serr, tg.ErrBlocked) { // a block is already logged at Warn by tg.Bot
-				errs = append(errs, fmt.Errorf("resend status message: %w", serr))
+	switch err = n.out.ignoreBlocked(ctx, err); {
+	case err == nil:
+	case isMessageGone(err):
+		mid, serr := n.out.send(ctx, view.Message.ChatID, text, withHTML(), withKeyboard(kb), quiet())
+		if serr = n.out.ignoreBlocked(ctx, serr); serr != nil {
+			errs = append(errs, fmt.Errorf("resend status message: %w", serr))
+		} else if mid != 0 { // 0: the resend hit a blocked user
+			if uerr := n.svc.SetStatusMessageID(ctx, user, view.Message.ID, mid); uerr != nil {
+				errs = append(errs, fmt.Errorf("save status message id: %w", uerr))
 			}
-		} else if uerr := n.svc.SetStatusMessageID(ctx, user, view.Message.ID, mid); uerr != nil {
-			errs = append(errs, fmt.Errorf("save status message id: %w", uerr))
 		}
-	case errors.Is(err, tg.ErrBlocked): // already logged at Warn by tg.Bot
 	default:
 		errs = append(errs, fmt.Errorf("edit status message: %w", err))
 	}
@@ -134,7 +132,8 @@ func (n *Notifier) singleOutcome(ctx context.Context, user docsbot.UserID, doc d
 	if err != nil {
 		return fmt.Errorf("resolve tg user: %w", err)
 	}
-	return n.bot.SendMarkup(ctx, chatID, text, kb)
+	_, err = n.out.send(ctx, chatID, text, withKeyboard(kb), quiet())
+	return err
 }
 
 // SyncOutcome shows the document's card after a cloud sync failed or found the
@@ -159,8 +158,8 @@ func (n *Notifier) SyncOutcome(ctx context.Context, user docsbot.UserID, doc doc
 			url = ""
 		}
 	}
-	_, err = n.bot.SendHTML(ctx, chatID, cardText(card.Doc), cardKeyboardWith(card.Doc, "", "", url))
-	return ignoreBlocked(err)
+	_, err = n.out.send(ctx, chatID, cardText(card.Doc), withHTML(), withKeyboard(cardKeyboardWith(card.Doc, "", "", url)), quiet())
+	return n.out.ignoreBlocked(ctx, err)
 }
 
 // RemoteKept tells the user a deleted document's Drive file could not be trashed.
@@ -169,7 +168,8 @@ func (n *Notifier) RemoteKept(ctx context.Context, user docsbot.UserID) error {
 	if err != nil {
 		return fmt.Errorf("resolve tg user: %w", err)
 	}
-	return ignoreBlocked(n.bot.Send(ctx, chatID, textDeletedRemoteKept))
+	_, err = n.out.send(ctx, chatID, textDeletedRemoteKept, quiet())
+	return n.out.ignoreBlocked(ctx, err)
 }
 
 // throttle sleeps so consecutive edits of one status message are at least
@@ -184,13 +184,6 @@ func (n *Notifier) throttle(id docsbot.StatusMessageID) {
 	n.mu.Lock()
 	n.lastEdit[id] = time.Now()
 	n.mu.Unlock()
-}
-
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }
 
 // Reconnect asks the user to re-link Drive after access was revoked. At most one
@@ -214,12 +207,11 @@ func (n *Notifier) Reconnect(ctx context.Context, user docsbot.UserID) error {
 	}
 	if url, uErr := n.auth.AuthURL(ctx, string(user), docsbot.BotName); uErr != nil {
 		n.log.ErrorContext(ctx, "build auth url", "err", uErr)
-		err = n.bot.Send(ctx, chatID, textReconnect)
+		_, err = n.out.send(ctx, chatID, textReconnect, quiet())
 	} else {
-		err = n.bot.SendMarkup(ctx, chatID, textReconnect, reconnectKeyboard(url))
+		_, err = n.out.send(ctx, chatID, textReconnect, withKeyboard(reconnectKeyboard(url)), quiet())
 	}
-	blocked := errors.Is(err, tg.ErrBlocked)
-	if err != nil && !blocked {
+	if err = n.out.ignoreBlocked(ctx, err); err != nil {
 		return err
 	}
 	n.mu.Lock()

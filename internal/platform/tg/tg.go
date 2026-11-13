@@ -54,8 +54,9 @@ type Config struct {
 	GroupNotice string // sent once when the bot is used in a group, before it leaves
 }
 
-// Bot wraps the go-telegram client. The inbound adapter adds its handlers
-// through the register callback and never sees the client otherwise.
+// Bot wraps the go-telegram client: it owns the lifecycle (polling or webhook,
+// middleware, command menu) and file downloads. A bot adapter adds its handlers
+// through the register callback and sends messages with the client from Client.
 type Bot struct {
 	api  *bot.Bot
 	cfg  Config
@@ -83,6 +84,10 @@ func New(cfg Config, users Users, log *slog.Logger, register func(*bot.Bot)) (*B
 
 	return &Bot{api: api, cfg: cfg, http: &http.Client{Timeout: downloadWait}, log: log}, nil
 }
+
+// Client is the underlying go-telegram client, for adapters that send messages
+// outside an update handler (e.g. upload notices, the OAuth return).
+func (b *Bot) Client() *bot.Bot { return b.api }
 
 // RegisterRoutes mounts the webhook handler on mux. It is a no-op in polling
 // mode, so callers can always call it.

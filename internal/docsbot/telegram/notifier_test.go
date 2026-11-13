@@ -381,7 +381,7 @@ func TestNotifier_Reconnect_blockedArmsDebounce(t *testing.T) {
 	require.Len(t, e.api.callsOf("sendMessage"), 1, "the second call is debounced")
 }
 
-// tg.Bot already logs a block at Warn; NotifyConnected must not return it as an error.
+// A block is logged by the sender; NotifyConnected must not return it as an error.
 func TestNotifyConnected_blockedIsNotAnError(t *testing.T) {
 	e := newNotifierEnv(t)
 	e.api.blocked = true
