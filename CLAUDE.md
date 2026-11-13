@@ -1,6 +1,6 @@
 # CLAUDE.md — Most
 
-Most is a series of Telegram bots built on a shared Go core. The first bot, Most Docs, saves documents to the user's own Google Drive; until Drive is connected, documents are kept in Telegram.
+Most is a series of Telegram bots built on a shared Go core. The first bot, Most Files (`docsbot`), saves documents to the user's own Google Drive; until Drive is connected, documents are kept in Telegram.
 
 Docs (read only what the task needs, not everything): `docs/code_conventions.md` (read before writing code; skim the relevant sections), `docs/product.md`, `docs/architecture.md`, `docs/model.md`. Tasks: GitHub Issues (milestone MVP).
 
@@ -8,7 +8,7 @@ Docs (read only what the task needs, not everything): `docs/code_conventions.md`
 
 - `internal/<bot>/` — domain: entities, `Service` with use cases, ports in `ports.go`.
 - `internal/<bot>/<adapter>/` — adapters: `telegram/`, `jobs/` (inbound), `postgres/` (outbound).
-- `internal/platform/` — shared core for all bots (config, log, db, jobs, tg, oauth, gdrive, httpx, billing).
+- `internal/platform/` — shared core for all bots (config, logging, db, jobs, tg, oauth, gdrive, convert).
 - `cmd/<bot>/main.go` — manual dependency wiring, no DI frameworks.
 - Use cases return the meaning of a reply (`docsbot.Reply`); the channel adapter renders buttons and texts.
 

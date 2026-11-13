@@ -34,7 +34,7 @@ flowchart LR
 
 | Пакет                     | Может импортировать                             | Не может                                                                                       |
 |---------------------------|-------------------------------------------------|------------------------------------------------------------------------------------------------|
-| `internal/docsbot` (домен)   | stdlib, `platform/clock` и т.п. утилиты без I/O | `docsbot/telegram`, `docsbot/postgres`, `platform/tg`, `platform/db`, `platform/gdrive`, внешние SDK |
+| `internal/docsbot` (домен)   | stdlib и пакеты без I/O | `docsbot/telegram`, `docsbot/postgres`, `platform/tg`, `platform/db`, `platform/gdrive`, внешние SDK |
 | `internal/docsbot/<adapter>` | домен `docsbot`, `platform/*`, SDK              | другой бот (`internal/calendar`)                                                               |
 | `internal/platform/*`     | stdlib, SDK, другие `platform/*`                | любой бот                                                                                      |
 | `cmd/<bot>`               | всё                                             | —                                                                                              |
@@ -47,7 +47,7 @@ flowchart LR
 cmd/
   docsbot/main.go          # сборка зависимостей и запуск
 internal/
-  docsbot/                 # домен Most Docs
+  docsbot/                 # домен Most Files
     document.go            # сущности и value objects
     service.go             # юзкейсы (методы Service)
     ports.go               # интерфейсы, нужные домену
@@ -55,11 +55,11 @@ internal/
     reply.go               # ответы юзкейсов (смысл, не UI)
     service_test.go        # unit-тесты с фейками
     fakes_test.go          # фейки портов
-    telegram/              # входящий адаптер: апдейт → service → рендер
-    jobs/                  # входящий адаптер: задачи очереди → service
+    telegram/              # входящий адаптер: апдейт → service → рендер; texts.go — тексты
+    jobs/                  # входящий адаптер: воркеры River (upload, sync, trash, sweep, purge_pending)
     postgres/              # исходящий адаптер: Repo через sqlc
   platform/                # общее ядро для всех ботов
-    config/  log/  db/  jobs/  tg/  oauth/  gdrive/  httpx/  billing/
+    config/  logging/  db/  jobs/  tg/  oauth/  gdrive/  convert/
 migrations/                # goose, *.sql
 tests/e2e/                 # e2e против dev-стенда
 docs/                      # дизайн-доки
@@ -150,20 +150,24 @@ sequenceDiagram
 Без DI-фреймворков. Всё собирается руками в `main.go` через конструкторы `New…` — аналог `Depends` + lifespan в FastAPI.
 
 ```go
-func main() {
+func run() error { // main вызывает run и печатает ошибку
     ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
     defer stop()
 
-    cfg := config.MustLoad()
+    cfg, err := config.Load()
+    if err != nil {
+        return err
+    }
     log := logging.New(cfg.LogLevel)
-    pool := db.MustConnect(ctx, cfg.DatabaseURL)
+    pool, err := db.Connect(ctx, cfg.DatabaseURL)
+    if err != nil {
+        return err
+    }
+    defer pool.Close()
 
     repo := postgres.NewRepo(pool)
-    drive := gdrive.New(oauth.New(cfg.Google, pool))
-    svc := docsbot.NewService(repo, drive)
-
-    bot := telegram.NewHandler(svc, log)
-    run(ctx, bot, jobs.NewWorker(svc, pool))
+    // дальше: oauth.New, gdrive.New, docsbot.NewService(repo, ...),
+    // telegram.Register(...), воркеры River, HTTP-сервер — см. cmd/docsbot/main.go
 }
 ```
 
@@ -194,13 +198,13 @@ func Compress(img []byte, maxBytes int, format Format) ([]byte, error)
 
 - Коротко и просто. Если комментарий длиннее кода — упрости одно из двух.
 - Не дублируй сигнатуру и очевидное (`// increment i` не нужен).
-- Поясняй неочевидное: инварианты, обход багов библиотек, причину решения (со ссылкой на issue).
+- Поясняй неочевидное: инварианты, обход багов библиотек, причину решения. Номера тикетов и историю правок в код не пишем — они в коммите и PR.
 - `TODO:` / `FIXME:` — с номером задачи: `// TODO(#36): ...`.
 - Не оставляй закомментированный код — он есть в git.
 
 ## 8. Ошибки
 
-- Возвращаем `error`, не паникуем. `panic` — только для ошибок программиста при старте (`MustLoad`).
+- Возвращаем `error`, не паникуем. `panic` — только для ошибок программиста.
 - Оборачиваем с контекстом: `fmt.Errorf("upload to drive: %w", err)`.
 - Проверяем через `errors.Is` / `errors.As`.
 - Доменные ошибки — в `errors.go` домена. Адаптеры переводят свои ошибки в доменные (`pgx.ErrNoRows` → `docsbot.ErrNotFound`).
@@ -225,7 +229,7 @@ func Compress(img []byte, maxBytes int, format Format) ([]byte, error)
 
 - Запросы — в `.sql` файлах, код генерирует `sqlc`. Сгенерированный код живёт только в адаптере `postgres/`.
 - Миграции — `goose`, файлы `migrations/NNNN_name.sql`, только вперёд в проде.
-- Транзакция нужна юзкейсу → порт `Tx(ctx, func(Repo) error) error`, SQL наружу не течёт.
+- Юзкейсу нужно несколько записей атомарно (БД и очередь) → один метод порта (`Uploads`, `Syncs`); транзакция открывается внутри адаптера `postgres/`, SQL наружу не течёт.
 
 ## 12. Тесты
 
