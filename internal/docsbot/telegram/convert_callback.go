@@ -174,12 +174,6 @@ func (c *converter) show(ctx context.Context, b *bot.Bot, chatID int64, msgID in
 	return msgID // both failed: keep the old dialogue message so the session survives
 }
 
-// isNotModified reports Telegram's answer to an edit that changes nothing. The Bot
-// API has no error code for it, only the description text.
-func isNotModified(err error) bool {
-	return strings.Contains(strings.ToLower(err.Error()), "message is not modified")
-}
-
 // moveDown shows the next step of a dialogue that a user's message advanced: a
 // new message at the bottom of the chat, next to what the user just sent, then
 // the previous dialogue message is removed. Callers hold the user's dialogue lock.

@@ -69,9 +69,3 @@ func reply(ctx context.Context, b *bot.Bot, log *slog.Logger, chatID int64, text
 		log.ErrorContext(ctx, "send telegram message", "err", err)
 	}
 }
-
-// traceAPI logs one Telegram API call at Debug: method and timing only. The
-// error, if any, is logged once by the caller.
-func traceAPI(ctx context.Context, log *slog.Logger, op string, start time.Time) {
-	log.DebugContext(ctx, "telegram api", "op", op, "duration_ms", time.Since(start).Milliseconds())
-}
