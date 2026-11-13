@@ -2,7 +2,9 @@ package tg
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -47,6 +49,31 @@ func recoverPanic(log *slog.Logger) bot.Middleware {
 				}
 			}()
 			next(ctx, b, update)
+		}
+	}
+}
+
+// handlerTimeout is the budget of one update handler. It is above the slowest
+// regular flow (several Telegram downloads plus a PDF operation) and exists so a
+// hung call to Telegram or Drive cannot hold a handler goroutine forever.
+const handlerTimeout = 2 * time.Minute
+
+// withTimeout bounds a handler by d. Updates for which unbounded returns true
+// (nil means none) get no deadline: a long job that is paced and capped by its
+// own logic, like resending all documents, would be cut off mid-way otherwise.
+func withTimeout(d time.Duration, unbounded func(*models.Update) bool, log *slog.Logger) bot.Middleware {
+	return func(next bot.HandlerFunc) bot.HandlerFunc {
+		return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+			if unbounded != nil && unbounded(update) {
+				next(ctx, b, update)
+				return
+			}
+			ctx, cancel := context.WithTimeout(ctx, d)
+			defer cancel()
+			next(ctx, b, update)
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				log.Warn("telegram handler timed out", "update_id", update.ID, "kind", updateKind(update))
+			}
 		}
 	}
 }

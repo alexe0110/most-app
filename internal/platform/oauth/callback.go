@@ -44,7 +44,7 @@ func (s *Service) Callback() http.HandlerFunc {
 			return
 		}
 
-		tok, err := s.config().Exchange(ctx, code, oauth2.VerifierOption(st.Verifier))
+		tok, err := s.config().Exchange(s.tokenCtx(ctx), code, oauth2.VerifierOption(st.Verifier))
 		if err != nil {
 			s.log.Error("oauth code exchange failed", "err", err)
 			s.redirect(w, r)

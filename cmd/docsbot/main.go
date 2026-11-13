@@ -38,12 +38,7 @@ func main() {
 
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer func() {
-		fmt.Println("стопаю сервис")
-		fmt.Println("пу пу пу")
-		time.Sleep(2 * time.Second)
-		stop()
-	}()
+	defer stop()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -116,6 +111,7 @@ func run() error {
 		PublicURL:     cfg.PublicURL,
 		WebhookSecret: cfg.TelegramWebhookSecret,
 		GroupNotice:   telegram.GroupNotice(),
+		Unbounded:     telegram.IsExport,
 	}, repo, log, func(b *bot.Bot) {
 		telegram.Register(b, log, svc, oauthSvc, telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder))
 	})

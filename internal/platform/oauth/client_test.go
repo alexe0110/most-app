@@ -3,9 +3,12 @@ package oauth
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 )
 
 // seedIntegration stores an active integration with an encrypted refresh token.
@@ -153,4 +156,49 @@ func TestConnected(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// hangingGoogle never answers, so only a client timeout can end a request.
+func hangingGoogle(t *testing.T) *httptest.Server {
+	t.Helper()
+	release := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	t.Cleanup(func() { close(release); ts.Close() })
+	return ts
+}
+
+func TestNew_defaultClientHasTimeout(t *testing.T) {
+	svc := newTestService(t, newFakeStore(), nil, &fakeGoogle{})
+	require.Equal(t, requestTimeout, svc.httpClient.Timeout)
+}
+
+func TestClient_hungTokenEndpointTimesOut(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestService(t, store, nil, &fakeGoogle{})
+	ts := hangingGoogle(t)
+	svc.endpoint = oauth2.Endpoint{TokenURL: ts.URL}
+	svc.httpClient = &http.Client{Timeout: 50 * time.Millisecond}
+	seedIntegration(t, svc, store, statusActive)
+
+	start := time.Now()
+	_, err := svc.Client(t.Context(), "user-1", "docs")
+
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrAccessRevoked, "a timeout is not a revoked grant")
+	require.Less(t, time.Since(start), 5*time.Second)
+}
+
+func TestRevoke_hungEndpointTimesOut(t *testing.T) {
+	store := newFakeStore()
+	svc := newTestService(t, store, nil, &fakeGoogle{})
+	svc.revokeURL = hangingGoogle(t).URL
+	svc.httpClient = &http.Client{Timeout: 50 * time.Millisecond}
+	seedIntegration(t, svc, store, statusActive)
+
+	require.Error(t, svc.Revoke(t.Context(), "user-1", "docs"))
+	// The best-effort variant still ends up marked revoked locally.
+	require.NoError(t, svc.RevokeBestEffort(t.Context(), "user-1", "docs"))
+	ig, err := store.Integration(t.Context(), "user-1", "docs", provider)
+	require.NoError(t, err)
+	require.Equal(t, statusRevoked, ig.Status)
 }

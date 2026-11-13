@@ -196,11 +196,12 @@ func TestNotifier_UploadOutcome_editErrors(t *testing.T) {
 		name       string
 		editErr    string
 		wantResend bool
+		wantErr    bool
 	}{
 		{name: "not modified is ignored", editErr: "Bad Request: message is not modified: specified new message content and reply markup are exactly the same"},
 		{name: "deleted message is resent", editErr: "Bad Request: message to edit not found", wantResend: true},
 		{name: "uneditable message is resent", editErr: "Bad Request: message can't be edited", wantResend: true},
-		{name: "other error is not resent", editErr: "Bad Request: chat not found"},
+		{name: "other error is returned for the worker to log", editErr: "Bad Request: chat not found", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -208,7 +209,12 @@ func TestNotifier_UploadOutcome_editErrors(t *testing.T) {
 			e.api.editErr = tt.editErr
 			sm, docs := e.batch(t, docsbot.BackupBackedUp, docsbot.BackupUploading)
 
-			require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, docs[0].ID), "edit failures do not fail the job")
+			err := e.n.UploadOutcome(t.Context(), testUserID, docs[0].ID)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
 
 			sends := e.api.callsOf("sendMessage")
 			if !tt.wantResend {

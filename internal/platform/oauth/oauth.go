@@ -31,6 +31,11 @@ const (
 	// CallbackPath is where the OAuth redirect lands on the shared HTTP mux.
 	CallbackPath = "/oauth/google/callback"
 
+	// requestTimeout bounds one call to Google's token and revoke endpoints: they
+	// answer in well under a second, and a hung one must not hold a handler or a
+	// worker until its own deadline.
+	requestTimeout = 10 * time.Second
+
 	stateTTL         = 10 * time.Minute
 	stateBytes       = 32
 	defaultRevokeURL = "https://oauth2.googleapis.com/revoke"
@@ -69,6 +74,9 @@ func WithEndpoint(e oauth2.Endpoint) Option { return func(s *Service) { s.endpoi
 // WithRevokeURL overrides the token-revocation endpoint.
 func WithRevokeURL(u string) Option { return func(s *Service) { s.revokeURL = u } }
 
+// WithHTTPClient overrides the client used for token and revoke requests.
+func WithHTTPClient(c *http.Client) Option { return func(s *Service) { s.httpClient = c } }
+
 // New validates the config and builds the Service. onConnected may be nil.
 func New(cfg Config, store Store, onConnected OnConnected, log *slog.Logger, opts ...Option) (*Service, error) {
 	enc, err := newEncryptor(cfg.TokenEncKey)
@@ -86,12 +94,19 @@ func New(cfg Config, store Store, onConnected OnConnected, log *slog.Logger, opt
 		log:          log,
 		endpoint:     google.Endpoint,
 		revokeURL:    defaultRevokeURL,
-		httpClient:   http.DefaultClient,
+		httpClient:   &http.Client{Timeout: requestTimeout},
 	}
 	for _, o := range opts {
 		o(s)
 	}
 	return s, nil
+}
+
+// tokenCtx makes the oauth2 library use the Service's client (with its timeout)
+// for token exchange and refresh; otherwise it falls back to http.DefaultClient,
+// which never times out.
+func (s *Service) tokenCtx(ctx context.Context) context.Context {
+	return context.WithValue(ctx, oauth2.HTTPClient, s.httpClient)
 }
 
 // config is the oauth2 config for the current request.

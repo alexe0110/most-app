@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -96,4 +97,35 @@ func TestUploadWorker_failureReasons(t *testing.T) {
 			require.Zero(t, notify.reconnect, "no reconnect prompt")
 		})
 	}
+}
+
+type failingNotifier struct{}
+
+func (failingNotifier) UploadOutcome(context.Context, docsbot.UserID, docsbot.DocumentID) error {
+	return errors.New("telegram is down")
+}
+
+func (failingNotifier) Reconnect(context.Context, docsbot.UserID) error {
+	return errors.New("telegram is down")
+}
+
+// A failed notice is logged with ids only and never fails the job: a retry
+// would repeat the upload for a message that is best-effort anyway.
+func TestUploadWorker_notifyErrorIsLoggedNotReturned(t *testing.T) {
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	w := &uploadWorker{svc: &revokedBackuper{err: docsbot.ErrDriveRevoked}, notify: failingNotifier{}, log: log}
+	job := &river.Job[UploadDocumentArgs]{
+		JobRow: &rivertype.JobRow{ID: 1, Attempt: 1, MaxAttempts: 3},
+		Args:   UploadDocumentArgs{UserID: "u1", DocumentID: "d1"},
+	}
+
+	require.NoError(t, w.Work(t.Context(), job))
+
+	out := logs.String()
+	require.Contains(t, out, "notify user failed")
+	require.Contains(t, out, "notice=UploadOutcome")
+	require.Contains(t, out, "notice=Reconnect")
+	require.Contains(t, out, "user_id=u1")
+	require.Contains(t, out, "doc_id=d1")
 }

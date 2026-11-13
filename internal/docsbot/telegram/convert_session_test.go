@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"log/slog"
+	"reflect"
 	"testing"
 	"time"
 
@@ -28,15 +29,19 @@ func TestSessionStore_orderedImages(t *testing.T) {
 	// Append out of order; album photos may be processed concurrently.
 	store.update(1, func(s *session) {
 		s.images = append(s.images,
-			pendingImage{msgID: 3, data: []byte("c")},
-			pendingImage{msgID: 1, data: []byte("a")},
-			pendingImage{msgID: 2, data: []byte("b")},
+			pendingImage{msgID: 3, fileID: "c"},
+			pendingImage{msgID: 1, fileID: "a"},
+			pendingImage{msgID: 2, fileID: "b"},
 		)
 	})
 
 	sess, ok := store.live(1)
 	require.True(t, ok)
-	require.Equal(t, [][]byte{[]byte("a"), []byte("b"), []byte("c")}, sess.orderedImages())
+	var ids []string
+	for _, img := range sess.orderedImages() {
+		ids = append(ids, img.fileID)
+	}
+	require.Equal(t, []string{"a", "b", "c"}, ids)
 }
 
 func TestSessionStore_endReportsLiveness(t *testing.T) {
@@ -105,4 +110,32 @@ func TestConverter_claimMenuOnce(t *testing.T) {
 	release()
 	_, afterRelease := c.claimMenu(1, 10)
 	require.True(t, afterRelease)
+}
+
+// A photo session keeps file ids and sizes, never image bytes: a few users with
+// twenty photos each must not be able to exhaust memory.
+func TestPendingImage_holdsNoBytes(t *testing.T) {
+	typ := reflect.TypeFor[pendingImage]()
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		require.NotEqual(t, reflect.Slice, f.Type.Kind(), "field %s must not hold a slice (bytes)", f.Name)
+	}
+}
+
+// Timed-out sessions of other users are dropped on any access, not only when
+// their own owner returns.
+func TestSessionStore_expiredSessionsAreSwept(t *testing.T) {
+	now := time.Now()
+	store := newSessionStore(func() time.Time { return now })
+	store.start(1)
+	store.start(2)
+	store.update(1, func(s *session) { s.images = append(s.images, pendingImage{msgID: 1, fileID: "f"}) })
+
+	now = now.Add(sessionTTL + time.Second)
+	store.start(3)
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Len(t, store.byUser, 1, "only the fresh session is left")
+	require.Contains(t, store.byUser, int64(3))
 }

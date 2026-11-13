@@ -1775,3 +1775,18 @@ func (s *confirmStore) take(user int64) bool {
 	delete(s.m, user)
 	return s.now().Sub(at) <= confirmTTL
 }
+
+// IsExport reports an update that starts the export of all documents. The export
+// is paced under the Bot API rate limit and capped by the service, so it can
+// outlast a regular handler budget and runs without one.
+func IsExport(u *models.Update) bool {
+	if cb := u.CallbackQuery; cb != nil {
+		return cb.Data == cbPrefix+actExport
+	}
+	if m := u.Message; m != nil {
+		cmd, _, _ := strings.Cut(m.Text, " ")
+		cmd, _, _ = strings.Cut(cmd, "@")
+		return cmd == "/export"
+	}
+	return false
+}
