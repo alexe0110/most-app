@@ -74,10 +74,11 @@ func albumBot(t *testing.T, drive fakeDrive) (*fakeTimer, func(*models.Update), 
 	return ft, send, sent, repo
 }
 
-func pendingCount(repo *fakeRepo, group string) int {
+// pendingCount counts pending documents of the test album "alb".
+func pendingCount(repo *fakeRepo) int {
 	n := 0
 	for _, d := range repo.docs {
-		if d.MediaGroupID == group && d.Status == docsbot.StatusPending {
+		if d.MediaGroupID == "alb" && d.Status == docsbot.StatusPending {
 			n++
 		}
 	}
@@ -90,7 +91,7 @@ func TestAlbum_threePhotosThreeDocsOnePicker(t *testing.T) {
 	for _, uid := range []string{"p1", "p2", "p3"} {
 		send(albumPhoto("alb", uid))
 	}
-	require.Equal(t, 3, pendingCount(repo, "alb"), "each photo is its own document")
+	require.Equal(t, 3, pendingCount(repo), "each photo is its own document")
 	require.Empty(t, sent.texts, "no picker before the debounce elapses")
 
 	ft.fire()
@@ -129,7 +130,7 @@ func TestAlbum_withDuplicateReportsCount(t *testing.T) {
 	}
 	ft.fire()
 
-	require.Equal(t, 2, pendingCount(repo, "alb"), "the duplicate creates no document")
+	require.Equal(t, 2, pendingCount(repo), "the duplicate creates no document")
 	require.Len(t, sent.texts, 1)
 	require.Contains(t, sent.texts[0], "2 изображения") // the PDF choice replaces the picker
 	require.Contains(t, sent.texts[0], "Уже были сохранены: 1")
@@ -149,9 +150,9 @@ func TestAlbum_pickerSavesWholeAlbum(t *testing.T) {
 	}
 	require.NotEmpty(t, first)
 
-	send(dataCallback(100, "d:ga:"+string(first)+":"+string(docsbot.CatReceipts)))
+	send(dataCallback("d:ga:" + string(first) + ":" + string(docsbot.CatReceipts)))
 
-	require.Zero(t, pendingCount(repo, "alb"))
+	require.Zero(t, pendingCount(repo))
 	require.Len(t, repo.savedFor(testUserID), 3)
 	require.True(t, has(sent.edits, "Сохранил 3 файла"), "edits %q", sent.edits)
 }
@@ -253,7 +254,7 @@ func TestChooseCategory_tooLargeStaysInTelegram(t *testing.T) {
 	})
 
 	b.ProcessUpdate(tg.ContextWithUserID(t.Context(), testUserID),
-		dataCallback(100, "d:cat:"+string(doc.ID)+":"+string(docsbot.CatOther)))
+		dataCallback("d:cat:"+string(doc.ID)+":"+string(docsbot.CatOther)))
 
 	require.Equal(t, docsbot.BackupTooLarge, repo.docs[doc.ID].BackupStatus)
 	require.True(t, has(sent.edits, "Слишком большой для Google Диска"), "edits %q", sent.edits)
@@ -281,7 +282,7 @@ func TestAlbum_allDuplicatesShowNoPicker(t *testing.T) {
 	send(albumPhoto("alb", "p2"))
 	ft.fire()
 
-	require.Zero(t, pendingCount(repo, "alb"))
+	require.Zero(t, pendingCount(repo))
 	require.Len(t, sent.texts, 1, "one summary, no picker: %q", sent.texts)
 	require.Contains(t, sent.texts[0], "Уже были сохранены: 2")
 	require.NotContains(t, sent.markups[0], "d:ga:")
@@ -295,7 +296,7 @@ func TestAlbum_photosAndDocumentsGetOnePicker(t *testing.T) {
 	send(albumDocument("alb", "d2", "scan2.pdf"))
 	ft.fire()
 
-	require.Equal(t, 3, pendingCount(repo, "alb"))
+	require.Equal(t, 3, pendingCount(repo))
 	require.Len(t, sent.texts, 1)
 	require.Contains(t, sent.markups[0], "d:ga:")
 }
@@ -313,9 +314,9 @@ func TestAlbum_pickerAfterRestartStillSavesAlbum(t *testing.T) {
 		anchor = d.ID
 	}
 
-	send(dataCallback(100, "d:ga:"+string(anchor)+":"+string(docsbot.CatReceipts)))
+	send(dataCallback("d:ga:" + string(anchor) + ":" + string(docsbot.CatReceipts)))
 
-	require.Zero(t, pendingCount(repo, "alb"))
+	require.Zero(t, pendingCount(repo))
 	require.Len(t, repo.savedFor(testUserID), 2)
 }
 
@@ -329,7 +330,7 @@ func TestAlbum_pickerDoubleTapOpensOneStatus(t *testing.T) {
 		})
 		anchor = d.ID
 	}
-	tap := dataCallback(100, "d:ga:"+string(anchor)+":"+string(docsbot.CatReceipts))
+	tap := dataCallback("d:ga:" + string(anchor) + ":" + string(docsbot.CatReceipts))
 
 	send(tap)
 	edits := len(sent.edits)

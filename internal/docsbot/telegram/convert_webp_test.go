@@ -144,7 +144,7 @@ func TestConvertHEIC_noConvertRowAndRefusedCallbacks(t *testing.T) {
 		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "image/heic",
 		Category: docsbot.CatOther, Title: "IMG.heic", TgFileID: "x", TgFileUniqueID: "heic-uniq",
 	})
-	b.ProcessUpdate(ctx, dataCallback(100, "d:oc:"+string(doc.ID)+":s"))
+	b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(doc.ID)+":s"))
 	require.Len(t, sent.editMarkups, 1)
 	require.NotContains(t, sent.editMarkups[0], "conv:doc:")
 }

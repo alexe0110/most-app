@@ -42,7 +42,7 @@ func seedPending(repo *fakeRepo, n int) []docsbot.DocumentID {
 
 // pick sends a category choice for the document from picker message msgID.
 func pick(ctx context.Context, b *bot.Bot, id docsbot.DocumentID, msgID int) {
-	b.ProcessUpdate(ctx, dataCallbackMsg(100, msgID, "d:cat:"+string(id)+":"+string(docsbot.CatOther)))
+	b.ProcessUpdate(ctx, dataCallbackMsg(msgID, "d:cat:"+string(id)+":"+string(docsbot.CatOther)))
 }
 
 func TestChooseCategory_driveOn_oneFileBecomesLiveCard(t *testing.T) {
@@ -142,7 +142,7 @@ func closeStatus(t *testing.T, repo *fakeRepo, id docsbot.StatusMessageID) error
 }
 
 func retryUpdate(smID docsbot.StatusMessageID) *models.Update {
-	return dataCallback(100, "d:rsm:"+string(smID))
+	return dataCallback("d:rsm:" + string(smID))
 }
 
 func TestRetryBatch_requeuesFailedAndRedraws(t *testing.T) {
@@ -182,7 +182,7 @@ func TestTransfer_editsOfferIntoStatusMessage(t *testing.T) {
 		repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: fmt.Sprintf("f%d", i)})
 	}
 
-	b.ProcessUpdate(ctx, dataCallbackMsg(100, 21, "d:try"))
+	b.ProcessUpdate(ctx, dataCallbackMsg(21, "d:try"))
 
 	require.Empty(t, sent.texts, "no per-document or extra message")
 	require.Len(t, sent.edits, 1)
@@ -193,7 +193,7 @@ func TestTransfer_nothingToTransfer(t *testing.T) {
 	b, sent, _ := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: true})
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 
-	b.ProcessUpdate(ctx, dataCallbackMsg(100, 21, "d:try"))
+	b.ProcessUpdate(ctx, dataCallbackMsg(21, "d:try"))
 
 	require.Len(t, sent.edits, 1)
 	require.Contains(t, sent.edits[0], "Всё уже на Google Диске.")
@@ -204,7 +204,7 @@ func TestRetryAll_editsSettingsIntoStatusMessage(t *testing.T) {
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupFailed, Title: "x"})
 
-	b.ProcessUpdate(ctx, dataCallbackMsg(100, 22, "d:rta"))
+	b.ProcessUpdate(ctx, dataCallbackMsg(22, "d:rta"))
 
 	require.Len(t, sent.edits, 1)
 	require.Contains(t, sent.edits[0], "Переношу на Google Диск · 0 из 1")
@@ -257,7 +257,7 @@ func TestTransfer_manyDocsShareOneStatusMessage(t *testing.T) {
 		seeded = append(seeded, d.ID)
 	}
 
-	b.ProcessUpdate(ctx, dataCallbackMsg(100, 21, "d:try"))
+	b.ProcessUpdate(ctx, dataCallbackMsg(21, "d:try"))
 
 	require.Empty(t, sent.texts, "one status message, no per-document notices")
 	require.Len(t, sent.edits, 1)
@@ -279,7 +279,7 @@ func TestRetryAll_nothingFailed(t *testing.T) {
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupBackedUp, Title: "x"})
 
-	b.ProcessUpdate(ctx, dataCallbackMsg(100, 22, "d:rta"))
+	b.ProcessUpdate(ctx, dataCallbackMsg(22, "d:rta"))
 
 	require.Empty(t, sent.texts)
 	require.Len(t, sent.edits, 1)
@@ -291,7 +291,7 @@ func TestTransfer_otherUsersDocsAreNotTouched(t *testing.T) {
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 	other := repo.seed(docsbot.Document{UserID: "other-user", Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "theirs"})
 
-	b.ProcessUpdate(ctx, dataCallbackMsg(100, 21, "d:try"))
+	b.ProcessUpdate(ctx, dataCallbackMsg(21, "d:try"))
 
 	require.Empty(t, repo.docs[other.ID].StatusMessageID)
 	require.Contains(t, sent.edits[0], "Всё уже на Google Диске.")
@@ -304,7 +304,7 @@ func TestLogs_retryAllAndUploadStartWithoutLeaks(t *testing.T) {
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupFailed, Title: "СекретныйTITLE"})
 
-	b.ProcessUpdate(ctx, dataCallbackMsg(100, 22, "d:rta"))
+	b.ProcessUpdate(ctx, dataCallbackMsg(22, "d:rta"))
 
 	out := sink.String()
 	require.Contains(t, out, "retry all")

@@ -31,7 +31,7 @@ func TestConvert_staleButtons(t *testing.T) {
 		{
 			name: "second tap of a limit button",
 			run: func(h *convHarness) (func(), int) {
-				h.servePNG("large")
+				h.servePNG()
 				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", h.lastMsg()))
 				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
@@ -47,7 +47,7 @@ func TestConvert_staleButtons(t *testing.T) {
 		{
 			name: "second tap of a format button",
 			run: func(h *convHarness) (func(), int) {
-				h.servePNG("large")
+				h.servePNG()
 				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", h.lastMsg()))
 				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
@@ -61,7 +61,7 @@ func TestConvert_staleButtons(t *testing.T) {
 		{
 			name: "format button at the limit step",
 			run: func(h *convHarness) (func(), int) {
-				h.servePNG("large")
+				h.servePNG()
 				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", h.lastMsg()))
 				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
@@ -180,14 +180,14 @@ func TestConvert_staleButtons(t *testing.T) {
 	}
 }
 
-// servePNG makes fileID download as a small PNG.
-func (h *convHarness) servePNG(fileID string) {
+// servePNG makes file "large" download as a small PNG.
+func (h *convHarness) servePNG() {
 	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		panic(err)
 	}
-	h.serve(fileID, buf.Bytes())
+	h.serve("large", buf.Bytes())
 }
 
 // /convert again replaces the session: buttons of the old dialogue are stale.

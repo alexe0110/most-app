@@ -689,7 +689,7 @@ func (d *docs) onRetrySync(ctx context.Context, b *bot.Bot, u *models.Update, us
 		d.fail(ctx, b, chatID, "load card", err)
 		return
 	}
-	orig, _ := d.origins.get(chatID, msgID)
+	orig := d.origins.get(chatID, msgID)
 	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
 }
 
@@ -947,7 +947,7 @@ func (d *docs) onSetCategory(ctx context.Context, b *bot.Bot, u *models.Update, 
 		return
 	}
 	d.log.InfoContext(ctx, "document recategorized", "user_id", user, "doc_id", card.Doc.ID, "category", cat)
-	orig, _ := d.origins.get(chatID, msgID)
+	orig := d.origins.get(chatID, msgID)
 	if card.FileInOldFolder {
 		d.editCardText(ctx, b, chatID, msgID, cardText(card.Doc)+"\n"+textDriveFileStayed, d.cardKB(ctx, card.Doc, "", orig), orig)
 		return
@@ -1045,7 +1045,7 @@ func (d *docs) restoreCard(ctx context.Context, b *bot.Bot, user docsbot.UserID,
 		d.log.ErrorContext(ctx, "restore card", "err", err, "user_id", user)
 		return
 	}
-	orig, _ := d.origins.get(chatID, msgID)
+	orig := d.origins.get(chatID, msgID)
 	d.showCard(ctx, b, user, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
 }
 
@@ -1079,7 +1079,7 @@ func (d *docs) applyRename(ctx context.Context, b *bot.Bot, user docsbot.UserID,
 		d.fail(ctx, b, e.chat, "rename", err)
 	default:
 		d.log.InfoContext(ctx, "document renamed", "user_id", user, "doc_id", e.id)
-		orig, _ := d.origins.get(e.chat, e.msg)
+		orig := d.origins.get(e.chat, e.msg)
 		d.showCard(ctx, b, user, e.chat, e.msg, card.Doc, card.CategoryFolderID, orig)
 	}
 }
@@ -1157,7 +1157,7 @@ func (d *docs) onDeleteYes(ctx context.Context, b *bot.Bot, u *models.Update, us
 // returnToOrigin replaces the deleted card's message with the list or search it
 // was opened from, falling back to a plain "deleted" note.
 func (d *docs) returnToOrigin(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, chatID int64, msgID int) {
-	orig, _ := d.origins.get(chatID, msgID)
+	orig := d.origins.get(chatID, msgID)
 	switch {
 	case strings.HasPrefix(orig, "l:"):
 		parts := strings.Split(orig, ":")
@@ -1238,7 +1238,7 @@ func (d *docs) onDeleteNo(ctx context.Context, b *bot.Bot, u *models.Update, use
 		d.fail(ctx, b, chatID, "load card", err)
 		return
 	}
-	orig, _ := d.origins.get(chatID, msgID)
+	orig := d.origins.get(chatID, msgID)
 	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
 }
 
@@ -1657,20 +1657,20 @@ func (s *originStore) set(chat int64, msg int, orig string) {
 	s.m[originKey{chat, msg}] = originEntry{orig: orig, at: s.now()}
 }
 
-// get returns the origin if present and not expired; the entry is kept.
-func (s *originStore) get(chat int64, msg int) (string, bool) {
+// get returns the origin, or "" when absent or expired; the entry is kept.
+func (s *originStore) get(chat int64, msg int) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	k := originKey{chat, msg}
 	e, ok := s.m[k]
 	if !ok {
-		return "", false
+		return ""
 	}
 	if s.now().Sub(e.at) > originTTL {
 		delete(s.m, k)
-		return "", false
+		return ""
 	}
-	return e.orig, true
+	return e.orig
 }
 
 // searchStore remembers each user's last search query so a card opened from the
