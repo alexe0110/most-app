@@ -45,7 +45,7 @@ func (s *spyReconnect) Reconnect(context.Context, docsbot.UserID) error {
 // A revoked Drive grant (the mapped error of driveBridge.Upload) is terminal:
 // the document is marked failed, the user is told, asked to reconnect, and the
 // job is not retried. Detecting a file deleted or renamed in Drive needs a new
-// Drive call and is deferred to #11.
+// Drive call and is deferred.
 func TestUploadWorker_revokedAsksToReconnect(t *testing.T) {
 	svc := &revokedBackuper{err: docsbot.ErrDriveRevoked}
 	notify := &spyReconnect{}

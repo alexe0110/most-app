@@ -778,7 +778,7 @@ type MarkDocumentBackedUpSyncParams struct {
 	UserID       pgtype.UUID
 }
 
-// Like MarkDocumentBackedUp, and in the same statement queues a sync when the
+// Marks the document backed up and, in the same statement, queues a sync when the
 // title or category changed since the upload started (meta_version differs).
 func (q *Queries) MarkDocumentBackedUpSync(ctx context.Context, arg MarkDocumentBackedUpSyncParams) (int32, error) {
 	row := q.db.QueryRow(ctx, markDocumentBackedUpSync,

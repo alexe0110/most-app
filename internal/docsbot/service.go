@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	// pageSize is how many documents one catalog page shows (#13).
+	// pageSize is how many documents one catalog page shows.
 	pageSize = 10
-	// searchLimit caps search results (#14).
+	// searchLimit caps search results.
 	searchLimit = 10
-	// exportLimit caps how many documents one "send all" request resends (#15).
+	// exportLimit caps how many documents one "send all" request resends.
 	exportLimit = 50
 	// statusWindow is how long an open status message keeps absorbing new documents.
 	statusWindow = 30 * time.Second
@@ -899,8 +899,8 @@ func (s *Service) Card(ctx context.Context, user UserID, id DocumentID) (Card, e
 		return Card{}, fmt.Errorf("load document: %w", err)
 	}
 	if doc.InDrive() {
-		// The file may sit in an older category folder (it is not moved on
-		// recategorize), so link only to the file itself.
+		// The file may still sit in an older category folder until the sync worker
+		// moves it, so link only to the file itself.
 		return Card{Doc: doc}, nil
 	}
 	folderID, _, err := s.folders.CategoryFolderID(ctx, user, doc.Category)

@@ -31,7 +31,7 @@ const (
 	actDeleteNo      = "dn"  // cancel deletion
 	actListCat       = "lc"  // open a category page: d:lc:<slug>:<page>
 	actListBack      = "lb"  // back to the category list
-	actTransfer      = "tr"  // transfer saved documents to Drive (#11)
+	actTransfer      = "tr"  // transfer saved documents to Drive
 	actTransferYes   = "try" // confirm the transfer offer
 	actTransferNo    = "trn" // decline the transfer offer
 	actRetry         = "rt"  // retry a failed backup: d:rt:<docID>

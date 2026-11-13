@@ -4,7 +4,7 @@ package telegram
 // (product.md): documents are "хранятся в Telegram" / "ещё не на Google Диске", the
 // goal is the user's Google Drive; never "временно".
 
-// Core flow texts (#9, #10, #12, #13, #14).
+// Core flow texts.
 const (
 	// textStart is a format string: %s = Drive root folder name.
 	textStart = "Привет! Я Most Docs. Пришли документ — фото, PDF или файл, — " +
@@ -92,7 +92,7 @@ const (
 	textSendFailed     = "Не удалось отправить файл. Попробуй ещё раз."
 )
 
-// Settings, disconnect, export and delete texts (#15).
+// Settings, disconnect, export and delete texts.
 const (
 	textDisconnected = "Google Диск отключён. Новые документы останутся в Telegram, " +
 		"а уже выгруженные файлы и ссылки на них сохранены."
@@ -281,7 +281,7 @@ const (
 	btnAlbumEach = "💾 Сохранить по одному"
 )
 
-// Batch status message (#99) and /settings.
+// Batch status message and /settings.
 const (
 	textStatusProgress    = "⏳ Переношу на Google Диск · %d из %d" // done, total
 	textStatusDone        = "✅ Перенёс на Google Диск — %d %s"     // backed up, plural("документ")
