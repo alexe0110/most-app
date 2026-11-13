@@ -11,6 +11,16 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
+func TestService_Search_hugeAndOddQueries(t *testing.T) {
+	repo := newFakeRepo()
+	svc, _ := edgeService(repo, fakeDrive{})
+	for _, q := range []string{"%", "_", `\`, "😀😀", "ДОГОВОР"} {
+		found, err := svc.Search(t.Context(), user, q)
+		require.NoError(t, err, q)
+		require.False(t, found.BlankQuery, q)
+	}
+}
+
 // searchSpy records the query that reaches the repository.
 type searchSpy struct {
 	*fakeRepo
