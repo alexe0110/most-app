@@ -10,6 +10,21 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
+func TestTrimExt_ambiguousTails(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"2026.11", "2026.11"},     // digits only: not an extension
+		{"Акт 12.05", "Акт 12.05"}, // date-like tail
+		{"scan.final", "scan"},     // 5 letters look like an extension (documented heuristic)
+		{"a.b.c.pdf", "a.b.c"},     // only the last one goes
+		{"Акт.2026а", "Акт.2026а"}, // non-ASCII tail
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			require.Equal(t, tt.want, docsbot.TrimExt(tt.in))
+		})
+	}
+}
+
 func TestNormalizeTitle(t *testing.T) {
 	tests := []struct {
 		name string
