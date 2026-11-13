@@ -33,7 +33,7 @@ type Trasher interface {
 }
 
 // TrashNotifier tells the user the cloud file was left behind. Implemented by
-// the telegram adapter; errors are best-effort.
+// the telegram adapter; errors are returned, not logged: the worker logs them.
 type TrashNotifier interface {
 	RemoteKept(ctx context.Context, user docsbot.UserID) error
 }
@@ -56,11 +56,11 @@ func (w *trashWorker) Work(ctx context.Context, job *river.Job[StorageTrashArgs]
 		w.log.InfoContext(ctx, "remote file trashed", "user_id", user, "provider", job.Args.Provider)
 		return nil
 	case errors.Is(err, docsbot.ErrDriveRevoked), errors.Is(err, docsbot.ErrDriveDisconnected):
-		_ = w.notify.RemoteKept(ctx, user)
+		notifyWarn(ctx, w.log, "RemoteKept", w.notify.RemoteKept(ctx, user), user)
 		w.log.WarnContext(ctx, "remote trash skipped: no drive access", "job_id", job.ID, "user_id", user, "provider", job.Args.Provider)
 		return nil
 	case job.Attempt >= job.MaxAttempts:
-		_ = w.notify.RemoteKept(ctx, user)
+		notifyWarn(ctx, w.log, "RemoteKept", w.notify.RemoteKept(ctx, user), user)
 		w.log.ErrorContext(ctx, "remote trash failed permanently", "job_id", job.ID, "attempt", job.Attempt,
 			"err", err, "user_id", user, "provider", job.Args.Provider)
 		return fmt.Errorf("trash remote: %w", err)

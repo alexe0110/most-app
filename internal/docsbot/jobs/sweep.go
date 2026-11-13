@@ -42,7 +42,7 @@ func (w *sweepWorker) Work(ctx context.Context, _ *river.Job[SweepUploadsArgs]) 
 		return fmt.Errorf("sweep uploads: %w", err)
 	}
 	for _, f := range res.Failed {
-		_ = w.notify.UploadOutcome(ctx, f.User, f.ID)
+		notifyWarn(ctx, w.log, "UploadOutcome", w.notify.UploadOutcome(ctx, f.User, f.ID), f.User, f.ID)
 	}
 	w.log.InfoContext(ctx, "sweep uploads finished",
 		"found", res.Found, "requeued", res.Requeued, "failed", len(res.Failed),

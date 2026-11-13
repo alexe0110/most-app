@@ -186,11 +186,11 @@ func (n *Notifier) dropRename(chat int64, msg int) {
 }
 
 // UploadOutcome reflects a document's final upload state: it refreshes the batch
-// status message, or, for a document outside one, sends a single notice.
+// status message, or, for a document outside one, sends a single notice. It only
+// returns errors; the worker logs them.
 func (n *Notifier) UploadOutcome(ctx context.Context, user docsbot.UserID, doc docsbot.DocumentID) error {
 	view, err := n.svc.StatusView(ctx, user, doc)
 	if err != nil {
-		n.log.ErrorContext(ctx, "load status view", "err", err, "user_id", user, "doc_id", doc)
 		return fmt.Errorf("status view: %w", err)
 	}
 	if !view.Grouped {
@@ -201,30 +201,31 @@ func (n *Notifier) UploadOutcome(ctx context.Context, user docsbot.UserID, doc d
 	n.dropRename(view.Message.ChatID, view.Message.MessageID) // the redraw overwrites a prompt shown here
 	err = n.bot.EditHTML(ctx, view.Message.ChatID, view.Message.MessageID, text, kb)
 	n.dropRename(view.Message.ChatID, view.Message.MessageID)
+	var errs []error
 	switch msg := strings.ToLower(errString(err)); {
 	case err == nil, strings.Contains(msg, "message is not modified"):
 	case strings.Contains(msg, "message to edit not found"), strings.Contains(msg, "message can't be edited"):
 		mid, serr := n.bot.SendHTML(ctx, view.Message.ChatID, text, kb)
 		if serr != nil {
 			if !errors.Is(serr, tg.ErrBlocked) { // a block is already logged at Warn by tg.Bot
-				n.log.ErrorContext(ctx, "resend status message", "err", serr, "user_id", user)
+				errs = append(errs, fmt.Errorf("resend status message: %w", serr))
 			}
 		} else if uerr := n.svc.SetStatusMessageID(ctx, user, view.Message.ID, mid); uerr != nil {
-			n.log.ErrorContext(ctx, "save status message id", "err", uerr, "user_id", user)
+			errs = append(errs, fmt.Errorf("save status message id: %w", uerr))
 		}
 	case errors.Is(err, tg.ErrBlocked): // already logged at Warn by tg.Bot
 	default:
-		n.log.ErrorContext(ctx, "edit status message", "err", err, "user_id", user)
+		errs = append(errs, fmt.Errorf("edit status message: %w", err))
 	}
 	if view.AllTerminal {
 		n.mu.Lock()
 		delete(n.lastEdit, view.Message.ID)
 		n.mu.Unlock()
 		if cerr := n.svc.CloseStatus(ctx, user, view.Message.ID); cerr != nil {
-			n.log.ErrorContext(ctx, "close status message", "err", cerr, "user_id", user)
+			errs = append(errs, fmt.Errorf("close status message: %w", cerr))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // singleOutcome is the per-document notice for a document without a status message.

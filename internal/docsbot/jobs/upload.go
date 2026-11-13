@@ -37,11 +37,26 @@ type Backuper interface {
 }
 
 // Notifier tells the user in Telegram how an upload ended. Implemented by the
-// telegram adapter; errors are best-effort.
+// telegram adapter, which only returns errors; the worker logs them (see
+// notifyWarn) and never fails the job over a notice.
 type Notifier interface {
 	// UploadOutcome reports a document's final state (backed up, failed or too large).
 	UploadOutcome(ctx context.Context, user docsbot.UserID, doc docsbot.DocumentID) error
 	Reconnect(ctx context.Context, user docsbot.UserID) error
+}
+
+// notifyWarn logs a failed user notification at Warn. A notice is best-effort:
+// failing the job would retry the upload and could repeat the notice. The log
+// carries ids only, never titles or file ids.
+func notifyWarn(ctx context.Context, log *slog.Logger, notice string, err error, user docsbot.UserID, doc ...docsbot.DocumentID) {
+	if err == nil {
+		return
+	}
+	attrs := []any{"notice", notice, "err", err, "user_id", user}
+	if len(doc) > 0 {
+		attrs = append(attrs, "doc_id", doc[0])
+	}
+	log.WarnContext(ctx, "notify user failed", attrs...)
 }
 
 type uploadWorker struct {
@@ -66,8 +81,8 @@ func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentAr
 		if err := w.svc.MarkBackupFailed(ctx, user, id, docsbot.BackupReasonRevoked); err != nil {
 			w.log.ErrorContext(ctx, "mark backup failed", "err", err, "user_id", user, "doc_id", id)
 		}
-		_ = w.notify.UploadOutcome(ctx, user, id)
-		_ = w.notify.Reconnect(ctx, user)
+		notifyWarn(ctx, w.log, "UploadOutcome", w.notify.UploadOutcome(ctx, user, id), user, id)
+		notifyWarn(ctx, w.log, "Reconnect", w.notify.Reconnect(ctx, user), user)
 		w.log.WarnContext(ctx, "drive upload: access revoked", "job_id", job.ID, "attempt", job.Attempt,
 			"user_id", user, "doc_id", id, "duration_ms", time.Since(start).Milliseconds())
 		return nil
@@ -76,7 +91,7 @@ func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentAr
 		if err := w.svc.MarkBackupFailed(ctx, user, id, docsbot.BackupReasonQuota); err != nil {
 			w.log.ErrorContext(ctx, "mark backup failed", "err", err, "user_id", user, "doc_id", id)
 		}
-		_ = w.notify.UploadOutcome(ctx, user, id)
+		notifyWarn(ctx, w.log, "UploadOutcome", w.notify.UploadOutcome(ctx, user, id), user, id)
 		w.log.WarnContext(ctx, "drive upload: storage full", "job_id", job.ID, "attempt", job.Attempt,
 			"user_id", user, "doc_id", id, "duration_ms", time.Since(start).Milliseconds())
 		return nil
@@ -85,7 +100,7 @@ func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentAr
 			if markErr := w.svc.MarkBackupFailed(ctx, user, id, docsbot.BackupReasonUnavailable); markErr != nil {
 				w.log.ErrorContext(ctx, "mark backup failed", "err", markErr, "user_id", user, "doc_id", id)
 			}
-			_ = w.notify.UploadOutcome(ctx, user, id)
+			notifyWarn(ctx, w.log, "UploadOutcome", w.notify.UploadOutcome(ctx, user, id), user, id)
 			w.log.ErrorContext(ctx, "drive upload failed permanently", "job_id", job.ID, "attempt", job.Attempt,
 				"err", err, "user_id", user, "doc_id", id, "duration_ms", time.Since(start).Milliseconds())
 		} else {
@@ -104,7 +119,7 @@ func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentAr
 		"backup_status", res.Doc.BackupStatus, "duration_ms", time.Since(start).Milliseconds())
 	// A too-large file stays in Telegram (backup_status=too_large); the outcome
 	// still updates its status line.
-	_ = w.notify.UploadOutcome(ctx, user, id)
+	notifyWarn(ctx, w.log, "UploadOutcome", w.notify.UploadOutcome(ctx, user, id), user, id)
 	return nil
 }
 

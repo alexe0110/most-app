@@ -32,7 +32,7 @@ type Syncer interface {
 }
 
 // SyncNotifier tells the user in Telegram when a sync needs attention.
-// Implemented by the telegram adapter; errors are best-effort.
+// Implemented by the telegram adapter; errors are returned, not logged: the worker logs them.
 type SyncNotifier interface {
 	// SyncOutcome shows the document's card after a failed or missing sync.
 	SyncOutcome(ctx context.Context, user docsbot.UserID, doc docsbot.DocumentID) error
@@ -59,8 +59,8 @@ func (w *syncWorker) Work(ctx context.Context, job *river.Job[StorageSyncArgs]) 
 		if err := w.svc.MarkSyncFailed(ctx, user, id, docsbot.SyncReasonRevoked); err != nil {
 			w.log.ErrorContext(ctx, "mark sync failed", "err", err, "user_id", user, "doc_id", id)
 		}
-		_ = w.notify.SyncOutcome(ctx, user, id)
-		_ = w.notify.Reconnect(ctx, user)
+		notifyWarn(ctx, w.log, "SyncOutcome", w.notify.SyncOutcome(ctx, user, id), user, id)
+		notifyWarn(ctx, w.log, "Reconnect", w.notify.Reconnect(ctx, user), user)
 		w.log.WarnContext(ctx, "drive sync: access revoked", "job_id", job.ID, "attempt", job.Attempt,
 			"user_id", user, "doc_id", id)
 		return nil
@@ -69,7 +69,7 @@ func (w *syncWorker) Work(ctx context.Context, job *river.Job[StorageSyncArgs]) 
 			if markErr := w.svc.MarkSyncFailed(ctx, user, id, ""); markErr != nil {
 				w.log.ErrorContext(ctx, "mark sync failed", "err", markErr, "user_id", user, "doc_id", id)
 			}
-			_ = w.notify.SyncOutcome(ctx, user, id)
+			notifyWarn(ctx, w.log, "SyncOutcome", w.notify.SyncOutcome(ctx, user, id), user, id)
 			w.log.ErrorContext(ctx, "drive sync failed permanently", "job_id", job.ID, "attempt", job.Attempt,
 				"err", err, "user_id", user, "doc_id", id)
 		} else {
@@ -79,7 +79,7 @@ func (w *syncWorker) Work(ctx context.Context, job *river.Job[StorageSyncArgs]) 
 	}
 	switch {
 	case res.Missing:
-		_ = w.notify.SyncOutcome(ctx, user, id)
+		notifyWarn(ctx, w.log, "SyncOutcome", w.notify.SyncOutcome(ctx, user, id), user, id)
 		w.log.WarnContext(ctx, "drive sync: remote file missing", "user_id", user, "doc_id", id)
 	case res.Noop:
 		w.log.DebugContext(ctx, "sync noop", "job_id", job.ID, "user_id", user, "doc_id", id)
