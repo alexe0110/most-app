@@ -57,6 +57,7 @@ internal/
     fakes_test.go          # фейки портов
     telegram/              # входящий адаптер: апдейт → service → рендер; texts.go — тексты
     jobs/                  # входящий адаптер: воркеры River (upload, sync, trash, sweep, purge_pending)
+    web/                   # входящий адаптер: публичные страницы /, /privacy, /terms
     postgres/              # исходящий адаптер: Repo через sqlc
   platform/                # общее ядро для всех ботов
     config/  logging/  db/  jobs/  tg/  oauth/  gdrive/  convert/

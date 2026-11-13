@@ -1,0 +1,34 @@
+{{define "title"}}Terms of Service &mdash; Most Files{{end -}}
+{{define "content" -}}
+<h1>Terms of Service / Условия использования</h1>
+<p class="muted">Revision / Редакция: {{template "revision"}}</p>
+<p class="lang-switch"><a href="#ru">Русский</a> <a href="#en">English</a></p>
+
+<section class="lang" id="ru" lang="ru">
+<h2>Условия использования</h2>
+<ol>
+<li><strong>Сервис.</strong> Most Files — Telegram-бот <a href="{{.BotURL}}">@most_files_bot</a>: каталог документов в Telegram с возможностью копировать их на ваш Google Диск. Подробнее о данных — в <a href="/privacy">политике конфиденциальности</a>.</li>
+<li><strong>Без гарантий.</strong> Сервис предоставляется «как есть», без каких-либо гарантий бесперебойной работы, сохранности данных или пригодности для конкретной цели. Рекомендуем хранить копии важных документов.</li>
+<li><strong>Ваш контент.</strong> Вы отвечаете за документы, которые загружаете, и подтверждаете, что имеете на них право.</li>
+<li><strong>Запрещено.</strong> Загружать контент, нарушающий закон, и использовать сервис для противоправных целей.</li>
+<li><strong>Прекращение использования.</strong> Вы можете перестать пользоваться сервисом в любой момент и удалить свои данные в боте (<code>/settings</code>).</li>
+<li><strong>Изменения.</strong> Мы можем изменять или прекращать работу сервиса, а также менять эти условия. Дата редакции указана вверху страницы; продолжая пользоваться сервисом, вы принимаете новую редакцию.</li>
+<li><strong>Применимое право.</strong> Право Республики Казахстан.</li>
+<li><strong>Контакты.</strong> {{template "contact" .}}</li>
+</ol>
+</section>
+
+<section class="lang" id="en" lang="en">
+<h2>Terms of Service</h2>
+<ol>
+<li><strong>The service.</strong> Most Files is the Telegram bot <a href="{{.BotURL}}">@most_files_bot</a>: a catalog of documents in Telegram that can also copy them to your Google Drive. See the <a href="/privacy">Privacy Policy</a> for how data is handled.</li>
+<li><strong>No warranty.</strong> The service is provided "as is", without warranties of any kind, including uninterrupted operation, data preservation, or fitness for a particular purpose. Keep copies of documents that matter to you.</li>
+<li><strong>Your content.</strong> You are responsible for the documents you upload and confirm that you have the right to them.</li>
+<li><strong>Prohibited use.</strong> Do not upload illegal content or use the service for unlawful purposes.</li>
+<li><strong>Stopping.</strong> You may stop using the service at any time and delete your data in the bot (<code>/settings</code>).</li>
+<li><strong>Changes.</strong> We may change or discontinue the service and change these terms. The revision date is at the top of this page; continued use means you accept the updated terms.</li>
+<li><strong>Governing law.</strong> The laws of the Republic of Kazakhstan.</li>
+<li><strong>Contact.</strong> {{template "contact" .}}</li>
+</ol>
+</section>
+{{- end}}

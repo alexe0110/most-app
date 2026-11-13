@@ -1,0 +1,62 @@
+{{- define "revision"}}13.11.2026{{end -}}
+{{- define "contact"}}<a href="mailto:{{.ContactEmail}}">{{.ContactEmail}}</a>{{end -}}
+{{- define "layout" -}}
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{block "title" .}}Most Files{{end}}</title>
+<style>
+:root { color-scheme: light dark; --bg: #ffffff; --fg: #1d2129; --muted: #5f6b7a; --link: #1a5fb4; --line: #d9dee5; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14171c; --fg: #e6e9ee; --muted: #9aa5b4; --link: #7db3ff; --line: #2b313a; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.wrap { max-width: 720px; margin: 0 auto; padding: 0 16px; }
+a { color: var(--link); }
+header { border-bottom: 1px solid var(--line); }
+header .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 24px; padding-top: 12px; padding-bottom: 12px; }
+.brand { font-weight: 700; color: var(--fg); text-decoration: none; }
+nav a { margin-right: 16px; }
+nav a:last-child { margin-right: 0; }
+main { padding-top: 24px; padding-bottom: 24px; }
+h1 { font-size: 1.75rem; line-height: 1.25; margin: 0 0 8px; }
+h2 { font-size: 1.25rem; margin: 2rem 0 0.5rem; }
+h3 { font-size: 1.05rem; margin: 1.5rem 0 0.25rem; }
+.lang-switch { margin: 0 0 8px; color: var(--muted); }
+.lang-switch a { margin-right: 12px; }
+.muted { color: var(--muted); }
+section.lang { padding-top: 8px; margin-top: 16px; border-top: 1px solid var(--line); }
+ul { padding-left: 1.25rem; }
+li { margin: 0.25rem 0; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; overflow-wrap: anywhere; }
+.box { border: 1px solid var(--line); border-radius: 8px; padding: 4px 16px 12px; margin: 16px 0; }
+footer { border-top: 1px solid var(--line); color: var(--muted); font-size: 0.9rem; }
+footer .wrap { padding-top: 16px; padding-bottom: 24px; }
+</style>
+</head>
+<body>
+<header>
+<div class="wrap">
+<a class="brand" href="/">Most Files</a>
+<nav lang="en">
+<a href="/">Home</a>
+<a href="/privacy">Privacy</a>
+<a href="/terms">Terms</a>
+</nav>
+</div>
+</header>
+<main class="wrap">
+{{template "content" .}}
+</main>
+<footer>
+<div class="wrap">
+<div>Most Files &middot; {{template "contact" .}}</div>
+<div>Revision / Редакция: {{template "revision"}}</div>
+</div>
+</footer>
+</body>
+</html>
+{{- end -}}
