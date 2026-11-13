@@ -119,10 +119,15 @@ func TestSender_classifiesRealTelegramErrors(t *testing.T) {
 			require.Equal(t, tt.notModified, isNotModified(err))
 			require.Equal(t, tt.gone, isMessageGone(err))
 			require.Equal(t, tt.blocked, errors.Is(err, errBlocked))
-			require.False(t, isNotModified(nil))
-			require.False(t, isMessageGone(nil))
 		})
 	}
+}
+
+func TestSender_classifiersAcceptNil(t *testing.T) {
+	t.Parallel()
+
+	require.False(t, isNotModified(nil))
+	require.False(t, isMessageGone(nil))
 }
 
 func TestSender_keyboardOnTheWire(t *testing.T) {

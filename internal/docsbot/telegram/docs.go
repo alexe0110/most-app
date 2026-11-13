@@ -121,7 +121,7 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 	user, ok := userID(ctx)
 	if !ok {
 		if answersItself(parts) {
-			d.out(b).answer(ctx, u.CallbackQuery.ID, withToast("")) // never leave the button spinning
+			d.out(b).answer(ctx, u.CallbackQuery.ID) // never leave the button spinning
 		}
 		return
 	}

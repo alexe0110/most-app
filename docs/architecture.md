@@ -117,7 +117,7 @@ sequenceDiagram
 
 ### Отправка сообщений
 
-Обработчики, конвертер и `telegram.Notifier` пишут в чат только через `sender` (`docsbot/telegram/send.go`): `send`, `edit`, `clearKeyboard`, `delete`, `answer`. Он трассирует вызов (Debug, только метод и время), логирует сбой один раз и сводит ошибки Telegram к трём случаям: «сообщение не изменилось» (для `edit` это успех), «сообщения уже нет или его нельзя править» (`isMessageGone`) и 403 — пользователь заблокировал бота (`errBlocked`, лог Info, не Error). `platform/tg` отвечает за запуск, middleware и скачивание файлов и отдаёт клиент через `Client()`.
+Обработчики, конвертер и `telegram.Notifier` пишут сообщения (текст, правка, удаление, ответ на нажатие кнопки) только через `sender` (`docsbot/telegram/send.go`): `send`, `edit`, `setKeyboard`, `clearKeyboard`, `delete`, `answer` логируют сбой сами, а `trySend`, `tryEdit`, `tryDelete` отдают ошибку вызывающему. Файлы (`SendDocument`, `SendPhoto`, `SendMediaGroup`) уходят напрямую, не через `sender`. Он трассирует вызов (Debug, только метод и время), логирует сбой один раз и сводит ошибки Telegram к трём случаям: «сообщение не изменилось» (для `edit` это успех), «сообщения уже нет или его нельзя править» (`isMessageGone`) и 403 — пользователь заблокировал бота (`errBlocked`, лог Info, не Error). `platform/tg` отвечает за запуск, middleware и скачивание файлов и отдаёт клиент через `Client()`.
 
 ### Синхронизация с Drive
 

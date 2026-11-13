@@ -94,7 +94,7 @@ func (c connectSettings) refresh(ctx context.Context, out sender, chatID int64, 
 	}
 	view, err := c.svc.Settings(ctx, user)
 	if err != nil {
-		out.log.WarnContext(ctx, "load settings after connect", "err", err, "user_id", user)
+		out.logFailure(ctx, slog.LevelWarn, "load settings after connect", err, "user_id", user)
 		return
 	}
 	var (
@@ -103,7 +103,7 @@ func (c connectSettings) refresh(ctx context.Context, out sender, chatID int64, 
 	)
 	if c.auth != nil {
 		if u, err := c.auth.AuthURL(ctx, string(user), docsbot.BotName); err != nil {
-			out.log.WarnContext(ctx, "build auth url after connect", "err", err, "user_id", user)
+			out.logFailure(ctx, slog.LevelWarn, "build auth url after connect", err, "user_id", user)
 		} else {
 			url, haveURL = u, true
 		}

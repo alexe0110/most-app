@@ -108,16 +108,16 @@ func TestSettingsActions_logEventsWithoutLeaks(t *testing.T) {
 func TestLogs_blockedUserIsNotAnErrorInHandlers(t *testing.T) {
 	tests := []struct {
 		name   string
-		run    func(b *bot.Bot, ctx context.Context, repo *fakeRepo)
+		run    func(ctx context.Context, b *bot.Bot, repo *fakeRepo)
 		method string // the call Telegram refused
 	}{
-		{"help", func(b *bot.Bot, ctx context.Context, _ *fakeRepo) {
+		{"help", func(ctx context.Context, b *bot.Bot, _ *fakeRepo) {
 			b.ProcessUpdate(ctx, commandUpdate(100, "help"))
 		}, "sendMessage"},
-		{"start", func(b *bot.Bot, ctx context.Context, _ *fakeRepo) {
+		{"start", func(ctx context.Context, b *bot.Bot, _ *fakeRepo) {
 			b.ProcessUpdate(ctx, commandUpdate(100, "start"))
 		}, "sendMessage"},
-		{"document intake keeps the document", func(b *bot.Bot, ctx context.Context, repo *fakeRepo) {
+		{"document intake keeps the document", func(ctx context.Context, b *bot.Bot, repo *fakeRepo) {
 			b.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
 				From:     &models.User{ID: 100},
 				Chat:     models.Chat{ID: 100, Type: models.ChatTypePrivate},
@@ -125,22 +125,22 @@ func TestLogs_blockedUserIsNotAnErrorInHandlers(t *testing.T) {
 			}})
 			require.Len(t, repo.docs, 1)
 		}, "sendMessage"},
-		{"card edit and callback answer", func(b *bot.Bot, ctx context.Context, repo *fakeRepo) {
+		{"rename prompt edits the card message", func(ctx context.Context, b *bot.Bot, repo *fakeRepo) {
 			doc := seedPassport(repo, "СекретныйДокумент", "u1")
 			b.ProcessUpdate(ctx, dataCallback("d:rn:"+string(doc.ID)))
 		}, "editMessageText"},
-		{"callback answer", func(b *bot.Bot, ctx context.Context, repo *fakeRepo) {
+		{"callback answer", func(ctx context.Context, b *bot.Bot, repo *fakeRepo) {
 			doc := seedPassport(repo, "СекретныйДокумент", "u1")
 			b.ProcessUpdate(ctx, dataCallback("d:dy:"+string(doc.ID)))
 		}, "answerCallbackQuery"},
-		{"export clears the keyboard", func(b *bot.Bot, ctx context.Context, repo *fakeRepo) {
+		{"export clears the keyboard", func(ctx context.Context, b *bot.Bot, repo *fakeRepo) {
 			seedPassport(repo, "СекретныйДокумент", "u1")
 			b.ProcessUpdate(ctx, dataCallback("d:exp"))
 		}, "editMessageReplyMarkup"},
-		{"converter start", func(b *bot.Bot, ctx context.Context, _ *fakeRepo) {
+		{"converter start", func(ctx context.Context, b *bot.Bot, _ *fakeRepo) {
 			b.ProcessUpdate(ctx, commandUpdate(100, "convert"))
 		}, "sendMessage"},
-		{"converter stale button", func(b *bot.Bot, ctx context.Context, _ *fakeRepo) {
+		{"converter stale button", func(ctx context.Context, b *bot.Bot, _ *fakeRepo) {
 			b.ProcessUpdate(ctx, dataCallback("conv:cancel"))
 		}, "editMessageReplyMarkup"},
 	}
@@ -152,7 +152,7 @@ func TestLogs_blockedUserIsNotAnErrorInHandlers(t *testing.T) {
 			sent.forbidden = true
 			ctx := tg.ContextWithUserID(t.Context(), testUserID)
 
-			require.NotPanics(t, func() { tt.run(b, ctx, repo) })
+			require.NotPanics(t, func() { tt.run(ctx, b, repo) })
 
 			sent.mu.Lock()
 			refused := append([]string(nil), sent.refused...)

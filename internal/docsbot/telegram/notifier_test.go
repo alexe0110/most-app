@@ -252,11 +252,14 @@ func TestNotifier_UploadOutcome_blockedUserIsNotAnError(t *testing.T) {
 			e := newNotifierEnv(t)
 			e.api.editErr, e.api.editCode, e.api.blocked = tt.editErr, tt.editCode, tt.blocked
 			sm, docs := e.batch(t, docsbot.BackupBackedUp, docsbot.BackupUploading)
+			var buf lockedBuffer
+			n := telegram.NewNotifier(e.bot, chatLookup{}, fakeAuth{}, e.svc, slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
-			require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, docs[0].ID))
+			require.NoError(t, n.UploadOutcome(t.Context(), testUserID, docs[0].ID))
 
 			require.Len(t, e.api.callsOf("sendMessage"), tt.wantSends)
 			require.Equal(t, 70, e.status.msgs[sm.ID].MessageID)
+			require.NotContains(t, buf.String(), `"level":"ERROR"`)
 		})
 	}
 }
