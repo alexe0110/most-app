@@ -156,7 +156,7 @@ func (b *Bot) EditHTML(ctx context.Context, chatID int64, messageID int, text st
 	markup = markupOrNil(markup)
 	if markup == nil {
 		// An explicit empty keyboard is how editMessageText clears it.
-		markup = &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}}
+		markup = EmptyKeyboard()
 	}
 	_, err := b.api.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID: chatID, MessageID: messageID, Text: text, ParseMode: models.ParseModeHTML, ReplyMarkup: markup,
@@ -229,6 +229,13 @@ func (b *Bot) Download(ctx context.Context, fileID string) (data []byte, mime st
 		return nil, "", ErrFileTooLarge
 	}
 	return data, resp.Header.Get("Content-Type"), nil
+}
+
+// EmptyKeyboard is the markup that removes an inline keyboard. The slice must be
+// non-nil: a nil one marshals to "inline_keyboard": null, which Telegram rejects
+// ("must be of type Array"); an empty array clears the keyboard.
+func EmptyKeyboard() *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}}
 }
 
 // markupOrNil returns m, or an untyped nil when m is nil or a typed nil pointer

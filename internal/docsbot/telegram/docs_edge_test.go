@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -84,6 +85,33 @@ func TestDisconnect_driveFailureIsShown(t *testing.T) {
 
 	require.False(t, has(sent.edits, "Google Диск отключён"), "the integration is still active: %q", sent.edits)
 	require.True(t, has(sent.texts, "Что-то пошло не так"), "texts %q", sent.texts)
+}
+
+func TestDisconnect_clearsKeyboardWithEmptyArray(t *testing.T) {
+	b, sent, _ := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{})
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	b.ProcessUpdate(ctx, dataCallback("d:dc"))
+
+	require.True(t, has(sent.edits, "Google Диск отключён"), "edits %q", sent.edits)
+	markups := sent.snapshot(&sent.editMarkups)
+	require.NotEmpty(t, markups)
+	last := markups[len(markups)-1]
+	require.Contains(t, last, `"inline_keyboard":[]`, "an empty array clears the keyboard")
+	require.NotContains(t, last, `"inline_keyboard":null`, "Telegram rejects a null inline_keyboard")
+}
+
+func TestExport_spentButtonKeyboardIsClearedWithEmptyArray(t *testing.T) {
+	b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithExportPace(0, 0))
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "a"})
+
+	b.ProcessUpdate(ctx, dataCallback("d:exp"))
+
+	edits := sent.snapshot(&sent.markupEdits)
+	require.NotEmpty(t, edits, "the tapped button's keyboard is removed")
+	require.Contains(t, edits[0], `"inline_keyboard":[]`, "an empty array clears the keyboard")
+	require.NotContains(t, edits[0], `"inline_keyboard":null`, "Telegram rejects a null inline_keyboard")
 }
 
 func TestSetCategory_backedUpCard(t *testing.T) {

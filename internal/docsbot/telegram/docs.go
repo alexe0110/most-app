@@ -427,7 +427,7 @@ func (d *docs) onExport(ctx context.Context, b *bot.Bot, u *models.Update, user 
 	}
 	// The button is spent: a second tap must not start another export.
 	if _, msgID, ok := callbackMessage(u); ok {
-		d.editMarkup(ctx, b, chatID, msgID, &models.InlineKeyboardMarkup{})
+		d.editMarkup(ctx, b, chatID, msgID, tg.EmptyKeyboard())
 	}
 	d.export(ctx, b, chatID, user)
 }
@@ -916,7 +916,7 @@ func (d *docs) editHTML(ctx context.Context, b *bot.Bot, chatID int64, msgID int
 	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text, ParseMode: models.ParseModeHTML}
 	if kb == nil {
 		// An omitted reply_markup keeps the old keyboard; an empty one clears it.
-		kb = &models.InlineKeyboardMarkup{}
+		kb = tg.EmptyKeyboard()
 	}
 	params.ReplyMarkup = kb
 	start := time.Now()
@@ -1458,7 +1458,7 @@ func (d *docs) editMessage(ctx context.Context, b *bot.Bot, chatID int64, msgID 
 	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text}
 	if kb == nil {
 		// An omitted reply_markup keeps the old keyboard; an empty one clears it.
-		kb = &models.InlineKeyboardMarkup{}
+		kb = tg.EmptyKeyboard()
 	}
 	params.ReplyMarkup = kb
 	start := time.Now()
