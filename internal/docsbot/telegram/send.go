@@ -122,9 +122,11 @@ func (s sender) tryEdit(ctx context.Context, chatID int64, msgID int, text strin
 	start := time.Now()
 	if o.caption {
 		op = "editMessageCaption"
-		_, err = s.api.EditMessageCaption(ctx, &bot.EditMessageCaptionParams{
-			ChatID: chatID, MessageID: msgID, Caption: text, ReplyMarkup: o.editMarkup(),
-		})
+		params := &bot.EditMessageCaptionParams{ChatID: chatID, MessageID: msgID, Caption: text, ReplyMarkup: o.editMarkup()}
+		if o.html {
+			params.ParseMode = models.ParseModeHTML
+		}
+		_, err = s.api.EditMessageCaption(ctx, params)
 	} else {
 		op = "editMessageText"
 		params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text, ReplyMarkup: o.editMarkup()}

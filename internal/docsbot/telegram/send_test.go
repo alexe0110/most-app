@@ -199,8 +199,13 @@ func TestSender_sendsTextOptions(t *testing.T) {
 	s.edit(t.Context(), 42, 7, "<b>hi</b>", withHTML())
 	require.Equal(t, models.ParseModeHTML, models.ParseMode(srv.last(t).form["parse_mode"]))
 
-	s.answer(t.Context(), "cb1", withToast("Готово"))
+	s.edit(t.Context(), 42, 7, "<b>cap</b>", onCaption(), withHTML())
 	got := srv.last(t)
+	require.Equal(t, "editMessageCaption", got.method)
+	require.Equal(t, models.ParseModeHTML, models.ParseMode(got.form["parse_mode"]))
+
+	s.answer(t.Context(), "cb1", withToast("Готово"))
+	got = srv.last(t)
 	require.Equal(t, "answerCallbackQuery", got.method)
 	require.Equal(t, "Готово", got.form["text"])
 
