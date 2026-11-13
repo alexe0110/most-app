@@ -11,6 +11,42 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
+// incomingFile reads the file out of a message; ok is false for a non-file one.
+func incomingFile(m *models.Message, user docsbot.UserID) (docsbot.IncomingFile, bool) {
+	switch {
+	case len(m.Photo) > 0:
+		p := m.Photo[len(m.Photo)-1] // Telegram sorts sizes ascending
+		return docsbot.IncomingFile{
+			UserID: user, Kind: docsbot.KindPhoto,
+			FileID: p.FileID, FileUniqueID: p.FileUniqueID, Title: photoTitle(m),
+			FileSize: int64(p.FileSize), MIME: "", MediaGroupID: m.MediaGroupID,
+			Width: p.Width, Height: p.Height,
+		}, true
+	case m.Document != nil:
+		return docsbot.IncomingFile{
+			UserID: user, Kind: docsbot.KindDocument,
+			FileID: m.Document.FileID, FileUniqueID: m.Document.FileUniqueID, Title: documentTitle(m),
+			FileSize: m.Document.FileSize, MIME: m.Document.MimeType, MediaGroupID: m.MediaGroupID,
+		}, true
+	default:
+		return docsbot.IncomingFile{}, false
+	}
+}
+
+// documentTitle is the file name without its extension, or the caption; "" when neither exists (the domain
+// then assigns a default name).
+func documentTitle(m *models.Message) string {
+	if m.Document.FileName != "" {
+		return docsbot.TrimExt(m.Document.FileName)
+	}
+	return m.Caption
+}
+
+// photoTitle is the caption, "" when absent.
+func photoTitle(m *models.Message) string {
+	return m.Caption
+}
+
 // receive stores an incoming file and asks for a category (or reports a dup).
 func (d *docs) receive(ctx context.Context, b *bot.Bot, u *models.Update) {
 	user, ok := userID(ctx)
