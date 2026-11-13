@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -501,4 +502,55 @@ func TestIsExport(t *testing.T) {
 			require.Equal(t, tt.want, telegram.IsExport(tt.u))
 		})
 	}
+}
+
+// Real sizes can differ from the declared ones: the PDF is refused after the
+// download and the session ends instead of looping on the same photos.
+func TestConvert_photosToPDF_realSizeOverLimitEndsSession(t *testing.T) {
+	h := newConvHarness(t)
+	ctx := t.Context()
+	h.serve("large", make([]byte, 11<<20))
+
+	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:pdf"))
+	h.bot.ProcessUpdate(ctx, photoUpdate(1))
+	h.bot.ProcessUpdate(ctx, photoUpdate(2))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
+
+	require.Contains(t, strings.Join(h.editTexts, "\n"), "больше 20 МБ", "the progress note turns into the refusal")
+	require.Empty(t, h.docs)
+
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
+	require.Empty(t, h.docs, "the session is gone")
+	require.Equal(t, "Кнопка устарела, открой заново.", h.lastText())
+}
+
+// Two images sent in a row in compress mode: only the first moves the dialogue.
+func TestConvert_compressTwoImagesAskLimitOnce(t *testing.T) {
+	h := newConvHarness(t)
+	ctx := t.Context()
+	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
+
+	h.mu.Lock()
+	h.gate = make(chan struct{})
+	gate := h.gate
+	h.mu.Unlock()
+	var wg sync.WaitGroup
+	for i := 1; i <= 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h.bot.ProcessUpdate(ctx, photoUpdate(i))
+		}()
+	}
+	require.Eventually(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.downloads) == 2
+	}, 5*time.Second, 5*time.Millisecond)
+	close(gate)
+	wg.Wait()
+
+	require.Equal(t, 1, strings.Count(h.allTexts(), "До какого размера сжать?"))
 }

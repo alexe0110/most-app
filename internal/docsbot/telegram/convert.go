@@ -79,6 +79,8 @@ const (
 	maxFileBytes = 20 << 20   // Telegram download limit for bots
 	maxLimitKB   = 20 * 1_024 // largest custom target, in KB
 	downloadWait = 30 * time.Second
+	// photosDownloadBudget caps all downloads of one PDF from photos together.
+	photosDownloadBudget = 80 * time.Second
 )
 
 // converter runs the /convert dialogue. State lives in sessions; the image work
@@ -256,7 +258,10 @@ func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Upda
 
 	unlock := c.dialogue.lock(user)
 	defer unlock()
-	if !c.sessions.update(user, func(s *session) {
+	// Two images sent in a row both pass the check above while downloading: only
+	// the first one moves the dialogue on, the other is dropped.
+	advanced := false
+	c.sessions.update(user, func(s *session) {
 		if s.step != stepAwaitImage {
 			return
 		}
@@ -267,10 +272,11 @@ func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Upda
 		if d := update.Message.Document; d != nil {
 			s.sourceTitle = d.FileName
 		}
-	}) {
-		return
+		advanced = true
+	})
+	if advanced {
+		c.moveDown(ctx, b, chatID, user, textConvertChooseLimit+c.fileTip(user, update), limitKeyboard())
 	}
-	c.moveDown(ctx, b, chatID, user, textConvertChooseLimit+c.fileTip(user, update), limitKeyboard())
 }
 
 // addPage adds a photo to a PDF in progress without downloading it. The limits
@@ -623,17 +629,22 @@ func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, update *models.Up
 	unlock()
 
 	// The declared sizes are not trusted: the real total is checked as the pages arrive.
+	// The downloads share one budget well under the handler timeout, so the error
+	// below can still be shown on a live ctx when Telegram is slow.
+	dlCtx, cancel := context.WithTimeout(ctx, photosDownloadBudget)
+	defer cancel()
 	images := make([][]byte, 0, len(pending))
 	total := 0
 	for _, img := range pending {
-		data, err := c.download(ctx, b, img.fileID)
+		data, err := c.download(dlCtx, b, img.fileID)
 		if err != nil {
 			c.log.ErrorContext(ctx, "convert download photo", "err", err, "user_id", user)
 			c.retry(ctx, b, chatID, user, sess, msgID, textConvertDownloadFailed, pdfKeyboard())
 			return
 		}
 		if total += len(data); total > maxAlbumBytes {
-			c.retry(ctx, b, chatID, user, sess, msgID, fmt.Sprintf(textPhotosOverLimit, maxAlbumBytes>>20), cancelKeyboard())
+			// The session is not restored: the same photos would fail the same way.
+			c.show(ctx, b, chatID, msgID, fmt.Sprintf(textPhotosOverLimit, maxAlbumBytes>>20), nil)
 			return
 		}
 		images = append(images, data)
