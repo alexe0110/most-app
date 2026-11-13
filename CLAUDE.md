@@ -47,7 +47,7 @@ Docs (read only what the task needs, not everything): `docs/code_conventions.md`
 5. Render the `Reply` in `telegram/`.
 6. Wire in `cmd/<bot>/main.go`, if a new dependency appeared.
 
-Reference: `docsbot.Service.Receive` and `internal/docsbot/telegram/docs.go`. Follow the same shape.
+Reference: `docsbot.Service.Receive` and `internal/docsbot/telegram/docs_intake.go`. Follow the same shape.
 
 ## Commands
 

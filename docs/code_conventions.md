@@ -13,7 +13,7 @@ flowchart LR
         JOB["docsbot/jobs<br/>воркеры"]
     end
     subgraph DOM["Домен docsbot"]
-        SVC["service.go<br/>юзкейсы"]
+        SVC["service*.go<br/>юзкейсы"]
         ENT["document.go<br/>сущности"]
         PORTS["ports.go<br/>интерфейсы"]
     end
@@ -49,7 +49,7 @@ cmd/
 internal/
   docsbot/                 # домен Most Files
     document.go            # сущности и value objects
-    service.go             # юзкейсы (методы Service)
+    service*.go            # юзкейсы (методы Service) по темам
     ports.go               # интерфейсы, нужные домену
     errors.go              # доменные ошибки
     reply.go               # ответы юзкейсов (смысл, не UI)

@@ -30,7 +30,7 @@ Postgres — адаптеры. Drive (#11) не реализуем, но ост�
 - `Reply` (интерфейс) для ветвящихся юзкейсов: `NeedCategory{Doc}`, `AlreadySaved{Doc}`, `Saved{Doc,OfferDrive}`.
 - Конкретные для остальных: `Card{Doc}`, `Catalog{Counts,NotInDrive,DriveConnected}`, `CategoryPage{Category,Docs,Page,Pages,Total,DriveConnected}`, `Found{Query,Docs}`.
 
-**`service.go` — юзкейсы**
+**`service*.go` — юзкейсы**
 - `Receive` → дубль `saved`=`AlreadySaved`; `pending`=`NeedCategory`; новый → `CreateDocument(pending)` + `NeedCategory`.
 - `ChooseCategory` → идемпотентно; `SaveDocument` (категория + `saved`); если `Drive.Connected` — `SetBackupStatus(pending)` (постановку задачи добавит #11); `OfferDrive` = не подключён и `CountSaved ∈ {1,5}`.
 - `Card`, `Rename`, `Recategorize`, `Delete` (все со скоупом по user), `Catalog`, `CategoryPage` (пагинация по 10), `Search`.
