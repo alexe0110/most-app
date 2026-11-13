@@ -66,7 +66,7 @@ func reply(ctx context.Context, b *bot.Bot, log *slog.Logger, chatID int64, text
 	_, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text})
 	traceAPI(ctx, log, "sendMessage", start)
 	if err != nil {
-		log.Error("send telegram message", "err", err)
+		log.ErrorContext(ctx, "send telegram message", "err", err)
 	}
 }
 

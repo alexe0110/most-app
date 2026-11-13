@@ -30,7 +30,7 @@ func (w *purgeOAuthStatesWorker) Work(ctx context.Context, _ *river.Job[PurgeOAu
 	if err != nil {
 		return fmt.Errorf("purge expired oauth states: %w", err)
 	}
-	w.log.Info("purged expired oauth states", "count", tag.RowsAffected())
+	w.log.InfoContext(ctx, "purged expired oauth states", "count", tag.RowsAffected())
 	return nil
 }
 

@@ -1297,12 +1297,12 @@ func (d *docs) offerDrive(ctx context.Context, b *bot.Bot, chatID int64, user do
 
 // connectURL builds the Google consent URL for the user, false if unavailable.
 func (d *docs) connectURL(ctx context.Context, user docsbot.UserID) (string, bool) {
-	if d.auth == nil || user == "" {
+	if user == "" {
 		return "", false
 	}
 	url, err := d.auth.AuthURL(ctx, string(user), botName)
 	if err != nil {
-		d.log.Error("build auth url", "err", err)
+		d.log.ErrorContext(ctx, "build auth url", "err", err)
 		return "", false
 	}
 	return url, true
@@ -1472,7 +1472,7 @@ func (d *docs) editMessage(ctx context.Context, b *bot.Bot, chatID int64, msgID 
 	_, err := b.EditMessageText(ctx, params)
 	traceAPI(ctx, d.log, "editMessageText", start)
 	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
-		d.log.Error("edit telegram message", "err", err)
+		d.log.ErrorContext(ctx, "edit telegram message", "err", err)
 	}
 }
 
@@ -1489,7 +1489,7 @@ func (d *docs) editMarkup(ctx context.Context, b *bot.Bot, chatID int64, msgID i
 	})
 	traceAPI(ctx, d.log, "editMessageReplyMarkup", start)
 	if err != nil {
-		d.log.Error("edit telegram markup", "err", err)
+		d.log.ErrorContext(ctx, "edit telegram markup", "err", err)
 	}
 }
 
@@ -1499,7 +1499,7 @@ func (d *docs) answerText(ctx context.Context, b *bot.Bot, callbackID, text stri
 	_, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: callbackID, Text: text})
 	traceAPI(ctx, d.log, "answerCallbackQuery", start)
 	if err != nil {
-		d.log.Error("answer callback", "err", err)
+		d.log.ErrorContext(ctx, "answer callback", "err", err)
 	}
 }
 

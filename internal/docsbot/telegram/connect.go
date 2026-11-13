@@ -267,7 +267,7 @@ func (n *Notifier) SyncOutcome(ctx context.Context, user docsbot.UserID, doc doc
 	if revoked(card.Doc) {
 		var uErr error
 		if url, uErr = n.auth.AuthURL(ctx, string(user), botName); uErr != nil {
-			n.log.Error("build auth url", "err", uErr)
+			n.log.ErrorContext(ctx, "build auth url", "err", uErr)
 			url = ""
 		}
 	}
@@ -325,7 +325,7 @@ func (n *Notifier) Reconnect(ctx context.Context, user docsbot.UserID) error {
 		return fmt.Errorf("resolve tg user: %w", err)
 	}
 	if url, uErr := n.auth.AuthURL(ctx, string(user), botName); uErr != nil {
-		n.log.Error("build auth url", "err", uErr)
+		n.log.ErrorContext(ctx, "build auth url", "err", uErr)
 		err = n.bot.Send(ctx, chatID, textReconnect)
 	} else {
 		err = n.bot.SendMarkup(ctx, chatID, textReconnect, reconnectKeyboard(url))

@@ -116,11 +116,10 @@ type Upload struct {
 
 // File is an uploaded Drive file.
 type File struct {
-	ID   string
-	Link string
+	ID string
 }
 
-// Upload stores the file in the user's category folder and returns its link.
+// Upload stores the file in the user's category folder and returns its id.
 func (s *Service) Upload(ctx context.Context, userID string, up Upload) (File, error) {
 	httpc, err := s.client(ctx, userID)
 	if err != nil {
@@ -344,13 +343,12 @@ func (s *Service) findFileByDocID(ctx context.Context, httpc *http.Client, folde
 		docIDProperty, escapeQuery(docID), folderID)
 	v := url.Values{}
 	v.Set("q", q)
-	v.Set("fields", "files(id,webViewLink)")
+	v.Set("fields", "files(id)")
 	v.Set("spaces", "drive")
 
 	var out struct {
 		Files []struct {
-			ID          string `json:"id"`
-			WebViewLink string `json:"webViewLink"`
+			ID string `json:"id"`
 		} `json:"files"`
 	}
 	if err := s.do(ctx, "files.list", httpc, http.MethodGet, s.baseURL+"/drive/v3/files?"+v.Encode(), "", nil, &out); err != nil {
@@ -360,15 +358,7 @@ func (s *Service) findFileByDocID(ctx context.Context, httpc *http.Client, folde
 		return File{}, false, nil
 	}
 	f := out.Files[0]
-	return File{ID: f.ID, Link: fileLink(f.ID, f.WebViewLink)}, true, nil
-}
-
-// fileLink returns the web link, falling back to the canonical view URL.
-func fileLink(id, webViewLink string) string {
-	if webViewLink != "" {
-		return webViewLink
-	}
-	return "https://drive.google.com/file/d/" + id + "/view"
+	return File{ID: f.ID}, true, nil
 }
 
 // upload sends the file as multipart/related: JSON metadata, then the bytes.
@@ -383,15 +373,14 @@ func (s *Service) upload(ctx context.Context, httpc *http.Client, folderID, name
 	}
 
 	var out struct {
-		ID          string `json:"id"`
-		WebViewLink string `json:"webViewLink"`
+		ID string `json:"id"`
 	}
-	u := s.baseURL + "/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink"
+	u := s.baseURL + "/upload/drive/v3/files?uploadType=multipart&fields=id"
 	if err := s.do(ctx, "files.upload", httpc, http.MethodPost, u, ct, body, &out); err != nil {
 		return File{}, fmt.Errorf("drive upload: %w", err)
 	}
 
-	return File{ID: out.ID, Link: fileLink(out.ID, out.WebViewLink)}, nil
+	return File{ID: out.ID}, nil
 }
 
 // multipartBody builds a multipart/related body: JSON metadata, then the bytes.

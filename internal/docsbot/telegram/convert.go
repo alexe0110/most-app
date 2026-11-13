@@ -1188,7 +1188,7 @@ func stripURL(err error) error {
 // answer stops the button's loading spinner.
 func (c *converter) answer(ctx context.Context, b *bot.Bot, callbackID string) {
 	if _, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: callbackID}); err != nil {
-		c.log.Error("answer callback", "err", err)
+		c.log.ErrorContext(ctx, "answer callback", "err", err)
 	}
 }
 
@@ -1320,7 +1320,7 @@ func callbackChat(update *models.Update) (int64, bool) {
 // sendMarkup sends text with an inline keyboard.
 func sendMarkup(ctx context.Context, b *bot.Bot, log *slog.Logger, chatID int64, text string, markup models.ReplyMarkup) {
 	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ReplyMarkup: markup}); err != nil {
-		log.Error("send telegram message", "err", err)
+		log.ErrorContext(ctx, "send telegram message", "err", err)
 	}
 }
 

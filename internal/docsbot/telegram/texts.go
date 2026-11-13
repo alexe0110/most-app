@@ -43,7 +43,6 @@ const (
 	// textDeletedRemoteKept: the Drive file could not be trashed and stays.
 	textDeletedRemoteKept = "Документ удалён. На Google Диске файл остался — удали его вручную."
 	textDeleted           = "Документ удалён 🗑"
-	textDeleteCancelled   = "Удаление отменено."
 	textGone              = "Этого документа уже нет."
 	textStale             = "Кнопка устарела, открой заново."
 

@@ -214,7 +214,7 @@ func (d driveBridge) Upload(ctx context.Context, user docsbot.UserID, in docsbot
 	if err != nil {
 		return docsbot.DriveFile{}, driveErr(err)
 	}
-	return docsbot.DriveFile{ID: f.ID, Link: f.Link}, nil
+	return docsbot.DriveFile{ID: f.ID}, nil
 }
 
 func (d driveBridge) Rename(ctx context.Context, user docsbot.UserID, remoteID, name string) error {

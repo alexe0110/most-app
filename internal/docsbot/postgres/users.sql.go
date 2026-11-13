@@ -11,30 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createUser = `-- name: CreateUser :one
-insert into users (tg_user_id, lang)
-values ($1, $2)
-returning id, tg_user_id, lang, created_at, deleted_at
-`
-
-type CreateUserParams struct {
-	TgUserID int64
-	Lang     string
-}
-
-func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
-	row := q.db.QueryRow(ctx, createUser, arg.TgUserID, arg.Lang)
-	var i User
-	err := row.Scan(
-		&i.ID,
-		&i.TgUserID,
-		&i.Lang,
-		&i.CreatedAt,
-		&i.DeletedAt,
-	)
-	return i, err
-}
-
 const ensureUser = `-- name: EnsureUser :one
 insert into users (tg_user_id, lang)
 values ($1, $2)

@@ -590,9 +590,6 @@ func truncateMiddle(s string, n int) string {
 	if len(r) <= n {
 		return s
 	}
-	if n < 3 {
-		return truncate(s, n)
-	}
 	tail := (n - 1) / 2
 	head := n - 1 - tail
 	return strings.TrimRight(string(r[:head]), " ") + "…" + strings.TrimLeft(string(r[len(r)-tail:]), " ")
