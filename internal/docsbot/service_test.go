@@ -726,3 +726,56 @@ func TestService_SweepStuckUploads(t *testing.T) {
 		})
 	}
 }
+
+// A failed upload enqueue leaves the document saved with no backup. The next tap
+// on a category must queue the upload instead of reporting "already saved" only.
+func TestService_ChooseCategory_retryQueuesUpload(t *testing.T) {
+	tests := []struct {
+		name       string
+		connected  bool
+		status     docsbot.BackupStatus
+		wantQueued bool
+	}{
+		{"saved, no backup, Drive connected", true, docsbot.BackupNone, true},
+		{"Drive not connected", false, docsbot.BackupNone, false},
+		{"already pending", true, docsbot.BackupPending, false},
+		{"already backed up", true, docsbot.BackupBackedUp, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther,
+				BackupStatus: tt.status, Title: "Паспорт", TgFileUniqueID: "u"})
+			uploads := &fakeUploads{repo: repo}
+			svc := docsbot.NewService(repo, fakeDrive{connected: tt.connected}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+
+			got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
+
+			require.NoError(t, err)
+			require.True(t, got.Already)
+			if tt.wantQueued {
+				require.Equal(t, []docsbot.DocumentID{doc.ID}, uploads.calls)
+				require.Equal(t, docsbot.BackupPending, got.Doc.BackupStatus)
+			} else {
+				require.Empty(t, uploads.calls)
+			}
+		})
+	}
+}
+
+func TestService_ChooseCategory_enqueueFailureThenRetry(t *testing.T) {
+	repo := newFakeRepo()
+	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: "Паспорт", TgFileUniqueID: "u"})
+	uploads := &fakeUploads{repo: repo, enqueueErr: errors.New("queue down")}
+	svc := docsbot.NewService(repo, fakeDrive{connected: true}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+
+	_, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
+	require.Error(t, err, "first tap saves the document but cannot queue the upload")
+
+	uploads.enqueueErr = nil
+	got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
+
+	require.NoError(t, err)
+	require.Equal(t, docsbot.BackupPending, got.Doc.BackupStatus)
+	require.Equal(t, []docsbot.DocumentID{doc.ID}, uploads.calls)
+}

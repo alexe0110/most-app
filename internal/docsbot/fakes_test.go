@@ -125,17 +125,21 @@ func (f fakeFiles) Download(context.Context, string) ([]byte, string, error) {
 // fakeUploads records enqueued uploads and, like the real atomic enqueue, marks
 // the document pending.
 type fakeUploads struct {
-	mu       sync.Mutex
-	repo     *fakeRepo
-	calls    []docsbot.DocumentID
-	cancels  []docsbot.UserID // CancelUploads calls
-	allJobs  []docsbot.UserID // CancelUserJobs calls
-	requeued []docsbot.DocumentID
+	mu         sync.Mutex
+	repo       *fakeRepo
+	calls      []docsbot.DocumentID
+	cancels    []docsbot.UserID // CancelUploads calls
+	allJobs    []docsbot.UserID // CancelUserJobs calls
+	requeued   []docsbot.DocumentID
+	enqueueErr error // returned by EnqueueUpload before anything changes, like a failed tx
 }
 
 func (u *fakeUploads) EnqueueUpload(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if u.enqueueErr != nil {
+		return u.enqueueErr
+	}
 	u.calls = append(u.calls, id)
 	u.repo.mu.Lock()
 	defer u.repo.mu.Unlock()
