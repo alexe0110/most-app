@@ -11,6 +11,56 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
+// renamedDuringUpload renames the document while its file uploads.
+type renamedDuringUpload struct {
+	fakeDrive
+	repo  *fakeRepo
+	id    docsbot.DocumentID
+	title string
+}
+
+func (d renamedDuringUpload) Upload(ctx context.Context, user docsbot.UserID, in docsbot.DriveUpload) (docsbot.DriveFile, error) {
+	if d.title != "" {
+		_ = d.repo.SetTitle(ctx, user, d.id, d.title)
+	}
+	return d.fakeDrive.Upload(ctx, user, in)
+}
+
+func TestService_Backup_syncQueuedExactlyWhenVersionChanged(t *testing.T) {
+	tests := []struct {
+		name     string
+		rename   string
+		wantJobs int
+	}{
+		{"no change while uploading", "", 0},
+		{"renamed while uploading", "Новое", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			doc := repo.seed(docsbot.Document{
+				UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "Старое", Kind: docsbot.KindDocument,
+				BackupStatus: docsbot.BackupPending, TgFileID: "tg-1", MIME: "application/pdf",
+			})
+			syncs := &fakeSyncs{repo: repo}
+			drive := renamedDuringUpload{
+				fakeDrive: fakeDrive{connected: true, uploadFile: docsbot.DriveFile{ID: "remote-1"}},
+				repo:      repo, id: doc.ID, title: tt.rename,
+			}
+			svc := docsbot.NewService(repo, drive, fakeFiles{data: []byte("x"), mime: "application/pdf"}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
+
+			res, err := svc.Backup(t.Context(), user, doc.ID)
+
+			require.NoError(t, err)
+			require.Equal(t, docsbot.BackupBackedUp, repo.docs[doc.ID].BackupStatus)
+			require.Len(t, syncs.jobs, tt.wantJobs)
+			if tt.wantJobs > 0 {
+				require.Equal(t, docsbot.SyncPending, res.Doc.SyncStatus)
+			}
+		})
+	}
+}
+
 // flakySyncs fails the first MarkBackedUp calls, like a worker dying after the
 // Drive upload but before the result is saved.
 type flakySyncs struct {

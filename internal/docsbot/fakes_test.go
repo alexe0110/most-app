@@ -12,6 +12,23 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
+// --- races (run with -race) ---
+
+func parallel(n int, fn func(i int)) {
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			fn(i)
+		}()
+	}
+	close(start)
+	wg.Wait()
+}
+
 const stranger docsbot.UserID = "user-2"
 
 func edgeService(repo *fakeRepo, drive fakeDrive) (*docsbot.Service, *fakeUploads) {

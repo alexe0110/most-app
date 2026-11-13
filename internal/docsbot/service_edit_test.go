@@ -1,13 +1,144 @@
 package docsbot_test
 
 import (
+	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
+
+func TestService_RenameRecategorize_notQueuedWhileUploading(t *testing.T) {
+	for _, st := range []docsbot.BackupStatus{docsbot.BackupPending, docsbot.BackupUploading, docsbot.BackupFailed, docsbot.BackupNone} {
+		t.Run(string(st), func(t *testing.T) {
+			repo := newFakeRepo()
+			doc := backedUpDoc(repo, func(d *docsbot.Document) { d.BackupStatus, d.DriveFileID = st, "" })
+			svc, syncs := syncService(repo, fakeDrive{connected: true}, fakeFiles{})
+
+			_, err := svc.Rename(t.Context(), user, doc.ID, "Новое")
+			require.NoError(t, err)
+			_, err = svc.Recategorize(t.Context(), user, doc.ID, docsbot.CatPassport)
+			require.NoError(t, err)
+
+			got := repo.docs[doc.ID]
+			require.Equal(t, "Новое", got.Title)
+			require.Equal(t, docsbot.CatPassport, got.Category)
+			require.Equal(t, 2, got.MetaVersion, "meta_version moves so the upload can notice")
+			require.Empty(t, syncs.jobs)
+		})
+	}
+}
+
+func TestService_Recategorize_disconnectedMissingStaysMissing(t *testing.T) {
+	repo := newFakeRepo()
+	doc := backedUpDoc(repo, func(d *docsbot.Document) { d.SyncStatus = docsbot.SyncMissing })
+	svc, syncs := syncService(repo, fakeDrive{connected: true}, fakeFiles{})
+
+	card, err := svc.Recategorize(t.Context(), user, doc.ID, docsbot.CatPassport)
+
+	require.NoError(t, err)
+	require.Equal(t, docsbot.SyncMissing, card.Doc.SyncStatus)
+	require.Empty(t, syncs.jobs)
+}
+
+func TestService_Delete_errors(t *testing.T) {
+	t.Run("drive status error keeps the row", func(t *testing.T) {
+		repo := newFakeRepo()
+		doc := backedUpDoc(repo, nil)
+		svc, syncs := syncService(repo, fakeDrive{err: errors.New("db down")}, fakeFiles{})
+
+		_, err := svc.Delete(t.Context(), user, doc.ID)
+
+		require.Error(t, err)
+		require.Contains(t, repo.docs, doc.ID)
+		require.Empty(t, syncs.trashes)
+	})
+	t.Run("trash enqueue failure keeps the row", func(t *testing.T) {
+		repo := newFakeRepo()
+		doc := backedUpDoc(repo, nil)
+		svc, syncs := syncService(repo, fakeDrive{connected: true}, fakeFiles{})
+		syncs.err = errors.New("queue down")
+
+		_, err := svc.Delete(t.Context(), user, doc.ID)
+
+		require.Error(t, err)
+		require.Contains(t, repo.docs, doc.ID)
+	})
+	t.Run("foreign and unknown documents", func(t *testing.T) {
+		repo := newFakeRepo()
+		doc := backedUpDoc(repo, nil)
+		svc, syncs := syncService(repo, fakeDrive{connected: true}, fakeFiles{})
+
+		_, err := svc.Delete(t.Context(), stranger, doc.ID)
+		require.ErrorIs(t, err, docsbot.ErrNotFound)
+		_, err = svc.Delete(t.Context(), user, "nope")
+		require.ErrorIs(t, err, docsbot.ErrNotFound)
+		require.Contains(t, repo.docs, doc.ID)
+		require.Empty(t, syncs.trashes)
+	})
+	t.Run("missing remote file queues nothing and keeps nothing", func(t *testing.T) {
+		repo := newFakeRepo()
+		doc := backedUpDoc(repo, func(d *docsbot.Document) { d.SyncStatus = docsbot.SyncMissing })
+		svc, syncs := syncService(repo, fakeDrive{connected: true}, fakeFiles{})
+
+		got, err := svc.Delete(t.Context(), user, doc.ID)
+
+		require.NoError(t, err)
+		require.Equal(t, docsbot.Deleted{}, got)
+		require.Empty(t, syncs.trashes)
+	})
+}
+
+func TestService_race_doubleTapRenameAndCategory(t *testing.T) {
+	repo := newFakeRepo()
+	doc := backedUpDoc(repo, nil)
+	svc, syncs := syncService(repo, fakeDrive{connected: true}, fakeFiles{})
+
+	const n = 8
+	parallel(n, func(i int) {
+		if i%2 == 0 {
+			_, err := svc.Rename(t.Context(), user, doc.ID, "Одно имя")
+			require.NoError(t, err)
+			return
+		}
+		_, err := svc.Recategorize(t.Context(), user, doc.ID, docsbot.CatPassport)
+		require.NoError(t, err)
+	})
+
+	got := repo.docs[doc.ID]
+	require.Equal(t, "Одно имя", got.Title)
+	require.Equal(t, docsbot.CatPassport, got.Category)
+	require.Equal(t, n, got.MetaVersion)
+	require.Equal(t, docsbot.SyncPending, got.SyncStatus)
+	require.NotEmpty(t, syncs.jobs)
+}
+
+func TestService_race_doubleTapDeleteTrashesOnce(t *testing.T) {
+	repo := newFakeRepo()
+	doc := backedUpDoc(repo, nil)
+	svc, syncs := syncService(repo, fakeDrive{connected: true}, fakeFiles{})
+
+	var ok, gone atomic.Int32
+	parallel(6, func(int) {
+		_, err := svc.Delete(t.Context(), user, doc.ID)
+		switch {
+		case err == nil:
+			ok.Add(1)
+		case errors.Is(err, docsbot.ErrNotFound):
+			gone.Add(1)
+		default:
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	require.EqualValues(t, 1, ok.Load())
+	require.EqualValues(t, 5, gone.Load())
+	require.Equal(t, []string{"remote-1"}, syncs.trashes, "one trash job, not one per tap")
+	require.Empty(t, repo.docs)
+}
 
 func TestService_SetTitleCategoryDelete_missingIsNotFound(t *testing.T) {
 	repo := newFakeRepo()
