@@ -2,6 +2,7 @@ package docsbot_test
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -9,6 +10,108 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
+
+func TestService_Receive_normalizesTitle(t *testing.T) {
+	repo := newFakeRepo()
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+
+	in := incoming("norm")
+	in.Title = " a\nb\t"
+	reply, err := svc.Receive(t.Context(), in)
+	require.NoError(t, err)
+	require.Equal(t, "a b", reply.(docsbot.NeedCategory).Doc.Title)
+
+	in = incoming("blank")
+	in.Title = "\n \n"
+	reply, err = svc.Receive(t.Context(), in)
+	require.NoError(t, err)
+	require.Empty(t, reply.(docsbot.NeedCategory).Doc.Title, "blank stays empty: the default title is set on save")
+}
+
+func TestService_ChooseCategoryGroup_parallelTapsSaveOnce(t *testing.T) {
+	repo := newFakeRepo()
+	var first docsbot.DocumentID
+	for _, uid := range []string{"p1", "p2", "p3"} {
+		d := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "alb", TgFileUniqueID: uid})
+		first = d.ID
+	}
+	svc, uploads := edgeService(repo, fakeDrive{connected: true})
+
+	var mu sync.Mutex
+	saved := 0
+	runParallel(8, func(int) error {
+		got, err := svc.ChooseCategoryGroup(t.Context(), user, first, docsbot.CatReceipts)
+		mu.Lock()
+		defer mu.Unlock()
+		saved += len(got.Docs)
+		return err
+	})
+
+	require.Equal(t, 3, saved, "every document is saved by exactly one tap")
+	require.Len(t, uploads.calls, 3, "and queued once")
+}
+
+func TestService_Receive(t *testing.T) {
+	saved := docsbot.Document{
+		ID: "d-saved", UserID: user, Status: docsbot.StatusSaved,
+		Category: docsbot.CatPassport, Title: "Паспорт", TgFileUniqueID: "dup-saved",
+	}
+	pending := docsbot.Document{
+		ID: "d-pending", UserID: user, Status: docsbot.StatusPending,
+		Title: "Паспорт", TgFileUniqueID: "dup-pending",
+	}
+
+	tests := []struct {
+		name   string
+		seed   *docsbot.Document
+		unique string
+		assert func(t *testing.T, rep docsbot.Reply, repo *fakeRepo)
+	}{
+		{
+			name:   "new file is created and needs a category",
+			unique: "fresh",
+			assert: func(t *testing.T, rep docsbot.Reply, repo *fakeRepo) {
+				nc, ok := rep.(docsbot.NeedCategory)
+				require.True(t, ok)
+				require.Equal(t, docsbot.StatusPending, nc.Doc.Status)
+				require.Len(t, repo.docs, 1)
+			},
+		},
+		{
+			name:   "pending duplicate re-asks the category",
+			seed:   &pending,
+			unique: "dup-pending",
+			assert: func(t *testing.T, rep docsbot.Reply, repo *fakeRepo) {
+				nc, ok := rep.(docsbot.NeedCategory)
+				require.True(t, ok)
+				require.Equal(t, docsbot.DocumentID("d-pending"), nc.Doc.ID)
+				require.Len(t, repo.docs, 1, "no new row")
+			},
+		},
+		{
+			name:   "saved duplicate reports already saved",
+			seed:   &saved,
+			unique: "dup-saved",
+			assert: func(t *testing.T, rep docsbot.Reply, _ *fakeRepo) {
+				as, ok := rep.(docsbot.AlreadySaved)
+				require.True(t, ok)
+				require.Equal(t, docsbot.DocumentID("d-saved"), as.Doc.ID)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			if tt.seed != nil {
+				repo.seed(*tt.seed)
+			}
+			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+			rep, err := svc.Receive(t.Context(), incoming(tt.unique))
+			require.NoError(t, err)
+			tt.assert(t, rep, repo)
+		})
+	}
+}
 
 func intakeFile(uid string) docsbot.IncomingFile {
 	return docsbot.IncomingFile{UserID: user, Kind: docsbot.KindPhoto, FileID: "f-" + uid, FileUniqueID: uid}

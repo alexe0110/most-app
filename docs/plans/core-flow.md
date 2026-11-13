@@ -30,7 +30,7 @@ Postgres — адаптеры. Drive (#11) не реализуем, но ост�
 - `Reply` (интерфейс) для ветвящихся юзкейсов: `NeedCategory{Doc}`, `AlreadySaved{Doc}`, `Saved{Doc,OfferDrive}`.
 - Конкретные для остальных: `Card{Doc}`, `Catalog{Counts,NotInDrive,DriveConnected}`, `CategoryPage{Category,Docs,Page,Pages,Total,DriveConnected}`, `Found{Query,Docs}`.
 
-**`service.go` — юзкейсы**
+**`service*.go` — юзкейсы**
 - `Receive` → дубль `saved`=`AlreadySaved`; `pending`=`NeedCategory`; новый → `CreateDocument(pending)` + `NeedCategory`.
 - `ChooseCategory` → идемпотентно; `SaveDocument` (категория + `saved`); если `Drive.Connected` — `SetBackupStatus(pending)` (постановку задачи добавит #11); `OfferDrive` = не подключён и `CountSaved ∈ {1,5}`.
 - `Card`, `Rename`, `Recategorize`, `Delete` (все со скоупом по user), `Catalog`, `CategoryPage` (пагинация по 10), `Search`.
@@ -60,7 +60,7 @@ Postgres — адаптеры. Drive (#11) не реализуем, но ост�
 
 ## Тесты
 
-- **unit** (`service_test.go` + `fakes_test.go`): table-driven на все юзкейсы с фейками `Repo`/`Drive` (новый/дубль/pending, offer на 1-м и 5-м, ветка connected, пагинация, скоуп по user).
+- **unit** (`service*_test.go` + `fakes_test.go`): table-driven на все юзкейсы с фейками `Repo`/`Drive` (новый/дубль/pending, offer на 1-м и 5-м, ветка connected, пагинация, скоуп по user).
 - **handler** (`telegram`, fake Bot API через `bot.WithServerURL`+`httptest`, фейковый `Service`): приём → категория → карточка; `/start`; поиск.
 - **integration** (`postgres`, `dbtest.New`): create/дубль/by-id/save/list+пагинация/search(опечатка)/counts/update/delete.
 

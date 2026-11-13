@@ -12,6 +12,54 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
+// --- races (run with -race) ---
+
+func parallel(n int, fn func(i int)) {
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			fn(i)
+		}()
+	}
+	close(start)
+	wg.Wait()
+}
+
+const stranger docsbot.UserID = "user-2"
+
+func edgeService(repo *fakeRepo, drive fakeDrive) (*docsbot.Service, *fakeUploads) {
+	uploads := &fakeUploads{repo: repo}
+	return docsbot.NewService(repo, drive, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}), uploads
+}
+
+// runParallel runs fn n times at once and returns the results in call order.
+func runParallel(n int, fn func(i int) error) []error {
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = fn(i)
+		}()
+	}
+	wg.Wait()
+	return errs
+}
+
+const user docsbot.UserID = "user-1"
+
+func incoming(unique string) docsbot.IncomingFile {
+	return docsbot.IncomingFile{
+		UserID: user, Kind: docsbot.KindDocument, FileID: "f-" + unique,
+		FileUniqueID: unique, Title: "Паспорт",
+	}
+}
+
 // fakeDrive reports a configurable connection state and upload outcome.
 type fakeDrive struct {
 	connected  bool

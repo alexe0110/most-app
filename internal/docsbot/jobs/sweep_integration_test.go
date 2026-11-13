@@ -17,6 +17,30 @@ import (
 	pjobs "github.com/alexe0110/most-app/internal/platform/jobs"
 )
 
+// Disconnect with a queued job and documents in pending/uploading: the job is
+// removed, the documents fall back to none, nothing is uploaded afterwards.
+func TestDisconnect_resetsQueuedAndUploading(t *testing.T) {
+	drive := &countingDrive{}
+	pool, user, id, svc, spy, enq, start := setupSweep(t, drive, "none", "0 seconds", "active")
+
+	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
+	var uploadingID string
+	require.NoError(t, pool.QueryRow(t.Context(),
+		`insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, backup_status)
+		 values ($1::uuid, 'saved', 'document', 'other', 't', 'f2', 'u2', 'uploading') returning id::text`, string(user)).Scan(&uploadingID))
+
+	require.NoError(t, svc.Disconnect(t.Context(), user))
+	start()
+	time.Sleep(2 * time.Second)
+
+	for _, d := range []docsbot.DocumentID{id, docsbot.DocumentID(uploadingID)} {
+		status, _ := backupState(t, pool, d)
+		require.Equal(t, "none", status)
+	}
+	require.Zero(t, drive.count())
+	require.Empty(t, spy.seen())
+}
+
 // setupSweep is setupUpload plus a service to sweep with. It puts the seeded
 // document into the given backup_status and age, and creates the user's Drive
 // integration with integrationStatus ("" means no integration row). start runs
