@@ -174,7 +174,7 @@ func TestNotifier_UploadOutcome_groupedEditsStatusMessage(t *testing.T) {
 	require.Len(t, edits, 1)
 	require.Equal(t, "70", edits[0].messageID)
 	require.Equal(t, "HTML", edits[0].parseMode)
-	require.Contains(t, edits[0].text, "Загрузка в Drive (1 из 2)")
+	require.Contains(t, edits[0].text, "⏳ Переношу на Google Диск · 1 из 2")
 	require.Empty(t, e.api.callsOf("sendMessage"), "no separate Выгружено notice for a batch")
 	require.False(t, e.status.msgs[sm.ID].Closed, "still has a line in progress")
 }
@@ -188,7 +188,7 @@ func TestNotifier_UploadOutcome_closesWhenAllTerminal(t *testing.T) {
 	require.True(t, e.status.msgs[sm.ID].Closed)
 	edits := e.api.callsOf("editMessageText")
 	require.Len(t, edits, 1)
-	require.Contains(t, edits[0].text, "❌")
+	require.Contains(t, edits[0].text, "⚠️ Не перенёс 1")
 }
 
 func TestNotifier_UploadOutcome_editErrors(t *testing.T) {
@@ -218,7 +218,7 @@ func TestNotifier_UploadOutcome_editErrors(t *testing.T) {
 			}
 			require.Len(t, sends, 1)
 			require.Equal(t, "HTML", sends[0].parseMode)
-			require.Contains(t, sends[0].text, "Загрузка в Drive (1 из 2)")
+			require.Contains(t, sends[0].text, "⏳ Переношу на Google Диск · 1 из 2")
 			require.Equal(t, 500, e.status.msgs[sm.ID].MessageID, "new message id is stored for later edits")
 		})
 	}
@@ -347,8 +347,7 @@ func TestNotifier_UploadOutcome_transferDoneText(t *testing.T) {
 
 	edits := e.api.callsOf("editMessageText")
 	require.Len(t, edits, 1)
-	require.Contains(t, edits[0].text, "Перенос в Drive (3 из 3)")
-	require.Contains(t, edits[0].text, "Готово: 3 в Drive")
+	require.Contains(t, edits[0].text, "✅ Перенёс на Google Диск — 3 документа")
 }
 
 type failingLookup struct{ err error }
@@ -387,9 +386,8 @@ func TestNotifyConnected_blockedIsNotAnError(t *testing.T) {
 
 const emptyKeyboard = `{"inline_keyboard":[]}`
 
-// A batch without failures has no keyboard: the edit must clear it with an
-// explicit empty keyboard, never a JSON null (Telegram answers 400 to that).
-func TestNotifier_UploadOutcome_noFailuresClearsKeyboard(t *testing.T) {
+// A finished batch without failures offers only «Мои документы».
+func TestNotifier_UploadOutcome_doneWithoutFailuresOffersMyDocs(t *testing.T) {
 	e := newNotifierEnv(t)
 	sm, docs := e.batch(t, docsbot.BackupBackedUp, docsbot.BackupBackedUp)
 
@@ -399,8 +397,23 @@ func TestNotifier_UploadOutcome_noFailuresClearsKeyboard(t *testing.T) {
 	require.Len(t, edits, 1, "edit must not be rejected and retried")
 	require.Contains(t, edits[0].text, "✅")
 	require.True(t, edits[0].hasMarkup)
-	require.Equal(t, emptyKeyboard, edits[0].markup)
+	require.Contains(t, edits[0].markup, "Мои документы")
+	require.NotContains(t, edits[0].markup, "Повторить")
 	require.True(t, e.status.msgs[sm.ID].Closed)
+}
+
+// A batch still in progress has no keyboard: the edit must clear it with an
+// explicit empty keyboard, never a JSON null (Telegram answers 400 to that).
+func TestNotifier_UploadOutcome_inProgressClearsKeyboard(t *testing.T) {
+	e := newNotifierEnv(t)
+	_, docs := e.batch(t, docsbot.BackupBackedUp, docsbot.BackupUploading)
+
+	require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, docs[0].ID))
+
+	edits := e.api.callsOf("editMessageText")
+	require.Len(t, edits, 1)
+	require.True(t, edits[0].hasMarkup)
+	require.Equal(t, emptyKeyboard, edits[0].markup)
 }
 
 func TestNotifier_UploadOutcome_retryButtonRemovedAfterRecovery(t *testing.T) {
@@ -418,13 +431,14 @@ func TestNotifier_UploadOutcome_retryButtonRemovedAfterRecovery(t *testing.T) {
 
 	edits = e.api.callsOf("editMessageText")
 	require.Len(t, edits, 2)
-	require.Equal(t, emptyKeyboard, edits[1].markup, "retry button is removed once nothing failed")
+	require.NotContains(t, edits[1].markup, "Повторить", "retry button is removed once nothing failed")
+	require.Contains(t, edits[1].markup, "Мои документы")
 }
 
 func TestNotifier_UploadOutcome_resendWithoutFailuresHasNoMarkup(t *testing.T) {
 	e := newNotifierEnv(t)
 	e.api.editErr = "Bad Request: message to edit not found"
-	_, docs := e.batch(t, docsbot.BackupBackedUp)
+	_, docs := e.batch(t, docsbot.BackupBackedUp, docsbot.BackupUploading)
 
 	require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, docs[0].ID))
 

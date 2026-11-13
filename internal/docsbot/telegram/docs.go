@@ -36,7 +36,9 @@ type docs struct {
 	confirms *confirmStore
 	searches *searchStore
 	origins  *originStore
-	albums   *albumBuffer
+	// settingsMsgs remembers the /settings message per chat for the OAuth return.
+	settingsMsgs *settingsStore
+	albums       *albumBuffer
 	// driveFolder is the Drive root folder name shown in /start.
 	driveFolder string
 	// registerAlbum remembers an album's images for the "one PDF" button and
@@ -52,11 +54,12 @@ type docs struct {
 func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Option) *docs {
 	d := &docs{
 		svc: svc, auth: auth, log: log,
-		renames:  newRenameStore(time.Now),
-		confirms: newConfirmStore(time.Now),
-		searches: newSearchStore(time.Now),
-		origins:  newOriginStore(time.Now),
-		albums:   newAlbumBuffer(),
+		renames:      newRenameStore(time.Now),
+		confirms:     newConfirmStore(time.Now),
+		searches:     newSearchStore(time.Now),
+		origins:      newOriginStore(time.Now),
+		settingsMsgs: newSettingsStore(time.Now),
+		albums:       newAlbumBuffer(),
 
 		driveFolder: defaultDriveFolder,
 
@@ -138,7 +141,9 @@ func (d *docs) settings(ctx context.Context, b *bot.Bot, u *models.Update) {
 func (d *docs) sendSettings(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, view docsbot.SettingsView) {
 	url, haveURL := d.connectURL(ctx, user)
 	text, kb := renderSettings(view, url, haveURL)
-	d.send(ctx, b, chatID, text, kb)
+	if id, ok := d.sendWith(ctx, b, chatID, text, models.ParseModeHTML, kb); ok {
+		d.settingsMsgs.set(chatID, id)
+	}
 }
 
 func (d *docs) help(ctx context.Context, b *bot.Bot, u *models.Update) {
@@ -372,6 +377,7 @@ func (d *docs) onDisconnect(ctx context.Context, b *bot.Bot, u *models.Update, u
 		return
 	}
 	d.log.InfoContext(ctx, "drive disconnected", "user_id", user)
+	d.settingsMsgs.forget(chatID, msgID) // the message is no longer the settings screen
 	d.editText(ctx, b, chatID, msgID, textDisconnected)
 }
 
@@ -395,7 +401,8 @@ func (d *docs) onInlineSwitch(ctx context.Context, b *bot.Bot, u *models.Update,
 	d.log.InfoContext(ctx, "inline mode switched", "user_id", user, "enabled", on)
 	url, haveURL := d.connectURL(ctx, user)
 	text, kb := renderSettings(view, url, haveURL)
-	d.editMessage(ctx, b, chatID, msgID, text, kb)
+	d.editHTML(ctx, b, chatID, msgID, text, kb)
+	d.settingsMsgs.set(chatID, msgID)
 }
 
 // onRetryAll re-queues every failed Drive upload; the /settings message turns
@@ -405,6 +412,7 @@ func (d *docs) onRetryAll(ctx context.Context, b *bot.Bot, u *models.Update, use
 	if !ok {
 		return
 	}
+	d.settingsMsgs.forget(chatID, msgID) // the settings message turns into a status message
 	view, ok, err := d.svc.RetryFailed(ctx, user, chatID, msgID)
 	if err != nil {
 		d.fail(ctx, b, chatID, "retry failed", err)
@@ -600,6 +608,7 @@ func (d *docs) onDeleteConfirm(ctx context.Context, b *bot.Bot, chatID int64, us
 		return
 	}
 	d.log.InfoContext(ctx, "data deleted", "user_id", user)
+	d.settingsMsgs.forgetChat(chatID) // nothing left to refresh after a connect
 	reply(ctx, b, d.log, chatID, textDataDeleted)
 }
 
@@ -1430,17 +1439,25 @@ func (d *docs) sendHTML(ctx context.Context, b *bot.Bot, chatID int64, text stri
 }
 
 // send posts a message, with an inline keyboard when kb is non-nil.
-func (d *docs) send(ctx context.Context, b *bot.Bot, chatID int64, text string, kb *models.InlineKeyboardMarkup) {
-	params := &bot.SendMessageParams{ChatID: chatID, Text: text}
+func (d *docs) send(ctx context.Context, b *bot.Bot, chatID int64, text string, kb *models.InlineKeyboardMarkup) (int, bool) {
+	return d.sendWith(ctx, b, chatID, text, "", kb)
+}
+
+// sendWith is send with a parse mode ("" for plain text). It returns the id of
+// the sent message; ok is false when the send failed (logged here).
+func (d *docs) sendWith(ctx context.Context, b *bot.Bot, chatID int64, text string, mode models.ParseMode, kb *models.InlineKeyboardMarkup) (int, bool) {
+	params := &bot.SendMessageParams{ChatID: chatID, Text: text, ParseMode: mode}
 	if kb != nil {
 		params.ReplyMarkup = kb
 	}
 	start := time.Now()
-	_, err := b.SendMessage(ctx, params)
+	msg, err := b.SendMessage(ctx, params)
 	traceAPI(ctx, d.log, "sendMessage", start)
 	if err != nil {
-		d.log.Error("send telegram message", "err", err)
+		d.log.ErrorContext(ctx, "send telegram message", "err", err)
+		return 0, false
 	}
+	return msg.ID, true
 }
 
 // editMessage rewrites a message's text and keyboard in place (used for paging).

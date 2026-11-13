@@ -362,7 +362,7 @@ type BackupResult struct {
 // Backup uploads a saved document to the user's Drive. It is the upload_document
 // worker's use case and is idempotent: an already backed-up document is a no-op.
 // A file above the download limit is marked too_large and left in Telegram; a
-// revoked grant returns ErrDriveRevoked; transient errors are returned for retry.
+// revoked grant returns ErrDriveRevoked and a full Drive ErrDriveFull; transient errors are returned for retry.
 func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (BackupResult, error) {
 	doc, err := s.repo.DocumentByID(ctx, user, id)
 	if errors.Is(err, ErrNotFound) {
@@ -406,6 +406,9 @@ func (s *Service) Backup(ctx context.Context, user UserID, id DocumentID) (Backu
 	}
 	if errors.Is(err, ErrDriveRevoked) {
 		return BackupResult{}, ErrDriveRevoked
+	}
+	if errors.Is(err, ErrDriveFull) {
+		return BackupResult{}, ErrDriveFull
 	}
 	if err != nil {
 		return BackupResult{}, fmt.Errorf("upload to drive: %w", err)
@@ -512,9 +515,10 @@ func (s *Service) replaceRefused(ctx context.Context, user UserID, id DocumentID
 	return ReplaceBusy{}, nil
 }
 
-// MarkBackupFailed records a terminal upload failure.
-func (s *Service) MarkBackupFailed(ctx context.Context, user UserID, id DocumentID) error {
-	if err := s.repo.SetBackupStatus(ctx, user, id, BackupFailed); err != nil {
+// MarkBackupFailed records a terminal upload failure with its reason
+// (BackupReason*; "" is stored as unknown and shown as unavailable).
+func (s *Service) MarkBackupFailed(ctx context.Context, user UserID, id DocumentID, reason BackupReason) error {
+	if err := s.repo.FailBackup(ctx, user, id, reason); err != nil {
 		return fmt.Errorf("mark backup failed: %w", err)
 	}
 	return nil
@@ -668,7 +672,7 @@ func (s *Service) SweepStuckUploads(ctx context.Context) (SweepResult, error) {
 	res.Found = len(rows)
 	for _, r := range rows {
 		if now.Sub(r.UpdatedAt) >= sweepFailAfter {
-			if err := s.repo.SetBackupStatus(ctx, r.User, r.ID, BackupFailed); err != nil {
+			if err := s.repo.FailBackup(ctx, r.User, r.ID, BackupReasonUnavailable); err != nil {
 				return res, fmt.Errorf("fail stuck upload: %w", err)
 			}
 			res.Failed = append(res.Failed, r)

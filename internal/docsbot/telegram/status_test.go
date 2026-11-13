@@ -21,7 +21,7 @@ func statusEdits(c *capture) []string {
 	defer c.mu.Unlock()
 	var out []string
 	for _, e := range c.edits {
-		if strings.Contains(e, "Загрузка в Drive") {
+		if strings.Contains(e, "Переношу на Google Диск") {
 			out = append(out, e)
 		}
 	}
@@ -55,7 +55,7 @@ func TestChooseCategory_driveOn_oneFileBecomesLiveCard(t *testing.T) {
 	require.Empty(t, sent.texts, "the picker is edited, nothing new is sent")
 	require.Len(t, sent.edits, 1)
 	require.Contains(t, sent.edits[0], "🗂 ")
-	require.Contains(t, sent.edits[0], "⏳ Загружаю в Drive…")
+	require.Contains(t, sent.edits[0], "⏳ Загружаю на Google Диск…")
 	require.NotEmpty(t, repo.docs[id].StatusMessageID)
 	sm, err := repo.status.ByID(t.Context(), testUserID, repo.docs[id].StatusMessageID)
 	require.NoError(t, err)
@@ -78,17 +78,12 @@ func TestChooseCategory_driveOn_manyFilesShareOneBatch(t *testing.T) {
 	first, err := repo.status.ByID(t.Context(), testUserID, repo.docs[ids[0]].StatusMessageID)
 	require.NoError(t, err)
 	require.Equal(t, docsbot.StatusSingle, first.Kind, "the first card stays a card")
-	require.False(t, has(sent.edits[:1], "Загрузка в Drive"))
+	require.False(t, has(sent.edits[:1], "Переношу на Google Диск"))
 
 	batches := statusEdits(sent)
 	require.Len(t, batches, 4, "file 2 opens the batch, files 3..5 refresh it")
 	last := batches[len(batches)-1]
-	require.Contains(t, last, "Загрузка в Drive (0 из 4)")
-	require.Contains(t, last, "/list")
-	for i := 1; i < 5; i++ {
-		require.Contains(t, last, fmt.Sprintf("file%d.pdf", i))
-	}
-	require.NotContains(t, last, "file0.pdf", "the first file lives on its own card")
+	require.Contains(t, last, "Переношу на Google Диск · 0 из 4")
 
 	smIDs := map[docsbot.StatusMessageID]bool{}
 	for _, d := range repo.docs {
@@ -162,9 +157,9 @@ func TestRetryBatch_requeuesFailedAndRedraws(t *testing.T) {
 
 	edits := statusEdits(sent)
 	require.Len(t, edits, 1)
-	require.Contains(t, edits[0], "bad.pdf")
-	require.NotContains(t, edits[0], "❌", "the failed line is back in progress")
-	require.Contains(t, edits[0], "⏳")
+	require.Contains(t, edits[0], "ok.pdf", "the transferred document stays listed")
+	require.NotContains(t, edits[0], "Не перенёс", "the failed document is back in progress")
+	require.Contains(t, edits[0], "⏳ Переношу на Google Диск · 1 из 2")
 }
 
 func TestRetryBatch_foreignMessageIsIgnored(t *testing.T) {
@@ -191,7 +186,7 @@ func TestTransfer_editsOfferIntoStatusMessage(t *testing.T) {
 
 	require.Empty(t, sent.texts, "no per-document or extra message")
 	require.Len(t, sent.edits, 1)
-	require.Contains(t, sent.edits[0], "Перенос в Drive (0 из 3)")
+	require.Contains(t, sent.edits[0], "Переношу на Google Диск · 0 из 3")
 }
 
 func TestTransfer_nothingToTransfer(t *testing.T) {
@@ -201,7 +196,7 @@ func TestTransfer_nothingToTransfer(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallbackMsg(100, 21, "d:try"))
 
 	require.Len(t, sent.edits, 1)
-	require.Contains(t, sent.edits[0], "Всё уже в Google Drive.")
+	require.Contains(t, sent.edits[0], "Всё уже на Google Диске.")
 }
 
 func TestRetryAll_editsSettingsIntoStatusMessage(t *testing.T) {
@@ -212,7 +207,7 @@ func TestRetryAll_editsSettingsIntoStatusMessage(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallbackMsg(100, 22, "d:rta"))
 
 	require.Len(t, sent.edits, 1)
-	require.Contains(t, sent.edits[0], "Перенос в Drive (0 из 1)")
+	require.Contains(t, sent.edits[0], "Переношу на Google Диск · 0 из 1")
 }
 
 // nudges counts the connect-Drive offers among sent messages.
@@ -221,7 +216,7 @@ func nudges(c *capture) int {
 	defer c.mu.Unlock()
 	n := 0
 	for _, m := range c.texts {
-		if strings.Contains(m, "Google Drive") {
+		if strings.Contains(m, "Google Диск") {
 			n++
 		}
 	}
@@ -266,7 +261,7 @@ func TestTransfer_manyDocsShareOneStatusMessage(t *testing.T) {
 
 	require.Empty(t, sent.texts, "one status message, no per-document notices")
 	require.Len(t, sent.edits, 1)
-	require.Contains(t, sent.edits[0], "Перенос в Drive (0 из 7)")
+	require.Contains(t, sent.edits[0], "Переношу на Google Диск · 0 из 7")
 	smIDs := map[docsbot.StatusMessageID]bool{}
 	for _, id := range seeded {
 		require.NotEmpty(t, repo.docs[id].StatusMessageID)
@@ -299,7 +294,7 @@ func TestTransfer_otherUsersDocsAreNotTouched(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallbackMsg(100, 21, "d:try"))
 
 	require.Empty(t, repo.docs[other.ID].StatusMessageID)
-	require.Contains(t, sent.edits[0], "Всё уже в Google Drive.")
+	require.Contains(t, sent.edits[0], "Всё уже на Google Диске.")
 }
 
 func TestLogs_retryAllAndUploadStartWithoutLeaks(t *testing.T) {

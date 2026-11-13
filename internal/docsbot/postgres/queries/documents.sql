@@ -40,13 +40,23 @@ where id = @id
 -- name: UpdateDocumentBackupStatus :exec
 update documents
 set backup_status = @backup_status,
+    backup_reason = null,
+    updated_at    = now()
+where id = @id
+  and user_id = @user_id;
+
+-- name: FailDocumentBackup :exec
+update documents
+set backup_status = 'failed',
+    backup_reason = @backup_reason,
     updated_at    = now()
 where id = @id
   and user_id = @user_id;
 
 -- name: MarkDocumentUploading :exec
 update documents
-set backup_status = 'uploading'
+set backup_status = 'uploading',
+    backup_reason = null
 where id = @id
   and user_id = @user_id;
 
@@ -58,6 +68,7 @@ where id = @id
 -- the current Telegram file, so there is no pending content change any more.
 update documents
 set backup_status = 'pending',
+    backup_reason = null,
     sync_status   = 'ok',
     sync_reason   = null,
     drive_file_id = case when backup_status = 'backed_up' then null else drive_file_id end,
@@ -165,6 +176,7 @@ limit @lim offset @off;
 -- title or category changed since the upload started (meta_version differs).
 update documents
 set backup_status = 'backed_up',
+    backup_reason = null,
     drive_file_id = @drive_file_id,
     sync_status   = case when meta_version <> @start_version then 'pending' else sync_status end,
     sync_reason   = case when meta_version <> @start_version then null else sync_reason end,
@@ -286,6 +298,7 @@ where id = @id
 -- upload; a concurrent caller gets no rows for the same documents.
 update documents
 set backup_status = 'pending',
+    backup_reason = null,
     updated_at    = now()
 where user_id = @user_id
   and status = 'saved'
@@ -303,6 +316,7 @@ group by backup_status;
 -- Atomically takes every failed upload of the user for retry.
 update documents
 set backup_status = 'pending',
+    backup_reason = null,
     updated_at    = now()
 where user_id = @user_id
   and status = 'saved'

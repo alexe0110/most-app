@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"html"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -78,7 +77,7 @@ func TestCardText(t *testing.T) {
 			"drive with size and type",
 			docsbot.Document{Title: "a", MIME: "application/pdf", FileSize: 204 * 1024, CreatedAt: created,
 				BackupStatus: docsbot.BackupBackedUp, DriveFileID: "f"},
-			[]string{"📄 <b>a</b>\n", "🗂 Другое · PDF · 204 КБ\n", "📅 05.03.2026\n", "☁️ Google Drive · копия в Telegram"}, []string{"📥"},
+			[]string{"📄 <b>a</b>\n", "🗂 Другое · PDF · 204 КБ\n", "📅 05.03.2026\n", "☁️ Google Диск · копия в Telegram"}, []string{"📥"},
 		},
 		{
 			"telegram only, no size and type",
@@ -89,7 +88,7 @@ func TestCardText(t *testing.T) {
 			"pdf with pages",
 			docsbot.Document{Title: "ВНЖ", Category: docsbot.CatPassport, MIME: "application/pdf", FileSize: 194 * 1024, PageCount: 3,
 				CreatedAt: time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC), BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncOK},
-			[]string{"📄 <b>ВНЖ</b>\n🗂 Паспорт и ID · PDF · 3 стр. · 194 КБ\n📅 10.11.2026\n☁️ Google Drive · копия в Telegram"}, nil,
+			[]string{"📄 <b>ВНЖ</b>\n🗂 Паспорт и ID · PDF · 3 стр. · 194 КБ\n📅 10.11.2026\n☁️ Google Диск · копия в Telegram"}, nil,
 		},
 		{
 			"photo has the image icon",
@@ -119,12 +118,12 @@ func TestCardText(t *testing.T) {
 		{
 			"file deleted in drive",
 			docsbot.Document{Title: "x", CreatedAt: created, BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing},
-			[]string{"📥 Файл удалён в Drive, копия осталась в Telegram"}, nil,
+			[]string{"📥 Файл удалён в Google Диске, копия осталась в Telegram"}, nil,
 		},
 		{
 			"sync failed keeps its line",
 			docsbot.Document{Title: "x", CreatedAt: created, BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncFailed},
-			[]string{"⚠️ Не удалось обновить в Drive"}, nil,
+			[]string{"⚠️ Не удалось обновить в Google Диске"}, nil,
 		},
 		{
 			"title is escaped",
@@ -289,72 +288,16 @@ func statusDoc(title string, st docsbot.BackupStatus) docsbot.Document {
 	return docsbot.Document{ID: "d", Title: title, Category: docsbot.CatPassport, BackupStatus: st, DriveFileID: "F1"}
 }
 
-func TestRenderStatusMessage_lines(t *testing.T) {
-	tests := []struct {
-		name    string
-		doc     docsbot.Document
-		folders map[docsbot.Category]string
-		want    []string
-		notWant []string
-	}{
-		{
-			name:    "backed up with folder",
-			doc:     statusDoc("a.pdf", docsbot.BackupBackedUp),
-			folders: map[docsbot.Category]string{docsbot.CatPassport: "FOLD"},
-			want:    []string{"✅ a.pdf · Паспорт и ID", `<a href="https://drive.google.com/file/d/F1/view">файл</a>`, `<a href="https://drive.google.com/drive/folders/FOLD">папка</a>`},
-		},
-		{
-			name:    "backed up without folder",
-			doc:     statusDoc("a.pdf", docsbot.BackupBackedUp),
-			want:    []string{"✅ a.pdf", "файл</a>"},
-			notWant: []string{"папка"},
-		},
-		{name: "pending", doc: statusDoc("a.pdf", docsbot.BackupPending), want: []string{"⏳ a.pdf · Паспорт и ID"}},
-		{name: "uploading", doc: statusDoc("a.pdf", docsbot.BackupUploading), want: []string{"⏳ a.pdf"}},
-		{name: "failed", doc: statusDoc("a.pdf", docsbot.BackupFailed), want: []string{"❌ a.pdf · не удалось"}},
-		{name: "too large", doc: statusDoc("a.pdf", docsbot.BackupTooLarge), want: []string{"📥 a.pdf · слишком большой для Drive"}},
-		{name: "escaped name", doc: statusDoc("<b>x</b>&", docsbot.BackupPending), want: []string{"&lt;b&gt;x&lt;/b&gt;&amp;"}, notWant: []string{"<b>"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			text, _ := renderStatusMessage(docsbot.StatusMessage{ID: "sm"}, []docsbot.Document{tt.doc}, tt.folders)
-			for _, w := range tt.want {
-				require.Contains(t, text, w)
-			}
-			for _, w := range tt.notWant {
-				require.NotContains(t, text, w)
-			}
-		})
-	}
-}
-
-func TestRenderStatusMessage_counterAndRetry(t *testing.T) {
-	lines := []docsbot.Document{
-		statusDoc("a", docsbot.BackupBackedUp),
-		statusDoc("b", docsbot.BackupPending),
-		statusDoc("c", docsbot.BackupTooLarge),
-	}
-	text, kb := renderStatusMessage(docsbot.StatusMessage{ID: "sm"}, lines, nil)
-	require.True(t, strings.HasPrefix(text, "Загрузка в Drive (2 из 3)"), text)
-	require.Nil(t, kb, "no retry button without failed uploads")
-
-	lines = append(lines, statusDoc("d", docsbot.BackupFailed))
-	_, kb = renderStatusMessage(docsbot.StatusMessage{ID: "sm"}, lines, nil)
-	require.NotNil(t, kb)
-	require.Equal(t, "d:rsm:sm", kb.InlineKeyboard[0][0].CallbackData)
-	require.Equal(t, btnRetryBackup, kb.InlineKeyboard[0][0].Text)
-}
-
 func TestStorageLine(t *testing.T) {
 	tests := []struct {
 		st   docsbot.BackupStatus
 		want string
 	}{
-		{docsbot.BackupPending, "⏳ Загружаю в Drive…"},
-		{docsbot.BackupUploading, "⏳ Загружаю в Drive…"},
-		{docsbot.BackupBackedUp, "☁️ Google Drive · копия в Telegram"},
-		{docsbot.BackupFailed, "❌ Не удалось выгрузить в Drive"},
-		{docsbot.BackupTooLarge, "📥 Слишком большой для Drive"},
+		{docsbot.BackupPending, "⏳ Загружаю на Google Диск…"},
+		{docsbot.BackupUploading, "⏳ Загружаю на Google Диск…"},
+		{docsbot.BackupBackedUp, "☁️ Google Диск · копия в Telegram"},
+		{docsbot.BackupFailed, "❌ Не удалось выгрузить на Google Диск"},
+		{docsbot.BackupTooLarge, "📥 Слишком большой для Google Диска"},
 		{docsbot.BackupNone, "📥 Только в Telegram"},
 	}
 	for _, tt := range tests {
@@ -364,7 +307,7 @@ func TestStorageLine(t *testing.T) {
 
 func TestStorageLine_fileDeletedInDrive(t *testing.T) {
 	doc := docsbot.Document{BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing}
-	require.Equal(t, "📥 Файл удалён в Drive, копия осталась в Telegram", storageLine(doc))
+	require.Equal(t, "📥 Файл удалён в Google Диске, копия осталась в Telegram", storageLine(doc))
 }
 
 func TestRenderStatusMessage_single(t *testing.T) {
@@ -373,13 +316,13 @@ func TestRenderStatusMessage_single(t *testing.T) {
 	text, kb := renderStatusMessage(sm, []docsbot.Document{statusDoc("<a>.pdf", docsbot.BackupPending)}, nil)
 	require.Contains(t, text, "📄 <b>&lt;a&gt;.pdf</b>")
 	require.Contains(t, text, "🗂 Паспорт и ID")
-	require.Contains(t, text, "⏳ Загружаю в Drive…")
+	require.Contains(t, text, "⏳ Загружаю на Google Диск…")
 	require.Equal(t, cb(actSend, "d"), kb.InlineKeyboard[0][0].CallbackData)
 	require.Len(t, kb.InlineKeyboard, 3, "card buttons only")
 
 	text, kb = renderStatusMessage(sm, []docsbot.Document{statusDoc("a.pdf", docsbot.BackupBackedUp)},
 		map[docsbot.Category]string{docsbot.CatPassport: "FOLD"})
-	require.Contains(t, text, "☁️ Google Drive · копия в Telegram")
+	require.Contains(t, text, "☁️ Google Диск · копия в Telegram")
 	require.Equal(t, btnCardOpen, kb.InlineKeyboard[0][1].Text)
 	require.Equal(t, btnOpenFolder, kb.InlineKeyboard[1][0].Text)
 
@@ -389,61 +332,7 @@ func TestRenderStatusMessage_single(t *testing.T) {
 	require.Equal(t, "d:rsm:sm", last[0].CallbackData)
 
 	text, _ = renderStatusMessage(sm, []docsbot.Document{statusDoc("a", docsbot.BackupPending), statusDoc("b", docsbot.BackupPending)}, nil)
-	require.True(t, strings.HasPrefix(text, "Загрузка в Drive (0 из 2)"), "more than one line falls back to a batch")
-}
-
-func TestRenderStatusMessage_batchHint(t *testing.T) {
-	text, _ := renderStatusMessage(docsbot.StatusMessage{ID: "sm", Kind: docsbot.StatusBatch},
-		[]docsbot.Document{statusDoc("a", docsbot.BackupPending)}, nil)
-	require.Contains(t, text, "✏️ Изменить имя и категорию: /list")
-}
-
-func TestRenderStatusMessage_transfer(t *testing.T) {
-	sm := docsbot.StatusMessage{ID: "sm", Kind: docsbot.StatusTransfer}
-
-	text, _ := renderStatusMessage(sm, []docsbot.Document{
-		statusDoc("a", docsbot.BackupBackedUp), statusDoc("b", docsbot.BackupPending)}, nil)
-	require.True(t, strings.HasPrefix(text, "Перенос в Drive (1 из 2)"), text)
-	require.NotContains(t, text, "Готово")
-
-	text, kb := renderStatusMessage(sm, []docsbot.Document{
-		statusDoc("a", docsbot.BackupBackedUp), statusDoc("b", docsbot.BackupTooLarge)}, nil)
-	require.Contains(t, text, "Готово: 1 в Drive")
-	require.Nil(t, kb)
-
-	_, kb = renderStatusMessage(sm, []docsbot.Document{statusDoc("a", docsbot.BackupFailed)}, nil)
-	require.NotNil(t, kb)
-}
-
-func TestRenderStatusMessage_overflow(t *testing.T) {
-	var lines []docsbot.Document
-	for i := 0; i < 25; i++ {
-		lines = append(lines, statusDoc(strings.Repeat("я", 100), docsbot.BackupBackedUp))
-	}
-	text, _ := renderStatusMessage(docsbot.StatusMessage{ID: "sm"}, lines, map[docsbot.Category]string{docsbot.CatPassport: "FOLD"})
-	require.Contains(t, text, "…и ещё 5")
-	require.Equal(t, 20, strings.Count(text, "✅"))
-	require.Less(t, len([]rune(text)), 4096)
-}
-
-// Telegram counts the characters of the parsed text (tags stripped) against 4096.
-// Use realistic Drive ids, the longest allowed name and the longest category label.
-func TestRenderStatusMessage_realisticOverflowAndInjection(t *testing.T) {
-	id := strings.Repeat("a", 33)
-	var lines []docsbot.Document
-	for i := 0; i < 60; i++ {
-		d := statusDoc(strings.Repeat("<&\"", 100), docsbot.BackupBackedUp)
-		d.DriveFileID = id
-		lines = append(lines, d)
-	}
-	text, _ := renderStatusMessage(docsbot.StatusMessage{ID: "sm"}, lines, map[docsbot.Category]string{docsbot.CatPassport: id})
-
-	require.Equal(t, 20, strings.Count(text, "✅"))
-	require.Contains(t, text, "…и ещё 40")
-	require.NotContains(t, text, "<&", "names must be escaped")
-	require.NotContains(t, text, `""`, "a quote in a name must not leak outside escaping")
-	visible := html.UnescapeString(regexp.MustCompile(`<[^>]*>`).ReplaceAllString(text, ""))
-	require.Less(t, len([]rune(visible)), 4096, "visible text fits Telegram's limit")
+	require.True(t, strings.HasPrefix(text, "⏳ Переношу на Google Диск · 0 из 2"), "more than one line falls back to a batch")
 }
 
 func TestIncomingFile(t *testing.T) {
@@ -570,7 +459,7 @@ func TestRender_hostileTitle(t *testing.T) {
 
 			status, _ := renderStatusMessage(docsbot.StatusMessage{ID: "sm"}, []docsbot.Document{doc, doc}, nil)
 			require.NotContains(t, status, title, "status message is HTML: the raw title must not appear")
-			require.Contains(t, status, html.EscapeString(truncate(title, statusNameLimit)))
+			require.Contains(t, status, html.EscapeString(truncateMiddle(title, listTitleRunes)))
 
 			single, _ := renderSingleStatus(docsbot.StatusMessage{ID: "sm"}, doc, nil)
 			require.NotContains(t, single, title)

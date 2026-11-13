@@ -85,19 +85,22 @@ func run() error {
 	// oauth.Service and the bot each need the other (the bot shows the consent
 	// link; oauth notifies the bot when Drive connects). tgbot is filled just
 	// below, and both closures run only after startup, so the cycle is safe.
-	renames := telegram.NewRenames() // shared by the bot handlers and the notifier
+	renames := telegram.NewRenames()               // shared by the bot handlers and the notifier
+	settingsMsgs := telegram.NewSettingsMessages() // shared by the /settings handlers and the connect callback
 	var (
-		tgbot *tg.Bot
-		svc   *docsbot.Service
+		tgbot    *tg.Bot
+		svc      *docsbot.Service
+		oauthSvc *oauth.Service
 	)
-	oauthSvc, err := oauth.New(oauth.Config{
+	oauthSvc, err = oauth.New(oauth.Config{
 		ClientID:     cfg.GoogleClientID,
 		ClientSecret: cfg.GoogleClientSecret,
 		TokenEncKey:  cfg.TokenEncKey,
 		PublicURL:    cfg.PublicURL,
 		BotURL:       botURL(cfg.TelegramBotUsername),
 	}, repo, func(ctx context.Context, userID string) error {
-		return telegram.NotifyConnected(tgbot, repo, svc, log)(ctx, userID)
+		return telegram.NotifyConnected(tgbot, repo, svc, log,
+			telegram.WithConnectSettings(settingsMsgs, svc, oauthSvc))(ctx, userID)
 	}, log)
 	if err != nil {
 		return fmt.Errorf("new oauth service: %w", err)
@@ -114,7 +117,7 @@ func run() error {
 		WebhookSecret: cfg.TelegramWebhookSecret,
 		GroupNotice:   telegram.GroupNotice(),
 	}, repo, log, func(b *bot.Bot) {
-		telegram.Register(b, log, svc, oauthSvc, telegram.WithRenames(renames), telegram.WithDriveFolder(cfg.DriveRootFolder))
+		telegram.Register(b, log, svc, oauthSvc, telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder))
 	})
 	if err != nil {
 		return err
@@ -255,6 +258,8 @@ func driveErr(err error) error {
 		return docsbot.ErrDriveRevoked
 	case errors.Is(err, gdrive.ErrAccessDisconnected), errors.Is(err, oauth.ErrAccessDisconnected):
 		return docsbot.ErrDriveDisconnected
+	case errors.Is(err, gdrive.ErrStorageFull):
+		return docsbot.ErrDriveFull
 	case errors.Is(err, gdrive.ErrFileNotFound):
 		return docsbot.ErrRemoteMissing
 	}

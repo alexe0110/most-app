@@ -148,3 +148,54 @@ func TestFolders_categoryFolderID(t *testing.T) {
 
 // noInsert is a job insert that must not be needed: the version did not move.
 func noInsert(context.Context, pgx.Tx) error { return errors.New("unexpected job insert") }
+
+// The reason of a failed backup is stored with the status and cleared whenever
+// the document leaves the failed state (any other status, retry claims).
+func TestBackups_failReason(t *testing.T) {
+	repo, user := domainRepo(t)
+	ctx := t.Context()
+	reason := func(id docsbot.DocumentID) docsbot.BackupReason {
+		t.Helper()
+		d, err := repo.DocumentByID(ctx, user, id)
+		require.NoError(t, err)
+		return d.BackupReason
+	}
+
+	doc := savedDoc(t, repo, user, "quota")
+	require.NoError(t, repo.FailBackup(ctx, user, doc.ID, docsbot.BackupReasonQuota))
+	got, err := repo.DocumentByID(ctx, user, doc.ID)
+	require.NoError(t, err)
+	require.Equal(t, docsbot.BackupFailed, got.BackupStatus)
+	require.Equal(t, docsbot.BackupReasonQuota, got.BackupReason)
+
+	claimed, err := repo.ClaimFailed(ctx, user, doc.ID)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.Empty(t, reason(doc.ID), "a retry clears the reason")
+
+	require.NoError(t, repo.FailBackup(ctx, user, doc.ID, docsbot.BackupReasonRevoked))
+	require.NoError(t, repo.SetBackupStatus(ctx, user, doc.ID, docsbot.BackupBackedUp))
+	require.Empty(t, reason(doc.ID), "another status clears the reason")
+
+	other := savedDoc(t, repo, user, "bulk")
+	require.NoError(t, repo.FailBackup(ctx, user, other.ID, docsbot.BackupReasonUnavailable))
+	ids, err := repo.ClaimTransferable(ctx, user)
+	require.NoError(t, err)
+	require.Contains(t, ids, other.ID)
+	require.Empty(t, reason(other.ID), "a bulk claim clears the reason")
+
+	// A worker that was already running when the sweeper failed its document
+	// still finishes: success and the uploading claim must not keep a stale reason.
+	late := savedDoc(t, repo, user, "late")
+	require.NoError(t, repo.FailBackup(ctx, user, late.ID, docsbot.BackupReasonUnavailable))
+	require.NoError(t, repo.MarkUploading(ctx, user, late.ID))
+	require.Empty(t, reason(late.ID), "uploading clears the reason")
+	require.NoError(t, repo.FailBackup(ctx, user, late.ID, docsbot.BackupReasonUnavailable))
+	_, err = repo.MarkBackedUpForSync(ctx, user, late.ID, "drive-late", 0, 0, noInsert)
+	require.NoError(t, err)
+	require.Empty(t, reason(late.ID), "a successful upload clears the reason")
+
+	foreign := docsbot.UserID("00000000-0000-0000-0000-000000000000")
+	require.NoError(t, repo.FailBackup(ctx, foreign, doc.ID, docsbot.BackupReasonQuota))
+	require.Empty(t, reason(doc.ID), "a foreign user cannot fail the document")
+}

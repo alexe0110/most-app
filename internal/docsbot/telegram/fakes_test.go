@@ -182,10 +182,18 @@ func (r *fakeRepo) SetBackupStatus(_ context.Context, user docsbot.UserID, id do
 	return r.setBackup(user, id, s)
 }
 
+func (r *fakeRepo) FailBackup(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, reason docsbot.BackupReason) error {
+	if d, ok := r.docs[id]; ok && d.UserID == user {
+		d.BackupStatus, d.BackupReason = docsbot.BackupFailed, reason
+		r.docs[id] = d
+	}
+	return nil
+}
+
 // setBackup is a user-scoped update: a foreign or missing document is a no-op.
 func (r *fakeRepo) setBackup(user docsbot.UserID, id docsbot.DocumentID, s docsbot.BackupStatus) error {
 	if d, ok := r.docs[id]; ok && d.UserID == user {
-		d.BackupStatus = s
+		d.BackupStatus, d.BackupReason = s, ""
 		r.docs[id] = d
 	}
 	return nil

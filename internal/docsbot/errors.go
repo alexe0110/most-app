@@ -17,6 +17,8 @@ var (
 	ErrFileTooLarge = errors.New("file too large for drive")
 	// ErrDriveRevoked means the user's Drive access was revoked; they must reconnect.
 	ErrDriveRevoked = errors.New("drive access revoked")
+	// ErrDriveFull means the user's Drive has no free space left; retrying will not help.
+	ErrDriveFull = errors.New("drive storage full")
 	// ErrDriveDisconnected means the user turned Drive off themselves; the document
 	// falls back to Telegram-only: no failure, no reconnect prompt.
 	ErrDriveDisconnected = errors.New("drive access disconnected by user")

@@ -14,6 +14,7 @@ import (
 const claimFailedDocuments = `-- name: ClaimFailedDocuments :many
 update documents
 set backup_status = 'pending',
+    backup_reason = null,
     updated_at    = now()
 where user_id = $1
   and status = 'saved'
@@ -50,6 +51,7 @@ func (q *Queries) ClaimFailedDocuments(ctx context.Context, userID pgtype.UUID) 
 const claimFailedForRetry = `-- name: ClaimFailedForRetry :execrows
 update documents
 set backup_status = 'pending',
+    backup_reason = null,
     sync_status   = 'ok',
     sync_reason   = null,
     drive_file_id = case when backup_status = 'backed_up' then null else drive_file_id end,
@@ -106,6 +108,7 @@ func (q *Queries) ClaimSyncFailed(ctx context.Context, arg ClaimSyncFailedParams
 const claimTransferableDocuments = `-- name: ClaimTransferableDocuments :many
 update documents
 set backup_status = 'pending',
+    backup_reason = null,
     updated_at    = now()
 where user_id = $1
   and status = 'saved'
@@ -310,8 +313,28 @@ func (q *Queries) DocumentCategoryCounts(ctx context.Context, userID pgtype.UUID
 	return items, nil
 }
 
+const failDocumentBackup = `-- name: FailDocumentBackup :exec
+update documents
+set backup_status = 'failed',
+    backup_reason = $1,
+    updated_at    = now()
+where id = $2
+  and user_id = $3
+`
+
+type FailDocumentBackupParams struct {
+	BackupReason pgtype.Text
+	ID           pgtype.UUID
+	UserID       pgtype.UUID
+}
+
+func (q *Queries) FailDocumentBackup(ctx context.Context, arg FailDocumentBackupParams) error {
+	_, err := q.db.Exec(ctx, failDocumentBackup, arg.BackupReason, arg.ID, arg.UserID)
+	return err
+}
+
 const getDocumentByID = `-- name: GetDocumentByID :one
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height, backup_reason
 from documents
 where id = $1
   and user_id = $2
@@ -349,12 +372,13 @@ func (q *Queries) GetDocumentByID(ctx context.Context, arg GetDocumentByIDParams
 		&i.PageCount,
 		&i.ImageWidth,
 		&i.ImageHeight,
+		&i.BackupReason,
 	)
 	return i, err
 }
 
 const getDocumentByUniqueID = `-- name: GetDocumentByUniqueID :one
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height, backup_reason
 from documents
 where user_id = $1
   and tg_file_unique_id = $2
@@ -392,12 +416,13 @@ func (q *Queries) GetDocumentByUniqueID(ctx context.Context, arg GetDocumentByUn
 		&i.PageCount,
 		&i.ImageWidth,
 		&i.ImageHeight,
+		&i.BackupReason,
 	)
 	return i, err
 }
 
 const inlineSearchDocuments = `-- name: InlineSearchDocuments :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height, backup_reason
 from documents
 where user_id = $1
   and status = 'saved'
@@ -461,6 +486,7 @@ func (q *Queries) InlineSearchDocuments(ctx context.Context, arg InlineSearchDoc
 			&i.PageCount,
 			&i.ImageWidth,
 			&i.ImageHeight,
+			&i.BackupReason,
 		); err != nil {
 			return nil, err
 		}
@@ -475,7 +501,7 @@ func (q *Queries) InlineSearchDocuments(ctx context.Context, arg InlineSearchDoc
 const insertDocument = `-- name: InsertDocument :one
 insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, file_size, mime_type, media_group_id, page_count, image_width, image_height)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, nullif($11::integer, 0), nullif($12::integer, 0), nullif($13::integer, 0))
-returning id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height
+returning id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height, backup_reason
 `
 
 type InsertDocumentParams struct {
@@ -537,12 +563,13 @@ func (q *Queries) InsertDocument(ctx context.Context, arg InsertDocumentParams) 
 		&i.PageCount,
 		&i.ImageWidth,
 		&i.ImageHeight,
+		&i.BackupReason,
 	)
 	return i, err
 }
 
 const listDocumentsByCategory = `-- name: ListDocumentsByCategory :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height, backup_reason
 from documents
 where user_id = $1
   and (category = $2 or ($2 = 'other' and category <> all($3::text[])))
@@ -598,6 +625,7 @@ func (q *Queries) ListDocumentsByCategory(ctx context.Context, arg ListDocuments
 			&i.PageCount,
 			&i.ImageWidth,
 			&i.ImageHeight,
+			&i.BackupReason,
 		); err != nil {
 			return nil, err
 		}
@@ -610,7 +638,7 @@ func (q *Queries) ListDocumentsByCategory(ctx context.Context, arg ListDocuments
 }
 
 const listPendingByMediaGroup = `-- name: ListPendingByMediaGroup :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height, backup_reason
 from documents
 where user_id = $1
   and media_group_id = $2
@@ -657,6 +685,7 @@ func (q *Queries) ListPendingByMediaGroup(ctx context.Context, arg ListPendingBy
 			&i.PageCount,
 			&i.ImageWidth,
 			&i.ImageHeight,
+			&i.BackupReason,
 		); err != nil {
 			return nil, err
 		}
@@ -669,7 +698,7 @@ func (q *Queries) ListPendingByMediaGroup(ctx context.Context, arg ListPendingBy
 }
 
 const listSavedDocumentsForExport = `-- name: ListSavedDocumentsForExport :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height, backup_reason
 from documents
 where user_id = $1
   and status = 'saved'
@@ -715,6 +744,7 @@ func (q *Queries) ListSavedDocumentsForExport(ctx context.Context, arg ListSaved
 			&i.PageCount,
 			&i.ImageWidth,
 			&i.ImageHeight,
+			&i.BackupReason,
 		); err != nil {
 			return nil, err
 		}
@@ -729,6 +759,7 @@ func (q *Queries) ListSavedDocumentsForExport(ctx context.Context, arg ListSaved
 const markDocumentBackedUpSync = `-- name: MarkDocumentBackedUpSync :one
 update documents
 set backup_status = 'backed_up',
+    backup_reason = null,
     drive_file_id = $1,
     sync_status   = case when meta_version <> $2 then 'pending' else sync_status end,
     sync_reason   = case when meta_version <> $2 then null else sync_reason end,
@@ -764,7 +795,8 @@ func (q *Queries) MarkDocumentBackedUpSync(ctx context.Context, arg MarkDocument
 
 const markDocumentUploading = `-- name: MarkDocumentUploading :exec
 update documents
-set backup_status = 'uploading'
+set backup_status = 'uploading',
+    backup_reason = null
 where id = $1
   and user_id = $2
 `
@@ -834,7 +866,7 @@ func (q *Queries) MarkSynced(ctx context.Context, arg MarkSyncedParams) (int64, 
 }
 
 const recentSavedDocuments = `-- name: RecentSavedDocuments :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height, backup_reason
 from documents
 where user_id = $1
   and status = 'saved'
@@ -881,6 +913,7 @@ func (q *Queries) RecentSavedDocuments(ctx context.Context, arg RecentSavedDocum
 			&i.PageCount,
 			&i.ImageWidth,
 			&i.ImageHeight,
+			&i.BackupReason,
 		); err != nil {
 			return nil, err
 		}
@@ -991,7 +1024,7 @@ func (q *Queries) SaveDocumentCategory(ctx context.Context, arg SaveDocumentCate
 }
 
 const searchDocuments = `-- name: SearchDocuments :many
-select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height
+select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height, backup_reason
 from documents
 where user_id = $1
   and status = 'saved'
@@ -1046,6 +1079,7 @@ func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams
 			&i.PageCount,
 			&i.ImageWidth,
 			&i.ImageHeight,
+			&i.BackupReason,
 		); err != nil {
 			return nil, err
 		}
@@ -1271,6 +1305,7 @@ func (q *Queries) UpdateCategoryForSync(ctx context.Context, arg UpdateCategoryF
 const updateDocumentBackupStatus = `-- name: UpdateDocumentBackupStatus :exec
 update documents
 set backup_status = $1,
+    backup_reason = null,
     updated_at    = now()
 where id = $2
   and user_id = $3

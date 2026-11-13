@@ -99,6 +99,18 @@ func (r *Repo) SetBackupStatus(ctx context.Context, user docsbot.UserID, id docs
 	return nil
 }
 
+// FailBackup marks the upload failed and stores why (a docsbot.BackupReason*).
+func (r *Repo) FailBackup(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, reason docsbot.BackupReason) error {
+	docID, uid, err := ids(id, user)
+	if err != nil {
+		return err
+	}
+	if err := r.FailDocumentBackup(ctx, FailDocumentBackupParams{ID: docID, UserID: uid, BackupReason: pgtype.Text{String: string(reason), Valid: reason != ""}}); err != nil {
+		return fmt.Errorf("fail document backup: %w", err)
+	}
+	return nil
+}
+
 // ClaimFailed atomically moves a failed document to pending; false when it is
 // not failed or not the user's.
 func (r *Repo) ClaimFailed(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) (bool, error) {
@@ -512,6 +524,7 @@ func toDocument(d Document) docsbot.Document {
 		BackupStatus:    docsbot.BackupStatus(d.BackupStatus),
 		SyncStatus:      docsbot.SyncStatus(d.SyncStatus),
 		SyncReason:      d.SyncReason.String,
+		BackupReason:    docsbot.BackupReason(d.BackupReason.String),
 		MetaVersion:     int(d.MetaVersion),
 		ContentDirty:    d.ContentDirty,
 		CreatedAt:       d.CreatedAt.Time,

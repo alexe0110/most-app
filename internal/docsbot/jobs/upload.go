@@ -33,7 +33,7 @@ func (UploadDocumentArgs) Kind() string { return "upload_document" }
 // Backuper is the subset of docsbot.Service the worker needs.
 type Backuper interface {
 	Backup(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) (docsbot.BackupResult, error)
-	MarkBackupFailed(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error
+	MarkBackupFailed(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, reason docsbot.BackupReason) error
 }
 
 // Notifier tells the user in Telegram how an upload ended. Implemented by the
@@ -52,7 +52,7 @@ type uploadWorker struct {
 }
 
 // Work uploads one document. A revoked grant is terminal until the user
-// reconnects; other errors are retried by River until MaxAttempts.
+// reconnects, a full Drive until the user frees space; other errors are retried by River until MaxAttempts.
 func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentArgs]) error {
 	user := docsbot.UserID(job.Args.UserID)
 	id := docsbot.DocumentID(job.Args.DocumentID)
@@ -63,7 +63,7 @@ func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentAr
 	res, err := w.svc.Backup(ctx, user, id)
 	switch {
 	case errors.Is(err, docsbot.ErrDriveRevoked):
-		if err := w.svc.MarkBackupFailed(ctx, user, id); err != nil {
+		if err := w.svc.MarkBackupFailed(ctx, user, id, docsbot.BackupReasonRevoked); err != nil {
 			w.log.ErrorContext(ctx, "mark backup failed", "err", err, "user_id", user, "doc_id", id)
 		}
 		_ = w.notify.UploadOutcome(ctx, user, id)
@@ -71,9 +71,18 @@ func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentAr
 		w.log.WarnContext(ctx, "drive upload: access revoked", "job_id", job.ID, "attempt", job.Attempt,
 			"user_id", user, "doc_id", id, "duration_ms", time.Since(start).Milliseconds())
 		return nil
+	case errors.Is(err, docsbot.ErrDriveFull):
+		// Terminal at once, like a revoked grant, but there is nothing to reconnect.
+		if err := w.svc.MarkBackupFailed(ctx, user, id, docsbot.BackupReasonQuota); err != nil {
+			w.log.ErrorContext(ctx, "mark backup failed", "err", err, "user_id", user, "doc_id", id)
+		}
+		_ = w.notify.UploadOutcome(ctx, user, id)
+		w.log.WarnContext(ctx, "drive upload: storage full", "job_id", job.ID, "attempt", job.Attempt,
+			"user_id", user, "doc_id", id, "duration_ms", time.Since(start).Milliseconds())
+		return nil
 	case err != nil:
 		if job.Attempt >= job.MaxAttempts {
-			if markErr := w.svc.MarkBackupFailed(ctx, user, id); markErr != nil {
+			if markErr := w.svc.MarkBackupFailed(ctx, user, id, docsbot.BackupReasonUnavailable); markErr != nil {
 				w.log.ErrorContext(ctx, "mark backup failed", "err", markErr, "user_id", user, "doc_id", id)
 			}
 			_ = w.notify.UploadOutcome(ctx, user, id)

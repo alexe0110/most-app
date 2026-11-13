@@ -184,14 +184,14 @@ func TestStart_inlinePayload(t *testing.T) {
 		b, sent, _ := newBot(t)
 		b.ProcessUpdate(tg.ContextWithUserID(t.Context(), testUserID), start("/start inline"))
 		require.True(t, has(sent.texts, "Most Docs"), "sent %q", sent.texts)
-		require.False(t, has(sent.texts, "Google Drive:"), "sent %q", sent.texts)
+		require.False(t, has(sent.texts, "Google Диск:"), "sent %q", sent.texts)
 	})
 
 	t.Run("disabled: settings screen", func(t *testing.T) {
 		b, sent, repo := newBot(t)
 		repo.inlineOff = map[docsbot.UserID]bool{testUserID: true}
 		b.ProcessUpdate(tg.ContextWithUserID(t.Context(), testUserID), start("/start inline"))
-		require.True(t, has(sent.texts, "Google Drive:"), "sent %q", sent.texts)
+		require.True(t, has(sent.texts, "Google Диск:"), "sent %q", sent.texts)
 		require.True(t, has(sent.markups, "Отправка из любого чата: выкл"), "markups %q", sent.markups)
 	})
 

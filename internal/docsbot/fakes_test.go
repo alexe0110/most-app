@@ -485,7 +485,11 @@ func (r *fakeRepo) MarkUploading(_ context.Context, user docsbot.UserID, id docs
 }
 
 func (r *fakeRepo) SetBackupStatus(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, s docsbot.BackupStatus) error {
-	return r.update(user, id, func(d *docsbot.Document) { d.BackupStatus = s })
+	return r.update(user, id, func(d *docsbot.Document) { d.BackupStatus, d.BackupReason = s, "" })
+}
+
+func (r *fakeRepo) FailBackup(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, reason docsbot.BackupReason) error {
+	return r.update(user, id, func(d *docsbot.Document) { d.BackupStatus, d.BackupReason = docsbot.BackupFailed, reason })
 }
 
 // update applies fn to the user's document under the lock. Like the real

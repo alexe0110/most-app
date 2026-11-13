@@ -27,6 +27,9 @@ type Repo interface {
 	// false when the document was not pending (already saved, or gone).
 	SaveDocument(ctx context.Context, user UserID, id DocumentID, cat Category) (saved bool, err error)
 	SetBackupStatus(ctx context.Context, user UserID, id DocumentID, s BackupStatus) error
+	// FailBackup marks the upload failed and stores the reason (BackupReason*).
+	// Any other status change clears the reason.
+	FailBackup(ctx context.Context, user UserID, id DocumentID, reason BackupReason) error
 	// ClaimFailed atomically moves a failed document to pending; a backed-up
 	// document whose Drive file is missing is claimed too and loses its file id.
 	// It reports false for any other state or a foreign document.
