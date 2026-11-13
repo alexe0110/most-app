@@ -19,6 +19,10 @@ var templatesFS embed.FS
 // Google reviewers must see a working link.
 const botURL = "https://t.me/most_files_bot"
 
+// contactEmail is a constant, not config: the address is public by design and
+// changes rarely, so a redeploy is cheaper than one more required env var.
+const contactEmail = "alexe0110@gmail.com"
+
 // contentSecurityPolicy forbids scripts, frames and any other origin: the pages
 // are static text with inline styles only.
 const contentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
@@ -33,11 +37,6 @@ const (
 	pathTerms   = "/terms"
 )
 
-// Config holds the values inserted into the pages.
-type Config struct {
-	ContactEmail string
-}
-
 type pageData struct {
 	ContactEmail string
 	BotURL       string
@@ -50,8 +49,8 @@ type Pages struct {
 
 // New renders all pages once. A template error is a startup error, so a broken
 // page never reaches a request.
-func New(cfg Config) (*Pages, error) {
-	data := pageData{ContactEmail: cfg.ContactEmail, BotURL: botURL}
+func New() (*Pages, error) {
+	data := pageData{ContactEmail: contactEmail, BotURL: botURL}
 
 	var p Pages
 	for _, page := range []struct {

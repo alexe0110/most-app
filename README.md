@@ -96,7 +96,7 @@ Railway, сервис `files-bot`, окружения `dev` и `production`. А�
 
 ### Публичные страницы
 
-Сервис отдаёт `/`, `/privacy` и `/terms` (нужны для верификации Google OAuth). Контактный адрес на них задаёт переменная `CONTACT_EMAIL`: в `prod` обязательна, в `dev` по умолчанию `contact@example.com`. Реальный адрес в репозиторий не коммитить.
+Сервис отдаёт `/`, `/privacy` и `/terms` (нужны для верификации Google OAuth). Контактный адрес на страницах — константа `contactEmail` в `internal/docsbot/web/web.go`.
 
 ### Корневая папка на Drive
 

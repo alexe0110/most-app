@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	testEmail = "hello@most.example"
+	contactEmail = "alexe0110@gmail.com"
 
 	limitedUse = "Most Files's use and transfer to any other app of information received from Google APIs " +
 		"will adhere to the Google API Services User Data Policy, including the Limited Use requirements."
@@ -25,17 +25,16 @@ const (
 )
 
 var (
-	tagRe    = regexp.MustCompile(`<[^>]+>`)
-	dateRe   = regexp.MustCompile(`\d{2}\.\d{2}\.\d{4}`)
-	mailtoRe = regexp.MustCompile(`href="mailto:([^"]*)"`)
+	tagRe  = regexp.MustCompile(`<[^>]+>`)
+	dateRe = regexp.MustCompile(`\d{2}\.\d{2}\.\d{4}`)
 )
 
 // externalMarkers would make a page load something from another origin or run code.
 var externalMarkers = []string{"<script", "<link", "<img", "<iframe", "<object", "<embed", " src=", "@import", "url("}
 
-func newMux(t *testing.T, email string) *http.ServeMux {
+func newMux(t *testing.T) *http.ServeMux {
 	t.Helper()
-	pages, err := web.New(web.Config{ContactEmail: email})
+	pages, err := web.New()
 	require.NoError(t, err)
 	mux := http.NewServeMux()
 	pages.RegisterRoutes(mux)
@@ -57,6 +56,7 @@ func TestPages_get(t *testing.T) {
 		path     string
 		contains []string
 		plain    []string // checked after stripping tags
+		excludes []string
 	}{
 		{
 			name:     "home",
@@ -66,8 +66,9 @@ func TestPages_get(t *testing.T) {
 		{
 			name:     "privacy",
 			path:     "/privacy",
-			contains: []string{"Most Files", "drive.file", policyURL, "[УТОЧНИТЬ]"},
+			contains: []string{"Most Files", "drive.file", policyURL},
 			plain:    []string{limitedUse},
+			excludes: []string{"УТОЧН", "TODO"},
 		},
 		{
 			name:     "terms",
@@ -77,7 +78,7 @@ func TestPages_get(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rec := do(t, newMux(t, testEmail), http.MethodGet, tt.path)
+			rec := do(t, newMux(t), http.MethodGet, tt.path)
 
 			require.Equal(t, http.StatusOK, rec.Code)
 			require.Equal(t, "text/html; charset=utf-8", rec.Header().Get("Content-Type"))
@@ -94,8 +95,11 @@ func TestPages_get(t *testing.T) {
 			for _, s := range tt.plain {
 				require.Contains(t, plain, s)
 			}
-			require.Contains(t, body, `href="mailto:`+testEmail+`"`)
-			require.Contains(t, plain, testEmail)
+			for _, s := range tt.excludes {
+				require.NotContains(t, body, s)
+			}
+			require.Contains(t, body, `href="mailto:`+contactEmail+`"`)
+			require.Contains(t, plain, contactEmail)
 
 			// Language switch: both anchors and both links to them.
 			for _, s := range []string{`id="ru"`, `id="en"`, `href="#ru"`, `href="#en"`} {
@@ -109,7 +113,7 @@ func TestPages_get(t *testing.T) {
 }
 
 func TestPrivacy_limitedUseInBothLanguages(t *testing.T) {
-	body := do(t, newMux(t, testEmail), http.MethodGet, "/privacy").Body.String()
+	body := do(t, newMux(t), http.MethodGet, "/privacy").Body.String()
 	plain := html.UnescapeString(tagRe.ReplaceAllString(body, ""))
 
 	require.Equal(t, 2, strings.Count(plain, limitedUse))
@@ -143,7 +147,7 @@ func revisionIn(t *testing.T, body string) string {
 
 func TestPages_head(t *testing.T) {
 	// A real server: only it drops the body of a HEAD response.
-	srv := httptest.NewServer(newMux(t, testEmail))
+	srv := httptest.NewServer(newMux(t))
 	t.Cleanup(srv.Close)
 
 	for _, path := range []string{"/", "/privacy", "/terms"} {
@@ -181,7 +185,7 @@ func TestPages_notServed(t *testing.T) {
 		{http.MethodPut, "/terms", http.StatusMethodNotAllowed},
 		{http.MethodDelete, "/privacy", http.StatusMethodNotAllowed},
 	}
-	mux := newMux(t, testEmail)
+	mux := newMux(t)
 	for _, tt := range tests {
 		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
 			rec := do(t, mux, tt.method, tt.path)
@@ -195,7 +199,7 @@ func TestPages_notServed(t *testing.T) {
 // The home page is registered at the root; it must not shadow the routes the
 // rest of the app mounts, whatever the registration order.
 func TestPages_doesNotSwallowOtherRoutes(t *testing.T) {
-	pages, err := web.New(web.Config{ContactEmail: testEmail})
+	pages, err := web.New()
 	require.NoError(t, err)
 
 	other := func(mux *http.ServeMux) {
@@ -228,38 +232,5 @@ func TestPages_doesNotSwallowOtherRoutes(t *testing.T) {
 		t.Run(name+" unknown stays 404", func(t *testing.T) {
 			require.Equal(t, http.StatusNotFound, do(t, mux, http.MethodGet, "/nope").Code)
 		})
-	}
-}
-
-func TestPages_escapesContactEmail(t *testing.T) {
-	tests := []struct {
-		name  string
-		email string
-	}{
-		{"tag and quote", `a<b>@x.com"`},
-		{"attribute breakout with script", `x"><script>@a.b`},
-		{"single quote handler", `'><img src=x onerror=alert(1)>@a.b`},
-		{"ampersand", `a&b@x.com`},
-	}
-	for _, tt := range tests {
-		mux := newMux(t, tt.email)
-		for _, path := range []string{"/", "/privacy", "/terms"} {
-			t.Run(tt.name+" "+path, func(t *testing.T) {
-				body := do(t, mux, http.MethodGet, path).Body.String()
-
-				for _, s := range []string{"<script", "<img", "<b>"} {
-					require.NotContains(t, strings.ToLower(body), s)
-				}
-				hrefs := mailtoRe.FindAllStringSubmatch(body, -1)
-				require.NotEmpty(t, hrefs)
-				for _, m := range hrefs {
-					require.NotContains(t, m[1], "<")
-					require.NotContains(t, m[1], ">")
-					require.NotContains(t, m[1], "'")
-				}
-				// The visible text is the address as given.
-				require.Contains(t, html.UnescapeString(tagRe.ReplaceAllString(body, "")), tt.email)
-			})
-		}
 	}
 }

@@ -130,7 +130,7 @@ func run() error {
 		log.Error("set bot commands", "err", err) // not fatal
 	}
 
-	pages, err := web.New(web.Config{ContactEmail: cfg.ContactEmail})
+	pages, err := web.New()
 	if err != nil {
 		return fmt.Errorf("new web pages: %w", err)
 	}
