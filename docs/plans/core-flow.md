@@ -60,7 +60,7 @@ Postgres — адаптеры. Drive (#11) не реализуем, но ост�
 
 ## Тесты
 
-- **unit** (`service_test.go` + `fakes_test.go`): table-driven на все юзкейсы с фейками `Repo`/`Drive` (новый/дубль/pending, offer на 1-м и 5-м, ветка connected, пагинация, скоуп по user).
+- **unit** (`service*_test.go` + `fakes_test.go`): table-driven на все юзкейсы с фейками `Repo`/`Drive` (новый/дубль/pending, offer на 1-м и 5-м, ветка connected, пагинация, скоуп по user).
 - **handler** (`telegram`, fake Bot API через `bot.WithServerURL`+`httptest`, фейковый `Service`): приём → категория → карточка; `/start`; поиск.
 - **integration** (`postgres`, `dbtest.New`): create/дубль/by-id/save/list+пагинация/search(опечатка)/counts/update/delete.
 

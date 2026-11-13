@@ -53,7 +53,7 @@ internal/
     ports.go               # интерфейсы, нужные домену
     errors.go              # доменные ошибки
     reply.go               # ответы юзкейсов (смысл, не UI)
-    service_test.go        # unit-тесты с фейками
+    service*_test.go       # unit-тесты по темам, фейки в fakes_test.go
     fakes_test.go          # фейки портов
     telegram/              # входящий адаптер: апдейт → service → рендер; texts.go — тексты
     jobs/                  # входящий адаптер: воркеры River (upload, sync, trash, sweep, purge_pending)
