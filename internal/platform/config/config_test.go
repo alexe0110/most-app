@@ -34,6 +34,7 @@ func TestLoad(t *testing.T) {
 				GoogleClientSecret: "gsecret",
 				TokenEncKey:        "key",
 				DriveRootFolder:    "Most Docs",
+				ContactEmail:       "contact@example.com",
 			},
 		},
 		{
@@ -46,6 +47,7 @@ func TestLoad(t *testing.T) {
 				"PUBLIC_URL":       "https://most.example",
 				"GOOGLE_CLIENT_ID": "gid", "GOOGLE_CLIENT_SECRET": "gsecret", "TOKEN_ENC_KEY": "key",
 				"DRIVE_ROOT_FOLDER": "Most Docs Test",
+				"CONTACT_EMAIL":     "hello@most.example",
 			},
 			want: Config{
 				Env: "prod", LogLevel: "debug", HTTPAddr: ":3000", DatabaseURL: "postgres://u:p@db:5432/x",
@@ -56,6 +58,7 @@ func TestLoad(t *testing.T) {
 				GoogleClientSecret: "gsecret",
 				TokenEncKey:        "key",
 				DriveRootFolder:    "Most Docs Test",
+				ContactEmail:       "hello@most.example",
 			},
 		},
 		{
@@ -73,6 +76,25 @@ func TestLoad(t *testing.T) {
 				GoogleClientSecret: "gsecret",
 				TokenEncKey:        "key",
 				DriveRootFolder:    "Most Docs",
+				ContactEmail:       "contact@example.com",
+			},
+		},
+		{
+			name: "explicit contact email wins over the dev default",
+			env: map[string]string{
+				"TELEGRAM_TOKEN": "t", "GOOGLE_CLIENT_ID": "gid", "GOOGLE_CLIENT_SECRET": "gsecret",
+				"TOKEN_ENC_KEY": "key", "CONTACT_EMAIL": "me@dev.example",
+			},
+			want: Config{
+				Env: "dev", LogLevel: "info", HTTPAddr: ":8080",
+				DatabaseURL:   "postgres://most:most@localhost:5432/most?sslmode=disable",
+				TelegramToken: "t", TelegramMode: "polling",
+				PublicURL:          "http://localhost:8080",
+				GoogleClientID:     "gid",
+				GoogleClientSecret: "gsecret",
+				TokenEncKey:        "key",
+				DriveRootFolder:    "Most Docs",
+				ContactEmail:       "me@dev.example",
 			},
 		},
 		{
@@ -106,6 +128,16 @@ func TestLoad(t *testing.T) {
 			wantErr: "PUBLIC_URL",
 		},
 		{
+			name:    "invalid contact email",
+			env:     map[string]string{"TELEGRAM_TOKEN": "t", "CONTACT_EMAIL": "Most <a@b.c>"},
+			wantErr: "CONTACT_EMAIL",
+		},
+		{
+			name:    "prod without contact email",
+			env:     map[string]string{"APP_ENV": "prod", "TELEGRAM_TOKEN": "t", "PUBLIC_URL": "https://most.example"},
+			wantErr: "CONTACT_EMAIL",
+		},
+		{
 			name:    "missing google client id",
 			env:     map[string]string{"TELEGRAM_TOKEN": "t"},
 			wantErr: "GOOGLE_CLIENT_ID",
@@ -130,7 +162,7 @@ func TestLoad(t *testing.T) {
 				"APP_ENV", "LOG_LEVEL", "PORT", "DATABASE_URL",
 				"TELEGRAM_TOKEN", "TELEGRAM_MODE", "TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_BOT_USERNAME",
 				"PUBLIC_URL", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "TOKEN_ENC_KEY",
-				"DRIVE_ROOT_FOLDER",
+				"DRIVE_ROOT_FOLDER", "CONTACT_EMAIL",
 			} {
 				t.Setenv(k, "")
 			}

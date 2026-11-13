@@ -19,6 +19,7 @@ import (
 	docjobs "github.com/alexe0110/most-app/internal/docsbot/jobs"
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
 	"github.com/alexe0110/most-app/internal/docsbot/telegram"
+	"github.com/alexe0110/most-app/internal/docsbot/web"
 	"github.com/alexe0110/most-app/internal/platform/config"
 	"github.com/alexe0110/most-app/internal/platform/convert"
 	"github.com/alexe0110/most-app/internal/platform/db"
@@ -129,11 +130,17 @@ func run() error {
 		log.Error("set bot commands", "err", err) // not fatal
 	}
 
+	pages, err := web.New(web.Config{ContactEmail: cfg.ContactEmail})
+	if err != nil {
+		return fmt.Errorf("new web pages: %w", err)
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("GET "+oauth.CallbackPath, oauthSvc.Callback())
+	pages.RegisterRoutes(mux)
 	tgbot.RegisterRoutes(mux) // webhook route; no-op in polling mode
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}
 

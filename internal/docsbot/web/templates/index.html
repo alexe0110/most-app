@@ -1,0 +1,45 @@
+{{define "title"}}Most Files &mdash; Telegram bot for your documents{{end -}}
+{{define "content" -}}
+<h1>Most Files</h1>
+<p class="lang-switch"><a href="#ru">Русский</a> <a href="#en">English</a></p>
+
+<section class="lang" id="ru" lang="ru">
+<h2>Что это</h2>
+<p>Most Files — Telegram-бот <a href="{{.BotURL}}">@most_files_bot</a>, который хранит ваши документы в Telegram и, по желанию, копирует их на ваш собственный Google Диск (папка «Most Docs» с подпапками по категориям).</p>
+<p>Бот ведёт каталог документов: категории, поиск (в том числе inline-поиск), а также конвертацию (<code>/convert</code>: фото в PDF, сжатие, операции с PDF).</p>
+
+<h2>Как начать</h2>
+<ol>
+<li>Откройте бота: <a href="{{.BotURL}}">{{.BotURL}}</a>.</li>
+<li>Отправьте документ или фото.</li>
+<li>Выберите категорию.</li>
+<li>По желанию подключите Google Диск в настройках бота (<code>/settings</code>): документы будут копироваться в вашу папку «Most Docs».</li>
+</ol>
+
+<h2>Документы</h2>
+<p><a href="/privacy">Политика конфиденциальности</a> &middot; <a href="/terms">Условия использования</a></p>
+
+<h2>Контакты</h2>
+<p>{{template "contact" .}}</p>
+</section>
+
+<section class="lang" id="en" lang="en">
+<h2>What it is</h2>
+<p>Most Files is the Telegram bot <a href="{{.BotURL}}">@most_files_bot</a> that keeps your documents in Telegram and, optionally, copies them to your own Google Drive (a "Most Docs" folder with a subfolder for each category).</p>
+<p>The bot maintains a catalog of your documents: categories, search (including inline search), and conversion (<code>/convert</code>: photo to PDF, compression, PDF operations).</p>
+
+<h2>Getting started</h2>
+<ol>
+<li>Open the bot: <a href="{{.BotURL}}">{{.BotURL}}</a>.</li>
+<li>Send a document or a photo.</li>
+<li>Pick a category.</li>
+<li>Optionally connect Google Drive in the bot settings (<code>/settings</code>): documents are then copied to your own "Most Docs" folder.</li>
+</ol>
+
+<h2>Legal</h2>
+<p><a href="/privacy">Privacy Policy</a> &middot; <a href="/terms">Terms of Service</a></p>
+
+<h2>Contact</h2>
+<p>{{template "contact" .}}</p>
+</section>
+{{- end}}

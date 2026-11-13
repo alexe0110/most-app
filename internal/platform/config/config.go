@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/mail"
 	"os"
 
 	"github.com/alexe0110/most-app/internal/platform/gdrive"
@@ -31,6 +32,8 @@ type Config struct {
 	TokenEncKey        string // base64-encoded 32-byte key, required
 
 	DriveRootFolder string // Drive root folder name, default gdrive.DefaultRootFolder
+
+	ContactEmail string // public contact on the web pages; required in prod
 }
 
 // Load reads settings from env, applies defaults and validates them.
@@ -40,6 +43,11 @@ func Load() (Config, error) {
 	publicURL := os.Getenv("PUBLIC_URL")
 	if publicURL == "" && env == "dev" {
 		publicURL = "http://localhost:8080"
+	}
+
+	contactEmail := os.Getenv("CONTACT_EMAIL")
+	if contactEmail == "" && env == "dev" {
+		contactEmail = "contact@example.com"
 	}
 
 	cfg := Config{
@@ -56,6 +64,8 @@ func Load() (Config, error) {
 		TelegramBotUsername:   os.Getenv("TELEGRAM_BOT_USERNAME"),
 
 		PublicURL: publicURL,
+
+		ContactEmail: contactEmail,
 
 		GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
 		GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
@@ -102,6 +112,16 @@ func (c Config) validate() error {
 	// PublicURL has a dev default; in prod it must be set explicitly.
 	if c.Env == "prod" && c.PublicURL == "" {
 		return fmt.Errorf("PUBLIC_URL: required in prod")
+	}
+
+	if c.Env == "prod" && c.ContactEmail == "" {
+		return fmt.Errorf("CONTACT_EMAIL: required in prod")
+	}
+	// The address goes into a public mailto link, so a typo must fail the start.
+	if c.ContactEmail != "" {
+		if a, err := mail.ParseAddress(c.ContactEmail); err != nil || a.Address != c.ContactEmail {
+			return fmt.Errorf("CONTACT_EMAIL: invalid address %q", c.ContactEmail)
+		}
 	}
 
 	if c.GoogleClientID == "" {

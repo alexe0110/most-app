@@ -1,0 +1,155 @@
+{{define "title"}}Privacy Policy &mdash; Most Files{{end -}}
+{{define "content" -}}
+<h1>Privacy Policy / Политика конфиденциальности</h1>
+<p class="muted">Revision / Редакция: {{template "revision"}}</p>
+<p class="lang-switch"><a href="#ru">Русский</a> <a href="#en">English</a></p>
+
+<section class="lang" id="ru" lang="ru">
+<h2>Политика конфиденциальности</h2>
+<p>Эта политика описывает, какие данные обрабатывает Telegram-бот Most Files (<a href="{{.BotURL}}">@most_files_bot</a>) и как с ними обращаться.</p>
+
+<h3>1. Какие данные мы храним</h3>
+<p>В базе данных (Postgres) хранятся:</p>
+<ul>
+<li>идентификатор пользователя Telegram и язык интерфейса;</li>
+<li>идентификатор чата и идентификаторы сообщений бота со статусами;</li>
+<li>для каждого документа: Telegram <code>file_id</code> и <code>file_unique_id</code>, идентификатор альбома Telegram (если файл пришёл в составе альбома), название (имя файла или подпись, которую вы отправили), категория, тип (фото или документ), MIME-тип, размер, число страниц или размеры изображения, даты, статус резервного копирования и синхронизации с причиной сбоя, идентификатор файла на Google Диске и кешированные идентификаторы папок на Диске;</li>
+<li>настройки (включён ли inline-режим);</li>
+<li>токен обновления (refresh token) Google в зашифрованном виде (AES-GCM); ключ шифрования хранится вне базы данных;</li>
+<li>одноразовое состояние OAuth: действует 10 минут, просроченные записи удаляются раз в сутки;</li>
+<li>очередь фоновых заданий (копирование, синхронизация, удаление на Google Диске): внутренние идентификаторы пользователя и документа, идентификатор файла на Google Диске;</li>
+<li>технические логи без содержимого документов, токенов и подписей (в логах могут встречаться внутренние идентификаторы пользователей).</li>
+</ul>
+
+<h3>2. Что мы не храним</h3>
+<ul>
+<li>Содержимое документов не хранится на наших серверах: файлы остаются в Telegram, у нас только <code>file_id</code>.</li>
+<li>При копировании на Google Диск и при конвертации (<code>/convert</code>: фото в PDF, сжатие, операции с PDF) файлы скачиваются и обрабатываются только в памяти и не сохраняются на диск.</li>
+<li>Токен доступа (access token) Google существует только в памяти.</li>
+</ul>
+
+<h3>3. Зачем нужны данные</h3>
+<p>Для работы сервиса: каталог документов, поиск (в том числе inline-поиск), конвертация и копирование на ваш Google Диск по вашему запросу.</p>
+
+<h3>4. Доступ к Google</h3>
+<p>Подключение Google Диска необязательно. Мы запрашиваем только одно разрешение: <code>https://www.googleapis.com/auth/drive.file</code>. Оно даёт доступ только к файлам и папкам, созданным самим приложением; другие файлы на вашем Диске мы видеть не можем. Разрешения на профиль и адрес электронной почты не запрашиваются.</p>
+<p>Отключить доступ можно в боте (<code>/settings</code>, отключение Google Диска) или в аккаунте Google: <a href="https://myaccount.google.com/permissions">https://myaccount.google.com/permissions</a>. Уже скопированные файлы остаются на вашем Диске.</p>
+
+<h3>5. Ограниченное использование данных Google (Limited Use)</h3>
+<div class="box">
+<p lang="en">Most Files's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy#additional_requirements_for_specific_api_scopes">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+<p>Перевод: использование и передача Most Files любым другим приложениям информации, полученной из API Google, будут соответствовать Политике Google API Services по данным пользователей, включая требования об ограниченном использовании.</p>
+<p>Мы не продаём данные, не используем данные Google для рекламы и не используем их для обучения моделей ИИ. Люди не читают данные Google, за исключением случаев, когда есть ваше согласие, это нужно для безопасности или этого требует закон.</p>
+</div>
+
+<h3>6. Удаление данных</h3>
+<p>В боте: <code>/settings</code> &rarr; «🗑 Удалить мои данные» &rarr; подтвердите, отправив слово «УДАЛИТЬ». Метаданные всех документов, подключение к Google Диску и настройки удаляются сразу, доступ к Google отзывается (если Google в этот момент недоступен, отзовите доступ вручную на <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>), а запись об аккаунте окончательно удаляется ежедневной задачей очистки, обычно в течение суток.</p>
+<p>Отдельные документы можно удалять в боте (копия на Google Диске перемещается в корзину Диска). Файлы на вашем Google Диске и сообщения в чате Telegram остаются у вас. Удаление данных также можно запросить по электронной почте.</p>
+
+<h3>7. Сроки хранения</h3>
+<ul>
+<li>Пока вы пользуетесь сервисом.</li>
+<li>Документы, которым не выбрана категория, удаляются примерно через сутки.</li>
+<li>Состояние OAuth — действует до 10 минут, просроченные записи удаляются раз в сутки.</li>
+<li>После запроса на удаление — см. раздел 6.</li>
+<li>Логи хранятся хостинг-провайдером в течение [УТОЧНИТЬ].</li>
+</ul>
+
+<h3>8. Третьи стороны</h3>
+<ul>
+<li>Telegram — доставка сообщений и хранение файлов.</li>
+<li>Google — Google Диск, только если вы его подключили.</li>
+<li>Railway — хостинг приложения и базы данных; регион: [УТОЧНИТЬ].</li>
+</ul>
+<p>Мы не продаём и не передаём данные никому, кроме перечисленного.</p>
+
+<h3>9. Безопасность</h3>
+<p>Соединения защищены TLS, токен обновления Google хранится в зашифрованном виде, запрашивается минимально необходимое разрешение, секреты хранятся в переменных окружения.</p>
+
+<h3>10. Дети</h3>
+<p>Сервис не предназначен для лиц младше 16 лет.</p>
+
+<h3>11. Законодательство Республики Казахстан</h3>
+<p>Данные обрабатываются в соответствии с Законом Республики Казахстан «О персональных данных и их защите». Пользуясь ботом, вы соглашаетесь на обработку данных, описанную в этой политике. Данные передаются за пределы Казахстана — на серверы Telegram, Google и Railway. Вы вправе в любой момент отозвать согласие (удалить данные в боте или написать нам), а также получить доступ к своим данным и потребовать их исправления.</p>
+
+<h3>12. Изменения политики</h3>
+<p>При изменении политики мы обновляем дату редакции вверху страницы. Продолжая пользоваться сервисом, вы принимаете новую редакцию.</p>
+
+<h3>13. Контакты</h3>
+<p>{{template "contact" .}}</p>
+</section>
+
+<section class="lang" id="en" lang="en">
+<h2>Privacy Policy</h2>
+<p>This policy describes the data the Telegram bot Most Files (<a href="{{.BotURL}}">@most_files_bot</a>) processes and how it is handled.</p>
+
+<h3>1. Data we store</h3>
+<p>The following is stored in our database (Postgres):</p>
+<ul>
+<li>your Telegram user ID and interface language;</li>
+<li>chat ID and message IDs of the bot's status messages;</li>
+<li>for each document: Telegram <code>file_id</code> and <code>file_unique_id</code>, Telegram album ID (if the file arrived in an album), title (the file name or the caption you sent), category, type (photo or document), MIME type, size, page count or image dimensions, dates, backup and sync status with the failure reason, Google Drive file ID and cached Drive folder IDs;</li>
+<li>settings (inline mode on or off);</li>
+<li>your Google refresh token, encrypted with AES-GCM; the encryption key is kept outside the database;</li>
+<li>one-time OAuth state: valid for 10 minutes, expired records are removed once a day;</li>
+<li>the background job queue (copying, sync, Drive deletion): internal user and document IDs and the Google Drive file ID;</li>
+<li>technical logs without document contents, tokens or captions (logs may contain internal user IDs).</li>
+</ul>
+
+<h3>2. What we do not store</h3>
+<ul>
+<li>Document contents are not stored on our servers: files stay in Telegram and we keep only the <code>file_id</code>.</li>
+<li>When copying to Google Drive or converting files (<code>/convert</code>: photo to PDF, compression, PDF operations), files are downloaded and processed in memory only and are not saved to disk.</li>
+<li>The Google access token exists in memory only.</li>
+</ul>
+
+<h3>3. Why we process data</h3>
+<p>To operate the service (document catalog, search including inline search, conversion) and to copy documents to your Google Drive at your request.</p>
+
+<h3>4. Google access</h3>
+<p>Connecting Google Drive is optional. We request a single scope: <code>https://www.googleapis.com/auth/drive.file</code>. It gives access only to files and folders created by the app; we cannot see any other files in your Drive. No profile or email scopes are requested.</p>
+<p>You can disconnect in the bot (<code>/settings</code>, disconnect Google Drive) or in your Google account: <a href="https://myaccount.google.com/permissions">https://myaccount.google.com/permissions</a>. Files already copied remain in your Drive.</p>
+
+<h3>5. Google API Services User Data Policy and Limited Use</h3>
+<div class="box">
+<p>Most Files's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy#additional_requirements_for_specific_api_scopes">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+<p>We do not sell data, we do not use Google user data for advertising, and we do not use it to train AI models. Humans do not read Google user data, except with your consent, for security purposes, or to comply with the law.</p>
+</div>
+
+<h3>6. Deleting your data</h3>
+<p>In the bot: <code>/settings</code> &rarr; "🗑 Удалить мои данные" (Delete my data) &rarr; confirm by typing the word "УДАЛИТЬ" (the bot's interface is in Russian). Metadata of all your documents, your Google Drive connection and your settings are deleted immediately, Google access is revoked (if Google is unreachable at that moment, revoke it manually at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>), and your account record is permanently removed by a daily cleanup job, usually within a day.</p>
+<p>You can also delete individual documents in the bot (the Drive copy is moved to the Drive trash). Files in your Google Drive and messages in your Telegram chat stay with you. You can also request deletion by email.</p>
+
+<h3>7. Retention</h3>
+<ul>
+<li>While you use the service.</li>
+<li>Documents without a chosen category are deleted after about one day.</li>
+<li>OAuth state is valid for up to 10 minutes; expired records are removed once a day.</li>
+<li>After a deletion request, see section 6.</li>
+<li>Logs are retained by the hosting provider for [УТОЧНИТЬ].</li>
+</ul>
+
+<h3>8. Third parties</h3>
+<ul>
+<li>Telegram: message delivery and file storage.</li>
+<li>Google: Google Drive, only when you connect it.</li>
+<li>Railway: hosting of the application and the database; region: [УТОЧНИТЬ].</li>
+</ul>
+<p>We do not sell or share data otherwise.</p>
+
+<h3>9. Security</h3>
+<p>Connections use TLS, the Google refresh token is stored encrypted, we request the minimal scope, and secrets are kept in environment variables.</p>
+
+<h3>10. Children</h3>
+<p>The service is not intended for persons under 16.</p>
+
+<h3>11. Law of the Republic of Kazakhstan</h3>
+<p>Data is processed in accordance with the Law of the Republic of Kazakhstan "On Personal Data and Their Protection". By using the bot you consent to the processing described in this policy. Data is transferred across borders to servers of Telegram, Google and Railway located outside Kazakhstan. You may withdraw your consent at any time (delete your data in the bot or email us), and you have the right to access and correct your data.</p>
+
+<h3>12. Changes to this policy</h3>
+<p>When the policy changes we update the revision date at the top of this page. Continued use of the service means you accept the updated policy.</p>
+
+<h3>13. Contact</h3>
+<p>{{template "contact" .}}</p>
+</section>
+{{- end}}
