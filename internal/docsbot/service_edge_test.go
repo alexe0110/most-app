@@ -169,7 +169,7 @@ func TestService_MarkBackupFailed_ignoresForeignDocument(t *testing.T) {
 	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupUploading})
 	svc, _ := edgeService(repo, fakeDrive{})
 
-	require.NoError(t, svc.MarkBackupFailed(t.Context(), stranger, doc.ID))
+	require.NoError(t, svc.MarkBackupFailed(t.Context(), stranger, doc.ID, docsbot.BackupReasonQuota))
 	require.Equal(t, docsbot.BackupUploading, repo.docs[doc.ID].BackupStatus)
 }
 

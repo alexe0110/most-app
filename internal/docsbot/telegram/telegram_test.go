@@ -150,6 +150,10 @@ func newBotOpts(t *testing.T, log *slog.Logger, drive fakeDrive, opts ...telegra
 			sent.record(&sent.editMarkups, r.FormValue("reply_markup"))
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/sendMessage") {
+			_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":`+strconv.Itoa(sentMessageID)+`}}`)
+			return
+		}
 		_, _ = io.WriteString(w, `{"ok":true,"result":{}}`)
 	}))
 	t.Cleanup(ts.Close)
@@ -161,6 +165,9 @@ func newBotOpts(t *testing.T, log *slog.Logger, drive fakeDrive, opts ...telegra
 	telegram.Register(b, log, svc, auth, opts...)
 	return b, sent, repo
 }
+
+// sentMessageID is the message id the fake API gives every sent message.
+const sentMessageID = 777
 
 const testUserID = "11111111-1111-1111-1111-111111111111"
 
@@ -321,7 +328,7 @@ func TestSettings_showsCountsAndControls(t *testing.T) {
 
 	b.ProcessUpdate(ctx, commandUpdate(100, "settings"))
 
-	require.True(t, has(sent.texts, "Google Drive"), "sent %q", sent.texts)
+	require.True(t, has(sent.texts, "Google Диск"), "sent %q", sent.texts)
 	require.True(t, has(sent.texts, "Документов: 2"), "sent %q", sent.texts)
 }
 
@@ -843,8 +850,8 @@ func TestOpenCard_detectsFileDeletedInDrive(t *testing.T) {
 		wantRetry bool
 		wantOpen  bool
 	}{
-		{"file deleted", true, "Файл удалён в Drive, копия осталась в Telegram", true, false},
-		{"file there", false, "Google Drive · копия в Telegram", false, true},
+		{"file deleted", true, "Файл удалён в Google Диске, копия осталась в Telegram", true, false},
+		{"file there", false, "Google Диск · копия в Telegram", false, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

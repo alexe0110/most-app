@@ -284,6 +284,12 @@ func TestService_Backup(t *testing.T) {
 			wantErr: docsbot.ErrDriveRevoked, wantStatus: docsbot.BackupUploading, wantDownload: 1, wantUpload: 1,
 		},
 		{
+			name:    "full drive is terminal",
+			files:   fakeFiles{data: []byte("x")},
+			drive:   fakeDrive{uploadErr: docsbot.ErrDriveFull},
+			wantErr: docsbot.ErrDriveFull, wantStatus: docsbot.BackupUploading, wantDownload: 1, wantUpload: 1,
+		},
+		{
 			name:    "transient upload error is retryable",
 			files:   fakeFiles{data: []byte("x")},
 			drive:   fakeDrive{uploadErr: errBoom},
@@ -381,8 +387,13 @@ func TestService_MarkBackupFailed(t *testing.T) {
 	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupUploading})
 	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
-	require.NoError(t, svc.MarkBackupFailed(t.Context(), user, doc.ID))
+	require.NoError(t, svc.MarkBackupFailed(t.Context(), user, doc.ID, docsbot.BackupReasonQuota))
 	require.Equal(t, docsbot.BackupFailed, repo.docs[doc.ID].BackupStatus)
+	require.Equal(t, docsbot.BackupReasonQuota, repo.docs[doc.ID].BackupReason)
+
+	// Any later status change clears the reason.
+	require.NoError(t, repo.SetBackupStatus(t.Context(), user, doc.ID, docsbot.BackupPending))
+	require.Empty(t, repo.docs[doc.ID].BackupReason)
 }
 
 func TestService_Settings(t *testing.T) {
@@ -708,6 +719,7 @@ func TestService_SweepStuckUploads(t *testing.T) {
 				require.Empty(t, uploads.requeued)
 			}
 			if tt.wantFailed {
+				require.Equal(t, docsbot.BackupReasonUnavailable, repo.docs[doc.ID].BackupReason)
 				require.Equal(t, doc.ID, res.Failed[0].ID)
 				require.Equal(t, user, res.Failed[0].User)
 			}

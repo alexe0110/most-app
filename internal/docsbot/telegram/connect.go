@@ -29,9 +29,37 @@ type driveCounter interface {
 	NotBackedUpCount(ctx context.Context, user docsbot.UserID) (int, error)
 }
 
+// settingsReader is the part of docsbot.Service that redraws the /settings
+// screen once Drive is connected.
+type settingsReader interface {
+	Settings(ctx context.Context, user docsbot.UserID) (docsbot.SettingsView, error)
+}
+
+// connectSettings is what NotifyConnected needs to turn the user's /settings
+// message into the connected screen.
+type connectSettings struct {
+	msgs *SettingsMessages
+	svc  settingsReader
+	auth Authorizer
+}
+
+// ConnectOption tunes NotifyConnected.
+type ConnectOption func(*connectSettings)
+
+// WithConnectSettings makes NotifyConnected also redraw the /settings message the
+// user came from (remembered in msgs by the docs handlers) as the connected screen.
+func WithConnectSettings(msgs *SettingsMessages, svc settingsReader, auth Authorizer) ConnectOption {
+	return func(c *connectSettings) { c.msgs, c.svc, c.auth = msgs, svc, auth }
+}
+
 // NotifyConnected builds the OnConnected callback: after Drive is linked it tells
-// the user, and offers to transfer any documents still only in Telegram.
-func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slog.Logger) oauth.OnConnected {
+// the user, refreshes their /settings message when it is known, and offers to
+// transfer any documents still only in Telegram.
+func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slog.Logger, opts ...ConnectOption) oauth.OnConnected {
+	var cs connectSettings
+	for _, opt := range opts {
+		opt(&cs)
+	}
 	return func(ctx context.Context, userID string) error {
 		chatID, err := users.TgUserID(ctx, userID)
 		if err != nil {
@@ -45,6 +73,7 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 			return ignoreBlocked(err) // a block is already logged at Warn by tg.Bot
 		}
 		log.InfoContext(ctx, "drive connected", "user_id", userID)
+		cs.refresh(ctx, b, log, chatID, docsbot.UserID(userID))
 		n, err := counter.NotBackedUpCount(ctx, docsbot.UserID(userID))
 		if err != nil {
 			return fmt.Errorf("count not backed up: %w", err)
@@ -53,6 +82,39 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 			return nil
 		}
 		return ignoreBlocked(b.SendMarkup(ctx, chatID, fmt.Sprintf(textTransferOffer, n), transferOfferKeyboard()))
+	}
+}
+
+// refresh edits the remembered /settings message into the connected screen. An
+// unknown message (restart, expired) is skipped silently; a failure is logged
+// at Warn and never fails the OAuth callback.
+func (c connectSettings) refresh(ctx context.Context, b *tg.Bot, log *slog.Logger, chatID int64, user docsbot.UserID) {
+	if c.msgs == nil || c.svc == nil {
+		return
+	}
+	msgID, ok := c.msgs.store.get(chatID)
+	if !ok {
+		return
+	}
+	view, err := c.svc.Settings(ctx, user)
+	if err != nil {
+		log.WarnContext(ctx, "load settings after connect", "err", err, "user_id", user)
+		return
+	}
+	var (
+		url     string
+		haveURL bool
+	)
+	if c.auth != nil {
+		if u, err := c.auth.AuthURL(ctx, string(user), botName); err != nil {
+			log.WarnContext(ctx, "build auth url after connect", "err", err, "user_id", user)
+		} else {
+			url, haveURL = u, true
+		}
+	}
+	text, kb := renderSettings(view, url, haveURL)
+	if err := b.EditHTML(ctx, chatID, msgID, text, kb); err != nil && !isNotModified(err) {
+		log.WarnContext(ctx, "edit settings after connect", "err", err, "user_id", user)
 	}
 }
 

@@ -55,7 +55,7 @@ func Commands() []models.BotCommand {
 		{Command: "start", Description: "Начать работу"},
 		{Command: "list", Description: "Мои документы по категориям"},
 		{Command: "convert", Description: "Фото → PDF или сжать изображение"},
-		{Command: "settings", Description: "Подключить Google Drive"},
+		{Command: "settings", Description: "Подключить Google Диск"},
 		{Command: "help", Description: "Что умеет бот"},
 	}
 }

@@ -41,6 +41,19 @@ func (b BackupStatus) Terminal() bool {
 	return b == BackupBackedUp || b == BackupFailed || b == BackupTooLarge
 }
 
+// BackupReason says why a Drive upload failed.
+type BackupReason string
+
+// Reasons a Drive upload failed, stored in Document.BackupReason.
+const (
+	// BackupReasonQuota: the user's Google Drive is full.
+	BackupReasonQuota BackupReason = "quota"
+	// BackupReasonRevoked: Drive access was revoked.
+	BackupReasonRevoked BackupReason = "revoked"
+	// BackupReasonUnavailable: any other failure (service down, retries exhausted, stuck).
+	BackupReasonUnavailable BackupReason = "unavailable"
+)
+
 // SyncStatus tracks whether the Drive file matches the document's title, category
 // and content. It only matters for a backed-up document.
 type SyncStatus string
@@ -86,6 +99,8 @@ type Document struct {
 	Width, Height int
 	MIME          string
 	BackupStatus  BackupStatus
+	// BackupReason explains a failed backup (BackupReason*); "" when not failed or unknown.
+	BackupReason BackupReason
 	// SyncStatus is the state of the Drive copy relative to the row; SyncReason
 	// explains a failed sync ("" or SyncReasonRevoked).
 	SyncStatus SyncStatus
@@ -118,8 +133,8 @@ type StatusKind string
 // Status kinds.
 const (
 	StatusSingle   StatusKind = "single"   // one uploading document, rendered as a live card
-	StatusBatch    StatusKind = "batch"    // 2+ documents, rendered as a counter + lines
-	StatusTransfer StatusKind = "transfer" // a bulk transfer/retry, rendered like a batch with its own header
+	StatusBatch    StatusKind = "batch"    // 2+ documents, rendered as a progress bar + category blocks
+	StatusTransfer StatusKind = "transfer" // a bulk transfer/retry, rendered like a batch
 )
 
 // InDrive reports whether the document has been backed up to the user's Drive.

@@ -38,6 +38,7 @@ type Document struct {
 	PageCount       pgtype.Int4
 	ImageWidth      pgtype.Int4
 	ImageHeight     pgtype.Int4
+	BackupReason    pgtype.Text
 }
 
 type DriveFolder struct {

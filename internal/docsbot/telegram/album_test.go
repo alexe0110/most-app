@@ -256,7 +256,7 @@ func TestChooseCategory_tooLargeStaysInTelegram(t *testing.T) {
 		dataCallback(100, "d:cat:"+string(doc.ID)+":"+string(docsbot.CatOther)))
 
 	require.Equal(t, docsbot.BackupTooLarge, repo.docs[doc.ID].BackupStatus)
-	require.True(t, has(sent.edits, "Слишком большой для Drive"), "edits %q", sent.edits)
+	require.True(t, has(sent.edits, "Слишком большой для Google Диска"), "edits %q", sent.edits)
 }
 
 func albumDocument(group, uniqueID, name string) *models.Update {

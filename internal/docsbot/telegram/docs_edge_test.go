@@ -82,7 +82,7 @@ func TestDisconnect_driveFailureIsShown(t *testing.T) {
 
 	b.ProcessUpdate(ctx, dataCallback(100, "d:dc"))
 
-	require.False(t, has(sent.edits, "Google Drive отключён"), "the integration is still active: %q", sent.edits)
+	require.False(t, has(sent.edits, "Google Диск отключён"), "the integration is still active: %q", sent.edits)
 	require.True(t, has(sent.texts, "Что-то пошло не так"), "texts %q", sent.texts)
 }
 
@@ -92,8 +92,8 @@ func TestSetCategory_backedUpCard(t *testing.T) {
 		connected bool
 		want      string
 	}{
-		{"connected: file follows via sync", true, "Обновляю в Drive"},
-		{"not connected: file stays in the old folder", false, "В Drive файл остался в прежней папке"},
+		{"connected: file follows via sync", true, "Обновляю на Google Диске"},
+		{"not connected: file stays in the old folder", false, "На Google Диске файл остался в прежней папке"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -52,6 +52,10 @@ var ErrAccessRevoked = errors.New("gdrive: access revoked")
 // should fall back silently, without asking to reconnect.
 var ErrAccessDisconnected = errors.New("gdrive: access disconnected by user")
 
+// ErrStorageFull means the user's Drive has no free space (403 storageQuotaExceeded).
+// Retrying cannot help until the user frees space.
+var ErrStorageFull = errors.New("gdrive: storage full")
+
 // ErrFileNotFound means the file itself is gone from Drive (404). The caller maps
 // it to its own "remote missing" meaning.
 var ErrFileNotFound = errors.New("gdrive: file not found")
@@ -427,7 +431,7 @@ func writePart(mw *multipart.Writer, hdr textproto.MIMEHeader, data []byte) erro
 }
 
 // do performs one request and decodes a JSON response into out. 401 maps to
-// ErrAccessRevoked and 404 to errNotFound; other non-2xx carry only the status.
+// ErrAccessRevoked, 404 to errNotFound and 403 storageQuotaExceeded to ErrStorageFull; other non-2xx carry only the status.
 // Each call is traced at Debug with op, status and duration (never URL or body).
 func (s *Service) do(ctx context.Context, op string, httpc *http.Client, method, u, contentType string, body io.Reader, out any) error {
 	start := time.Now()
@@ -467,9 +471,12 @@ func (s *Service) roundTrip(ctx context.Context, httpc *http.Client, method, u, 
 	case resp.StatusCode == http.StatusNotFound:
 		return resp.StatusCode, errNotFound
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
-		// Drain a bounded part so the connection can be reused; the body is not
+		// Read a bounded part so the connection can be reused; the body is not
 		// put into the error because it may carry file metadata.
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrBody))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
+		if resp.StatusCode == http.StatusForbidden && isStorageQuota(body) {
+			return resp.StatusCode, ErrStorageFull
+		}
 		return resp.StatusCode, fmt.Errorf("status %d", resp.StatusCode)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
@@ -477,6 +484,31 @@ func (s *Service) roundTrip(ctx context.Context, httpc *http.Client, method, u, 
 	}
 	return resp.StatusCode, nil
 }
+
+// isStorageQuota reports whether a 403 body says the user's storage is full:
+// {"error":{"errors":[{"reason":"storageQuotaExceeded"}]}}. A body that is not
+// that JSON falls back to a substring match.
+func isStorageQuota(body []byte) bool {
+	var e struct {
+		Error struct {
+			Errors []struct {
+				Reason string `json:"reason"`
+			} `json:"errors"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &e); err != nil {
+		return bytes.Contains(body, []byte(storageQuotaReason))
+	}
+	for _, x := range e.Error.Errors {
+		if x.Reason == storageQuotaReason {
+			return true
+		}
+	}
+	return false
+}
+
+// storageQuotaReason is the error reason Drive gives when the user's storage is full.
+const storageQuotaReason = "storageQuotaExceeded"
 
 // escapeQuery escapes a literal for use inside single quotes in a Drive query.
 func escapeQuery(s string) string {

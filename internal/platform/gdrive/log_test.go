@@ -108,3 +108,37 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 type clientFunc func() *http.Client
 
 func (f clientFunc) Client(context.Context, string) (*http.Client, error) { return f(), nil }
+
+func TestUpload_storageQuotaIsErrStorageFull(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  int
+		body    string
+		wantErr error
+	}{
+		{"storage quota", http.StatusForbidden, `{"error":{"errors":[{"reason":"storageQuotaExceeded"}]}}`, ErrStorageFull},
+		{"reason only in the message does not match", http.StatusForbidden, `{"error":{"message":"storageQuotaExceeded","errors":[{"reason":"rateLimitExceeded"}]}}`, nil},
+		{"non-JSON body falls back to substring", http.StatusForbidden, `storageQuotaExceeded`, ErrStorageFull},
+		{"rate limit is not storage", http.StatusForbidden, `{"error":{"errors":[{"reason":"userRateLimitExceeded"}]}}`, nil},
+		{"other status with the same body", http.StatusInternalServerError, `storageQuotaExceeded`, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			t.Cleanup(srv.Close)
+			svc := New(fakeClients{}, newFakeCache(), WithBaseURL(srv.URL))
+
+			_, err := svc.Upload(context.Background(), "user-1", testUpload())
+
+			require.Error(t, err)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+			} else {
+				require.NotErrorIs(t, err, ErrStorageFull)
+			}
+		})
+	}
+}

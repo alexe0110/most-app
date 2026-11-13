@@ -1,7 +1,7 @@
 package telegram
 
 // User-facing texts. Russian, kept in one place per project convention. Tone
-// (product.md): documents are "хранятся в Telegram" / "ещё не в Drive", the
+// (product.md): documents are "хранятся в Telegram" / "ещё не на Google Диске", the
 // goal is the user's Google Drive; never "временно".
 
 // Core flow texts (#9, #10, #12, #13, #14).
@@ -9,9 +9,9 @@ const (
 	// textStart is a format string: %s = Drive root folder name.
 	textStart = "Привет! Я Most Docs. Пришли документ — фото, PDF или файл, — " +
 		"я разложу его по категориям и найду по запросу. А ещё сожму фото и поработаю с PDF — команда /convert.\n\n" +
-		"Цель — хранить документы на твоём Google Drive. Пока Drive не подключён, " +
+		"Цель — хранить документы на твоём Google Диске. Пока Google Диск не подключён, " +
 		"они лежат во входящей папке в Telegram — можно начать без настройки.\n\n" +
-		"Подключишь Drive — бот будет видеть только файлы, которые сам создал. " +
+		"Подключишь Google Диск — бот будет видеть только файлы, которые сам создал. " +
 		"Он создаёт свою папку «%s» на твоём Диске и не видит папки, которые ты создаёшь сам, " +
 		"поэтому если у тебя уже есть папка с таким именем — появится вторая."
 
@@ -20,17 +20,17 @@ const (
 		"• /list — твои документы по категориям.\n" +
 		"• Поиск — напиши слово из названия.\n" +
 		"• /convert — фото → PDF, сжать изображение, действия с PDF: повернуть, оставить или убрать страницы, склеить.\n\n" +
-		"Цель — перенести документы на твой Google Drive; пока они хранятся в Telegram."
+		"Цель — перенести документы на твой Google Диск; пока они хранятся в Telegram."
 
-	textDriveConnected = "Google Drive подключён ✅ Новые документы будут попадать на твой Диск."
+	textDriveConnected = "Google Диск подключён ✅"
 
 	textChooseCategory      = "Выбери категорию:"
 	textChooseCategoryGroup = "Выбери категорию для %d %s:" // files in the album, plural("файл")
 	textChooseCategoryAlbum = "Выбери категорию для альбома:"
-	textAlbumChoice         = "Альбом: %d %s. Что сделать?"                        // count, plural("изображение")
-	textAlbumDuplicates     = "Уже были сохранены: %d"                             // %d = duplicate files
-	textGroupSaved          = "Сохранил %d %s в категории «%s»."                   // count, plural("файл"), category
-	textGroupTooLarge       = "Слишком большие для Drive, остались в Telegram: %d" // %d = files
+	textAlbumChoice         = "Альбом: %d %s. Что сделать?"                               // count, plural("изображение")
+	textAlbumDuplicates     = "Уже были сохранены: %d"                                    // %d = duplicate files
+	textGroupSaved          = "Сохранил %d %s в категории «%s»."                          // count, plural("файл"), category
+	textGroupTooLarge       = "Слишком большие для Google Диска, остались в Telegram: %d" // %d = files
 	textAlreadySaved        = "Этот файл уже сохранён."
 
 	textRenamePrompt  = "Пришли новое название"
@@ -39,9 +39,9 @@ const (
 
 	textDeleteConfirm = "Удалить этот документ? Отменить будет нельзя."
 	// textDeleteConfirmDrive is shown for a document in a connected Drive.
-	textDeleteConfirmDrive = "Удалить этот документ? Файл будет перемещён в корзину Google Drive."
+	textDeleteConfirmDrive = "Удалить этот документ? Файл будет перемещён в корзину Google Диска."
 	// textDeletedRemoteKept: the Drive file could not be trashed and stays.
-	textDeletedRemoteKept = "Документ удалён. В Google Drive файл остался — удали его вручную."
+	textDeletedRemoteKept = "Документ удалён. На Google Диске файл остался — удали его вручную."
 	textDeleted           = "Документ удалён 🗑"
 	textDeleteCancelled   = "Удаление отменено."
 	textGone              = "Этого документа уже нет."
@@ -57,31 +57,27 @@ const (
 	textNothingFound = "Ничего не нашёл. Загляни в /list или пришли новый документ."
 	textSearchHint   = "Напиши, что искать: часть названия документа."
 
-	textOfferDrive = "Хочешь, чтобы документы лежали на твоём Google Drive? Подключи — " +
+	textOfferDrive = "Хочешь, чтобы документы лежали на твоём Google Диске? Подключи — " +
 		"новые файлы будут попадать туда автоматически, а бот увидит только то, что сам создал."
 
-	textTransferOffer     = "Перенести %d сохранённых документов в Google Drive?" // %d = count
-	textNothingToTransfer = "Всё уже в Google Drive."
+	textTransferOffer     = "Перенести %d сохранённых документов на Google Диск?" // %d = count
+	textNothingToTransfer = "Всё уже на Google Диске."
 	textTransferDeclined  = "Хорошо. Перенести можно позже — в /list или /settings."
-	textBackedUp          = "☁️ «%s» теперь в Google Drive." // %s = title
-	textBackupFailed      = "Не удалось выгрузить документ в Google Drive. Попробовать ещё раз?"
-	textReconnect         = "Доступ к Google Drive отозван. Подключи заново, чтобы продолжить выгрузку."
-	textRetryQueued       = "Повторяю выгрузку в Google Drive."
-	textStatusHeader      = "Загрузка в Drive (%d из %d)" // done, total
-	textStatusMore        = "…и ещё %d"                   // %d = hidden lines
-	textStatusListHint    = "✏️ Изменить имя и категорию: /list"
-	textTransferHeader    = "Перенос в Drive (%d из %d)" // done, total
-	textTransferAllDone   = "Готово: %d в Drive"         // %d = backed up
+	textBackedUp          = "☁️ «%s» теперь на Google Диске." // %s = title
+	textBackupFailed      = "Не удалось выгрузить документ на Google Диск. Попробовать ещё раз?"
+	textReconnect         = "Доступ к Google Диску отозван. Подключи заново, чтобы продолжить выгрузку."
+	textRetryQueued       = "Повторяю выгрузку на Google Диск."
+	textStatusMore        = "…и ещё %d" // %d = hidden titles
 
-	textStoragePending      = "⏳ Загружаю в Drive…"
-	textStorageInDrive      = "☁️ Google Drive · копия в Telegram"
-	textStorageFailed       = "❌ Не удалось выгрузить в Drive"
-	textStorageTooLarge     = "📥 Слишком большой для Drive"
-	textStorageSyncing      = "⏳ Обновляю в Drive…"
-	textStorageSyncFailed   = "⚠️ Не удалось обновить в Drive"
-	textStorageSyncRevoked  = "⚠️ Не удалось обновить в Drive: доступ отозван"
-	textStorageMissing      = "📥 Файл удалён в Drive, копия осталась в Telegram"
-	textDriveFileStayed     = "В Drive файл остался в прежней папке"
+	textStoragePending      = "⏳ Загружаю на Google Диск…"
+	textStorageInDrive      = "☁️ Google Диск · копия в Telegram"
+	textStorageFailed       = "❌ Не удалось выгрузить на Google Диск"
+	textStorageTooLarge     = "📥 Слишком большой для Google Диска"
+	textStorageSyncing      = "⏳ Обновляю на Google Диске…"
+	textStorageSyncFailed   = "⚠️ Не удалось обновить в Google Диске"
+	textStorageSyncRevoked  = "⚠️ Не удалось обновить в Google Диске: доступ отозван"
+	textStorageMissing      = "📥 Файл удалён в Google Диске, копия осталась в Telegram"
+	textDriveFileStayed     = "На Google Диске файл остался в прежней папке"
 	textStorageTelegramOnly = "📥 Только в Telegram"
 
 	// textGroupNotice is sent once to a group the bot was added to, right before it leaves.
@@ -98,7 +94,7 @@ const (
 
 // Settings, disconnect, export and delete texts (#15).
 const (
-	textDisconnected = "Google Drive отключён. Новые документы останутся в Telegram, " +
+	textDisconnected = "Google Диск отключён. Новые документы останутся в Telegram, " +
 		"а уже выгруженные файлы и ссылки на них сохранены."
 	textNoFailed = "Документов с ошибкой выгрузки нет."
 
@@ -108,22 +104,22 @@ const (
 	textExportDone      = "Готово — прислал %d документов."                                      // %d = count
 	textExportTruncated = "Прислал %d из %d. Отправь /export ещё раз, чтобы получить остальные." // sent, total
 
-	textDeleteDataPrompt = "Это удалит все твои данные у бота: документы, категории и подключение Google Drive.\n\n" +
-		"Файлы, уже выгруженные на твой Google Drive, останутся у тебя. Сообщения в этом чате бот удалить не может.\n\n" +
+	textDeleteDataPrompt = "Это удалит все твои данные у бота: документы, категории и подключение к Google Диску.\n\n" +
+		"Файлы, уже выгруженные на твой Google Диск, останутся у тебя. Сообщения в этом чате бот удалить не может.\n\n" +
 		"Советую сначала забрать документы: кнопка ниже или команда /export.\n\n" +
 		"Чтобы подтвердить, пришли слово УДАЛИТЬ."
-	textDataDeleted = "Данные удалены. Файлы на Google Drive остались у тебя; сообщения в этом чате можно удалить вручную.\n\n" +
+	textDataDeleted = "Данные удалены. Файлы на Google Диске остались у тебя; сообщения в этом чате можно удалить вручную.\n\n" +
 		"Напиши /start, чтобы начать заново."
 	textDeleteWrongWord = "Удаление отменено — слово не совпало."
 )
 
 // Inline button labels for the core flow.
 const (
-	btnConnectDrive       = "☁️ Подключить Google Drive"
+	btnConnectDrive       = "☁️ Подключить Google Диск"
 	btnCardSend           = "📤 Прислать"
 	btnCardOpen           = "☁️ Открыть"
-	btnOpenDrive          = "☁️ Открыть в Drive"
-	btnOpenFolder         = "📁 Папка в Drive"
+	btnOpenDrive          = "☁️ Открыть в Google Диске"
+	btnOpenFolder         = "📁 Папка в Google Диске"
 	btnOpenCategoryFolder = "📁 Папка категории"
 	btnRename             = "✏️ Имя"
 	btnChangeCat          = "🗂 Категория"
@@ -131,7 +127,7 @@ const (
 	btnDeleteYes          = "Да, удалить"
 	btnDeleteNo           = "Отмена"
 	btnRenameCancel       = "Отмена"
-	btnTransfer           = "📤 Перенести в Drive"
+	btnTransfer           = "📤 Перенести на Google Диск"
 	btnBack               = "⬅️ Назад"
 	btnMyDocs             = "📂 Мои документы"
 	btnBackToCats         = "⬅️ Категории"
@@ -139,8 +135,8 @@ const (
 	btnTransferNo         = "Не сейчас"
 	btnRetryBackup        = "🔁 Повторить"
 	btnReupload           = "☁️ Выгрузить заново"
-	btnReconnect          = "☁️ Переподключить Google Drive"
-	btnDisconnect         = "🔌 Отключить Google Drive"
+	btnReconnect          = "☁️ Переподключить Google Диск"
+	btnDisconnect         = "🔌 Отключить Google Диск"
 	btnRetryAll           = "🔁 Повторить выгрузку"
 	btnExportAll          = "📨 Сначала прислать все документы"
 	btnDeleteData         = "🗑 Удалить мои данные"
@@ -195,7 +191,7 @@ const (
 	textReplaceConfirm = "Исходный файл будет заменён"
 	textReplacedDone   = "♻️ Исходный файл заменён"
 	textReplaceBusy    = "Подожди, файл ещё сохраняется"
-	textReplaceMissing = "Файл удалён в Drive: сначала «Выгрузить заново»"
+	textReplaceMissing = "Файл удалён в Google Диске: сначала «Выгрузить заново»"
 
 	textAlbumTooMany = "В один PDF помещается не больше %d страниц. Сохрани фото по одному."
 	textAlbumTooBig  = "Фото в альбоме больше %d МБ вместе — в один PDF не поместятся. Сохрани их по одному."
@@ -278,4 +274,26 @@ const (
 const (
 	btnAlbumPDF  = "📄 Собрать в один PDF"
 	btnAlbumEach = "💾 Сохранить по одному"
+)
+
+// Batch status message (#99) and /settings.
+const (
+	textStatusProgress    = "⏳ Переношу на Google Диск · %d из %d" // done, total
+	textStatusDone        = "✅ Перенёс на Google Диск — %d %s"     // backed up, plural("документ")
+	textStatusNotDone     = "⚠️ Не перенёс %d: %s"                 // count, reason
+	textStatusNotDoneList = "⚠️ Не перенёс %d:"                    // count; reasons follow
+	textStatusReasonLine  = "• %s — %d"                            // reason, count
+	textStatusCategory    = "📁 %s · %d"                            // category label (maybe a link), count
+	textReasonQuota       = "нет места на Диске"
+	textReasonRevoked     = "доступ отозван"
+	textReasonUnavailable = "сервис недоступен"
+	textReasonTooLarge    = "больше %d МБ"
+
+	textNotInDrive       = "📥 %d ещё не на Google Диске" // %d = documents
+	textSettingsOn       = "Google Диск: подключён ✅"
+	textSettingsOff      = "Google Диск: не подключён"
+	textSettingsTotal    = "Документов: %d"          // %d = all documents
+	textSettingsInDrive  = "☁️ На Google Диске: %d"  // %d = backed up
+	textSettingsTelegram = "📥 Только в Telegram: %d" // %d = documents
+	textSettingsFailed   = "⚠️ Не выгрузились: %d"   // %d = documents
 )
