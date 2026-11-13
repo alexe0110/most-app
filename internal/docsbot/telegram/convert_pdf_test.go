@@ -2,6 +2,7 @@ package telegram_test
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/go-pdf/fpdf"
@@ -14,6 +15,86 @@ import (
 	"github.com/alexe0110/most-app/internal/platform/convert"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
+
+func TestConvert_photosToPDF(t *testing.T) {
+	h := newConvHarness(t)
+	ctx := t.Context()
+
+	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:pdf"))
+	for i := 1; i <= 3; i++ {
+		h.bot.ProcessUpdate(ctx, photoUpdate(i))
+	}
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
+
+	require.Len(t, h.docs, 1)
+	doc := h.docs[0]
+	require.True(t, strings.HasPrefix(doc.filename, "Скан "), "got %q", doc.filename)
+	require.True(t, strings.HasSuffix(doc.filename, ".pdf"))
+	require.True(t, bytes.HasPrefix(doc.data, []byte("%PDF")))
+	require.Contains(t, string(doc.data), "/Count 3", "one page per photo")
+	require.Empty(t, h.repo.docs, "a result is not saved unless asked")
+}
+
+// The 21st photo is refused with a clear text; the session stays alive and the
+// first twenty still become a PDF. Photos are not downloaded while collecting.
+func TestConvert_photosToPDF_pageLimit(t *testing.T) {
+	h := newConvHarness(t)
+	ctx := t.Context()
+
+	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:pdf"))
+	for i := 1; i <= 21; i++ {
+		h.bot.ProcessUpdate(ctx, photoUpdate(i))
+	}
+
+	require.Empty(t, h.downloads, "photos are downloaded only when the PDF is built")
+	require.Contains(t, h.allTexts(), "не больше 20 страниц")
+
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
+
+	require.Len(t, h.docs, 1, "the session survived the refusal")
+	require.Contains(t, string(h.docs[0].data), "/Count 20")
+	require.Len(t, h.downloads, 20)
+}
+
+func TestConvert_photosToPDF_sizeLimit(t *testing.T) {
+	h := newConvHarness(t)
+	ctx := t.Context()
+
+	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:pdf"))
+	big := photoUpdate(1)
+	big.Message.Photo[1].FileSize = 21 << 20
+	h.bot.ProcessUpdate(ctx, big)
+	h.bot.ProcessUpdate(ctx, photoUpdate(2))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
+
+	require.Contains(t, h.allTexts(), "больше 20 МБ")
+	require.Len(t, h.docs, 1)
+	require.Contains(t, string(h.docs[0].data), "/Count 1", "only the photo that fit")
+}
+
+// Real sizes can differ from the declared ones: the PDF is refused after the
+// download and the session ends instead of looping on the same photos.
+func TestConvert_photosToPDF_realSizeOverLimitEndsSession(t *testing.T) {
+	h := newConvHarness(t)
+	ctx := t.Context()
+	h.serve("large", make([]byte, 11<<20))
+
+	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:pdf"))
+	h.bot.ProcessUpdate(ctx, photoUpdate(1))
+	h.bot.ProcessUpdate(ctx, photoUpdate(2))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
+
+	require.Contains(t, strings.Join(h.editTexts, "\n"), "больше 20 МБ", "the progress note turns into the refusal")
+	require.Empty(t, h.docs)
+
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
+	require.Empty(t, h.docs, "the session is gone")
+	require.Equal(t, "Кнопка устарела, открой заново.", h.lastText())
+}
 
 func testPDF(t *testing.T, pages int) []byte {
 	t.Helper()

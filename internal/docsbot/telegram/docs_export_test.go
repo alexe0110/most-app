@@ -8,12 +8,33 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
+
+func TestIsExport(t *testing.T) {
+	tests := []struct {
+		name string
+		u    *models.Update
+		want bool
+	}{
+		{"command", convText("/export"), true},
+		{"command with bot name", convText("/export@most_bot"), true},
+		{"export button", callbackUpdate("d:exp"), true},
+		{"other command", convText("/list"), false},
+		{"similar command", convText("/exports"), false},
+		{"other button", callbackUpdate("d:del"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, telegram.IsExport(tt.u))
+		})
+	}
+}
 
 func TestExport_rateLimitIsRetriedOnceAndSentIsCounted(t *testing.T) {
 	tests := []struct {
