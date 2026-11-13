@@ -41,7 +41,7 @@ func (s *Service) tokenSource(ctx context.Context, userID, bot string) (oauth2.T
 		return nil, fmt.Errorf("decrypt refresh token: %w", err)
 	}
 
-	src := s.config().TokenSource(ctx, &oauth2.Token{RefreshToken: string(refresh)})
+	src := s.config().TokenSource(s.tokenCtx(ctx), &oauth2.Token{RefreshToken: string(refresh)})
 	if _, err := src.Token(); err != nil {
 		if isInvalidGrant(err) {
 			if uErr := s.store.UpdateIntegrationStatus(ctx, userID, bot, provider, statusRevoked); uErr != nil {

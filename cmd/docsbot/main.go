@@ -111,6 +111,7 @@ func run() error {
 		PublicURL:     cfg.PublicURL,
 		WebhookSecret: cfg.TelegramWebhookSecret,
 		GroupNotice:   telegram.GroupNotice(),
+		Unbounded:     telegram.IsExport,
 	}, repo, log, func(b *bot.Bot) {
 		telegram.Register(b, log, svc, oauthSvc, telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder))
 	})

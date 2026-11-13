@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -276,4 +277,39 @@ func TestLeaveGroup_sendsNoticeThenLeaves(t *testing.T) {
 	leaveGroup("only private", discardLog())(context.Background(), b, -100)
 
 	require.Equal(t, []string{"sendMessage", "leaveChat"}, calls)
+}
+
+func TestWithTimeout(t *testing.T) {
+	exempt := func(u *models.Update) bool { return u.ID == 2 }
+	tests := []struct {
+		name         string
+		updateID     int64
+		wantDeadline bool
+	}{
+		{"regular update gets a deadline", 1, true},
+		{"exempt update runs unbounded", 2, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var hasDeadline bool
+			h := withTimeout(time.Minute, exempt, discardLog())(func(ctx context.Context, _ *bot.Bot, _ *models.Update) {
+				_, hasDeadline = ctx.Deadline()
+			})
+			h(t.Context(), nil, &models.Update{ID: tt.updateID})
+			require.Equal(t, tt.wantDeadline, hasDeadline)
+		})
+	}
+}
+
+func TestWithTimeout_cancelsHungHandler(t *testing.T) {
+	var cancelled bool
+	h := withTimeout(20*time.Millisecond, nil, discardLog())(func(ctx context.Context, _ *bot.Bot, _ *models.Update) {
+		select {
+		case <-ctx.Done():
+			cancelled = true
+		case <-time.After(5 * time.Second):
+		}
+	})
+	h(t.Context(), nil, &models.Update{ID: 1})
+	require.True(t, cancelled)
 }
