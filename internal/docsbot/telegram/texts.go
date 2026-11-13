@@ -91,6 +91,36 @@ const (
 	textSendFailed     = "Не удалось отправить файл. Попробуй ещё раз."
 )
 
+// Plural forms of "file" and "image" (one, few, many) for plural().
+const (
+	pluralFileOne  = "файл"
+	pluralFileFew  = "файла"
+	pluralFileMany = "файлов"
+
+	pluralImageOne  = "изображение"
+	pluralImageFew  = "изображения"
+	pluralImageMany = "изображений"
+)
+
+// Document card facts, catalog and search headings.
+const (
+	textFactPages    = "%d стр."
+	textFactPhoto    = "Фото"
+	textSizeKB       = "%d КБ"
+	textSizeMBSuffix = " МБ"
+	textCatalogTitle = "Твои документы:"
+	textFoundTitle   = "Нашёл (%d):" // %d = results
+)
+
+// Command menu descriptions (setMyCommands).
+const (
+	cmdDescStart    = "Начать работу"
+	cmdDescList     = "Мои документы по категориям"
+	cmdDescConvert  = "Фото → PDF или сжать изображение"
+	cmdDescSettings = "Подключить Google Диск"
+	cmdDescHelp     = "Что умеет бот"
+)
+
 // Settings, disconnect, export and delete texts.
 const (
 	textDisconnected = "Google Диск отключён. Новые документы останутся в Telegram, " +
@@ -300,4 +330,11 @@ const (
 	textSettingsInDrive  = "☁️ На Google Диске: %d"  // %d = backed up
 	textSettingsTelegram = "📥 Только в Telegram: %d" // %d = documents
 	textSettingsFailed   = "⚠️ Не выгрузились: %d"   // %d = documents
+)
+
+// Plural forms of "document" (one, few, many) for plural().
+const (
+	pluralDocumentOne  = "документ"
+	pluralDocumentFew  = "документа"
+	pluralDocumentMany = "документов"
 )

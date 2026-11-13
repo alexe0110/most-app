@@ -52,11 +52,11 @@ func GroupNotice() string { return textGroupNotice }
 // (same for dev and prod, so BotFather is never edited by hand).
 func Commands() []models.BotCommand {
 	return []models.BotCommand{
-		{Command: "start", Description: "Начать работу"},
-		{Command: "list", Description: "Мои документы по категориям"},
-		{Command: "convert", Description: "Фото → PDF или сжать изображение"},
-		{Command: "settings", Description: "Подключить Google Диск"},
-		{Command: "help", Description: "Что умеет бот"},
+		{Command: "start", Description: cmdDescStart},
+		{Command: "list", Description: cmdDescList},
+		{Command: "convert", Description: cmdDescConvert},
+		{Command: "settings", Description: cmdDescSettings},
+		{Command: "help", Description: cmdDescHelp},
 	}
 }
 
