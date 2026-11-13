@@ -3,12 +3,77 @@ package docsbot_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
+
+// searchSpy records the query that reaches the repository.
+type searchSpy struct {
+	*fakeRepo
+	calls int
+	query string
+}
+
+func (s *searchSpy) Search(ctx context.Context, user docsbot.UserID, q string, limit int) ([]docsbot.Document, error) {
+	s.calls++
+	s.query = q
+	return s.fakeRepo.Search(ctx, user, q, limit)
+}
+
+func TestService_Search_normalizesQuery(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantBlank bool
+		wantQuery string
+	}{
+		{"trimmed", "  паспорт \n", false, "паспорт"},
+		{"empty", "", true, ""},
+		{"only spaces", "  \t\n ", true, ""},
+		{"cut to 100 runes", strings.Repeat("я", 10_000), false, strings.Repeat("я", 100)},
+		{"emoji counted as runes", strings.Repeat("😀", 150), false, strings.Repeat("😀", 100)},
+		{"exactly 100 is kept", strings.Repeat("a", 100), false, strings.Repeat("a", 100)},
+		{"metacharacters pass through unchanged", `100%_\`, false, `100%_\`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spy := &searchSpy{fakeRepo: newFakeRepo()}
+			svc := docsbot.NewService(spy, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: spy.fakeRepo}, spy, newFakeStatus(spy.fakeRepo), &fakeSyncs{repo: spy.fakeRepo})
+
+			found, err := svc.Search(t.Context(), user, tt.query)
+
+			require.NoError(t, err)
+			require.Equal(t, tt.wantBlank, found.BlankQuery)
+			if tt.wantBlank {
+				require.Zero(t, spy.calls, "a blank query must not hit the repository")
+				return
+			}
+			require.Equal(t, tt.wantQuery, spy.query)
+			require.Equal(t, tt.wantQuery, found.Query)
+		})
+	}
+}
+
+func TestService_Card_backedUpHasNoFolderLink(t *testing.T) {
+	repo := newFakeRepo()
+	repo.folders = map[docsbot.Category]string{docsbot.CatAuto: "folder-1"}
+	backed := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatAuto,
+		BackupStatus: docsbot.BackupBackedUp, DriveFileID: "file-1"})
+	tgOnly := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatAuto})
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+
+	card, err := svc.Card(t.Context(), user, backed.ID)
+	require.NoError(t, err)
+	require.Empty(t, card.CategoryFolderID)
+
+	card, err = svc.Card(t.Context(), user, tgOnly.ID)
+	require.NoError(t, err)
+	require.Equal(t, "folder-1", card.CategoryFolderID)
+}
 
 func TestService_CategoryPage_paginates(t *testing.T) {
 	repo := newFakeRepo()

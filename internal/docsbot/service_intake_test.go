@@ -2,6 +2,7 @@ package docsbot_test
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -9,6 +10,46 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
+
+func TestService_Receive_normalizesTitle(t *testing.T) {
+	repo := newFakeRepo()
+	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+
+	in := incoming("norm")
+	in.Title = " a\nb\t"
+	reply, err := svc.Receive(t.Context(), in)
+	require.NoError(t, err)
+	require.Equal(t, "a b", reply.(docsbot.NeedCategory).Doc.Title)
+
+	in = incoming("blank")
+	in.Title = "\n \n"
+	reply, err = svc.Receive(t.Context(), in)
+	require.NoError(t, err)
+	require.Empty(t, reply.(docsbot.NeedCategory).Doc.Title, "blank stays empty: the default title is set on save")
+}
+
+func TestService_ChooseCategoryGroup_parallelTapsSaveOnce(t *testing.T) {
+	repo := newFakeRepo()
+	var first docsbot.DocumentID
+	for _, uid := range []string{"p1", "p2", "p3"} {
+		d := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "alb", TgFileUniqueID: uid})
+		first = d.ID
+	}
+	svc, uploads := edgeService(repo, fakeDrive{connected: true})
+
+	var mu sync.Mutex
+	saved := 0
+	runParallel(8, func(int) error {
+		got, err := svc.ChooseCategoryGroup(t.Context(), user, first, docsbot.CatReceipts)
+		mu.Lock()
+		defer mu.Unlock()
+		saved += len(got.Docs)
+		return err
+	})
+
+	require.Equal(t, 3, saved, "every document is saved by exactly one tap")
+	require.Len(t, uploads.calls, 3, "and queued once")
+}
 
 func TestService_Receive(t *testing.T) {
 	saved := docsbot.Document{

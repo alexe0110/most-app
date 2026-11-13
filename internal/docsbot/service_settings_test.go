@@ -9,6 +9,21 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
+func TestService_DeleteAllData_revokeFailureDoesNotBlockDeletion(t *testing.T) {
+	repo := newFakeRepo()
+	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved})
+	boom := errors.New("google unreachable")
+	svc, uploads := edgeService(repo, fakeDrive{revokeErr: boom})
+
+	err := svc.DeleteAllData(t.Context(), user)
+
+	require.ErrorIs(t, err, docsbot.ErrRevokeIncomplete)
+	require.ErrorIs(t, err, boom)
+	require.Equal(t, []docsbot.UserID{user}, uploads.allJobs)
+	require.Equal(t, []docsbot.UserID{user}, repo.deleted, "data must be deleted despite the revoke failure")
+	require.Empty(t, repo.docs)
+}
+
 func TestService_Settings(t *testing.T) {
 	repo := newFakeRepo()
 	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupBackedUp})

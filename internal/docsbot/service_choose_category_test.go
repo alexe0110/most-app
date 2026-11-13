@@ -1,6 +1,7 @@
 package docsbot_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -9,6 +10,106 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
+
+func TestService_parallelChooseCategory(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepo()
+	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: "Скан"})
+	svc, uploads := edgeService(repo, fakeDrive{connected: true})
+
+	errs := runParallel(20, func(int) error {
+		_, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
+		return err
+	})
+
+	for _, err := range errs {
+		require.NoError(t, err)
+	}
+	got := repo.docs[doc.ID]
+	require.Equal(t, docsbot.StatusSaved, got.Status)
+	require.Equal(t, docsbot.CatPassport, got.Category)
+	require.Equal(t, docsbot.BackupPending, got.BackupStatus)
+	require.NotEmpty(t, uploads.calls)
+}
+
+func TestService_defaultTitle_usesLocation(t *testing.T) {
+	now := time.Date(2026, 11, 8, 23, 30, 0, 0, time.UTC) // already 9 Nov in Almaty (UTC+5)
+	tests := []struct {
+		name string
+		opts []docsbot.Option
+		want string
+	}{
+		{"default Almaty", nil, "Медицина — 09.11.2026"},
+		{"fixed UTC", []docsbot.Option{docsbot.WithLocation(time.UTC)}, "Медицина — 08.11.2026"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "u"})
+			opts := append([]docsbot.Option{
+				docsbot.WithClock(func() time.Time { return now }),
+			}, tt.opts...)
+			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, opts...)
+
+			got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatMedical)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got.Doc.Title)
+		})
+	}
+}
+
+// racingRepo runs beforeSave right before SaveDocument, to play a concurrent
+// request (parallel tap, purge job) that wins the race.
+type racingRepo struct {
+	*fakeRepo
+	beforeSave func()
+}
+
+func (r racingRepo) SaveDocument(ctx context.Context, u docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (bool, error) {
+	r.beforeSave()
+	return r.fakeRepo.SaveDocument(ctx, u, id, cat)
+}
+
+func TestService_ChooseCategory_lostRace(t *testing.T) {
+	t.Run("parallel tap saved it first: flagged Already, nothing queued", func(t *testing.T) {
+		repo := newFakeRepo()
+		doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a"})
+		uploads := &fakeUploads{repo: repo}
+		rr := racingRepo{fakeRepo: repo, beforeSave: func() {
+			d := repo.docs[doc.ID]
+			d.Status, d.Category = docsbot.StatusSaved, docsbot.CatPassport
+			repo.docs[doc.ID] = d
+		}}
+		svc := docsbot.NewService(rr, fakeDrive{connected: true}, fakeFiles{}, uploads, rr, newFakeStatus(repo), &fakeSyncs{repo: repo})
+
+		got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatOther)
+
+		require.NoError(t, err)
+		require.True(t, got.Already)
+		require.Equal(t, docsbot.CatPassport, got.Doc.Category, "the winner's category stays")
+		require.Empty(t, uploads.calls)
+	})
+	t.Run("purged meanwhile: ErrNotFound", func(t *testing.T) {
+		repo := newFakeRepo()
+		doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a"})
+		rr := racingRepo{fakeRepo: repo, beforeSave: func() { delete(repo.docs, doc.ID) }}
+		svc := docsbot.NewService(rr, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, rr, newFakeStatus(repo), &fakeSyncs{repo: repo})
+
+		_, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatOther)
+
+		require.ErrorIs(t, err, docsbot.ErrNotFound)
+	})
+	t.Run("fresh save is not flagged", func(t *testing.T) {
+		repo := newFakeRepo()
+		doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a"})
+		svc, _ := edgeService(repo, fakeDrive{})
+
+		got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatOther)
+
+		require.NoError(t, err)
+		require.False(t, got.Already)
+	})
+}
 
 func TestService_ChooseCategory(t *testing.T) {
 	tests := []struct {

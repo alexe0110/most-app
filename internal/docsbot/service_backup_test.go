@@ -10,6 +10,15 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
+func TestService_MarkBackupFailed_ignoresForeignDocument(t *testing.T) {
+	repo := newFakeRepo()
+	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupUploading})
+	svc, _ := edgeService(repo, fakeDrive{})
+
+	require.NoError(t, svc.MarkBackupFailed(t.Context(), stranger, doc.ID, docsbot.BackupReasonQuota))
+	require.Equal(t, docsbot.BackupUploading, repo.docs[doc.ID].BackupStatus)
+}
+
 func TestService_Backup_missingDocumentIsNoop(t *testing.T) {
 	repo := newFakeRepo()
 	var uploads int

@@ -12,6 +12,28 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
+const stranger docsbot.UserID = "user-2"
+
+func edgeService(repo *fakeRepo, drive fakeDrive) (*docsbot.Service, *fakeUploads) {
+	uploads := &fakeUploads{repo: repo}
+	return docsbot.NewService(repo, drive, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}), uploads
+}
+
+// runParallel runs fn n times at once and returns the results in call order.
+func runParallel(n int, fn func(i int) error) []error {
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = fn(i)
+		}()
+	}
+	wg.Wait()
+	return errs
+}
+
 const user docsbot.UserID = "user-1"
 
 func incoming(unique string) docsbot.IncomingFile {
