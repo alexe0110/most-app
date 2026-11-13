@@ -107,9 +107,9 @@ func (c *converter) runPDFOp(ctx context.Context, b *bot.Bot, chatID, tgUser int
 	if prev, ok := c.sessions.live(tgUser); ok {
 		c.sessions.end(tgUser)
 		if prev.msgID != 0 {
-			_ = c.out(b).clearKeyboard(ctx, chatID, prev.msgID)
+			c.out(b).clearKeyboard(ctx, chatID, prev.msgID)
 		}
-		_, _ = c.out(b).send(ctx, chatID, textPDFPrevCancelled)
+		c.out(b).send(ctx, chatID, textPDFPrevCancelled)
 	}
 	c.sessions.start(tgUser)
 	next, prompt, kb := stepAwaitRange, textPDFRangePrompt, cancelKeyboard()
@@ -131,20 +131,20 @@ func (c *converter) onPDFSource(ctx context.Context, b *bot.Bot, update *models.
 	chatID := update.Message.Chat.ID
 	file := update.Message.Document
 	if file.FileSize > convert.MaxPDFBytes {
-		_, _ = c.out(b).send(ctx, chatID, pdfTooLargeText())
+		c.out(b).send(ctx, chatID, pdfTooLargeText())
 		return
 	}
 	data, err := c.download(ctx, b, file.FileID)
 	if err != nil {
 		uid, _ := userID(ctx)
 		c.log.ErrorContext(ctx, "convert download pdf", "err", err, "user_id", uid)
-		_, _ = c.out(b).send(ctx, chatID, textConvertDownloadFailed)
+		c.out(b).send(ctx, chatID, textConvertDownloadFailed)
 		return
 	}
 	pctx, cancel := context.WithTimeout(ctx, pdfTimeout)
 	defer cancel()
 	if _, err := convert.PageCount(pctx, data); err != nil {
-		_, _ = c.out(b).send(ctx, chatID, pdfErrorText(err))
+		c.out(b).send(ctx, chatID, pdfErrorText(err))
 		return
 	}
 
@@ -221,16 +221,16 @@ func (c *converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 		return
 	}
 	if sess.step == stepChooseAction || sess.step == stepPDFMenu {
-		_, _ = c.out(b).send(ctx, chatID, textConvertTapButton)
+		c.out(b).send(ctx, chatID, textConvertTapButton)
 		return
 	}
 	if sess.step != stepMergePDF {
-		_, _ = c.out(b).send(ctx, chatID, textConvertUnsupported)
+		c.out(b).send(ctx, chatID, textConvertUnsupported)
 		return
 	}
 	file := update.Message.Document
 	if int64(sess.pdfBytes)+file.FileSize > convert.MaxPDFBytes {
-		_, _ = c.out(b).send(ctx, chatID, pdfTooLargeText())
+		c.out(b).send(ctx, chatID, pdfTooLargeText())
 		return
 	}
 	// Download once to check the file; only its id and size are kept.
@@ -238,13 +238,13 @@ func (c *converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 	if err != nil {
 		uid, _ := userID(ctx)
 		c.log.ErrorContext(ctx, "convert download pdf", "err", err, "user_id", uid)
-		_, _ = c.out(b).send(ctx, chatID, textConvertDownloadFailed)
+		c.out(b).send(ctx, chatID, textConvertDownloadFailed)
 		return
 	}
 	pctx, cancel := context.WithTimeout(ctx, pdfTimeout)
 	defer cancel()
 	if _, err := convert.PageCount(pctx, data); err != nil {
-		_, _ = c.out(b).send(ctx, chatID, pdfErrorText(err))
+		c.out(b).send(ctx, chatID, pdfErrorText(err))
 		return
 	}
 
@@ -264,7 +264,7 @@ func (c *converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 		total = len(s.pdfs)
 	})
 	if tooLarge {
-		_, _ = c.out(b).send(ctx, chatID, pdfTooLargeText())
+		c.out(b).send(ctx, chatID, pdfTooLargeText())
 		return
 	}
 	if total == 0 {

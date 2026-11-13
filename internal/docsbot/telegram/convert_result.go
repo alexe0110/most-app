@@ -21,14 +21,14 @@ import (
 // clearButtons removes the keyboard from the message a button was pressed on.
 func (c *converter) clearButtons(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
 	if m := update.CallbackQuery.Message.Message; m != nil {
-		_ = c.out(b).clearKeyboard(ctx, chatID, m.ID)
+		c.out(b).clearKeyboard(ctx, chatID, m.ID)
 	}
 }
 
 // deleteCallbackMessage removes the message a button was pressed on.
 func (c *converter) deleteCallbackMessage(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
 	if m := update.CallbackQuery.Message.Message; m != nil {
-		_ = c.out(b).delete(ctx, chatID, m.ID)
+		c.out(b).delete(ctx, chatID, m.ID)
 	}
 }
 
@@ -85,7 +85,7 @@ func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 // removeKeyboard strips the buttons from a sent message, when there is one.
 func (c *converter) removeKeyboard(ctx context.Context, b *bot.Bot, chatID int64, msg *models.Message) {
 	if msg != nil {
-		_ = c.out(b).clearKeyboard(ctx, chatID, msg.ID)
+		c.out(b).clearKeyboard(ctx, chatID, msg.ID)
 	}
 }
 

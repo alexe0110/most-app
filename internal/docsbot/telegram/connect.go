@@ -64,7 +64,7 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 			return fmt.Errorf("reset drive folders: %w", err)
 		}
 		log.InfoContext(ctx, "drive folder cache reset", "user_id", userID, "reason", "reconnect")
-		if _, err := out.send(ctx, chatID, textDriveConnected, quiet()); err != nil {
+		if _, err := out.trySend(ctx, chatID, textDriveConnected); err != nil {
 			return out.ignoreBlocked(ctx, err)
 		}
 		log.InfoContext(ctx, "drive connected", "user_id", userID)
@@ -76,7 +76,7 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 		if n == 0 {
 			return nil
 		}
-		_, err = out.send(ctx, chatID, fmt.Sprintf(textTransferOffer, n), withKeyboard(transferOfferKeyboard()), quiet())
+		_, err = out.trySend(ctx, chatID, fmt.Sprintf(textTransferOffer, n), withKeyboard(transferOfferKeyboard()))
 		return out.ignoreBlocked(ctx, err)
 	}
 }
@@ -109,6 +109,6 @@ func (c connectSettings) refresh(ctx context.Context, out sender, chatID int64, 
 		}
 	}
 	text, kb := renderSettings(view, url, haveURL)
-	err = out.edit(ctx, chatID, msgID, text, withHTML(), withKeyboard(kb), quiet())
+	err = out.tryEdit(ctx, chatID, msgID, text, withHTML(), withKeyboard(kb))
 	out.logFailure(ctx, slog.LevelWarn, "edit settings after connect", err, "user_id", user)
 }

@@ -15,7 +15,7 @@ import (
 
 // callback handles a button press.
 func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Update) {
-	_ = c.out(b).answer(ctx, update.CallbackQuery.ID)
+	c.out(b).answer(ctx, update.CallbackQuery.ID)
 
 	chatID, ok := callbackChat(update)
 	if !ok {
@@ -101,7 +101,7 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 			return
 		}
 		c.clearButtons(ctx, b, update, chatID)
-		_, _ = c.out(b).send(ctx, chatID, textConvertCancelled)
+		c.out(b).send(ctx, chatID, textConvertCancelled)
 	case cbLimit1, cbLimit2, cbLimit5:
 		sess, ok := c.sessions.advance(user, msgID, []step{stepChooseLimit}, func(s *session) {
 			s.maxBytes = limitBytes(data)
@@ -139,7 +139,7 @@ func (c *converter) out(b *bot.Bot) sender { return sender{api: b, log: c.log} }
 // an ended session, a double tap) and strips the message's buttons. It does
 // nothing else.
 func (c *converter) stale(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
-	_, _ = c.out(b).send(ctx, chatID, textStale)
+	c.out(b).send(ctx, chatID, textStale)
 	c.clearButtons(ctx, b, update, chatID)
 }
 
@@ -160,17 +160,17 @@ func (c *converter) show(ctx context.Context, b *bot.Bot, chatID int64, msgID in
 	out := c.out(b)
 	if msgID > 0 {
 		// An omitted keyboard keeps the old one, which is what a nil kb means here.
-		opts := []msgOpt{quiet()}
+		var opts []msgOpt
 		if kb != nil {
 			opts = append(opts, withKeyboard(kb))
 		}
-		err := out.edit(ctx, chatID, msgID, text, opts...)
+		err := out.tryEdit(ctx, chatID, msgID, text, opts...)
 		if err == nil {
 			return msgID
 		}
 		out.logFailure(ctx, slog.LevelWarn, "edit dialogue message failed, sending a new one", err)
 	}
-	if id, _ := out.send(ctx, chatID, text, withKeyboard(kb)); id != 0 { // failure logged by send
+	if id := out.send(ctx, chatID, text, withKeyboard(kb)); id != 0 {
 		return id
 	}
 	return msgID // both failed: keep the old dialogue message so the session survives
@@ -184,7 +184,7 @@ func (c *converter) moveDown(ctx context.Context, b *bot.Bot, chatID, user int64
 	if sess, ok := c.sessions.live(user); ok {
 		prev = sess.msgID
 	}
-	id, _ := c.out(b).send(ctx, chatID, text, withKeyboard(kb)) // failure logged by send
+	id := c.out(b).send(ctx, chatID, text, withKeyboard(kb))
 	if id == 0 {
 		return // keep the previous dialogue message: the session still owns it
 	}
@@ -198,8 +198,8 @@ func (c *converter) moveDown(ctx context.Context, b *bot.Bot, chatID, user int64
 // removed instead so they can't be pressed.
 func (c *converter) drop(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
 	out := c.out(b)
-	if err := out.delete(ctx, chatID, msgID, quiet()); err != nil {
-		_ = out.clearKeyboard(ctx, chatID, msgID)
+	if err := out.tryDelete(ctx, chatID, msgID); err != nil {
+		out.clearKeyboard(ctx, chatID, msgID)
 	}
 }
 
@@ -209,7 +209,7 @@ func (c *converter) finish(ctx context.Context, b *bot.Bot, chatID int64, msgID 
 	if msgID == 0 {
 		return
 	}
-	if err := c.out(b).delete(ctx, chatID, msgID, quiet()); err != nil {
+	if err := c.out(b).tryDelete(ctx, chatID, msgID); err != nil {
 		c.show(ctx, b, chatID, msgID, textConvertDone, nil)
 	}
 }

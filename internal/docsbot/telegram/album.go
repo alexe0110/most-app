@@ -119,7 +119,7 @@ func (d *docs) flushAlbum(ctx context.Context, b *bot.Bot, st albumState) {
 			text += "\n\n" + fmt.Sprintf(textAlbumDuplicates, st.dups)
 		}
 		token := d.registerAlbum(st.user, st.group, st.images)
-		_, _ = d.out(b).send(ctx, st.chatID, text, withKeyboard(albumChoiceKeyboard(token, st.pickDoc)))
+		d.out(b).send(ctx, st.chatID, text, withKeyboard(albumChoiceKeyboard(token, st.pickDoc)))
 	case st.fresh > 0:
 		text := textChooseCategory
 		if st.fresh > 1 {
@@ -128,12 +128,12 @@ func (d *docs) flushAlbum(ctx context.Context, b *bot.Bot, st albumState) {
 		if st.dups > 0 {
 			text += "\n\n" + fmt.Sprintf(textAlbumDuplicates, st.dups)
 		}
-		_, _ = d.out(b).send(ctx, st.chatID, text, withKeyboard(categoryKeyboard(actCategoryGroup, st.pickDoc)))
+		d.out(b).send(ctx, st.chatID, text, withKeyboard(categoryKeyboard(actCategoryGroup, st.pickDoc)))
 	case st.dups > 0:
-		_, _ = d.out(b).send(ctx, st.chatID, fmt.Sprintf(textAlbumDuplicates, st.dups))
+		d.out(b).send(ctx, st.chatID, fmt.Sprintf(textAlbumDuplicates, st.dups))
 	}
 	if text, ok := rejectionText(st.reject); ok {
-		_, _ = d.out(b).send(ctx, st.chatID, text)
+		d.out(b).send(ctx, st.chatID, text)
 	}
 }
 
@@ -154,7 +154,7 @@ func (d *docs) onGroupPick(ctx context.Context, b *bot.Bot, u *models.Update, pa
 	if !ok {
 		return
 	}
-	_ = d.out(b).edit(ctx, chatID, msgID, textChooseCategoryAlbum, withKeyboard(categoryKeyboard(actCategoryGroup, id)))
+	d.out(b).edit(ctx, chatID, msgID, textChooseCategoryAlbum, withKeyboard(categoryKeyboard(actCategoryGroup, id)))
 }
 
 // rejectionText is the notice for an intake limit reply.

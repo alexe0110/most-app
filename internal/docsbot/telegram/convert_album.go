@@ -33,7 +33,7 @@ func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, update *models.Upda
 	}
 	album, ok := c.albums.peek(token, user)
 	if !ok {
-		_, _ = c.out(b).send(ctx, chatID, textConvertResultOld)
+		c.out(b).send(ctx, chatID, textConvertResultOld)
 		return
 	}
 	var declared int64
@@ -42,10 +42,10 @@ func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, update *models.Upda
 	}
 	switch {
 	case len(album.images) > maxAlbumPages:
-		_, _ = c.out(b).send(ctx, chatID, fmt.Sprintf(textAlbumTooMany, maxAlbumPages)) // the buttons stay: save one by one
+		c.out(b).send(ctx, chatID, fmt.Sprintf(textAlbumTooMany, maxAlbumPages)) // the buttons stay: save one by one
 		return
 	case declared > maxAlbumBytes:
-		_, _ = c.out(b).send(ctx, chatID, fmt.Sprintf(textAlbumTooBig, maxAlbumBytes>>20))
+		c.out(b).send(ctx, chatID, fmt.Sprintf(textAlbumTooBig, maxAlbumBytes>>20))
 		return
 	}
 	album, ok = c.albums.take(token, user) // a double tap stops here

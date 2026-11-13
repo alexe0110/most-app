@@ -86,13 +86,13 @@ func (n *Notifier) UploadOutcome(ctx context.Context, user docsbot.UserID, doc d
 	text, kb := renderStatusMessage(view.Message, view.Lines, view.FolderByCat)
 	n.throttle(view.Message.ID)
 	n.dropRename(view.Message.ChatID, view.Message.MessageID) // the redraw overwrites a prompt shown here
-	err = n.out.edit(ctx, view.Message.ChatID, view.Message.MessageID, text, withHTML(), withKeyboard(kb), quiet())
+	err = n.out.tryEdit(ctx, view.Message.ChatID, view.Message.MessageID, text, withHTML(), withKeyboard(kb))
 	n.dropRename(view.Message.ChatID, view.Message.MessageID)
 	var errs []error
 	switch err = n.out.ignoreBlocked(ctx, err); {
 	case err == nil:
 	case isMessageGone(err):
-		mid, serr := n.out.send(ctx, view.Message.ChatID, text, withHTML(), withKeyboard(kb), quiet())
+		mid, serr := n.out.trySend(ctx, view.Message.ChatID, text, withHTML(), withKeyboard(kb))
 		if serr = n.out.ignoreBlocked(ctx, serr); serr != nil {
 			errs = append(errs, fmt.Errorf("resend status message: %w", serr))
 		} else if mid != 0 { // 0: the resend hit a blocked user
@@ -132,7 +132,7 @@ func (n *Notifier) singleOutcome(ctx context.Context, user docsbot.UserID, doc d
 	if err != nil {
 		return fmt.Errorf("resolve tg user: %w", err)
 	}
-	_, err = n.out.send(ctx, chatID, text, withKeyboard(kb), quiet())
+	_, err = n.out.trySend(ctx, chatID, text, withKeyboard(kb))
 	return err
 }
 
@@ -158,7 +158,7 @@ func (n *Notifier) SyncOutcome(ctx context.Context, user docsbot.UserID, doc doc
 			url = ""
 		}
 	}
-	_, err = n.out.send(ctx, chatID, cardText(card.Doc), withHTML(), withKeyboard(cardKeyboardWith(card.Doc, "", "", url)), quiet())
+	_, err = n.out.trySend(ctx, chatID, cardText(card.Doc), withHTML(), withKeyboard(cardKeyboardWith(card.Doc, "", "", url)))
 	return n.out.ignoreBlocked(ctx, err)
 }
 
@@ -168,7 +168,7 @@ func (n *Notifier) RemoteKept(ctx context.Context, user docsbot.UserID) error {
 	if err != nil {
 		return fmt.Errorf("resolve tg user: %w", err)
 	}
-	_, err = n.out.send(ctx, chatID, textDeletedRemoteKept, quiet())
+	_, err = n.out.trySend(ctx, chatID, textDeletedRemoteKept)
 	return n.out.ignoreBlocked(ctx, err)
 }
 
@@ -207,9 +207,9 @@ func (n *Notifier) Reconnect(ctx context.Context, user docsbot.UserID) error {
 	}
 	if url, uErr := n.auth.AuthURL(ctx, string(user), docsbot.BotName); uErr != nil {
 		n.log.ErrorContext(ctx, "build auth url", "err", uErr)
-		_, err = n.out.send(ctx, chatID, textReconnect, quiet())
+		_, err = n.out.trySend(ctx, chatID, textReconnect)
 	} else {
-		_, err = n.out.send(ctx, chatID, textReconnect, withKeyboard(reconnectKeyboard(url)), quiet())
+		_, err = n.out.trySend(ctx, chatID, textReconnect, withKeyboard(reconnectKeyboard(url)))
 	}
 	if err = n.out.ignoreBlocked(ctx, err); err != nil {
 		return err

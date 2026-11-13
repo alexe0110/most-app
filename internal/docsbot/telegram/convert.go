@@ -153,10 +153,10 @@ func (c *converter) start(ctx context.Context, b *bot.Bot, update *models.Update
 	unlock := c.dialogue.lock(user)
 	defer unlock()
 	if prev, ok := c.sessions.live(user); ok && prev.msgID != 0 {
-		_ = c.out(b).clearKeyboard(ctx, update.Message.Chat.ID, prev.msgID)
+		c.out(b).clearKeyboard(ctx, update.Message.Chat.ID, prev.msgID)
 	}
 	c.sessions.start(user)
-	id, _ := c.out(b).send(ctx, update.Message.Chat.ID, textConvertStart, withKeyboard(actionKeyboard())) // a failed send is logged there; id 0 means no dialogue message
+	id := c.out(b).send(ctx, update.Message.Chat.ID, textConvertStart, withKeyboard(actionKeyboard())) // 0: no dialogue message
 	c.sessions.setMsg(user, id)
 }
 
@@ -170,10 +170,10 @@ func (c *converter) cancel(ctx context.Context, b *bot.Bot, update *models.Updat
 	if sess, ok := c.sessions.claim(user, 0); ok {
 		text = textConvertCancelled
 		if sess.msgID != 0 {
-			_ = c.out(b).clearKeyboard(ctx, update.Message.Chat.ID, sess.msgID)
+			c.out(b).clearKeyboard(ctx, update.Message.Chat.ID, sess.msgID)
 		}
 	}
-	_, _ = c.out(b).send(ctx, update.Message.Chat.ID, text)
+	c.out(b).send(ctx, update.Message.Chat.ID, text)
 }
 
 // message routes an in-session message by content and step.
@@ -190,7 +190,7 @@ func (c *converter) message(ctx context.Context, b *bot.Bot, update *models.Upda
 
 	switch {
 	case len(update.Message.Photo) > 0 && awaitsPDF(sess.step):
-		_, _ = c.out(b).send(ctx, chatID, textPDFNotPDF)
+		c.out(b).send(ctx, chatID, textPDFNotPDF)
 	case len(update.Message.Photo) > 0:
 		photo := largestPhoto(update.Message.Photo)
 		c.onImage(ctx, b, update, photo.FileID, int64(photo.FileSize))
@@ -199,7 +199,7 @@ func (c *converter) message(ctx context.Context, b *bot.Bot, update *models.Upda
 	case update.Message.Text != "":
 		c.onText(ctx, b, update, sess.step)
 	default:
-		_, _ = c.out(b).send(ctx, chatID, textConvertUnsupported)
+		c.out(b).send(ctx, chatID, textConvertUnsupported)
 	}
 }
 

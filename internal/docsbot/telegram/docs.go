@@ -82,7 +82,7 @@ func (d *docs) ownsUnsupported(u *models.Update) bool {
 
 // onUnsupported tells the user which media the bot takes.
 func (d *docs) onUnsupported(ctx context.Context, b *bot.Bot, u *models.Update) {
-	_, _ = d.out(b).send(ctx, u.Message.Chat.ID, textUnsupported)
+	d.out(b).send(ctx, u.Message.Chat.ID, textUnsupported)
 }
 
 // onText handles any non-command text: a pending rename, otherwise a search. A
@@ -93,7 +93,7 @@ func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 	}
 	chatID := u.Message.Chat.ID
 	if strings.HasPrefix(u.Message.Text, "/") {
-		_, _ = d.out(b).send(ctx, chatID, textUnknown)
+		d.out(b).send(ctx, chatID, textUnknown)
 		return
 	}
 	user, ok := userID(ctx)
@@ -116,12 +116,12 @@ func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 	parts := strings.Split(u.CallbackQuery.Data, ":") // d:<action>[:docID[:arg]]
 	if !answersItself(parts) {
-		_ = d.out(b).answer(ctx, u.CallbackQuery.ID, withToast(toastFor(parts)))
+		d.out(b).answer(ctx, u.CallbackQuery.ID, withToast(toastFor(parts)))
 	}
 	user, ok := userID(ctx)
 	if !ok {
 		if answersItself(parts) {
-			_ = d.out(b).answer(ctx, u.CallbackQuery.ID, withToast("")) // never leave the button spinning
+			d.out(b).answer(ctx, u.CallbackQuery.ID, withToast("")) // never leave the button spinning
 		}
 		return
 	}
@@ -217,7 +217,7 @@ func (d *docs) fail(ctx context.Context, b *bot.Bot, chatID int64, what string, 
 	} else {
 		d.log.ErrorContext(ctx, what, "err", err)
 	}
-	_, _ = d.out(b).send(ctx, chatID, textError)
+	d.out(b).send(ctx, chatID, textError)
 }
 
 // userID reads the internal user id the ensureUser middleware put in ctx.

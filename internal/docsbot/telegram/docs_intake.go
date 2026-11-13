@@ -71,14 +71,14 @@ func (d *docs) receive(ctx context.Context, b *bot.Bot, u *models.Update) {
 	switch r := rep.(type) {
 	case docsbot.NeedCategory:
 		d.logReceived(ctx, user, rep)
-		_, _ = d.out(b).send(ctx, chatID, textChooseCategory, withKeyboard(pickerKeyboard(r.Doc)))
+		d.out(b).send(ctx, chatID, textChooseCategory, withKeyboard(pickerKeyboard(r.Doc)))
 	case docsbot.AlreadySaved:
 		d.logReceived(ctx, user, rep)
 		d.sendAlreadySaved(ctx, b, chatID, user, r.Doc.ID)
 	default:
 		d.log.InfoContext(ctx, "document refused", "user_id", user, "reason", fmt.Sprintf("%T", rep))
 		if text, ok := rejectionText(rep); ok {
-			_, _ = d.out(b).send(ctx, chatID, text)
+			d.out(b).send(ctx, chatID, text)
 		}
 	}
 }
@@ -207,7 +207,7 @@ func (d *docs) onCategoryGroup(ctx context.Context, b *bot.Bot, u *models.Update
 		if tooLarge > 0 {
 			text += "\n" + fmt.Sprintf(textGroupTooLarge, tooLarge)
 		}
-		_ = d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(nil))
+		d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(nil))
 	}
 	if group.OfferDrive {
 		d.offerDrive(ctx, b, chatID, user)
@@ -222,7 +222,7 @@ func (d *docs) trackGroupUpload(ctx context.Context, b *bot.Bot, chatID int64, u
 		kind = docsbot.StatusBatch
 	}
 	text, kb := renderStatusMessage(docsbot.StatusMessage{Kind: kind}, docs, nil)
-	_ = d.out(b).edit(ctx, chatID, pickerMsgID, text, withHTML(), withKeyboard(kb))
+	d.out(b).edit(ctx, chatID, pickerMsgID, text, withHTML(), withKeyboard(kb))
 	sm, err := d.svc.OpenStatus(ctx, user, chatID, pickerMsgID, docs[0].ID, kind)
 	if err != nil {
 		d.fail(ctx, b, chatID, "open status", err)
@@ -252,7 +252,7 @@ func (d *docs) trackUpload(ctx context.Context, b *bot.Bot, chatID int64, user d
 			d.fail(ctx, b, chatID, "attach status", err)
 			return
 		}
-		_ = d.out(b).delete(ctx, chatID, pickerMsgID)
+		d.out(b).delete(ctx, chatID, pickerMsgID)
 		d.refreshStatus(ctx, b, user, doc.ID)
 		return
 	case reuse && sm.Kind == docsbot.StatusSingle:
@@ -263,7 +263,7 @@ func (d *docs) trackUpload(ctx context.Context, b *bot.Bot, chatID int64, user d
 		// its own single card (the default below).
 	}
 	text, kb := renderStatusMessage(docsbot.StatusMessage{Kind: kind}, []docsbot.Document{doc}, nil)
-	_ = d.out(b).edit(ctx, chatID, pickerMsgID, text, withHTML(), withKeyboard(kb))
+	d.out(b).edit(ctx, chatID, pickerMsgID, text, withHTML(), withKeyboard(kb))
 	if _, err := d.svc.OpenStatus(ctx, user, chatID, pickerMsgID, doc.ID, kind); err != nil {
 		d.fail(ctx, b, chatID, "open status", err)
 	}

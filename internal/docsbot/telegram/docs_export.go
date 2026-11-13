@@ -21,7 +21,7 @@ func (d *docs) onExport(ctx context.Context, b *bot.Bot, u *models.Update, user 
 	}
 	// The button is spent: a second tap must not start another export.
 	if _, msgID, ok := callbackMessage(u); ok {
-		_ = d.out(b).clearKeyboard(ctx, chatID, msgID)
+		d.out(b).clearKeyboard(ctx, chatID, msgID)
 	}
 	d.export(ctx, b, chatID, user)
 }
@@ -40,7 +40,7 @@ func (d *docs) exportCmd(ctx context.Context, b *bot.Bot, u *models.Update) {
 // under the Bot API rate limit.
 func (d *docs) export(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID) {
 	if !d.startExport(user) {
-		_, _ = d.out(b).send(ctx, chatID, textExportRunning)
+		d.out(b).send(ctx, chatID, textExportRunning)
 		return
 	}
 	defer d.finishExport(user)
@@ -50,11 +50,11 @@ func (d *docs) export(ctx context.Context, b *bot.Bot, chatID int64, user docsbo
 		return
 	}
 	if exp.Total == 0 {
-		_, _ = d.out(b).send(ctx, chatID, textExportEmpty)
+		d.out(b).send(ctx, chatID, textExportEmpty)
 		return
 	}
 	d.log.InfoContext(ctx, "export started", "user_id", user, "count", len(exp.Docs))
-	_, _ = d.out(b).send(ctx, chatID, textExportStart)
+	d.out(b).send(ctx, chatID, textExportStart)
 	sent, prev := 0, 0
 	for i, batch := range exportBatches(exp.Docs) {
 		if i > 0 && !pause(ctx, d.exportGap(prev)) {
@@ -70,10 +70,10 @@ func (d *docs) export(ctx context.Context, b *bot.Bot, chatID int64, user docsbo
 		sent += d.sendAlbum(ctx, b, chatID, batch)
 	}
 	if exp.Truncated {
-		_, _ = d.out(b).send(ctx, chatID, fmt.Sprintf(textExportTruncated, sent, exp.Total))
+		d.out(b).send(ctx, chatID, fmt.Sprintf(textExportTruncated, sent, exp.Total))
 		return
 	}
-	_, _ = d.out(b).send(ctx, chatID, fmt.Sprintf(textExportDone, sent))
+	d.out(b).send(ctx, chatID, fmt.Sprintf(textExportDone, sent))
 }
 
 // exportGap is the pause after a batch of n files. Telegram lets a bot send about
@@ -162,7 +162,7 @@ func (d *docs) sendAlbum(ctx context.Context, b *bot.Bot, chatID int64, batch []
 	traceAPI(ctx, d.log, "sendMediaGroup", start)
 	if err != nil {
 		d.log.ErrorContext(ctx, "send album", "err", err, "user_id", batch[0].UserID, "count", len(batch))
-		_, _ = d.out(b).send(ctx, chatID, textSendFailed)
+		d.out(b).send(ctx, chatID, textSendFailed)
 		return 0
 	}
 	d.log.InfoContext(ctx, "album sent", "user_id", batch[0].UserID, "count", len(batch))
