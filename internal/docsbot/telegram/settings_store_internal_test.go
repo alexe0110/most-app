@@ -1,11 +1,41 @@
 package telegram
 
 import (
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestSettingsStore_isolationBoundaryAndConcurrency(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	s := newSettingsStore(func() time.Time { mu.Lock(); defer mu.Unlock(); return now })
+
+	s.set(1, 10)
+	s.set(2, 20)
+	m1, _ := s.get(1)
+	m2, _ := s.get(2)
+	require.Equal(t, []int{10, 20}, []int{m1, m2}, "chats do not see each other")
+
+	mu.Lock()
+	now = now.Add(settingsTTL) // exactly the TTL: still valid
+	mu.Unlock()
+	_, ok := s.get(1)
+	require.True(t, ok)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.set(int64(i%5), i)
+			s.get(int64(i % 5))
+		}()
+	}
+	wg.Wait()
+}
 
 func TestSettingsStore_ttl(t *testing.T) {
 	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
