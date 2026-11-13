@@ -21,6 +21,7 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/platform/convert"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // callbackPrefix tags every inline button this feature owns.
@@ -63,7 +64,7 @@ const (
 // Limits of an album PDF.
 const (
 	maxAlbumPages = 20
-	maxAlbumBytes = maxFileBytes // all pages together
+	maxAlbumBytes = tg.MaxFileBytes // all pages together
 )
 
 // Quick operations of the menu.
@@ -76,7 +77,6 @@ const (
 )
 
 const (
-	maxFileBytes = 20 << 20   // Telegram download limit for bots
 	maxLimitKB   = 20 * 1_024 // largest custom target, in KB
 	downloadWait = 30 * time.Second
 	// photosDownloadBudget caps all downloads of one PDF from photos together.
@@ -1142,7 +1142,7 @@ func (c *converter) removeKeyboard(ctx context.Context, b *bot.Bot, chatID int64
 	}
 }
 
-// download fetches a Telegram file's bytes, capped at maxFileBytes.
+// download fetches a Telegram file's bytes, capped at tg.MaxFileBytes.
 func (c *converter) download(ctx context.Context, b *bot.Bot, fileID string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, downloadWait)
 	defer cancel()
@@ -1165,11 +1165,11 @@ func (c *converter) download(ctx context.Context, b *bot.Bot, fileID string) ([]
 		return nil, fmt.Errorf("download file: status %d", resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFileBytes+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, tg.MaxFileBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
 	}
-	if len(data) > maxFileBytes {
+	if len(data) > tg.MaxFileBytes {
 		return nil, errors.New("file exceeds download limit")
 	}
 	return data, nil

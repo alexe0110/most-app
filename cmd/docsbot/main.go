@@ -185,11 +185,11 @@ func botURL(username string) string {
 	return "https://t.me/" + username
 }
 
-// gdriveClients adapts oauth.Service to gdrive.Clients, fixing the bot to "docs".
+// gdriveClients adapts oauth.Service to gdrive.Clients, fixing the bot to docsbot.BotName.
 type gdriveClients struct{ oauth *oauth.Service }
 
 func (c gdriveClients) Client(ctx context.Context, userID string) (*http.Client, error) {
-	return c.oauth.Client(ctx, userID, "docs")
+	return c.oauth.Client(ctx, userID, docsbot.BotName)
 }
 
 // driveBridge implements docsbot.Drive over oauth (connection) and gdrive (upload).
@@ -199,7 +199,7 @@ type driveBridge struct {
 }
 
 func (d driveBridge) Connected(ctx context.Context, user docsbot.UserID) (bool, error) {
-	return d.oauth.Connected(ctx, string(user), "docs")
+	return d.oauth.Connected(ctx, string(user), docsbot.BotName)
 }
 
 func (d driveBridge) Upload(ctx context.Context, user docsbot.UserID, in docsbot.DriveUpload) (docsbot.DriveFile, error) {
@@ -265,13 +265,13 @@ func driveErr(err error) error {
 // Revoke best-effort revokes the user's Drive access at Google and marks the
 // integration revoked locally even if Google is unreachable.
 func (d driveBridge) Revoke(ctx context.Context, user docsbot.UserID) error {
-	return d.oauth.RevokeBestEffort(ctx, string(user), "docs")
+	return d.oauth.RevokeBestEffort(ctx, string(user), docsbot.BotName)
 }
 
 // Disconnect handles the user turning Drive off: best-effort revoke at Google
 // and mark the integration disconnected (not revoked) locally.
 func (d driveBridge) Disconnect(ctx context.Context, user docsbot.UserID) error {
-	return d.oauth.DisconnectBestEffort(ctx, string(user), "docs")
+	return d.oauth.DisconnectBestEffort(ctx, string(user), docsbot.BotName)
 }
 
 // tgFiles implements docsbot.FileSource over the Telegram bot. bot is set after

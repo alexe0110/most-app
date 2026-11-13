@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// BotName identifies this bot in the shared integrations/oauth tables.
+const BotName = "docs"
+
 const (
 	// pageSize is how many documents one catalog page shows.
 	pageSize = 10
@@ -28,7 +31,8 @@ const (
 	// maxQueryRunes caps a search query's length.
 	maxQueryRunes = 100
 	// MaxDriveBytes is the largest file the bot uploads to Drive; a bigger one
-	// stays in Telegram (backup_status too_large).
+	// stays in Telegram (backup_status too_large). It equals the Bot API download
+	// limit tg.MaxFileBytes, which the domain cannot import (depguard).
 	MaxDriveBytes = 20 << 20
 	// maxPendingPerUser caps files awaiting a category per user.
 	maxPendingPerUser = 20

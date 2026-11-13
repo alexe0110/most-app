@@ -14,16 +14,9 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/platform/gdrive"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
-
-// botName identifies this bot in the shared integrations/oauth tables.
-const botName = "docs"
-
-// defaultDriveFolder is the Drive root folder name shown in /start unless
-// WithDriveFolder overrides it. Mirrors the gdrive default (the adapter does
-// not import platform/gdrive).
-const defaultDriveFolder = "Most Docs"
 
 // docs is the inbound adapter for the core document flow: it turns updates into
 // Service calls and renders the replies. State is the domain's; the only local
@@ -61,7 +54,7 @@ func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Op
 		settingsMsgs: newSettingsStore(time.Now),
 		albums:       newAlbumBuffer(),
 
-		driveFolder: defaultDriveFolder,
+		driveFolder: gdrive.DefaultRootFolder,
 
 		pauseFile: exportPause, pauseAlbum: exportPerFilePause,
 		exports: map[docsbot.UserID]bool{},
@@ -1300,7 +1293,7 @@ func (d *docs) connectURL(ctx context.Context, user docsbot.UserID) (string, boo
 	if user == "" {
 		return "", false
 	}
-	url, err := d.auth.AuthURL(ctx, string(user), botName)
+	url, err := d.auth.AuthURL(ctx, string(user), docsbot.BotName)
 	if err != nil {
 		d.log.ErrorContext(ctx, "build auth url", "err", err)
 		return "", false

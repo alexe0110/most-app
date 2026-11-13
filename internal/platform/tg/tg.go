@@ -30,10 +30,10 @@ const (
 // webhookPath is where the webhook handler lives on the shared HTTP mux.
 const webhookPath = "/tg/webhook"
 
-const (
-	maxFileBytes = 20 << 20 // Bot API download limit
-	downloadWait = 30 * time.Second
-)
+// MaxFileBytes is the Bot API download limit for a file (20 MB).
+const MaxFileBytes = 20 << 20
+
+const downloadWait = 30 * time.Second
 
 // ErrFileTooLarge means the file is above the Bot API download limit (20 MB).
 var ErrFileTooLarge = errors.New("tg: file exceeds download limit")
@@ -199,7 +199,7 @@ func (b *Bot) Download(ctx context.Context, fileID string) (data []byte, mime st
 		}
 		return nil, "", fmt.Errorf("get file: %w", err)
 	}
-	if file.FileSize > maxFileBytes {
+	if file.FileSize > MaxFileBytes {
 		return nil, "", ErrFileTooLarge
 	}
 
@@ -221,11 +221,11 @@ func (b *Bot) Download(ctx context.Context, fileID string) (data []byte, mime st
 		return nil, "", fmt.Errorf("download file: status %d", resp.StatusCode)
 	}
 
-	data, err = io.ReadAll(io.LimitReader(resp.Body, maxFileBytes+1))
+	data, err = io.ReadAll(io.LimitReader(resp.Body, MaxFileBytes+1))
 	if err != nil {
 		return nil, "", fmt.Errorf("read file: %w", err)
 	}
-	if len(data) > maxFileBytes {
+	if len(data) > MaxFileBytes {
 		return nil, "", ErrFileTooLarge
 	}
 	return data, resp.Header.Get("Content-Type"), nil
