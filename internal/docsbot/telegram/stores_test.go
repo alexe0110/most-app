@@ -302,3 +302,53 @@ func TestConfirmStore_take(t *testing.T) {
 	_, ok = s.take(1)
 	require.False(t, ok, "a stale arm is ignored")
 }
+
+func TestOriginStore_expiredAreDroppedOnSet(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	s := newTTLMap[originKey, string](originTTL, maxStoreEntries, func() time.Time { return now })
+
+	for msg := range 100 {
+		s.set(originKey{chat: 1, msg: msg}, "s") // cards that are never opened again
+	}
+	now = now.Add(originTTL + time.Second)
+	s.set(originKey{chat: 1, msg: 1000}, "")
+
+	require.Len(t, s.m, 1, "the unread expired origins do not pile up")
+}
+
+func TestOriginStore_sizeIsCapped(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	const limit = 200 // the real cap is maxStoreEntries; a small one keeps the test quick
+	s := newTTLMap[originKey, string](originTTL, limit, func() time.Time { return now })
+
+	for msg := range limit + 50 {
+		s.set(originKey{chat: 1, msg: msg}, "s")
+		now = now.Add(time.Millisecond)
+	}
+
+	require.Len(t, s.m, limit)
+	_, ok := s.get(originKey{chat: 1, msg: 0})
+	require.False(t, ok, "the oldest origin made room")
+	_, ok = s.get(originKey{chat: 1, msg: limit + 49})
+	require.True(t, ok)
+}
+
+func TestSearchStore_keepsEntryAndDropsExpiredOnSet(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	s := newTTLMap[int64, string](searchTTL, maxStoreEntries, func() time.Time { return now })
+
+	s.set(1, "паспорт")
+	for range 2 {
+		q, ok := s.get(1)
+		require.True(t, ok, "repeated Назад keeps working")
+		require.Equal(t, "паспорт", q)
+	}
+
+	s.set(2, "договор")
+	now = now.Add(searchTTL + time.Second)
+	s.set(3, "счёт")
+
+	require.Len(t, s.m, 1, "users who never come back do not pile up")
+	_, ok := s.get(3)
+	require.True(t, ok)
+}

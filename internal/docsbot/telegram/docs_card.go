@@ -225,6 +225,8 @@ func (d *docs) onDeleteYes(ctx context.Context, b *bot.Bot, u *models.Update, us
 		return
 	}
 	d.log.InfoContext(ctx, "document deleted", "user_id", user, "doc_id", id, "remote_kept", deleted.RemoteKept)
+	// The message stops being a card; its origin is read once more below to return there.
+	defer d.origins.delete(originKey{chatID, msgID})
 	if deleted.RemoteKept {
 		// The Drive file stays: say so on the "deleted" note instead of returning to the list.
 		d.out(b).edit(ctx, chatID, msgID, textDeletedRemoteKept, withKeyboard(myDocsKeyboard()))
