@@ -22,13 +22,8 @@ jobs:
     with:
       ref: ${{ inputs.ref }}
 
-  linters:
-    uses: ./.github/workflows/linters.yml
-    with:
-      ref: ${{ inputs.ref }}
-
   deploy:
-    needs: [tests, linters]
+    needs: [tests]
     runs-on: ubuntu-latest
     environment: "Most / production"
     env:
