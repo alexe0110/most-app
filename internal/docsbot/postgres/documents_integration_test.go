@@ -382,7 +382,7 @@ func TestDocuments_retiredSlugBelongsToOther(t *testing.T) {
 		t.Helper()
 		d, err := repo.CreateDocument(ctx, docsbot.IncomingFile{UserID: user, Kind: docsbot.KindDocument, Title: title, FileID: "f" + unique, FileUniqueID: unique})
 		require.NoError(t, err)
-		saved, err := repo.SaveDocument(ctx, user, d.ID, cat)
+		saved, err := repo.SaveChosen(ctx, docsbot.SaveChoice{User: user, ID: d.ID, Category: cat})
 		require.NoError(t, err)
 		require.True(t, saved)
 		return d.ID

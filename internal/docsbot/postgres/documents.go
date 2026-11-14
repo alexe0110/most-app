@@ -73,20 +73,6 @@ func (r *Repo) DocumentByID(ctx context.Context, user docsbot.UserID, id docsbot
 	return toDocument(row), nil
 }
 
-// SaveDocument sets the category and marks a pending document saved. saved is
-// false when the document was not pending (already saved, or gone).
-func (r *Repo) SaveDocument(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (saved bool, err error) {
-	docID, uid, err := ids(id, user)
-	if err != nil {
-		return false, err
-	}
-	n, err := r.SaveDocumentCategory(ctx, SaveDocumentCategoryParams{ID: docID, UserID: uid, Category: string(cat)})
-	if err != nil {
-		return false, fmt.Errorf("save document category: %w", err)
-	}
-	return n == 1, nil
-}
-
 // SetBackupStatus updates the Drive upload status.
 func (r *Repo) SetBackupStatus(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, s docsbot.BackupStatus) error {
 	docID, uid, err := ids(id, user)

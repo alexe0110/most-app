@@ -164,9 +164,11 @@ func (s *Service) ChooseCategoryGroup(ctx context.Context, user UserID, anyDocID
 }
 
 // ChooseCategory saves a pending document under cat. It is idempotent: a second
-// tap on an already-saved document returns it flagged Already. When Drive is connected the
-// document is queued for upload (the upload_document worker performs it); otherwise it stays in
-// Telegram and we may offer to connect Drive.
+// tap on an already-saved document returns it flagged Already and changes
+// nothing. The category, the default title and, when Drive is connected, the
+// upload job are written in one transaction (Uploads.SaveChosen), so a failure
+// leaves the document pending for the next tap. Without Drive the document stays
+// in Telegram and we may offer to connect it.
 func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID, cat Category) (Saved, error) {
 	if !cat.Valid() {
 		return Saved{}, ErrUnknownCategory
@@ -176,17 +178,28 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 		return Saved{}, fmt.Errorf("load document: %w", err)
 	}
 	if doc.Status == StatusSaved {
-		// A first tap that saved the document but failed to queue the upload leaves
-		// it saved with no backup; a repeated tap is the user's only way to retry.
-		if doc.BackupStatus == BackupNone {
-			if _, err := s.queueIfConnected(ctx, user, &doc); err != nil {
-				return Saved{}, err
-			}
-		}
 		return Saved{Doc: doc, Already: true}, nil
 	}
 
-	won, err := s.repo.SaveDocument(ctx, user, id, cat)
+	choice := SaveChoice{User: user, ID: id, Category: cat, Backup: BackupNone}
+	if strings.TrimSpace(doc.Title) == "" {
+		if choice.Title, err = s.defaultTitle(ctx, user, cat); err != nil {
+			return Saved{}, err
+		}
+	}
+	connected, err := s.drive.Connected(ctx, user)
+	if err != nil {
+		return Saved{}, fmt.Errorf("drive status: %w", err)
+	}
+	if connected {
+		choice.Backup = BackupPending
+		if doc.FileSize > MaxDriveBytes {
+			// Known to be above the limit: skip the doomed download, keep it in Telegram.
+			choice.Backup = BackupTooLarge
+		}
+	}
+
+	won, err := s.uploads.SaveChosen(ctx, choice)
 	if err != nil {
 		return Saved{}, fmt.Errorf("save document: %w", err)
 	}
@@ -200,23 +213,11 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 	}
 	doc.Category = cat
 	doc.Status = StatusSaved
-
-	if strings.TrimSpace(doc.Title) == "" {
-		title, err := s.defaultTitle(ctx, user, cat)
-		if err != nil {
-			return Saved{}, err
-		}
-		if _, err := s.syncs.SetTitle(ctx, user, id, title, false); err != nil {
-			return Saved{}, fmt.Errorf("set default title: %w", err)
-		}
-		doc.Title = title
+	if choice.Title != "" {
+		doc.Title = choice.Title
 	}
-
-	queued, err := s.queueIfConnected(ctx, user, &doc)
-	if err != nil {
-		return Saved{}, err
-	}
-	if queued {
+	if connected {
+		doc.BackupStatus = choice.Backup
 		return Saved{Doc: doc}, nil
 	}
 
@@ -225,38 +226,6 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 		return Saved{}, fmt.Errorf("count saved: %w", err)
 	}
 	return Saved{Doc: doc, OfferDrive: count == 1 || count == 5}, nil
-}
-
-// queueIfConnected backs the saved document up when Drive is connected and
-// reports whether it did (or marked it too large); false means Drive is off and
-// the document stays in Telegram.
-func (s *Service) queueIfConnected(ctx context.Context, user UserID, doc *Document) (bool, error) {
-	connected, err := s.drive.Connected(ctx, user)
-	if err != nil {
-		return false, fmt.Errorf("drive status: %w", err)
-	}
-	if !connected {
-		return false, nil
-	}
-	return true, s.queueBackup(ctx, user, doc)
-}
-
-// queueBackup sets the upload job for a saved document, or marks it too large
-// when it is known to exceed the Drive limit, and updates doc to match.
-func (s *Service) queueBackup(ctx context.Context, user UserID, doc *Document) error {
-	if doc.FileSize > MaxDriveBytes {
-		// Known to be above the limit: skip the doomed download, keep it in Telegram.
-		if err := s.repo.SetBackupStatus(ctx, user, doc.ID, BackupTooLarge); err != nil {
-			return fmt.Errorf("mark too large: %w", err)
-		}
-		doc.BackupStatus = BackupTooLarge
-		return nil
-	}
-	if err := s.uploads.EnqueueUpload(ctx, user, doc.ID); err != nil {
-		return fmt.Errorf("enqueue upload: %w", err)
-	}
-	doc.BackupStatus = BackupPending
-	return nil
 }
 
 // defaultTitle builds "<category> — dd.mm.yyyy", adding " (n)" until it is unique

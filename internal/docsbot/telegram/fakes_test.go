@@ -405,16 +405,6 @@ func (r *fakeRepo) PurgeStalePending(_ context.Context, olderThan time.Time) (in
 	return n, nil
 }
 
-func (r *fakeRepo) SaveDocument(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (bool, error) {
-	d, ok := r.docs[id]
-	if !ok || d.Status != docsbot.StatusPending {
-		return false, nil
-	}
-	d.Category, d.Status = cat, docsbot.StatusSaved
-	r.docs[id] = d
-	return true, nil
-}
-
 func (*fakeRepo) StuckSyncs(context.Context, time.Time, int) ([]docsbot.StuckUpload, error) {
 	return nil, nil
 }
@@ -601,16 +591,27 @@ func (r *fakeRepo) SetInlineEnabled(_ context.Context, user docsbot.UserID, on b
 
 // fakeUploads is a no-op Uploads port: handler tests assert on the repo and the
 // sent messages, not on the queue.
-// With repo set it also marks the document pending, like the real enqueue.
+// With repo set, SaveChosen applies the choice to it like the real transaction.
 type fakeUploads struct{ repo *fakeRepo }
 
-func (u fakeUploads) EnqueueUpload(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID) error {
-	if u.repo != nil {
-		d := u.repo.docs[id]
-		d.BackupStatus = docsbot.BackupPending
-		u.repo.docs[id] = d
+func (u fakeUploads) SaveChosen(_ context.Context, c docsbot.SaveChoice) (bool, error) {
+	if u.repo == nil {
+		return true, nil
 	}
-	return nil
+	d, ok := u.repo.docs[c.ID]
+	if !ok || d.UserID != c.User || d.Status != docsbot.StatusPending {
+		return false, nil
+	}
+	d.Category, d.Status = c.Category, docsbot.StatusSaved
+	if c.Title != "" {
+		d.Title = c.Title
+		d.MetaVersion++
+	}
+	if c.Backup != docsbot.BackupNone {
+		d.BackupStatus = c.Backup
+	}
+	u.repo.docs[c.ID] = d
+	return true, nil
 }
 
 func (fakeUploads) RequeueUpload(context.Context, docsbot.UserID, docsbot.DocumentID) error {

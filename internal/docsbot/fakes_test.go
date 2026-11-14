@@ -189,8 +189,8 @@ func (f fakeFiles) Download(context.Context, string) ([]byte, string, error) {
 	return f.data, f.mime, f.err
 }
 
-// fakeUploads records enqueued uploads and, like the real atomic enqueue, marks
-// the document pending.
+// fakeUploads records enqueued uploads and, like the real transaction, saves the
+// chosen category together with the backup status.
 type fakeUploads struct {
 	mu         sync.Mutex
 	repo       *fakeRepo
@@ -198,23 +198,36 @@ type fakeUploads struct {
 	cancels    []docsbot.UserID // CancelUploads calls
 	allJobs    []docsbot.UserID // CancelUserJobs calls
 	requeued   []docsbot.DocumentID
-	enqueueErr error // returned by EnqueueUpload before anything changes, like a failed tx
+	enqueueErr error // returned by SaveChosen for a queued upload before anything changes, like a failed tx
 }
 
-func (u *fakeUploads) EnqueueUpload(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
+// SaveChosen mirrors the transaction: it either applies the whole choice or, on
+// enqueueErr for a queued upload, changes nothing.
+func (u *fakeUploads) SaveChosen(_ context.Context, c docsbot.SaveChoice) (bool, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if u.enqueueErr != nil {
-		return u.enqueueErr
+	if u.enqueueErr != nil && c.Backup == docsbot.BackupPending {
+		return false, u.enqueueErr
 	}
-	u.calls = append(u.calls, id)
 	u.repo.mu.Lock()
 	defer u.repo.mu.Unlock()
-	if d, ok := u.repo.docs[id]; ok && d.UserID == user {
-		d.BackupStatus = docsbot.BackupPending
-		u.repo.docs[id] = d
+	d, ok := u.repo.docs[c.ID]
+	if !ok || d.UserID != c.User || d.Status != docsbot.StatusPending {
+		return false, nil
 	}
-	return nil
+	d.Category, d.Status = c.Category, docsbot.StatusSaved
+	if c.Title != "" {
+		d.Title = c.Title
+		d.MetaVersion++
+	}
+	if c.Backup != docsbot.BackupNone {
+		d.BackupStatus = c.Backup
+	}
+	if c.Backup == docsbot.BackupPending {
+		u.calls = append(u.calls, c.ID)
+	}
+	u.repo.docs[c.ID] = d
+	return true, nil
 }
 
 // RequeueUpload records the call; like the real one it leaves backup_status alone.
@@ -524,18 +537,6 @@ func (r *fakeRepo) PurgeStalePending(_ context.Context, olderThan time.Time) (in
 		}
 	}
 	return n, nil
-}
-
-func (r *fakeRepo) SaveDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	d, ok := r.docs[id]
-	if !ok || d.UserID != user || d.Status != docsbot.StatusPending {
-		return false, nil
-	}
-	d.Category, d.Status = cat, docsbot.StatusSaved
-	r.docs[id] = d
-	return true, nil
 }
 
 func (r *fakeRepo) ResetPendingUploads(_ context.Context, user docsbot.UserID) error {

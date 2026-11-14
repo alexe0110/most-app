@@ -23,9 +23,6 @@ type Repo interface {
 	// PurgeStalePending deletes every user's pending documents created before
 	// olderThan and returns how many were removed.
 	PurgeStalePending(ctx context.Context, olderThan time.Time) (int, error)
-	// SaveDocument sets the category and marks a pending document saved. saved is
-	// false when the document was not pending (already saved, or gone).
-	SaveDocument(ctx context.Context, user UserID, id DocumentID, cat Category) (saved bool, err error)
 	SetBackupStatus(ctx context.Context, user UserID, id DocumentID, s BackupStatus) error
 	// FailBackup marks the upload failed and stores the reason (BackupReason*).
 	// Any other status change clears the reason.
@@ -172,13 +169,29 @@ type Folders interface {
 	CategoryFolderID(ctx context.Context, user UserID, cat Category) (id string, ok bool, err error)
 }
 
-// Uploads enqueues a document's Drive upload, marking backup_status=pending and
-// inserting the job in one transaction.
+// Uploads writes a document's upload state together with its Drive upload job.
 type Uploads interface {
-	EnqueueUpload(ctx context.Context, user UserID, id DocumentID) error
+	// SaveChosen sets the category of a pending document, marks it saved and, in
+	// the same transaction, applies the title and the backup outcome of the choice
+	// (queuing the upload job for BackupPending). saved is false, changing nothing,
+	// when the document was not pending (already saved, or gone).
+	SaveChosen(ctx context.Context, c SaveChoice) (saved bool, err error)
 	// RequeueUpload inserts the upload job only, unique, without touching
 	// backup_status or updated_at; a live job dedups to a no-op.
 	RequeueUpload(ctx context.Context, user UserID, id DocumentID) error
+}
+
+// SaveChoice is the user's category choice for a pending document, with
+// everything that is written along with it.
+type SaveChoice struct {
+	User     UserID
+	ID       DocumentID
+	Category Category
+	// Title replaces the stored title; empty keeps it.
+	Title string
+	// Backup is BackupNone (Drive not connected), BackupPending (queue the upload)
+	// or BackupTooLarge (connected, but the file exceeds MaxDriveBytes).
+	Backup BackupStatus
 }
 
 // JobCanceler removes a user's queued jobs. Unlike Uploads and Syncs it touches
