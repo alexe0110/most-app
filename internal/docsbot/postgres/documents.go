@@ -4,30 +4,44 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
-// This file implements the docsbot.Repo port over the documents table,
-// translating sqlc rows to and from domain types. The interface is declared by
-// the consumer (the domain).
+// Documents persists documents in Postgres. It implements the docsbot ports Repo,
+// Syncs and Uploads, translating sqlc rows to and from domain types; Syncs and
+// Uploads also queue their jobs through JobInserter inside the same transaction.
+type Documents struct {
+	pool *pgxpool.Pool
+	q    *Queries
+	jobs JobInserter
+}
 
-var _ docsbot.Repo = (*Repo)(nil)
+var (
+	_ docsbot.Repo    = (*Documents)(nil)
+	_ docsbot.Syncs   = (*Documents)(nil)
+	_ docsbot.Uploads = (*Documents)(nil)
+)
+
+// NewDocuments wires Documents around an existing pool; jobs enqueues the jobs
+// that commit together with a document change.
+func NewDocuments(pool *pgxpool.Pool, jobs JobInserter) *Documents {
+	return &Documents{pool: pool, q: New(pool), jobs: jobs}
+}
 
 // CreateDocument stores a received file as pending (category chosen later).
-func (r *Repo) CreateDocument(ctx context.Context, in docsbot.IncomingFile) (docsbot.Document, error) {
+func (r *Documents) CreateDocument(ctx context.Context, in docsbot.IncomingFile) (docsbot.Document, error) {
 	uid, err := parseUUID(string(in.UserID))
 	if err != nil {
 		return docsbot.Document{}, err
 	}
-	row, err := r.InsertDocument(ctx, InsertDocumentParams{
+	row, err := r.q.InsertDocument(ctx, InsertDocumentParams{
 		UserID:         uid,
 		Status:         string(docsbot.StatusPending),
 		Kind:           string(in.Kind),
@@ -52,12 +66,12 @@ func (r *Repo) CreateDocument(ctx context.Context, in docsbot.IncomingFile) (doc
 }
 
 // DocumentByFileUniqueID returns the user's document for a Telegram file.
-func (r *Repo) DocumentByFileUniqueID(ctx context.Context, user docsbot.UserID, uniqueID string) (docsbot.Document, error) {
+func (r *Documents) DocumentByFileUniqueID(ctx context.Context, user docsbot.UserID, uniqueID string) (docsbot.Document, error) {
 	uid, err := parseUUID(string(user))
 	if err != nil {
 		return docsbot.Document{}, err
 	}
-	row, err := r.GetDocumentByUniqueID(ctx, GetDocumentByUniqueIDParams{UserID: uid, TgFileUniqueID: uniqueID})
+	row, err := r.q.GetDocumentByUniqueID(ctx, GetDocumentByUniqueIDParams{UserID: uid, TgFileUniqueID: uniqueID})
 	if err != nil {
 		return docsbot.Document{}, notFoundOr(err, "get document by unique id")
 	}
@@ -65,363 +79,59 @@ func (r *Repo) DocumentByFileUniqueID(ctx context.Context, user docsbot.UserID, 
 }
 
 // DocumentByID returns the user's document by id.
-func (r *Repo) DocumentByID(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) (docsbot.Document, error) {
+func (r *Documents) DocumentByID(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) (docsbot.Document, error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return docsbot.Document{}, err
 	}
-	row, err := r.GetDocumentByID(ctx, GetDocumentByIDParams{ID: docID, UserID: uid})
+	row, err := r.q.GetDocumentByID(ctx, GetDocumentByIDParams{ID: docID, UserID: uid})
 	if err != nil {
 		return docsbot.Document{}, notFoundOr(err, "get document by id")
 	}
 	return toDocument(row), nil
 }
 
-// SetBackupStatus updates the Drive upload status.
-func (r *Repo) SetBackupStatus(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, s docsbot.BackupStatus) error {
-	docID, uid, err := ids(id, user)
+// PendingByMediaGroup lists the user's pending documents of one album, oldest first.
+func (r *Documents) PendingByMediaGroup(ctx context.Context, user docsbot.UserID, group string) ([]docsbot.Document, error) {
+	uid, err := parseUUID(string(user))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := r.UpdateDocumentBackupStatus(ctx, UpdateDocumentBackupStatusParams{ID: docID, UserID: uid, BackupStatus: string(s)}); err != nil {
-		return fmt.Errorf("update backup status: %w", err)
-	}
-	return nil
-}
-
-// FailBackup marks the upload failed and stores why (a docsbot.BackupReason*).
-func (r *Repo) FailBackup(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, reason docsbot.BackupReason) error {
-	docID, uid, err := ids(id, user)
-	if err != nil {
-		return err
-	}
-	if err := r.FailDocumentBackup(ctx, FailDocumentBackupParams{ID: docID, UserID: uid, BackupReason: pgtype.Text{String: string(reason), Valid: reason != ""}}); err != nil {
-		return fmt.Errorf("fail document backup: %w", err)
-	}
-	return nil
-}
-
-// ClaimFailed atomically moves a failed document to pending; false when it is
-// not failed or not the user's.
-func (r *Repo) ClaimFailed(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) (bool, error) {
-	docID, uid, err := ids(id, user)
-	if err != nil {
-		return false, err
-	}
-	n, err := r.ClaimFailedForRetry(ctx, ClaimFailedForRetryParams{ID: docID, UserID: uid})
-	if err != nil {
-		return false, fmt.Errorf("claim failed for retry: %w", err)
-	}
-	return n > 0, nil
-}
-
-// MarkUploading sets the status to uploading without touching updated_at, so
-// the sweeper's 24h backstop counts from enqueue time.
-func (r *Repo) MarkUploading(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
-	docID, uid, err := ids(id, user)
-	if err != nil {
-		return err
-	}
-	if err := r.MarkDocumentUploading(ctx, MarkDocumentUploadingParams{ID: docID, UserID: uid}); err != nil {
-		return fmt.Errorf("mark document uploading: %w", err)
-	}
-	return nil
-}
-
-// StuckUploads lists pending/uploading saved documents last touched before
-// olderThan, for users with an active Drive integration.
-func (r *Repo) StuckUploads(ctx context.Context, olderThan time.Time, limit int) ([]docsbot.StuckUpload, error) {
-	rows, err := r.Queries.StuckUploads(ctx, StuckUploadsParams{
-		OlderThan: pgtype.Timestamptz{Time: olderThan, Valid: true},
-		Lim:       int32(limit),
+	rows, err := r.q.ListPendingByMediaGroup(ctx, ListPendingByMediaGroupParams{
+		UserID:       uid,
+		MediaGroupID: pgtype.Text{String: group, Valid: true},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("stuck uploads: %w", err)
+		return nil, fmt.Errorf("list pending by media group: %w", err)
 	}
-	out := make([]docsbot.StuckUpload, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, docsbot.StuckUpload{
-			User:      docsbot.UserID(row.UserID.String()),
-			ID:        docsbot.DocumentID(row.ID.String()),
-			UpdatedAt: row.UpdatedAt.Time,
-		})
-	}
-	return out, nil
+	return toDocuments(rows), nil
 }
 
-// StuckSyncs lists backed-up documents whose sync has been pending since before
-// olderThan, for users with an active Drive integration.
-func (r *Repo) StuckSyncs(ctx context.Context, olderThan time.Time, limit int) ([]docsbot.StuckUpload, error) {
-	rows, err := r.Queries.StuckSyncs(ctx, StuckSyncsParams{
-		OlderThan: pgtype.Timestamptz{Time: olderThan, Valid: true},
-		Lim:       int32(limit),
+// IntakeStats returns the user's pending count, files created since `since`
+// and total documents in one query.
+func (r *Documents) IntakeStats(ctx context.Context, user docsbot.UserID, since time.Time) (docsbot.IntakeStats, error) {
+	uid, err := parseUUID(string(user))
+	if err != nil {
+		return docsbot.IntakeStats{}, err
+	}
+	row, err := r.q.UserIntakeStats(ctx, UserIntakeStatsParams{
+		UserID: uid,
+		Since:  pgtype.Timestamptz{Time: since, Valid: true},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("stuck syncs: %w", err)
+		return docsbot.IntakeStats{}, fmt.Errorf("user intake stats: %w", err)
 	}
-	out := make([]docsbot.StuckUpload, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, docsbot.StuckUpload{
-			User:      docsbot.UserID(row.UserID.String()),
-			ID:        docsbot.DocumentID(row.ID.String()),
-			UpdatedAt: row.UpdatedAt.Time,
-		})
-	}
-	return out, nil
+	return docsbot.IntakeStats{Pending: int(row.Pending), Recent: int(row.Recent), Total: int(row.Total)}, nil
 }
 
-// ResetPendingUploads resets the user's pending/uploading saved documents to none.
-func (r *Repo) ResetPendingUploads(ctx context.Context, user docsbot.UserID) error {
-	uid, err := parseUUID(string(user))
+// PurgeStalePending deletes pending documents created before olderThan, for all
+// users, and returns how many were removed.
+func (r *Documents) PurgeStalePending(ctx context.Context, olderThan time.Time) (int, error) {
+	n, err := r.q.DeleteStalePending(ctx, pgtype.Timestamptz{Time: olderThan, Valid: true})
 	if err != nil {
-		return err
-	}
-	if err := r.Queries.ResetPendingUploads(ctx, uid); err != nil {
-		return fmt.Errorf("reset pending uploads: %w", err)
-	}
-	return nil
-}
-
-// TitleExistsInCategory reports whether the user has a saved document with this
-// title in the category.
-func (r *Repo) TitleExistsInCategory(ctx context.Context, user docsbot.UserID, cat docsbot.Category, title string) (bool, error) {
-	uid, err := parseUUID(string(user))
-	if err != nil {
-		return false, err
-	}
-	ok, err := r.Queries.TitleExistsInCategory(ctx, TitleExistsInCategoryParams{UserID: uid, Category: string(cat), Title: title})
-	if err != nil {
-		return false, fmt.Errorf("title exists in category: %w", err)
-	}
-	return ok, nil
-}
-
-// CountSaved counts the user's saved documents.
-func (r *Repo) CountSaved(ctx context.Context, user docsbot.UserID) (int, error) {
-	uid, err := parseUUID(string(user))
-	if err != nil {
-		return 0, err
-	}
-	n, err := r.CountSavedDocuments(ctx, uid)
-	if err != nil {
-		return 0, fmt.Errorf("count saved documents: %w", err)
+		return 0, fmt.Errorf("delete stale pending: %w", err)
 	}
 	return int(n), nil
-}
-
-// CountNotBackedUp counts saved documents not yet on Drive.
-func (r *Repo) CountNotBackedUp(ctx context.Context, user docsbot.UserID) (int, error) {
-	uid, err := parseUUID(string(user))
-	if err != nil {
-		return 0, err
-	}
-	n, err := r.CountDocumentsNotBackedUp(ctx, uid)
-	if err != nil {
-		return 0, fmt.Errorf("count documents not backed up: %w", err)
-	}
-	return int(n), nil
-}
-
-// CategoryCounts returns per-category saved-document counts.
-func (r *Repo) CategoryCounts(ctx context.Context, user docsbot.UserID) ([]docsbot.CategoryCount, error) {
-	uid, err := parseUUID(string(user))
-	if err != nil {
-		return nil, err
-	}
-	rows, err := r.DocumentCategoryCounts(ctx, uid)
-	if err != nil {
-		return nil, fmt.Errorf("category counts: %w", err)
-	}
-	out := make([]docsbot.CategoryCount, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, docsbot.CategoryCount{Category: docsbot.Category(row.Category), Count: int(row.N)})
-	}
-	return out, nil
-}
-
-// ListByCategory returns one page of a category's saved documents, newest first.
-func (r *Repo) ListByCategory(ctx context.Context, user docsbot.UserID, cat docsbot.Category, limit, offset int) ([]docsbot.Document, error) {
-	uid, err := parseUUID(string(user))
-	if err != nil {
-		return nil, err
-	}
-	rows, err := r.ListDocumentsByCategory(ctx, ListDocumentsByCategoryParams{
-		UserID:   uid,
-		Category: string(cat),
-		Known:    knownCategories(),
-		Lim:      int32(limit),
-		Off:      int32(offset),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list documents by category: %w", err)
-	}
-	return toDocuments(rows), nil
-}
-
-// knownCategories are the current category slugs; "other" also collects the rows
-// whose slug is not among them.
-func knownCategories() []string {
-	out := make([]string, len(docsbot.AllCategories))
-	for i, c := range docsbot.AllCategories {
-		out[i] = string(c)
-	}
-	return out
-}
-
-// likeEscaper escapes the LIKE metacharacters so user input matches literally;
-// the query's ILIKE uses the default backslash escape.
-var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-
-// Search finds saved documents matching query by title (ILIKE + trigram).
-func (r *Repo) Search(ctx context.Context, user docsbot.UserID, query string, limit int) ([]docsbot.Document, error) {
-	uid, err := parseUUID(string(user))
-	if err != nil {
-		return nil, err
-	}
-	rows, err := r.SearchDocuments(ctx, SearchDocumentsParams{
-		UserID:  uid,
-		Pattern: pgtype.Text{String: likeEscaper.Replace(query), Valid: true},
-		Query:   query,
-		Lim:     int32(limit),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("search documents: %w", err)
-	}
-	return toDocuments(rows), nil
-}
-
-// InlineSearch finds saved documents whose title matches query or whose category
-// is in cats, best match first.
-func (r *Repo) InlineSearch(ctx context.Context, user docsbot.UserID, query string, cats []docsbot.Category, limit, offset int) ([]docsbot.Document, error) {
-	uid, err := parseUUID(string(user))
-	if err != nil {
-		return nil, err
-	}
-	slugs := make([]string, len(cats))
-	for i, c := range cats {
-		slugs[i] = string(c)
-	}
-	rows, err := r.InlineSearchDocuments(ctx, InlineSearchDocumentsParams{
-		UserID:  uid,
-		Pattern: pgtype.Text{String: likeEscaper.Replace(query), Valid: true},
-		Query:   query,
-		Cats:    slugs,
-		Lim:     int32(limit),
-		Off:     int32(offset),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("inline search documents: %w", err)
-	}
-	return toDocuments(rows), nil
-}
-
-// RecentSaved lists the user's saved documents, newest first.
-func (r *Repo) RecentSaved(ctx context.Context, user docsbot.UserID, limit, offset int) ([]docsbot.Document, error) {
-	uid, err := parseUUID(string(user))
-	if err != nil {
-		return nil, err
-	}
-	rows, err := r.RecentSavedDocuments(ctx, RecentSavedDocumentsParams{UserID: uid, Lim: int32(limit), Off: int32(offset)})
-	if err != nil {
-		return nil, fmt.Errorf("recent saved documents: %w", err)
-	}
-	return toDocuments(rows), nil
-}
-
-// MarkSynced records a finished sync if the document is unchanged since version.
-func (r *Repo) MarkSynced(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, version int) (bool, error) {
-	docID, uid, err := ids(id, user)
-	if err != nil {
-		return false, err
-	}
-	n, err := r.Queries.MarkSynced(ctx, MarkSyncedParams{ID: docID, UserID: uid, MetaVersion: int32(version)})
-	if err != nil {
-		return false, fmt.Errorf("mark synced: %w", err)
-	}
-	return n > 0, nil
-}
-
-// SetSyncStatus sets sync_status and sync_reason ("" clears the reason).
-func (r *Repo) SetSyncStatus(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, s docsbot.SyncStatus, reason string) error {
-	docID, uid, err := ids(id, user)
-	if err != nil {
-		return err
-	}
-	err = r.Queries.SetSyncStatus(ctx, SetSyncStatusParams{
-		ID: docID, UserID: uid, SyncStatus: string(s), SyncReason: pgtype.Text{String: reason, Valid: reason != ""},
-	})
-	if err != nil {
-		return fmt.Errorf("set sync status: %w", err)
-	}
-	return nil
-}
-
-// TransitionSyncStatus moves sync_status from -> to for a backed-up document and
-// reports whether the row still had the from status and the checked Drive file.
-func (r *Repo) TransitionSyncStatus(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, remoteID string, from, to docsbot.SyncStatus) (bool, error) {
-	docID, uid, err := ids(id, user)
-	if err != nil {
-		return false, err
-	}
-	n, err := r.Queries.TransitionSyncStatus(ctx, TransitionSyncStatusParams{
-		ID: docID, UserID: uid, FromStatus: string(from), ToStatus: string(to), DriveFileID: pgtype.Text{String: remoteID, Valid: true},
-	})
-	if err != nil {
-		return false, fmt.Errorf("transition sync status: %w", err)
-	}
-	return n > 0, nil
-}
-
-// ClaimTransferable atomically moves every saved none/failed document to
-// pending and returns their ids, oldest first.
-func (r *Repo) ClaimTransferable(ctx context.Context, user docsbot.UserID) ([]docsbot.DocumentID, error) {
-	uid, err := parseUUID(string(user))
-	if err != nil {
-		return nil, err
-	}
-	rows, err := r.ClaimTransferableDocuments(ctx, uid)
-	if err != nil {
-		return nil, fmt.Errorf("claim transferable documents: %w", err)
-	}
-	ids := make([]claimedID, 0, len(rows))
-	for _, row := range rows {
-		ids = append(ids, claimedID{id: row.ID, createdAt: row.CreatedAt.Time})
-	}
-	return sortedIDs(ids), nil
-}
-
-// ClaimAllFailed atomically moves every failed upload to pending and returns
-// their ids, oldest first.
-func (r *Repo) ClaimAllFailed(ctx context.Context, user docsbot.UserID) ([]docsbot.DocumentID, error) {
-	uid, err := parseUUID(string(user))
-	if err != nil {
-		return nil, err
-	}
-	rows, err := r.ClaimFailedDocuments(ctx, uid)
-	if err != nil {
-		return nil, fmt.Errorf("claim failed documents: %w", err)
-	}
-	ids := make([]claimedID, 0, len(rows))
-	for _, row := range rows {
-		ids = append(ids, claimedID{id: row.ID, createdAt: row.CreatedAt.Time})
-	}
-	return sortedIDs(ids), nil
-}
-
-// claimedID is a claimed document with the time to order the batch by.
-type claimedID struct {
-	id        pgtype.UUID
-	createdAt time.Time
-}
-
-// sortedIDs orders claimed documents oldest first (UPDATE ... RETURNING has no order).
-func sortedIDs(in []claimedID) []docsbot.DocumentID {
-	slices.SortFunc(in, func(a, b claimedID) int { return a.createdAt.Compare(b.createdAt) })
-	out := make([]docsbot.DocumentID, 0, len(in))
-	for _, c := range in {
-		out = append(out, docsbot.DocumentID(c.id.String()))
-	}
-	return out
 }
 
 // ids parses a (document, user) id pair in one step.
@@ -488,47 +198,4 @@ func toDocuments(rows []Document) []docsbot.Document {
 		out = append(out, toDocument(d))
 	}
 	return out
-}
-
-// PendingByMediaGroup lists the user's pending documents of one album, oldest first.
-func (r *Repo) PendingByMediaGroup(ctx context.Context, user docsbot.UserID, group string) ([]docsbot.Document, error) {
-	uid, err := parseUUID(string(user))
-	if err != nil {
-		return nil, err
-	}
-	rows, err := r.ListPendingByMediaGroup(ctx, ListPendingByMediaGroupParams{
-		UserID:       uid,
-		MediaGroupID: pgtype.Text{String: group, Valid: true},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list pending by media group: %w", err)
-	}
-	return toDocuments(rows), nil
-}
-
-// IntakeStats returns the user's pending count, files created since `since`
-// and total documents in one query.
-func (r *Repo) IntakeStats(ctx context.Context, user docsbot.UserID, since time.Time) (docsbot.IntakeStats, error) {
-	uid, err := parseUUID(string(user))
-	if err != nil {
-		return docsbot.IntakeStats{}, err
-	}
-	row, err := r.UserIntakeStats(ctx, UserIntakeStatsParams{
-		UserID: uid,
-		Since:  pgtype.Timestamptz{Time: since, Valid: true},
-	})
-	if err != nil {
-		return docsbot.IntakeStats{}, fmt.Errorf("user intake stats: %w", err)
-	}
-	return docsbot.IntakeStats{Pending: int(row.Pending), Recent: int(row.Recent), Total: int(row.Total)}, nil
-}
-
-// PurgeStalePending deletes pending documents created before olderThan, for all
-// users, and returns how many were removed.
-func (r *Repo) PurgeStalePending(ctx context.Context, olderThan time.Time) (int, error) {
-	n, err := r.DeleteStalePending(ctx, pgtype.Timestamptz{Time: olderThan, Valid: true})
-	if err != nil {
-		return 0, fmt.Errorf("delete stale pending: %w", err)
-	}
-	return int(n), nil
 }

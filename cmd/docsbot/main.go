@@ -74,10 +74,14 @@ func run() error {
 		return err
 	}
 
-	// Passing jobQueue to NewRepo is also the compile-time check that it
+	// Passing jobQueue to NewDocuments is also the compile-time check that it
 	// satisfies postgres.JobInserter (postgres cannot import the jobs adapter).
 	jobQueue := docjobs.NewQueue(queue)
-	repo := postgres.NewRepo(pool, jobQueue)
+	documents := postgres.NewDocuments(pool, jobQueue)
+	statusMessages := postgres.NewStatusMessages(pool)
+	users := postgres.NewUsers(pool)
+	oauthStore := postgres.NewOAuthStore(pool)
+	folders := postgres.NewFolderCache(pool)
 	files := &tgFiles{} // bot is set once it is built
 
 	// oauth.Service and the bot each need the other (the bot shows the consent
@@ -96,19 +100,19 @@ func run() error {
 		TokenEncKey:  cfg.TokenEncKey,
 		PublicURL:    cfg.PublicURL,
 		BotURL:       botURL(cfg.TelegramBotUsername),
-	}, repo, func(ctx context.Context, userID string) error {
-		return telegram.NotifyConnected(tgbot, repo, svc, log,
+	}, oauthStore, func(ctx context.Context, userID string) error {
+		return telegram.NotifyConnected(tgbot, users, svc, log,
 			telegram.WithConnectSettings(settingsMsgs, svc, oauthSvc))(ctx, userID)
 	}, log)
 	if err != nil {
 		return fmt.Errorf("new oauth service: %w", err)
 	}
 
-	gdriveSvc := gdrive.New(gdriveClients{oauth: oauthSvc}, repo, gdrive.WithLogger(log), gdrive.WithRootFolder(cfg.DriveRootFolder))
+	gdriveSvc := gdrive.New(gdriveClients{oauth: oauthSvc}, folders, gdrive.WithLogger(log), gdrive.WithRootFolder(cfg.DriveRootFolder))
 	driveAdapter := driveBridge{oauth: oauthSvc, gd: gdriveSvc}
 	svc = docsbot.NewService(docsbot.Ports{
-		Repo: repo, Drive: driveAdapter, Files: files, Uploads: repo, Jobs: jobQueue,
-		Folders: repo, Status: repo, Syncs: repo,
+		Repo: documents, Drive: driveAdapter, Files: files, Uploads: documents, Jobs: jobQueue,
+		Folders: folders, Status: statusMessages, Syncs: documents,
 	}, docsbot.WithPageCounter(pageCounter{}))
 
 	tgbot, err = tg.New(tg.Config{
@@ -118,14 +122,14 @@ func run() error {
 		WebhookSecret: cfg.TelegramWebhookSecret,
 		GroupNotice:   telegram.GroupNotice(),
 		Unbounded:     telegram.IsExport,
-	}, repo, log, func(b *bot.Bot) {
+	}, users, log, func(b *bot.Bot) {
 		telegram.Register(b, log, svc, oauthSvc, telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder))
 	})
 	if err != nil {
 		return err
 	}
 	files.bot = tgbot
-	notifier := telegram.NewNotifier(tgbot, repo, oauthSvc, svc, log, telegram.WithNotifierRenames(renames))
+	notifier := telegram.NewNotifier(tgbot, users, oauthSvc, svc, log, telegram.WithNotifierRenames(renames))
 	bindUpload(svc, notifier)
 	bindSync(svc, notifier)
 	bindTrash(svc, notifier)

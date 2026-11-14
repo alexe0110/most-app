@@ -146,7 +146,10 @@ func TestService_folderLinks(t *testing.T) {
 	}
 }
 
-type failingFolders struct{ err error }
+type failingFolders struct {
+	docsbot.Folders
+	err error
+}
 
 func (f failingFolders) CategoryFolderID(context.Context, docsbot.UserID, docsbot.Category) (string, bool, error) {
 	return "", false, f.err
@@ -156,7 +159,7 @@ func TestService_folderLinks_error(t *testing.T) {
 	boom := errors.New("boom")
 	repo := newFakeRepo()
 	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatReceipts})
-	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, failingFolders{err: boom}, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, failingFolders{Folders: repo, err: boom}, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	_, err := svc.Card(t.Context(), user, doc.ID)
 	require.ErrorIs(t, err, boom)

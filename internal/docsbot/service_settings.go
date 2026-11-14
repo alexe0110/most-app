@@ -8,7 +8,7 @@ import (
 // ResetDriveFolders clears the user's cached Drive folder ids, so folders are
 // found or created afresh (the Drive may now belong to another Google account).
 func (s *Service) ResetDriveFolders(ctx context.Context, user UserID) error {
-	if err := s.repo.DeleteAllFolders(ctx, user); err != nil {
+	if err := s.folders.DeleteAllFolders(ctx, user); err != nil {
 		return fmt.Errorf("delete all folders: %w", err)
 	}
 	return nil

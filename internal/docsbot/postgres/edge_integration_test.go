@@ -9,17 +9,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
-	"github.com/alexe0110/most-app/internal/docsbot/postgres"
 )
 
 // twoUsers returns a repo with users A and B.
-func twoUsers(t *testing.T) (repo *postgres.Repo, a, b docsbot.UserID) {
+func twoUsers(t *testing.T) (repo *adapters, a, b docsbot.UserID) {
 	t.Helper()
 	repo = newRepo(t)
 	return repo, docsbot.UserID(makeUser(t, repo, 900).ID.String()), docsbot.UserID(makeUser(t, repo, 901).ID.String())
 }
 
-func titled(t *testing.T, repo *postgres.Repo, user docsbot.UserID, unique, title string) docsbot.Document {
+func titled(t *testing.T, repo *adapters, user docsbot.UserID, unique, title string) docsbot.Document {
 	t.Helper()
 	doc, err := repo.CreateDocument(t.Context(), docsbot.IncomingFile{
 		UserID: user, Kind: docsbot.KindDocument, Title: title, FileID: "f-" + unique, FileUniqueID: unique,
@@ -29,7 +28,7 @@ func titled(t *testing.T, repo *postgres.Repo, user docsbot.UserID, unique, titl
 	return doc
 }
 
-func backupOf(t *testing.T, repo *postgres.Repo, user docsbot.UserID, id docsbot.DocumentID) docsbot.Document {
+func backupOf(t *testing.T, repo *adapters, user docsbot.UserID, id docsbot.DocumentID) docsbot.Document {
 	t.Helper()
 	d, err := repo.DocumentByID(t.Context(), user, id)
 	require.NoError(t, err)

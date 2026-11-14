@@ -87,8 +87,6 @@ type Repo interface {
 	// DeleteUserData deletes the user's documents, drive_folders and integrations and
 	// soft-deletes the user (users.deleted_at), all in one transaction.
 	DeleteUserData(ctx context.Context, user UserID) error
-	// DeleteAllFolders clears the user's cached Drive folder ids.
-	DeleteAllFolders(ctx context.Context, user UserID) error
 }
 
 // StuckUpload is a saved document stuck mid-upload (pending/uploading) for a
@@ -168,6 +166,8 @@ type FileSource interface {
 // Folders reports the cached Drive folder id for a user's category, if known.
 type Folders interface {
 	CategoryFolderID(ctx context.Context, user UserID, cat Category) (id string, ok bool, err error)
+	// DeleteAllFolders clears the user's cached Drive folder ids.
+	DeleteAllFolders(ctx context.Context, user UserID) error
 }
 
 // Uploads writes a document's upload state together with its Drive upload job.

@@ -12,19 +12,18 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
-	"github.com/alexe0110/most-app/internal/docsbot/postgres"
 	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 )
 
 // inlineEnv is a repo over a fresh database with a pool for direct fixtures.
-func inlineEnv(t *testing.T) (*postgres.Repo, *pgxpool.Pool) {
+func inlineEnv(t *testing.T) (*adapters, *pgxpool.Pool) {
 	t.Helper()
 	pool := dbtest.New(t)
-	return postgres.NewRepo(pool, noJobs{}), pool
+	return newAdapters(pool, noJobs{}), pool
 }
 
 // savedAt stores a saved document and backdates it by age, so ordering is deterministic.
-func savedAt(t *testing.T, repo *postgres.Repo, pool *pgxpool.Pool, user docsbot.UserID, title string, cat docsbot.Category, age time.Duration) docsbot.Document {
+func savedAt(t *testing.T, repo *adapters, pool *pgxpool.Pool, user docsbot.UserID, title string, cat docsbot.Category, age time.Duration) docsbot.Document {
 	t.Helper()
 	ctx := t.Context()
 	d, err := repo.CreateDocument(ctx, docsbot.IncomingFile{
@@ -141,7 +140,7 @@ func TestInline_lookup(t *testing.T) {
 	_, found, err = repo.Lookup(ctx, 999)
 	require.NoError(t, err)
 	require.False(t, found, "unknown user is not created")
-	_, err = repo.GetUserByTgID(ctx, 999)
+	_, err = repo.q.GetUserByTgID(ctx, 999)
 	require.ErrorIs(t, err, pgx.ErrNoRows)
 
 	require.NoError(t, repo.DeleteUserData(ctx, docsbot.UserID(u.ID.String())))

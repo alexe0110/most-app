@@ -45,10 +45,10 @@ func TestDisconnect_resetsQueuedAndUploading(t *testing.T) {
 // document into the given backup_status and age, and creates the user's Drive
 // integration with integrationStatus ("" means no integration row). start runs
 // the upload queue.
-func setupSweep(t *testing.T, drive docsbot.Drive, backup, age, integrationStatus string) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, svc *docsbot.Service, spy *spyNotifier, enq *postgres.Repo, start func()) {
+func setupSweep(t *testing.T, drive docsbot.Drive, backup, age, integrationStatus string) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, svc *docsbot.Service, spy *spyNotifier, enq *postgres.Documents, start func()) {
 	t.Helper()
 	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, slog.New(slog.DiscardHandler))
-	svc = newService(enq, jobs.NewQueue(queue), drive, fakeFiles{})
+	svc = newService(pool, enq, jobs.NewQueue(queue), drive, fakeFiles{})
 
 	ctx := t.Context()
 	_, err := pool.Exec(ctx, `update documents set backup_status = $2, updated_at = now() - $3::interval where id = $1::uuid`,

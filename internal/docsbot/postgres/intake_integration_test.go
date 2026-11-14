@@ -9,11 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
-	"github.com/alexe0110/most-app/internal/docsbot/postgres"
 	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 )
 
-func albumDoc(t *testing.T, repo *postgres.Repo, user docsbot.UserID, group, unique string) docsbot.Document {
+func albumDoc(t *testing.T, repo *adapters, user docsbot.UserID, group, unique string) docsbot.Document {
 	t.Helper()
 	doc, err := repo.CreateDocument(t.Context(), docsbot.IncomingFile{
 		UserID: user, Kind: docsbot.KindPhoto, FileID: "f-" + unique, FileUniqueID: unique, MediaGroupID: group,
@@ -57,7 +56,7 @@ func TestDocuments_mediaGroupListsOnlyOwnPendingOfAlbum(t *testing.T) {
 
 func TestDocuments_intakeStats(t *testing.T) {
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool, noJobs{})
+	repo := newAdapters(pool, noJobs{})
 	a := docsbot.UserID(makeUser(t, repo, 910).ID.String())
 	b := docsbot.UserID(makeUser(t, repo, 911).ID.String())
 	ctx := t.Context()
@@ -84,7 +83,7 @@ func TestDocuments_intakeStats(t *testing.T) {
 
 func TestDocuments_purgeStalePending(t *testing.T) {
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool, noJobs{})
+	repo := newAdapters(pool, noJobs{})
 	a := docsbot.UserID(makeUser(t, repo, 920).ID.String())
 	b := docsbot.UserID(makeUser(t, repo, 921).ID.String())
 	ctx := t.Context()

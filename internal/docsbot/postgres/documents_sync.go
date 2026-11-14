@@ -11,10 +11,8 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
-var (
-	_ docsbot.Syncs   = (*Repo)(nil)
-	_ docsbot.Uploads = (*Repo)(nil)
-)
+// This file holds the Documents methods that change a row and queue a job in one
+// transaction (the docsbot Syncs and Uploads ports).
 
 // needsSync reports whether the update left a backed-up document sync-pending.
 func needsSync(backup, sync string) bool {
@@ -24,7 +22,7 @@ func needsSync(backup, sync string) bool {
 // SetTitle renames the document. With cloud set, a backed-up document whose
 // Drive file is live also goes sync-pending and a sync job is queued in the same
 // transaction; queued reports that. ErrNotFound if the user has no such document.
-func (r *Repo) SetTitle(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, title string, cloud bool) (queued bool, err error) {
+func (r *Documents) SetTitle(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, title string, cloud bool) (queued bool, err error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return false, err
@@ -44,7 +42,7 @@ func (r *Repo) SetTitle(ctx context.Context, user docsbot.UserID, id docsbot.Doc
 }
 
 // SetCategory recategorizes the document, queuing a sync like SetTitle.
-func (r *Repo) SetCategory(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category, cloud bool) (queued bool, err error) {
+func (r *Documents) SetCategory(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category, cloud bool) (queued bool, err error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return false, err
@@ -67,7 +65,7 @@ func (r *Repo) SetCategory(ctx context.Context, user docsbot.UserID, id docsbot.
 // startVersion, leaves the document sync-pending and queues a sync in the same
 // transaction. pages > 0 records the PDF's page count. ErrNotFound if the
 // document is gone.
-func (r *Repo) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion, pages int) (queued bool, err error) {
+func (r *Documents) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion, pages int) (queued bool, err error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return false, err
@@ -96,7 +94,7 @@ func (r *Repo) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot
 // cloud is set (Drive connected), queues a sync in the same transaction. replaced
 // is false when the update touched no row (gone, uploading, sync in flight or
 // file missing).
-func (r *Repo) ReplaceContent(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, cloud bool) (replaced bool, err error) {
+func (r *Documents) ReplaceContent(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, cloud bool) (replaced bool, err error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return false, err
@@ -136,7 +134,7 @@ func (r *Repo) ReplaceContent(ctx context.Context, user docsbot.UserID, id docsb
 // EnqueueSync marks a backed-up document sync-pending and queues a sync in the
 // same transaction. A document that is gone, not backed up or missing on Drive
 // queues nothing.
-func (r *Repo) EnqueueSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
+func (r *Documents) EnqueueSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return err
@@ -155,7 +153,7 @@ func (r *Repo) EnqueueSync(ctx context.Context, user docsbot.UserID, id docsbot.
 
 // RetrySync moves a failed sync back to pending and queues it in the same
 // transaction. It reports false when the sync was not failed.
-func (r *Repo) RetrySync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) (queued bool, err error) {
+func (r *Documents) RetrySync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) (queued bool, err error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return false, err
@@ -178,7 +176,7 @@ func (r *Repo) RetrySync(ctx context.Context, user docsbot.UserID, id docsbot.Do
 // its Drive copy was. With cloud set and a live Drive file, trashing it is queued
 // in the same transaction; without cloud, remoteKept tells that a live file stays
 // in Drive. ErrNotFound if the user has no such document.
-func (r *Repo) DeleteDocument(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, cloud bool) (remoteKept bool, err error) {
+func (r *Documents) DeleteDocument(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, cloud bool) (remoteKept bool, err error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return false, err
@@ -204,8 +202,106 @@ func (r *Repo) DeleteDocument(ctx context.Context, user docsbot.UserID, id docsb
 
 // RequeueSync inserts the sync job only, without touching the document, so the
 // stuck clock keeps running.
-func (r *Repo) RequeueSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
+func (r *Documents) RequeueSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
 	return inTx(ctx, r.pool, func(_ *Queries, tx pgx.Tx) error {
 		return r.jobs.InsertSync(ctx, tx, user, id)
+	})
+}
+
+// SaveChosen saves a pending document under the chosen category and writes the
+// title and backup outcome that go with it in the same transaction, so a failed
+// job insert leaves the document pending for the next tap. saved is false when
+// the document was not pending.
+func (r *Documents) SaveChosen(ctx context.Context, c docsbot.SaveChoice) (saved bool, err error) {
+	docID, uid, err := ids(c.ID, c.User)
+	if err != nil {
+		return false, err
+	}
+	err = inTx(ctx, r.pool, func(q *Queries, tx pgx.Tx) error {
+		n, err := q.SaveDocumentCategory(ctx, SaveDocumentCategoryParams{ID: docID, UserID: uid, Category: string(c.Category)})
+		if err != nil {
+			return fmt.Errorf("save document category: %w", err)
+		}
+		if n == 0 {
+			return nil
+		}
+		saved = true
+		if c.Title != "" {
+			if _, err := q.UpdateDocumentTitle(ctx, UpdateDocumentTitleParams{ID: docID, UserID: uid, Title: c.Title}); err != nil {
+				return notFoundOr(err, "set default title")
+			}
+		}
+		return r.applyBackup(ctx, q, tx, c, docID, uid)
+	})
+	return saved && err == nil, err
+}
+
+// applyBackup writes the backup outcome of a saved choice: nothing for None, the
+// too_large status, or pending together with the upload job.
+func (r *Documents) applyBackup(ctx context.Context, q *Queries, tx pgx.Tx, c docsbot.SaveChoice, docID, uid pgtype.UUID) error {
+	switch c.Backup {
+	case docsbot.BackupNone:
+		return nil
+	case docsbot.BackupTooLarge, docsbot.BackupPending:
+		err := q.UpdateDocumentBackupStatus(ctx, UpdateDocumentBackupStatusParams{ID: docID, UserID: uid, BackupStatus: string(c.Backup)})
+		if err != nil {
+			return fmt.Errorf("set backup status: %w", err)
+		}
+		if c.Backup == docsbot.BackupTooLarge {
+			return nil
+		}
+		// A live job for a document that was pending a moment ago cannot exist; if
+		// one does, it will upload this document, so the insert is not rolled back.
+		_, err = r.jobs.InsertUpload(ctx, tx, c.User, c.ID)
+		return err
+	default:
+		return fmt.Errorf("save chosen: unsupported backup status %q", c.Backup)
+	}
+}
+
+// errUploadSkipped aborts the EnqueueUpload transaction when a live upload job
+// already exists; it never leaves this file.
+var errUploadSkipped = errors.New("upload job already queued")
+
+// EnqueueUpload marks the document backup_status=pending and queues its upload in
+// the same transaction, so the status change and the job commit or roll back
+// together. A live upload job is unique by args: the repeated call is skipped and
+// the transaction rolled back, so the document status stays untouched.
+func (r *Documents) EnqueueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
+	docID, uid, err := ids(id, user)
+	if err != nil {
+		return err
+	}
+	err = inTx(ctx, r.pool, func(q *Queries, tx pgx.Tx) error {
+		err := q.UpdateDocumentBackupStatus(ctx, UpdateDocumentBackupStatusParams{
+			ID:           docID,
+			UserID:       uid,
+			BackupStatus: string(docsbot.BackupPending),
+		})
+		if err != nil {
+			return fmt.Errorf("mark backup pending: %w", err)
+		}
+		skipped, err := r.jobs.InsertUpload(ctx, tx, user, id)
+		if err != nil {
+			return err
+		}
+		if skipped {
+			return errUploadSkipped
+		}
+		return nil
+	})
+	if errors.Is(err, errUploadSkipped) {
+		return nil
+	}
+	return err
+}
+
+// RequeueUpload inserts the upload job only, with the same uniqueness as
+// EnqueueUpload and without touching the document, so a live job dedups to a
+// no-op and the stuck-since clock (updated_at) is preserved.
+func (r *Documents) RequeueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
+	return inTx(ctx, r.pool, func(_ *Queries, tx pgx.Tx) error {
+		_, err := r.jobs.InsertUpload(ctx, tx, user, id)
+		return err
 	})
 }

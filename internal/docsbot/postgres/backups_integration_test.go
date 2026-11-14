@@ -15,7 +15,7 @@ import (
 )
 
 // savedDoc creates a saved document for user.
-func savedDoc(t *testing.T, repo *postgres.Repo, user docsbot.UserID, unique string) docsbot.Document {
+func savedDoc(t *testing.T, repo *adapters, user docsbot.UserID, unique string) docsbot.Document {
 	t.Helper()
 	ctx := t.Context()
 	doc, err := repo.CreateDocument(ctx, docsbot.IncomingFile{

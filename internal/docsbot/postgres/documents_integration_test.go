@@ -13,16 +13,16 @@ import (
 	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 )
 
-// domainRepo exercises *postgres.Repo through the docsbot.Repo port.
-func domainRepo(t *testing.T) (*postgres.Repo, docsbot.UserID) {
+// domainRepo exercises *adapters through the docsbot.Repo port.
+func domainRepo(t *testing.T) (*adapters, docsbot.UserID) {
 	t.Helper()
 	return domainRepoWith(t, noJobs{})
 }
 
 // domainRepoWith is domainRepo with a chosen job inserter.
-func domainRepoWith(t *testing.T, jobs postgres.JobInserter) (*postgres.Repo, docsbot.UserID) {
+func domainRepoWith(t *testing.T, jobs postgres.JobInserter) (*adapters, docsbot.UserID) {
 	t.Helper()
-	repo := postgres.NewRepo(dbtest.New(t), jobs)
+	repo := newAdapters(dbtest.New(t), jobs)
 	u := makeUser(t, repo, 700)
 	return repo, docsbot.UserID(u.ID.String())
 }
@@ -257,7 +257,7 @@ func TestDocuments_resetPendingUploads(t *testing.T) {
 
 func TestDocuments_markUploadingKeepsUpdatedAt(t *testing.T) {
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool, noJobs{})
+	repo := newAdapters(pool, noJobs{})
 	user := docsbot.UserID(makeUser(t, repo, 700).ID.String())
 	ctx := t.Context()
 

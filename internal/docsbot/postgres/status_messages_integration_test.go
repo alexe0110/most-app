@@ -12,9 +12,9 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
 )
 
-func newDoc(t *testing.T, repo *postgres.Repo, u postgres.User, uniq string) docsbot.DocumentID {
+func newDoc(t *testing.T, repo *adapters, u postgres.User, uniq string) docsbot.DocumentID {
 	t.Helper()
-	d, err := repo.InsertDocument(t.Context(), postgres.InsertDocumentParams{
+	d, err := repo.q.InsertDocument(t.Context(), postgres.InsertDocumentParams{
 		UserID: u.ID, Status: "saved", Kind: "document", Category: "passport",
 		Title: "t-" + uniq, TgFileID: "f-" + uniq, TgFileUniqueID: uniq,
 	})

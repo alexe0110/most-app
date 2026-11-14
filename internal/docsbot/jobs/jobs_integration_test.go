@@ -84,17 +84,17 @@ func runUploadWithLog(t *testing.T, files docsbot.FileSource, drive docsbot.Driv
 	return pool, user, id, spy
 }
 
-// newService wires a Service whose repo and queue share the job client.
-func newService(repo *postgres.Repo, jq *jobs.Queue, drive docsbot.Drive, files docsbot.FileSource) *docsbot.Service {
+// newService wires a Service over docs and the queue that docs inserts its jobs into.
+func newService(pool *pgxpool.Pool, docs *postgres.Documents, jq *jobs.Queue, drive docsbot.Drive, files docsbot.FileSource) *docsbot.Service {
 	return docsbot.NewService(docsbot.Ports{
-		Repo: repo, Drive: drive, Files: files, Uploads: repo, Jobs: jq,
-		Folders: repo, Status: repo, Syncs: repo,
+		Repo: docs, Drive: drive, Files: files, Uploads: docs, Jobs: jq,
+		Folders: postgres.NewFolderCache(pool), Status: postgres.NewStatusMessages(pool), Syncs: docs,
 	})
 }
 
 // setupUpload seeds a saved document and wires the queue, enqueuer and spy
 // without starting the queue.
-func setupUpload(t *testing.T, files docsbot.FileSource, drive docsbot.Drive, log *slog.Logger) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, spy *spyNotifier, enq *postgres.Repo, queue *pjobs.Client) {
+func setupUpload(t *testing.T, files docsbot.FileSource, drive docsbot.Drive, log *slog.Logger) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, spy *spyNotifier, enq *postgres.Documents, queue *pjobs.Client) {
 	t.Helper()
 	ctx := t.Context()
 	pool = dbtest.New(t)
@@ -112,8 +112,8 @@ func setupUpload(t *testing.T, files docsbot.FileSource, drive docsbot.Drive, lo
 	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
 	require.NoError(t, err)
 	jq := jobs.NewQueue(queue)
-	enq = postgres.NewRepo(pool, jq)
-	svc := newService(enq, jq, drive, files)
+	enq = postgres.NewDocuments(pool, jq)
+	svc := newService(pool, enq, jq, drive, files)
 	spy = &spyNotifier{}
 	bind(svc, spy)
 	return pool, user, id, spy, enq, queue

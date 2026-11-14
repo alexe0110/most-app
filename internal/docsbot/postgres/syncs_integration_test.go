@@ -21,19 +21,19 @@ import (
 // syncEnv is a repo over a fresh database with two users.
 type syncEnv struct {
 	pool            *pgxpool.Pool
-	repo            *postgres.Repo
+	repo            *adapters
 	user, otherUser docsbot.UserID
 }
 
 func newSyncEnv(t *testing.T) syncEnv {
 	t.Helper()
 	pool := dbtest.New(t)
-	return syncEnv{pool: pool, repo: postgres.NewRepo(pool, noJobs{})}.fresh(t)
+	return syncEnv{pool: pool, repo: newAdapters(pool, noJobs{})}.fresh(t)
 }
 
 // with is a repo over the same database whose jobs go to ji.
-func (e syncEnv) with(ji postgres.JobInserter) *postgres.Repo {
-	return postgres.NewRepo(e.pool, ji)
+func (e syncEnv) with(ji postgres.JobInserter) *adapters {
+	return newAdapters(e.pool, ji)
 }
 
 // userSeq gives every fresh pair of users distinct Telegram ids.
