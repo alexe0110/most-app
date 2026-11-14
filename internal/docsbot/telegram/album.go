@@ -144,9 +144,11 @@ func (d *docs) flushAlbum(ctx context.Context, b *bot.Bot, st albumState) {
 }
 
 // offersPDF reports whether the album gets the "one PDF or one by one" choice:
-// two or more fresh files, all of them images, none refused.
+// two or more fresh files, all of them images, none refused. Without a sender
+// (tgUser 0) there is nobody to own the PDF token, so the album is saved one by one.
 func (d *docs) offersPDF(st albumState) bool {
-	return d.registerAlbum != nil && st.fresh >= 2 && len(st.images) == st.fresh && !st.nonImage && st.reject == nil
+	return d.registerAlbum != nil && st.tgUser != 0 && st.fresh >= 2 && len(st.images) == st.fresh &&
+		!st.nonImage && st.reject == nil
 }
 
 // onGroupPick turns the album choice into the category picker for the whole

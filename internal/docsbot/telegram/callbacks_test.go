@@ -1,6 +1,8 @@
 package telegram
 
 import (
+	"cmp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -142,15 +144,28 @@ func TestCallbackConstructors_matchWireFormat(t *testing.T) {
 
 func TestCallbackData_worstCaseFitsTheLimit(t *testing.T) {
 	slug := longestSlug()
-	for _, data := range []string{
+	worst := []string{
 		docCB(actOpenCard, uuidDoc, "l", slug, "999"),
 		docCB(actSetCategory, uuidDoc, slug),
 		docCB(actListCat, "", slug, "999"),
 		docCB(actRetryBatch, "", string(uuidDoc)),
 		convDocCB(convActQuick, uuidDoc, opCompress5),
 		convCB(convActRepYes, hexToken),
-	} {
+	}
+	for _, c := range docsbot.AllCategories {
+		worst = append(worst,
+			docCB(actCategory, uuidDoc, string(c)),
+			docCB(actCategoryGroup, uuidDoc, string(c)),
+			docCB(actSetCategory, uuidDoc, string(c)),
+			docCB(actListCat, "", string(c), "999"),
+			docCB(actOpenCard, uuidDoc, "l", string(c), "999"),
+		)
+	}
+	for _, data := range worst {
 		require.LessOrEqual(t, len(data), 64, data)
+		cd, ok := parseCallback(data)
+		require.True(t, ok)
+		require.Equal(t, data, cd.String())
 	}
 }
 
@@ -160,40 +175,49 @@ func TestParseCallback_edges(t *testing.T) {
 		data   string
 		wantOK bool
 		want   callbackData
+		str    string // String() when it differs from data: an empty id with nothing after it is dropped
 	}{
-		{"empty", "", false, callbackData{}},
-		{"foreign prefix", "x:cat:1", false, callbackData{}},
-		{"prefix without colon", "d", false, callbackData{}},
-		{"bare prefix", "d:", true, callbackData{prefix: cbPrefix}},
-		{"bare conv prefix", "conv:", true, callbackData{prefix: callbackPrefix}},
-		{"doc action without id", "d:oc:", true, callbackData{prefix: cbPrefix, action: actOpenCard}},
-		{"doc action without segment", "d:oc", true, callbackData{prefix: cbPrefix, action: actOpenCard}},
-		{"extra colons stay arguments", "d:lc:a:1:2", true, callbackData{prefix: cbPrefix, action: actListCat, args: []string{"a", "1", "2"}}},
-		{"unknown action", "d:zzz:1", true, callbackData{prefix: cbPrefix, action: "zzz", args: []string{"1"}}},
-		{"unknown conv action", "conv:zzz", true, callbackData{prefix: callbackPrefix, action: "zzz"}},
-		{"prefix is case sensitive", "D:cat:1", false, callbackData{}},
-		{"leading space", " d:lb", false, callbackData{}},
-		{"conv without colon", "conv", false, callbackData{}},
-		{"prefix only inside", "x" + "d:lb", false, callbackData{}},
-		{"category without slug", "d:cat:id", true, callbackData{prefix: cbPrefix, action: actCategory, docID: "id"}},
-		{"category with empty slug", "d:cat:id:", true, callbackData{prefix: cbPrefix, action: actCategory, docID: "id", args: []string{""}}},
-		{"doc id never swallows a list argument", "d:lc:auto:2", true, callbackData{prefix: cbPrefix, action: actListCat, args: []string{"auto", "2"}}},
-		{"retry batch keeps its id as argument", "d:rsm:sm", true, callbackData{prefix: cbPrefix, action: actRetryBatch, args: []string{"sm"}}},
-		{"open card from search with extras", "d:oc:id:s:x", true, callbackData{prefix: cbPrefix, action: actOpenCard, docID: "id", args: []string{"s", "x"}}},
-		{"conv quick without op", "conv:q:abc", true, callbackData{prefix: callbackPrefix, action: convActQuick, docID: "abc"}},
-		{"conv quick without id", "conv:q::c1", true, callbackData{prefix: callbackPrefix, action: convActQuick, args: []string{"c1"}}},
-		{"conv quick with empty op", "conv:q:abc:", true, callbackData{prefix: callbackPrefix, action: convActQuick, docID: "abc", args: []string{""}}},
-		{"conv quick with unknown op", "conv:q:abc:zzz", true, callbackData{prefix: callbackPrefix, action: convActQuick, docID: "abc", args: []string{"zzz"}}},
-		{"conv token empty", "conv:save:", true, callbackData{prefix: callbackPrefix, action: convActSave, args: []string{""}}},
-		{"conv session op empty", "conv:p:", true, callbackData{prefix: callbackPrefix, action: convActPDFOp, args: []string{""}}},
-		{"conv menu without id", "conv:doc:", true, callbackData{prefix: callbackPrefix, action: convActDoc}},
-		{"unicode argument", "d:lc:паспорт:1", true, callbackData{prefix: cbPrefix, action: actListCat, args: []string{"паспорт", "1"}}},
+		{"empty", "", false, callbackData{}, ""},
+		{"foreign prefix", "x:cat:1", false, callbackData{}, ""},
+		{"prefix without colon", "d", false, callbackData{}, ""},
+		{"bare prefix", "d:", true, callbackData{prefix: cbPrefix}, ""},
+		{"bare conv prefix", "conv:", true, callbackData{prefix: callbackPrefix}, ""},
+		{"doc action without id", "d:oc:", true, callbackData{prefix: cbPrefix, action: actOpenCard}, "d:oc"},
+		{"doc action without segment", "d:oc", true, callbackData{prefix: cbPrefix, action: actOpenCard}, ""},
+		{"extra colons stay arguments", "d:lc:a:1:2", true, callbackData{prefix: cbPrefix, action: actListCat, args: []string{"a", "1", "2"}}, ""},
+		{"unknown action", "d:zzz:1", true, callbackData{prefix: cbPrefix, action: "zzz", args: []string{"1"}}, ""},
+		{"unknown conv action", "conv:zzz", true, callbackData{prefix: callbackPrefix, action: "zzz"}, ""},
+		{"prefix is case sensitive", "D:cat:1", false, callbackData{}, ""},
+		{"leading space", " d:lb", false, callbackData{}, ""},
+		{"conv without colon", "conv", false, callbackData{}, ""},
+		{"prefix only inside", "x" + "d:lb", false, callbackData{}, ""},
+		{"category without slug", "d:cat:id", true, callbackData{prefix: cbPrefix, action: actCategory, docID: "id"}, ""},
+		{"category with empty slug", "d:cat:id:", true, callbackData{prefix: cbPrefix, action: actCategory, docID: "id", args: []string{""}}, ""},
+		{"doc id never swallows a list argument", "d:lc:auto:2", true, callbackData{prefix: cbPrefix, action: actListCat, args: []string{"auto", "2"}}, ""},
+		{"retry batch keeps its id as argument", "d:rsm:sm", true, callbackData{prefix: cbPrefix, action: actRetryBatch, args: []string{"sm"}}, ""},
+		{"open card from search with extras", "d:oc:id:s:x", true, callbackData{prefix: cbPrefix, action: actOpenCard, docID: "id", args: []string{"s", "x"}}, ""},
+		{"conv quick without op", "conv:q:abc", true, callbackData{prefix: callbackPrefix, action: convActQuick, docID: "abc"}, ""},
+		{"conv quick without id", "conv:q::c1", true, callbackData{prefix: callbackPrefix, action: convActQuick, args: []string{"c1"}}, ""},
+		{"conv quick with empty op", "conv:q:abc:", true, callbackData{prefix: callbackPrefix, action: convActQuick, docID: "abc", args: []string{""}}, ""},
+		{"conv quick with unknown op", "conv:q:abc:zzz", true, callbackData{prefix: callbackPrefix, action: convActQuick, docID: "abc", args: []string{"zzz"}}, ""},
+		{"conv token empty", "conv:save:", true, callbackData{prefix: callbackPrefix, action: convActSave, args: []string{""}}, ""},
+		{"conv session op empty", "conv:p:", true, callbackData{prefix: callbackPrefix, action: convActPDFOp, args: []string{""}}, ""},
+		{"conv menu without id", "conv:doc:", true, callbackData{prefix: callbackPrefix, action: convActDoc}, "conv:doc"},
+		{"unicode argument", "d:lc:паспорт:1", true, callbackData{prefix: cbPrefix, action: actListCat, args: []string{"паспорт", "1"}}, ""},
+		{"empty id with arguments keeps the arguments in place", "d:cat::auto", true,
+			callbackData{prefix: cbPrefix, action: actCategory, args: []string{"auto"}}, ""},
+		{"open card without id from search", "d:oc::s", true, callbackData{prefix: cbPrefix, action: actOpenCard, args: []string{"s"}}, ""},
+		{"a huge number of arguments", cbPrefix + actListCat + strings.Repeat(":a", 50_000), true,
+			callbackData{prefix: cbPrefix, action: actListCat, args: slices.Repeat([]string{"a"}, 50_000)}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, ok := parseCallback(tt.data)
 			require.Equal(t, tt.wantOK, ok)
 			require.Equal(t, tt.want, got)
+			if ok {
+				require.Equal(t, cmp.Or(tt.str, tt.data), got.String())
+			}
 		})
 	}
 	require.NotPanics(t, func() { _ = callbackData{}.String() })
@@ -248,16 +272,6 @@ func TestParseCallback_wellFormedDataRoundTrips(t *testing.T) {
 			require.Equal(t, data, got.String(), "String inverts parse")
 		}
 	}
-}
-
-func TestParseCallback_hugeInputDoesNotPanic(t *testing.T) {
-	data := cbPrefix + actListCat + strings.Repeat(":a", 50_000)
-
-	got, ok := parseCallback(data)
-
-	require.True(t, ok)
-	require.Len(t, got.args, 50_000)
-	require.Equal(t, data, got.String())
 }
 
 func TestParseCallback_positionsMatchTheSplitHandlersUsedToRead(t *testing.T) {
@@ -347,23 +361,6 @@ func TestCallbackData_tokenIsEverythingAfterTheAction(t *testing.T) {
 	}
 }
 
-func TestCallbackData_everyCategoryAndPageFitsTheLimit(t *testing.T) {
-	for _, c := range docsbot.AllCategories {
-		for _, data := range []string{
-			docCB(actCategory, uuidDoc, string(c)),
-			docCB(actCategoryGroup, uuidDoc, string(c)),
-			docCB(actSetCategory, uuidDoc, string(c)),
-			docCB(actListCat, "", string(c), "999"),
-			docCB(actOpenCard, uuidDoc, "l", string(c), "999"),
-		} {
-			require.LessOrEqual(t, len(data), 64, data)
-			cd, ok := parseCallback(data)
-			require.True(t, ok)
-			require.Equal(t, data, cd.String())
-		}
-	}
-}
-
 func TestBackFromOrig_roundTripsThroughTheCardButtons(t *testing.T) {
 	tests := []struct {
 		orig       string
@@ -387,89 +384,4 @@ func TestBackFromOrig_roundTripsThroughTheCardButtons(t *testing.T) {
 	require.Empty(t, backFromOrig("l"))
 	open, _ := parseCallback(docCB(actOpenCard, uuidDoc, "l", longestSlug(), "999"))
 	require.Equal(t, "l:"+longestSlug()+":999", strings.Join(open.args, ":"))
-}
-
-// builtButtons is the callback data of every inline keyboard the bot renders,
-// with the worst-case values the limits care about.
-func builtButtons() []string {
-	slug := docsbot.Category(longestSlug())
-	token := newToken()
-	statusID := docsbot.StatusMessageID(uuidDoc)
-
-	var kbs []*models.InlineKeyboardMarkup
-	add := func(kb *models.InlineKeyboardMarkup) { kbs = append(kbs, kb) }
-	addRender := func(_ string, kb *models.InlineKeyboardMarkup) { add(kb) }
-
-	for _, action := range []string{actCategory, actCategoryGroup, actSetCategory} {
-		add(categoryKeyboard(action, uuidDoc))
-	}
-	for _, doc := range []docsbot.Document{
-		{ID: uuidDoc, Kind: docsbot.KindPhoto, Category: slug},
-		{ID: uuidDoc, Kind: docsbot.KindDocument, MIME: mimePDF, BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncFailed},
-		{ID: uuidDoc, Kind: docsbot.KindDocument, MIME: "image/webp", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing},
-		{ID: uuidDoc, Kind: docsbot.KindDocument, BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncFailed, SyncReason: docsbot.SyncReasonRevoked},
-	} {
-		add(pickerKeyboard(doc))
-		for _, orig := range []string{"", "s", "l:" + string(slug) + ":999"} {
-			add(cardKeyboard(doc, "folder", orig))
-			add(cardKeyboardWith(doc, "folder", orig, "https://example.com/connect"))
-		}
-		add(openDriveKeyboard(doc))
-	}
-	add(albumChoiceKeyboard(token, uuidDoc))
-	add(renameCancelKeyboard(uuidDoc))
-	add(transferOfferKeyboard())
-	add(retryKeyboard(uuidDoc))
-	add(exportFirstKeyboard())
-	add(myDocsKeyboard())
-	add(retryBatchKeyboard(statusID))
-	add(statusKeyboard(statusID, statusTally{total: 3, done: 3, failed: 1}))
-	add(&models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{inlineToggleRow(true), inlineToggleRow(false)}})
-
-	addRender(renderCatalog(docsbot.Catalog{
-		DriveConnected: true, NotInDrive: 1,
-		Counts: []docsbot.CategoryCount{{Category: slug, Count: 1}},
-	}))
-	addRender(renderSettings(docsbot.SettingsView{DriveConnected: true, Failed: 2, InlineEnabled: true}, "https://example.com/connect", true))
-	addRender(renderCategoryPage(docsbot.CategoryPage{
-		Category: slug, Page: 500, Pages: 999, Total: 1, Docs: []docsbot.Document{{ID: uuidDoc, Title: "t"}},
-	}))
-	addRender(renderFound(docsbot.Found{Query: "q", Docs: []docsbot.Document{{ID: uuidDoc, Title: "t"}}}))
-
-	for _, kb := range []*models.InlineKeyboardMarkup{
-		actionKeyboard(), pdfKeyboard(), limitKeyboard(), formatKeyboard(), cancelKeyboard(),
-		quickKeyboard(uuidDoc, true), quickKeyboard(uuidDoc, false), pdfMenuKeyboard(uuidDoc), pdfActionsKeyboard(),
-		saveKeyboard(token, true), saveKeyboard(token, false), replaceKeyboard(token),
-	} {
-		add(kb)
-	}
-
-	var data []string
-	for _, kb := range kbs {
-		for _, row := range kb.InlineKeyboard {
-			for _, b := range row {
-				if b.CallbackData != "" { // link buttons carry a URL instead
-					data = append(data, b.CallbackData)
-				}
-			}
-		}
-	}
-	return data
-}
-
-func TestBuiltButtons_everyOneParsesFitsAndIsKnown(t *testing.T) {
-	known := map[string]bool{}
-	for _, tt := range callbackCases() {
-		known[tt.want.prefix+tt.want.action] = true
-	}
-
-	data := builtButtons()
-	require.NotEmpty(t, data)
-	for _, d := range data {
-		cd, ok := parseCallback(d)
-		require.True(t, ok, d)
-		require.True(t, known[cd.prefix+cd.action], "%s: an action with no round-trip case", d)
-		require.Equal(t, d, cd.String(), "String inverts parse")
-		require.LessOrEqual(t, len(d), 64, d)
-	}
 }

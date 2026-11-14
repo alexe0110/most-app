@@ -122,12 +122,15 @@ func parseCallback(data string) (callbackData, bool) {
 	return cd, true
 }
 
-// String is the exact inverse of parseCallback.
+// String is the inverse of parseCallback for data that has something after the
+// action. An action that carries a document id writes its segment, even an empty
+// one, when arguments follow, so they keep their position. Data whose only
+// segment after the action is an empty id ("d:oc:") comes back without it.
 func (c callbackData) String() string {
 	var sb strings.Builder
 	sb.WriteString(c.prefix)
 	sb.WriteString(c.action)
-	if c.docID != "" {
+	if c.docID != "" || (len(c.args) > 0 && carriesDocID(c.prefix, c.action)) {
 		sb.WriteString(":" + string(c.docID))
 	}
 	for _, a := range c.args {
