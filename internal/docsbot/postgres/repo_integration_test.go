@@ -127,7 +127,7 @@ func TestRepo_integrationsAndFolders(t *testing.T) {
 // mustSave saves a pending document and requires that this call did the saving.
 func mustSave(t *testing.T, ctx context.Context, repo *adapters, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) {
 	t.Helper()
-	saved, err := repo.SaveChosen(ctx, docsbot.SaveChoice{User: user, ID: id, Category: cat})
+	saved, err := repo.SaveChosen(ctx, docsbot.SaveChoice{User: user, ID: id, Category: cat, Backup: docsbot.BackupNone})
 	require.NoError(t, err)
 	require.True(t, saved)
 }
@@ -152,7 +152,7 @@ func TestSaveChosen_parallelTapsSaveOnce(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			saved, err := repo.SaveChosen(ctx, docsbot.SaveChoice{User: user, ID: doc.ID, Category: docsbot.CatOther})
+			saved, err := repo.SaveChosen(ctx, docsbot.SaveChoice{User: user, ID: doc.ID, Category: docsbot.CatOther, Backup: docsbot.BackupNone})
 			assert.NoError(t, err)
 			if saved {
 				mu.Lock()
@@ -166,7 +166,7 @@ func TestSaveChosen_parallelTapsSaveOnce(t *testing.T) {
 	require.Equal(t, 1, wins)
 
 	// A second call on the saved document and one on a missing id save nothing.
-	saved, err := repo.SaveChosen(ctx, docsbot.SaveChoice{User: user, ID: doc.ID, Category: docsbot.CatOther})
+	saved, err := repo.SaveChosen(ctx, docsbot.SaveChoice{User: user, ID: doc.ID, Category: docsbot.CatOther, Backup: docsbot.BackupNone})
 	require.NoError(t, err)
 	require.False(t, saved)
 }
