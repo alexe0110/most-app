@@ -3,20 +3,18 @@
 insert into events (user_id, bot, name, props)
 values ($1, $2, $3, $4);
 
--- name: LockUser :exec
+-- name: LockUserFirstStart :one
 -- Serializes the first-start check of one user: two parallel /start commands must
--- not both see "no start yet".
-select id
+-- not both see "never started". The result is null for a user who has not started.
+select first_start_at
 from users
 where id = $1
 for update;
 
--- name: UserHasEvent :one
-select exists (select 1
-               from events
-               where user_id = $1
-                 and bot = $2
-                 and name = $3);
+-- name: MarkFirstStart :exec
+update users
+set first_start_at = now()
+where id = $1;
 
 -- name: DeleteUserEvents :exec
 delete

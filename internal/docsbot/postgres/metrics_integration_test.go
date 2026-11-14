@@ -173,6 +173,24 @@ func keys(m map[string]string) []string {
 	return out
 }
 
+// A start that is not the user's first (a user who existed before tracking, or whose
+// first start has expired) is no new user, even when it is the only start event left.
+func TestMetrics_startThatIsNotNewIsNoNewUser(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := t.Context()
+	var user string
+	require.NoError(t, pool.QueryRow(ctx, `insert into users (tg_user_id) values (1) returning id::text`).Scan(&user))
+	_, err := pool.Exec(ctx,
+		`insert into events (user_id, bot, name, props) values ($1::uuid, 'docs', 'start', '{"new":false}')`, user)
+	require.NoError(t, err)
+
+	for name, query := range metricQueries(t) {
+		if name == "sources_daily" || name == "sources_weekly" || name == "activation" || name == "retention" {
+			require.Empty(t, runMetric(t, pool, query), name)
+		}
+	}
+}
+
 func TestMetrics_emptyTables(t *testing.T) {
 	pool := dbtest.New(t)
 	for name, query := range metricQueries(t) {
@@ -182,7 +200,7 @@ func TestMetrics_emptyTables(t *testing.T) {
 	}
 }
 
-// New users are counted from their own docs start events: anonymous events, another
+// New users are counted from their own docs start events marked new: anonymous events, another
 // bot's start and a deleted user with no events left add nothing.
 func TestMetrics_newUsersCountOnlyTheirOwnDocsStarts(t *testing.T) {
 	pool := dbtest.New(t)
@@ -192,19 +210,19 @@ func TestMetrics_newUsersCountOnlyTheirOwnDocsStarts(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx, `insert into users (tg_user_id) values (2) returning id::text`).Scan(&other))
 	_, err := pool.Exec(ctx, `insert into users (tg_user_id, deleted_at) values (3, now())`)
 	require.NoError(t, err)
-	ev := func(user any, bot, name, ago string) {
+	ev := func(user any, bot, name, props, ago string) {
 		_, err := pool.Exec(ctx,
-			`insert into events (user_id, bot, name, created_at) values ($1::uuid, $2, $3, now() - $4::interval)`,
-			user, bot, name, ago)
+			`insert into events (user_id, bot, name, props, created_at) values ($1::uuid, $2, $3, $4::jsonb, now() - $5::interval)`,
+			user, bot, name, props, ago)
 		require.NoError(t, err)
 	}
-	ev(active, "docs", "start", "3 days")
-	ev(active, "docs", "start", "2 days") // a repeated /start is not a second new user
-	ev(active, "docs", "search", "2 days")
-	ev(active, "docs", "search", "2 days")
-	ev(nil, "docs", "data_deleted", "2 days")
-	ev(nil, "docs", "start", "2 days") // no user: not a new user
-	ev(other, "other", "start", "2 days")
+	ev(active, "docs", "start", `{"new":true}`, "3 days")
+	ev(active, "docs", "start", `{"new":false}`, "2 days") // a repeated /start is not a second new user
+	ev(active, "docs", "search", `{}`, "2 days")
+	ev(active, "docs", "search", `{}`, "2 days")
+	ev(nil, "docs", "data_deleted", `{}`, "2 days")
+	ev(nil, "docs", "start", `{"new":true}`, "2 days") // no user: not a new user
+	ev(other, "other", "start", `{"new":true}`, "2 days")
 	queries := metricQueries(t)
 
 	for _, name := range []string{"sources_daily", "sources_weekly", "activation"} {

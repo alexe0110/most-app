@@ -47,7 +47,7 @@ func (r *Documents) SavedForExport(ctx context.Context, user docsbot.UserID, lim
 }
 
 // DeleteUserData deletes the user's documents, drive_folders, integrations,
-// settings and events, clears their acquisition source and soft-deletes the
+// settings and events, clears their acquisition source and first-start mark and soft-deletes the
 // user, all in one transaction.
 func (r *Documents) DeleteUserData(ctx context.Context, user docsbot.UserID) error {
 	uid, err := parseUUID(string(user))

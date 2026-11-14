@@ -16,7 +16,7 @@ insert into users (tg_user_id, lang)
 values ($1, $2)
 on conflict (tg_user_id) do update
     set deleted_at = null
-returning id, tg_user_id, lang, created_at, deleted_at, source
+returning id, tg_user_id, lang, created_at, deleted_at, source, first_start_at
 `
 
 type EnsureUserParams struct {
@@ -36,12 +36,13 @@ func (q *Queries) EnsureUser(ctx context.Context, arg EnsureUserParams) (User, e
 		&i.CreatedAt,
 		&i.DeletedAt,
 		&i.Source,
+		&i.FirstStartAt,
 	)
 	return i, err
 }
 
 const getUserByTgID = `-- name: GetUserByTgID :one
-select id, tg_user_id, lang, created_at, deleted_at, source
+select id, tg_user_id, lang, created_at, deleted_at, source, first_start_at
 from users
 where tg_user_id = $1
   and deleted_at is null
@@ -57,6 +58,7 @@ func (q *Queries) GetUserByTgID(ctx context.Context, tgUserID int64) (User, erro
 		&i.CreatedAt,
 		&i.DeletedAt,
 		&i.Source,
+		&i.FirstStartAt,
 	)
 	return i, err
 }
@@ -77,12 +79,14 @@ func (q *Queries) GetUserTgID(ctx context.Context, id pgtype.UUID) (int64, error
 
 const softDeleteUser = `-- name: SoftDeleteUser :exec
 update users
-set deleted_at = now(),
-    source     = null
+set deleted_at     = now(),
+    source         = null,
+    first_start_at = null
 where id = $1
 `
 
-// The acquisition source is personal data too: it goes with the rest.
+// The acquisition source and the first-start mark go with the rest of the data:
+// a user who comes back after deleting everything is a stranger again.
 func (q *Queries) SoftDeleteUser(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, softDeleteUser, id)
 	return err

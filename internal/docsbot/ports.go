@@ -85,8 +85,8 @@ type Repo interface {
 	// olderThan, for users with an active Drive integration, oldest first.
 	StuckSyncs(ctx context.Context, olderThan time.Time, limit int) ([]StuckUpload, error)
 	// DeleteUserData deletes the user's documents, drive_folders, integrations and
-	// events, clears users.source and soft-deletes the user (users.deleted_at), all
-	// in one transaction.
+	// events, clears users.source and users.first_start_at and soft-deletes the user
+	// (users.deleted_at), all in one transaction.
 	DeleteUserData(ctx context.Context, user UserID) error
 }
 
@@ -270,8 +270,10 @@ type Events interface {
 	// Record stores one event; an empty Event.User stores it anonymously.
 	Record(ctx context.Context, e Event) error
 	// RecordStart stores a start event, with source and first as its props, in one
-	// transaction with the attribution: first is true when the user has no earlier
-	// start event. Only then source (if not empty) is written to users.source, and
-	// never over a stored one.
+	// transaction with the attribution: first is true when users.first_start_at is
+	// still empty, and it is set then. That mark is durable: neither the rollout of
+	// event tracking (existing users are backfilled) nor the expiry of old events
+	// makes a user new. Only on a first start is source (if not empty) written to
+	// users.source, and never over a stored one.
 	RecordStart(ctx context.Context, user UserID, source string) (first bool, err error)
 }

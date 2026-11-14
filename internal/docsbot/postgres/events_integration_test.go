@@ -161,6 +161,43 @@ func TestEvents_RecordStart_afterDataDeletionIsNewAgain(t *testing.T) {
 	require.Equal(t, "ad_2", userSource(t, pool, user))
 }
 
+// A user who existed before events were tracked has first_start_at backfilled by
+// the migration: their /start is not new and must not give them a source.
+func TestEvents_RecordStart_existingUserIsNotNew(t *testing.T) {
+	pool := dbtest.New(t)
+	repo := newAdapters(pool, noJobs{})
+	events := postgres.NewEvents(pool)
+	ctx := t.Context()
+	user := docsbot.UserID(makeUser(t, repo, 705).ID.String())
+	_, err := pool.Exec(ctx, `update users set first_start_at = created_at where id = $1`, string(user))
+	require.NoError(t, err)
+
+	first, err := events.RecordStart(ctx, user, "ad_1")
+	require.NoError(t, err)
+	require.False(t, first)
+	require.Empty(t, userSource(t, pool, user))
+}
+
+// Events expire after 180 days; the user must not become new again with them.
+func TestEvents_RecordStart_expiredStartsDoNotMakeTheUserNew(t *testing.T) {
+	pool := dbtest.New(t)
+	repo := newAdapters(pool, noJobs{})
+	events := postgres.NewEvents(pool)
+	ctx := t.Context()
+	user := docsbot.UserID(makeUser(t, repo, 706).ID.String())
+
+	first, err := events.RecordStart(ctx, user, "ad_1")
+	require.NoError(t, err)
+	require.True(t, first)
+	_, err = pool.Exec(ctx, `delete from events`) // what the purge does to old events
+	require.NoError(t, err)
+
+	again, err := events.RecordStart(ctx, user, "ad_2")
+	require.NoError(t, err)
+	require.False(t, again)
+	require.Equal(t, "ad_1", userSource(t, pool, user))
+}
+
 func TestEvents_failuresAreReturned(t *testing.T) {
 	pool := dbtest.New(t)
 	events := postgres.NewEvents(pool)

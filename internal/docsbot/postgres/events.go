@@ -51,19 +51,22 @@ func (r *Events) RecordStart(ctx context.Context, user docsbot.UserID, source st
 	}
 	var first bool
 	err = inTx(ctx, r.pool, func(q *Queries, _ pgx.Tx) error {
-		if err := q.LockUser(ctx, uid); err != nil {
+		startedAt, err := q.LockUserFirstStart(ctx, uid)
+		if err != nil {
 			return fmt.Errorf("lock user: %w", err)
 		}
-		seen, err := q.UserHasEvent(ctx, UserHasEventParams{UserID: uid, Bot: docsbot.BotName, Name: string(docsbot.EventStart)})
-		if err != nil {
-			return fmt.Errorf("check earlier start: %w", err)
-		}
-		first = !seen
+		first = !startedAt.Valid
 		e := docsbot.Event{User: user, Name: docsbot.EventStart, Props: docsbot.EventProps{Source: source, New: &first}}
 		if err := storeEvent(ctx, q, e); err != nil {
 			return err
 		}
-		if first && source != "" {
+		if !first {
+			return nil
+		}
+		if err := q.MarkFirstStart(ctx, uid); err != nil {
+			return fmt.Errorf("mark first start: %w", err)
+		}
+		if source != "" {
 			if err := q.SetUserSource(ctx, SetUserSourceParams{ID: uid, Source: pgtype.Text{String: source, Valid: true}}); err != nil {
 				return fmt.Errorf("set user source: %w", err)
 			}

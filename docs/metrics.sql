@@ -3,7 +3,8 @@
 --   psql "$DATABASE_URL" -f docs/metrics.sql   (выполнит все подряд)
 --
 -- Откуда данные: таблица events (docs/model.md) и users.source. «Новый
--- пользователь» — это его первое событие start; источник — payload этого
+-- пользователь» — это start с props.new = true (первый /start, отмечен в
+-- users.first_start_at; кто был в базе до появления событий, новым не считается); источник — payload этого
 -- /start (https://t.me/<бот>?start=<источник>, только a-z, 0-9 и _), без payload
 -- источник пуст и показывается как (none). Пользователь, удаливший данные, из
 -- метрик исчезает: его события и источник удалены. События хранятся 180 дней,
@@ -18,6 +19,7 @@ with first_start as (
     where name = 'start'
       and bot = 'docs'
       and user_id is not null
+      and (props->>'new')::boolean
     group by user_id
 )
 select (f.at at time zone 'UTC')::date as day,
@@ -38,6 +40,7 @@ with first_start as (
     where name = 'start'
       and bot = 'docs'
       and user_id is not null
+      and (props->>'new')::boolean
     group by user_id
 )
 select date_trunc('week', f.at at time zone 'UTC')::date as week,
@@ -59,6 +62,7 @@ with first_start as (
     where name = 'start'
       and bot = 'docs'
       and user_id is not null
+      and (props->>'new')::boolean
     group by user_id
 ),
      cohort as (
@@ -149,6 +153,7 @@ with first_start as (
     where name = 'start'
       and bot = 'docs'
       and user_id is not null
+      and (props->>'new')::boolean
     group by user_id
 ),
      activity as (
@@ -177,11 +182,11 @@ with first_start as (
 select week                                                                 as cohort_week,
        count(*)                                                             as new_users,
        round(100.0 * count(*) filter (where d1)
-                 / nullif(count(*) filter (where day0 <= current_date - 1), 0), 1)  as d1_pct,
+                 / nullif(count(*) filter (where day0 <= (now() at time zone 'UTC')::date - 1), 0), 1)  as d1_pct,
        round(100.0 * count(*) filter (where d7)
-                 / nullif(count(*) filter (where day0 <= current_date - 7), 0), 1)  as d7_pct,
+                 / nullif(count(*) filter (where day0 <= (now() at time zone 'UTC')::date - 7), 0), 1)  as d7_pct,
        round(100.0 * count(*) filter (where d30)
-                 / nullif(count(*) filter (where day0 <= current_date - 30), 0), 1) as d30_pct
+                 / nullif(count(*) filter (where day0 <= (now() at time zone 'UTC')::date - 30), 0), 1) as d30_pct
 from returns
 group by week
 order by week desc;

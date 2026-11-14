@@ -20,8 +20,10 @@ where id = $1
   and deleted_at is null;
 
 -- name: SoftDeleteUser :exec
--- The acquisition source is personal data too: it goes with the rest.
+-- The acquisition source and the first-start mark go with the rest of the data:
+-- a user who comes back after deleting everything is a stranger again.
 update users
-set deleted_at = now(),
-    source     = null
+set deleted_at     = now(),
+    source         = null,
+    first_start_at = null
 where id = $1;

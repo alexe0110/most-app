@@ -45,17 +45,30 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error 
 	return err
 }
 
-const lockUser = `-- name: LockUser :exec
-select id
+const lockUserFirstStart = `-- name: LockUserFirstStart :one
+select first_start_at
 from users
 where id = $1
 for update
 `
 
 // Serializes the first-start check of one user: two parallel /start commands must
-// not both see "no start yet".
-func (q *Queries) LockUser(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, lockUser, id)
+// not both see "never started". The result is null for a user who has not started.
+func (q *Queries) LockUserFirstStart(ctx context.Context, id pgtype.UUID) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, lockUserFirstStart, id)
+	var first_start_at pgtype.Timestamptz
+	err := row.Scan(&first_start_at)
+	return first_start_at, err
+}
+
+const markFirstStart = `-- name: MarkFirstStart :exec
+update users
+set first_start_at = now()
+where id = $1
+`
+
+func (q *Queries) MarkFirstStart(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markFirstStart, id)
 	return err
 }
 
@@ -75,25 +88,4 @@ type SetUserSourceParams struct {
 func (q *Queries) SetUserSource(ctx context.Context, arg SetUserSourceParams) error {
 	_, err := q.db.Exec(ctx, setUserSource, arg.ID, arg.Source)
 	return err
-}
-
-const userHasEvent = `-- name: UserHasEvent :one
-select exists (select 1
-               from events
-               where user_id = $1
-                 and bot = $2
-                 and name = $3)
-`
-
-type UserHasEventParams struct {
-	UserID pgtype.UUID
-	Bot    string
-	Name   string
-}
-
-func (q *Queries) UserHasEvent(ctx context.Context, arg UserHasEventParams) (bool, error) {
-	row := q.db.QueryRow(ctx, userHasEvent, arg.UserID, arg.Bot, arg.Name)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
 }

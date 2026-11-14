@@ -88,10 +88,11 @@ type StatusMessage struct {
 }
 
 type User struct {
-	ID        pgtype.UUID
-	TgUserID  int64
-	Lang      string
-	CreatedAt pgtype.Timestamptz
-	DeletedAt pgtype.Timestamptz
-	Source    pgtype.Text
+	ID           pgtype.UUID
+	TgUserID     int64
+	Lang         string
+	CreatedAt    pgtype.Timestamptz
+	DeletedAt    pgtype.Timestamptz
+	Source       pgtype.Text
+	FirstStartAt pgtype.Timestamptz
 }
