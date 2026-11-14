@@ -81,3 +81,103 @@ func TestService_Track_withoutEventsPort(t *testing.T) {
 		svc.Track(t.Context(), user, docsbot.EventSearch, docsbot.EventProps{})
 	})
 }
+
+// eventScenarios are the use cases that record a product event, each with the
+// exact events it must leave behind.
+func eventScenarios() []struct {
+	name string
+	run  func(t *testing.T, svc *docsbot.Service, repo *docsbottest.FakeRepo) error
+	want []docsbot.Event
+} {
+	pending := func(repo *docsbottest.FakeRepo, unique string, group string) docsbot.Document {
+		return repo.Seed(docsbot.Document{
+			UserID: user, Status: docsbot.StatusPending, Kind: docsbot.KindPhoto, MediaGroupID: group,
+			Title: "Секретное название", TgFileID: "file-id-secret", TgFileUniqueID: unique,
+		})
+	}
+	saved := docsbot.Event{
+		User: user, Name: docsbot.EventDocSaved,
+		Props: docsbot.EventProps{Category: docsbot.CatPassport, Kind: docsbot.KindPhoto},
+	}
+	return []struct {
+		name string
+		run  func(t *testing.T, svc *docsbot.Service, repo *docsbottest.FakeRepo) error
+		want []docsbot.Event
+	}{
+		{"doc saved once per document", func(t *testing.T, svc *docsbot.Service, repo *docsbottest.FakeRepo) error {
+			doc := pending(repo, "u1", "")
+			_, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
+			if err != nil {
+				return err
+			}
+			_, err = svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport) // repeated tap
+			return err
+		}, []docsbot.Event{saved}},
+		{"album saves every document", func(t *testing.T, svc *docsbot.Service, repo *docsbottest.FakeRepo) error {
+			first := pending(repo, "a1", "alb")
+			pending(repo, "a2", "alb")
+			_, err := svc.ChooseCategoryGroup(t.Context(), user, first.ID, docsbot.CatPassport)
+			return err
+		}, []docsbot.Event{saved, saved}},
+		{"derived copy is a saved document", func(t *testing.T, svc *docsbot.Service, repo *docsbottest.FakeRepo) error {
+			src := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatPassport, Title: "Паспорт"})
+			_, err := svc.SaveDerived(t.Context(), user, src.ID, docsbot.IncomingFile{
+				Kind: docsbot.KindDocument, FileID: "f", FileUniqueID: "d1", Title: "x",
+			}, " (PDF)")
+			return err
+		}, []docsbot.Event{{
+			User: user, Name: docsbot.EventDocSaved,
+			Props: docsbot.EventProps{Category: docsbot.CatPassport, Kind: docsbot.KindDocument},
+		}}},
+		{"card opened", func(t *testing.T, svc *docsbot.Service, repo *docsbottest.FakeRepo) error {
+			doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "Секретное название"})
+			_, err := svc.OpenCard(t.Context(), user, doc.ID)
+			return err
+		}, []docsbot.Event{{User: user, Name: docsbot.EventDocOpened}}},
+		{"card of a missing document is not an open", func(t *testing.T, svc *docsbot.Service, _ *docsbottest.FakeRepo) error {
+			_, err := svc.OpenCard(t.Context(), user, "missing")
+			require.ErrorIs(t, err, docsbot.ErrNotFound)
+			return nil
+		}, nil},
+		{"drive connected", func(t *testing.T, svc *docsbot.Service, _ *docsbottest.FakeRepo) error {
+			return svc.OnDriveConnected(t.Context(), user)
+		}, []docsbot.Event{{User: user, Name: docsbot.EventDriveConnected}}},
+		{"drive disconnected", func(t *testing.T, svc *docsbot.Service, _ *docsbottest.FakeRepo) error {
+			return svc.Disconnect(t.Context(), user)
+		}, []docsbot.Event{{User: user, Name: docsbot.EventDriveDisconnected}}},
+		{"export", func(t *testing.T, svc *docsbot.Service, _ *docsbottest.FakeRepo) error {
+			_, err := svc.ExportAll(t.Context(), user)
+			return err
+		}, []docsbot.Event{{User: user, Name: docsbot.EventExport}}},
+		{"data deleted is anonymous", func(t *testing.T, svc *docsbot.Service, _ *docsbottest.FakeRepo) error {
+			return svc.DeleteAllData(t.Context(), user)
+		}, []docsbot.Event{{Name: docsbot.EventDataDeleted}}},
+	}
+}
+
+func TestService_recordsEvents(t *testing.T) {
+	for _, tt := range eventScenarios() {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := docsbottest.NewFakeRepo()
+			svc, _ := edgeService(repo, docsbottest.FakeDrive{})
+
+			require.NoError(t, tt.run(t, svc, repo))
+
+			require.Equal(t, tt.want, repo.Events)
+		})
+	}
+}
+
+func TestService_eventWriteFailureChangesNothing(t *testing.T) {
+	for _, tt := range eventScenarios() {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := docsbottest.NewFakeRepo()
+			repo.EventsErr = errors.New("db down")
+			svc, _ := edgeService(repo, docsbottest.FakeDrive{})
+
+			require.NoError(t, tt.run(t, svc, repo), "the scenario succeeds without its event")
+
+			require.Empty(t, repo.Events)
+		})
+	}
+}

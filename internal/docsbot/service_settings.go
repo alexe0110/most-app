@@ -5,12 +5,14 @@ import (
 	"fmt"
 )
 
-// ResetDriveFolders clears the user's cached Drive folder ids, so folders are
-// found or created afresh (the Drive may now belong to another Google account).
-func (s *Service) ResetDriveFolders(ctx context.Context, user UserID) error {
+// OnDriveConnected is the use case of a finished Drive connect. It clears the
+// user's cached Drive folder ids, so folders are found or created afresh (the
+// Drive may now belong to another Google account).
+func (s *Service) OnDriveConnected(ctx context.Context, user UserID) error {
 	if err := s.folders.DeleteAllFolders(ctx, user); err != nil {
 		return fmt.Errorf("delete all folders: %w", err)
 	}
+	s.track(ctx, Event{User: user, Name: EventDriveConnected})
 	return nil
 }
 
@@ -67,6 +69,7 @@ func (s *Service) Disconnect(ctx context.Context, user UserID) error {
 	if err := s.repo.ResetPendingUploads(ctx, user); err != nil {
 		return fmt.Errorf("reset pending uploads: %w", err)
 	}
+	s.track(ctx, Event{User: user, Name: EventDriveDisconnected})
 	return nil
 }
 
@@ -82,6 +85,9 @@ func (s *Service) DeleteAllData(ctx context.Context, user UserID) error {
 	if err := s.repo.DeleteUserData(ctx, user); err != nil {
 		return fmt.Errorf("delete user data: %w", err)
 	}
+	// Anonymous: the user's own events went with their data, and this row keeps the
+	// deletion countable.
+	s.track(ctx, Event{Name: EventDataDeleted})
 	if revokeErr != nil {
 		return fmt.Errorf("revoke drive access: %w: %w", ErrRevokeIncomplete, revokeErr)
 	}
@@ -98,5 +104,6 @@ func (s *Service) ExportAll(ctx context.Context, user UserID) (Export, error) {
 	if err != nil {
 		return Export{}, fmt.Errorf("list for export: %w", err)
 	}
+	s.track(ctx, Event{User: user, Name: EventExport})
 	return Export{Docs: docs, Total: total, Truncated: total > exportLimit}, nil
 }

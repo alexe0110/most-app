@@ -241,6 +241,9 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 		}
 		return Saved{Doc: cur, Already: true}, nil
 	}
+	// Here, not in the callers: every path that saves a document (a button, an
+	// album, a derived copy) passes this point once, a repeated tap does not.
+	s.track(ctx, Event{User: user, Name: EventDocSaved, Props: EventProps{Category: cat, Kind: doc.Kind}})
 	doc.Category = cat
 	doc.Status = StatusSaved
 	if choice.Title != "" {

@@ -42,12 +42,12 @@ func TestService_Settings(t *testing.T) {
 	}, view)
 }
 
-func TestService_ResetDriveFolders(t *testing.T) {
+func TestService_OnDriveConnected_resetsFolders(t *testing.T) {
 	repo := docsbottest.NewFakeRepo()
 	repo.Folders = map[docsbot.Category]string{"passport": "f1", "insurance": "f2"}
 	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
-	require.NoError(t, svc.ResetDriveFolders(t.Context(), user))
+	require.NoError(t, svc.OnDriveConnected(t.Context(), user))
 	require.Empty(t, repo.Folders)
 }
 

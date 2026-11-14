@@ -2,6 +2,7 @@ package telegram_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -153,6 +154,38 @@ func TestInline_logsNoContent(t *testing.T) {
 	require.NotContains(t, buf.String(), "СекретныйТитул")
 	require.NotContains(t, buf.String(), "СекретныйЗапрос")
 	require.NotContains(t, buf.String(), "secret-file-id")
+}
+
+func TestInline_chosenResultRecordsInlineSent(t *testing.T) {
+	chosen := &models.Update{ChosenInlineResult: &models.ChosenInlineResult{
+		ResultID: "doc-secret-id", From: models.User{ID: 100}, Query: "СекретныйЗапрос",
+	}}
+
+	tests := []struct {
+		name      string
+		ctx       func(t *testing.T) context.Context
+		eventsErr error
+		want      []docsbot.Event
+	}{
+		{"known user", func(t *testing.T) context.Context {
+			return tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+		}, nil, []docsbot.Event{{User: docsbottest.TestUserID, Name: docsbot.EventInlineSent}}},
+		{"stranger is not counted", func(t *testing.T) context.Context { return t.Context() }, nil, nil},
+		{"write failure is absorbed", func(t *testing.T) context.Context {
+			return tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+		}, errors.New("db down"), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, sent, repo := newBot(t)
+			repo.EventsErr = tt.eventsErr
+
+			b.ProcessUpdate(tt.ctx(t), chosen)
+
+			require.Equal(t, tt.want, repo.Events, "no query text or result id in the event")
+			require.Empty(t, sent.texts, "nothing is sent to the chat")
+		})
+	}
 }
 
 func TestSettings_inlineToggle(t *testing.T) {

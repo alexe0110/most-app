@@ -121,6 +121,7 @@ func (c *Converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
 		c.show(ctx, b, chatID, msgID, textSendFailed, menu)
 		return
 	}
+	c.done(ctx, quickConvertOp(op))
 	c.finish(ctx, b, chatID, msgID)
 }
 

@@ -92,6 +92,7 @@ func (c *Converter) pdfOperation(ctx context.Context, b *bot.Bot, chatID, tgUser
 			fail(msgID, textSendFailed)
 			return
 		}
+		c.done(ctx, pdfConvertOp(op))
 		c.finish(ctx, b, chatID, msgID)
 		return
 	}
@@ -212,6 +213,7 @@ func (c *Converter) onRange(ctx context.Context, b *bot.Bot, update *models.Upda
 		again(textSendFailed)
 		return
 	}
+	c.done(ctx, pdfConvertOp(sess.pdfOp))
 	c.finish(ctx, b, chatID, msgID)
 }
 
@@ -331,6 +333,7 @@ func (c *Converter) finishMerge(ctx context.Context, b *bot.Bot, p press) {
 		c.retry(ctx, b, chatID, tgUser, sess, msgID, textSendFailed, pdfKeyboard())
 		return
 	}
+	c.done(ctx, docsbot.ConvertPDFMerge)
 	c.finish(ctx, b, chatID, msgID)
 }
 

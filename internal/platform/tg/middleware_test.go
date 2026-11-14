@@ -134,6 +134,20 @@ func TestEnsureUser_inlineQuery(t *testing.T) {
 		require.Zero(t, users.calls)
 	})
 
+	t.Run("chosen inline result: looked up like a query", func(t *testing.T) {
+		users := &fakeUsers{id: "user-1", found: true}
+		var gotID string
+		h := ensureUser(users, discardLog())(func(ctx context.Context, _ *bot.Bot, _ *models.Update) {
+			gotID, _ = UserIDFromContext(ctx)
+		})
+
+		h(context.Background(), nil, &models.Update{ChosenInlineResult: &models.ChosenInlineResult{From: models.User{ID: 42}}})
+
+		require.Equal(t, "user-1", gotID)
+		require.Zero(t, users.calls, "chosen inline result must not call Ensure")
+		require.Equal(t, int64(42), users.lookedUpTg)
+	})
+
 	t.Run("no sender: passes without lookup", func(t *testing.T) {
 		users := &fakeUsers{id: "user-1", found: true}
 		var nextCalled, gotOK bool
@@ -208,6 +222,7 @@ func TestPrivateOnly(t *testing.T) {
 		{"edited channel post", &models.Update{EditedChannelPost: &models.Message{Chat: models.Chat{ID: -1, Type: models.ChatTypeChannel}}}, false, false},
 		{"callback without message", &models.Update{CallbackQuery: &models.CallbackQuery{From: models.User{ID: 1}}}, false, false},
 		{"inline query", &models.Update{InlineQuery: &models.InlineQuery{From: &models.User{ID: 1}}}, true, false},
+		{"chosen inline result", &models.Update{ChosenInlineResult: &models.ChosenInlineResult{From: models.User{ID: 1}}}, true, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
