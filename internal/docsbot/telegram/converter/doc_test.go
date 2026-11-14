@@ -1,6 +1,8 @@
 package converter_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -238,4 +240,38 @@ func TestConvertDoc_strangerCannotSpendTheResult(t *testing.T) {
 	require.Len(t, h.repo.Docs, stored+1, "the owner's token survived the strangers")
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok))
 	require.Len(t, h.repo.Docs, stored+1, "and acts once")
+}
+
+// The stored document is fetched when the operation runs; if it can't be (deleted
+// from Telegram, over the limit, timeout) the user sees the failure on the menu
+// and can pick another operation.
+func TestConvertDoc_quickDownloadFailureKeepsTheMenu(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"file is gone", errors.New("get file: Bad Request: wrong file_id")},
+		{"file too large", fmt.Errorf("download: %w", tg.ErrFileTooLarge)},
+		{"timeout", fmt.Errorf("get file: %w", context.DeadlineExceeded)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newConvHarness(t)
+			src := seedSource(h, docsbot.StatusSaved)
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(src.ID)))
+			h.mu.Lock()
+			h.downloadErr = tt.err
+			h.mu.Unlock()
+
+			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":c1"))
+
+			require.Empty(t, h.docs)
+			require.Contains(t, h.lastShown(), "Не удалось получить файл")
+			h.mu.Lock()
+			last := h.editMarkups[len(h.editMarkups)-1]
+			h.mu.Unlock()
+			require.Contains(t, last, "conv:q:"+string(src.ID)+":c1", "the menu is back")
+		})
+	}
 }

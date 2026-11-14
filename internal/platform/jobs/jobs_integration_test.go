@@ -179,6 +179,24 @@ func TestClient_insertTxRollback(t *testing.T) {
 	require.Equal(t, 1, countRiverJobs(t, pool), "committed job must appear")
 }
 
+// TestInserter_insertTxRollback covers: the insert-only client enqueues inside the
+// caller's transaction, so a rollback leaves no job behind (what the document
+// queue relies on when its own write fails).
+func TestInserter_insertTxRollback(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := t.Context()
+	inserter, err := jobs.NewInserter(pool, discardLog())
+	require.NoError(t, err)
+
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	_, err = inserter.InsertTx(ctx, tx, okArgs{}, nil)
+	require.NoError(t, err)
+	require.NoError(t, tx.Rollback(ctx))
+
+	require.Equal(t, 0, countRiverJobs(t, pool))
+}
+
 // TestClient_restartDoesNotLoseJobs covers: a job inserted by a client that
 // never ran (a crash before processing) is picked up by a fresh client.
 func TestClient_restartDoesNotLoseJobs(t *testing.T) {

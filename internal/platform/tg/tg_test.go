@@ -98,21 +98,25 @@ func TestBot_Download_getFileTooBig(t *testing.T) {
 
 // A failed download must not carry the download link, which holds the bot token.
 func TestBot_Download_errorsDoNotLeakToken(t *testing.T) {
+	drop := func(w http.ResponseWriter, _ *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
+	}
 	tests := []struct {
-		name string
-		file http.HandlerFunc
+		name    string
+		getFile http.HandlerFunc
+		file    http.HandlerFunc
 	}{
-		{"connection dropped", func(w http.ResponseWriter, _ *http.Request) {
-			conn, _, err := w.(http.Hijacker).Hijack()
-			if err == nil {
-				_ = conn.Close()
-			}
-		}},
-		{"bad status", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadGateway) }},
+		{"getFile connection dropped", drop, fileBody(1)},
+		{"getFile bad status", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadGateway) }, fileBody(1)},
+		{"file connection dropped", fileInfo(1), drop},
+		{"file bad status", fileInfo(1), func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadGateway) }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := downloadBot(t, fileInfo(1), tt.file)
+			b := downloadBot(t, tt.getFile, tt.file)
 
 			_, _, err := b.Download(t.Context(), "f")
 

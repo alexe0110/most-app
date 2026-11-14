@@ -81,6 +81,9 @@ type convHarness struct {
 	photo []byte
 	// failDownloads makes every file download fail (after recording it).
 	failDownloads bool
+	// downloadErr, when set, is the error every file download fails with (after
+	// recording it); it takes precedence over failDownloads.
+	downloadErr error
 }
 
 // Download makes the harness the converter's file source: it records the file id,
@@ -91,9 +94,13 @@ func (h *convHarness) Download(_ context.Context, fileID string) ([]byte, string
 	data, ok := h.files[fileID]
 	gate := h.gate
 	fail := h.failDownloads
+	failWith := h.downloadErr
 	h.mu.Unlock()
 	if gate != nil {
 		<-gate
+	}
+	if failWith != nil {
+		return nil, "", failWith
 	}
 	if fail {
 		return nil, "", errors.New("download failed")

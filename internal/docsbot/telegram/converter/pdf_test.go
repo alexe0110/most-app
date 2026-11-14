@@ -2,6 +2,9 @@ package converter_test
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -324,4 +327,44 @@ func TestConvert_resultWithoutStoredFileLosesButtons(t *testing.T) {
 
 	require.Len(t, h.docs, 1)
 	require.Equal(t, 1, h.edits, "the dead buttons are removed")
+}
+
+// The photos are fetched when the PDF is built. A failure on any of them (gone,
+// too large for the Bot API, slow) keeps the collected pages so "done" can be
+// tapped again.
+func TestConvert_photosToPDF_downloadFailureKeepsThePages(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"file is gone", errors.New("get file: Bad Request: wrong file_id")},
+		{"file too large", fmt.Errorf("download: %w", tg.ErrFileTooLarge)},
+		{"timeout", fmt.Errorf("get file: %w", context.DeadlineExceeded)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newConvHarness(t)
+			ctx := t.Context()
+			h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
+			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:pdf"))
+			h.bot.ProcessUpdate(ctx, photoUpdate(1))
+			h.bot.ProcessUpdate(ctx, photoUpdate(2))
+
+			h.mu.Lock()
+			h.downloadErr = tt.err
+			h.mu.Unlock()
+			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
+
+			require.Empty(t, h.docs)
+			require.Contains(t, h.lastShown(), "Не удалось получить файл")
+
+			h.mu.Lock()
+			h.downloadErr = nil
+			h.mu.Unlock()
+			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
+
+			require.Len(t, h.docs, 1)
+			require.Contains(t, string(h.docs[0].data), "/Count 2", "both pages survived the failure")
+		})
+	}
 }
