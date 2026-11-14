@@ -110,16 +110,18 @@ func (c *Converter) pdfOperation(ctx context.Context, b *bot.Bot, chatID, tgUser
 	c.log.InfoContext(ctx, "pdf session", "user_id", user, "doc_id", src.docID, "op", op, "pages", pages, "in_bytes", len(data))
 	unlock := c.dialogue.lock(tgUser)
 	defer unlock()
-	if prev, ok := c.sessions.live(tgUser); ok {
-		c.sessions.end(tgUser)
+	// start replaces the user's own session and never refuses its owner, so the
+	// old one is left alone until the new one exists.
+	prev, hadPrev := c.sessions.live(tgUser)
+	if !c.sessions.start(tgUser) {
+		fail(msgID, textConvertBusy)
+		return
+	}
+	if hadPrev {
 		if prev.msgID != 0 {
 			c.out(b).ClearKeyboard(ctx, chatID, prev.msgID)
 		}
 		c.out(b).Send(ctx, chatID, textPDFPrevCancelled)
-	}
-	if !c.sessions.start(tgUser) {
-		fail(msgID, textConvertBusy)
-		return
 	}
 	next, prompt, kb := stepAwaitRange, textPDFRangePrompt, cancelKeyboard()
 	if op == opMerge {

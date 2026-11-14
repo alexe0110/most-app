@@ -311,10 +311,21 @@ func TestConvertPDF_newOperationCancelsLiveSession(t *testing.T) {
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":keep"))
 
+	h.mu.Lock()
+	editsBefore, eventsBefore := h.edits, len(h.events)
+	h.mu.Unlock()
+
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":merge"))
 
 	require.Contains(t, h.allTexts(), "Предыдущее преобразование отменено")
 	require.Contains(t, h.lastShown(), "Пришли PDF")
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	require.Equal(t, editsBefore+1, h.edits, "the old dialogue message loses its buttons")
+	require.Len(t, h.events[eventsBefore:], 3)
+	require.Contains(t, h.events[eventsBefore], "Обрабатываю", "progress note first")
+	require.Equal(t, "send:Предыдущее преобразование отменено.", h.events[eventsBefore+1])
+	require.Contains(t, h.events[eventsBefore+2], "Пришли PDF")
 }
 
 func TestConvert_resultWithoutStoredFileLosesButtons(t *testing.T) {
