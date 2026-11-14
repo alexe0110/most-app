@@ -220,7 +220,7 @@ func (d *docs) onCategoryGroup(ctx context.Context, b *bot.Bot, p press) {
 	case len(group.Docs) == 1:
 		d.editCard(ctx, b, chatID, msgID, group.Docs[0], "", "")
 	default:
-		text := fmt.Sprintf(textGroupSaved, len(group.Docs), plural(len(group.Docs), pluralFileOne, pluralFileFew, pluralFileMany), cat.Label())
+		text := fmt.Sprintf(textGroupSaved, len(group.Docs), plural(len(group.Docs), pluralDocumentOne, pluralDocumentFew, pluralDocumentMany), cat.Label())
 		if tooLarge > 0 {
 			text += "\n" + fmt.Sprintf(textGroupTooLarge, tooLarge)
 		}

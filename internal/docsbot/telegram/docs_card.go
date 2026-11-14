@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -93,8 +94,19 @@ func (d *docs) onRenamePrompt(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 	chatID, msgID := p.chatID, p.msgID
+	// The prompt replaces the card, so it repeats the current title.
+	card, err := d.svc.Card(ctx, p.user, id)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		d.gone(ctx, b, chatID, msgID)
+		return
+	}
+	if err != nil {
+		d.fail(ctx, b, chatID, "load card", err)
+		return
+	}
 	d.renames.Set(p.tgUser, renameEntry{id: id, chat: chatID, msg: msgID})
-	d.out(b).Edit(ctx, chatID, msgID, textRenamePrompt, tg.WithHTML(), tg.WithKeyboard(renameCancelKeyboard(id)))
+	prompt := fmt.Sprintf(textRenamePrompt, html.EscapeString(card.Doc.Title), docsbot.MaxTitleRunes)
+	d.out(b).Edit(ctx, chatID, msgID, prompt, tg.WithHTML(), tg.WithKeyboard(renameCancelKeyboard(id)))
 }
 
 // onRenameCancel drops the rename armed on this message, if any, and puts the
@@ -196,24 +208,33 @@ func (d *docs) onDeleteAsk(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 	chatID, msgID := p.chatID, p.msgID
+	card, err := d.svc.Card(ctx, user, id)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		d.gone(ctx, b, chatID, msgID)
+		return
+	}
+	if err != nil {
+		d.fail(ctx, b, chatID, "load card", err)
+		return
+	}
 	kb := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
 		{Text: btnDeleteYes, CallbackData: docCB(actDeleteYes, id)},
 		{Text: btnDeleteNo, CallbackData: docCB(actDeleteNo, id)},
 	}}}
-	d.out(b).Edit(ctx, chatID, msgID, d.deleteConfirmText(ctx, user, id), tg.WithKeyboard(kb))
+	d.out(b).Edit(ctx, chatID, msgID, d.deleteConfirmText(ctx, user, card.Doc), tg.WithKeyboard(kb))
 }
 
-// deleteConfirmText warns that the Drive file goes to the trash when the document
-// is in a connected Drive. Any lookup failure falls back to the plain text.
-func (d *docs) deleteConfirmText(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) string {
-	card, err := d.svc.Card(ctx, user, id)
-	if err != nil || !card.Doc.InDrive() {
-		return textDeleteConfirm
+// deleteConfirmText names the document and, when it is in a connected Drive,
+// warns that the Drive file goes to the trash. A failed Drive status falls back
+// to the plain text.
+func (d *docs) deleteConfirmText(ctx context.Context, user docsbot.UserID, doc docsbot.Document) string {
+	if !doc.InDrive() {
+		return fmt.Sprintf(textDeleteConfirm, doc.Title)
 	}
 	if connected, err := d.svc.DriveConnected(ctx, user); err != nil || !connected {
-		return textDeleteConfirm
+		return fmt.Sprintf(textDeleteConfirm, doc.Title)
 	}
-	return textDeleteConfirmDrive
+	return fmt.Sprintf(textDeleteConfirmDrive, doc.Title)
 }
 
 func (d *docs) onDeleteYes(ctx context.Context, b *bot.Bot, p press) {

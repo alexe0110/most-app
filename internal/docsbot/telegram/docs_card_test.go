@@ -129,7 +129,7 @@ func TestDeleteYes_returnsToOrigin(t *testing.T) {
 
 	open(first.ID)
 	b.ProcessUpdate(ctx, dataCallback("d:del:"+string(first.ID)))
-	require.True(t, has(sent.edits, "Удалить этот документ"), "edits %q", sent.edits)
+	require.True(t, has(sent.edits, "Удалить «Первый»?"), "edits %q", sent.edits)
 	b.ProcessUpdate(ctx, dataCallback("d:dy:"+string(first.ID)))
 	require.True(t, has(sent.edits, docsbot.CatPassport.Label()+" — 1"), "category page: %q", sent.edits)
 
@@ -207,7 +207,7 @@ func TestOpenCard_detectsFileDeletedInDrive(t *testing.T) {
 		wantRetry bool
 		wantOpen  bool
 	}{
-		{"file deleted", true, "Файл удалён в Google Диске, копия осталась в Telegram", true, false},
+		{"file deleted", true, "На Google Диске файла нет, копия осталась в Telegram", true, false},
 		{"file there", false, "Google Диск · копия в Telegram", false, true},
 	}
 	for _, tt := range tests {

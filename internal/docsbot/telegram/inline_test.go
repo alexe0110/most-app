@@ -193,18 +193,18 @@ func TestSettings_inlineToggle(t *testing.T) {
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	b.ProcessUpdate(ctx, commandUpdate("settings"))
-	require.True(t, has(sent.markups, "Отправка из любого чата: вкл"), "markups %q", sent.markups)
+	require.True(t, has(sent.markups, "Из любого чата: вкл"), "markups %q", sent.markups)
 	require.True(t, has(sent.markups, "d:inl:0"), "markups %q", sent.markups)
 
 	b.ProcessUpdate(ctx, dataCallback("d:inl:0"))
 	require.True(t, repo.InlineOff[docsbottest.TestUserID])
-	require.True(t, has(sent.editMarkups, "Отправка из любого чата: выкл"), "edits %q", sent.editMarkups)
+	require.True(t, has(sent.editMarkups, "Из любого чата: выкл"), "edits %q", sent.editMarkups)
 	require.True(t, has(sent.editMarkups, "d:inl:1"), "edits %q", sent.editMarkups)
 	require.Equal(t, []int{7}, sent.editIDs, "settings message is edited in place")
 
 	b.ProcessUpdate(ctx, dataCallback("d:inl:1"))
 	require.False(t, repo.InlineOff[docsbottest.TestUserID])
-	require.True(t, has(sent.editMarkups, "Отправка из любого чата: вкл"))
+	require.True(t, has(sent.editMarkups, "Из любого чата: вкл"))
 }
 
 func TestStart_inlinePayload(t *testing.T) {
@@ -226,7 +226,7 @@ func TestStart_inlinePayload(t *testing.T) {
 		repo.InlineOff = map[docsbot.UserID]bool{docsbottest.TestUserID: true}
 		b.ProcessUpdate(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID), start("/start inline"))
 		require.True(t, has(sent.texts, "Google Диск:"), "sent %q", sent.texts)
-		require.True(t, has(sent.markups, "Отправка из любого чата: выкл"), "markups %q", sent.markups)
+		require.True(t, has(sent.markups, "Из любого чата: выкл"), "markups %q", sent.markups)
 	})
 
 	t.Run("plain start unaffected when disabled", func(t *testing.T) {

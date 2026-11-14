@@ -62,7 +62,7 @@ func (d *docs) onInlineSwitch(ctx context.Context, b *bot.Bot, p press) {
 	}
 	d.log.InfoContext(ctx, "inline mode switched", "user_id", user, "enabled", on)
 	url, haveURL := d.connectURL(ctx, user)
-	text, kb := renderSettings(view, url, haveURL)
+	text, kb := renderSettings(view, url, haveURL, d.screenInfo())
 	d.out(b).Edit(ctx, chatID, msgID, text, tg.WithHTML(), tg.WithKeyboard(kb))
 	d.settingsMsgs.Set(chatID, msgID)
 }

@@ -29,8 +29,14 @@ func WithExportPace(file, perAlbumFile time.Duration) Option {
 	return func(d *docs) { d.pauseFile, d.pauseAlbum = file, perAlbumFile }
 }
 
-// WithDriveFolder sets the Drive root folder name shown in /start; an empty
-// name keeps the default.
+// WithBotUsername sets the bot's @username named in the texts that explain the
+// inline mode; without it those lines are left out.
+func WithBotUsername(name string) Option {
+	return func(d *docs) { d.botUsername = name }
+}
+
+// WithDriveFolder sets the Drive root folder name shown in /start and /settings;
+// an empty name keeps the default.
 func WithDriveFolder(name string) Option {
 	return func(d *docs) {
 		if name != "" {

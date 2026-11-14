@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"html"
 	"strconv"
 	"strings"
 
@@ -38,15 +39,21 @@ func renderCatalog(c docsbot.Catalog) (string, *models.InlineKeyboardMarkup) {
 	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
+// screenInfo is what the settings texts name that depends on the deployment.
+type screenInfo struct {
+	driveFolder string // Drive root folder
+	botUsername string // without @; empty leaves the inline hint out
+}
+
 // renderSettings draws the /settings screen: Drive state, document counts, and
 // the available actions. connectURL is the Google consent link; haveURL is false
 // when it could not be built (then no connect/reconnect button is shown).
-func renderSettings(v docsbot.SettingsView, connectURL string, haveURL bool) (string, *models.InlineKeyboardMarkup) {
+func renderSettings(v docsbot.SettingsView, connectURL string, haveURL bool, info screenInfo) (string, *models.InlineKeyboardMarkup) {
 	b := &strings.Builder{}
 	if v.DriveConnected {
 		b.WriteString(textSettingsOn)
 	} else {
-		b.WriteString(textSettingsOff)
+		fmt.Fprintf(b, textSettingsOff, html.EscapeString(info.driveFolder))
 	}
 	fmt.Fprintf(b, "\n\n"+textSettingsTotal, v.Total)
 	if v.DriveConnected {
@@ -55,6 +62,9 @@ func renderSettings(v docsbot.SettingsView, connectURL string, haveURL bool) (st
 	}
 	if v.Failed > 0 {
 		fmt.Fprintf(b, "\n"+textSettingsFailed, v.Failed)
+	}
+	if info.botUsername != "" {
+		fmt.Fprintf(b, "\n\n"+textSettingsInline, html.EscapeString(info.botUsername))
 	}
 
 	var rows [][]models.InlineKeyboardButton
@@ -171,7 +181,7 @@ func renderFound(f docsbot.Found) (string, *models.InlineKeyboardMarkup) {
 		return textSearchHint, nil
 	}
 	if len(f.Docs) == 0 {
-		return textNothingFound, nil
+		return fmt.Sprintf(textNothingFound, f.Query), nil
 	}
 	var rows [][]models.InlineKeyboardButton
 	for _, doc := range f.Docs {

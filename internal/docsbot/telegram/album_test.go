@@ -113,7 +113,7 @@ func TestAlbum_pickerSavesWholeAlbum(t *testing.T) {
 
 	require.Zero(t, pendingCount(repo))
 	require.Len(t, repo.SavedFor(docsbottest.TestUserID), 3)
-	require.True(t, has(sent.edits, "Сохранил 3 файла"), "edits %q", sent.edits)
+	require.True(t, has(sent.edits, "Сохранил 3 документа"), "edits %q", sent.edits)
 }
 
 func TestAlbum_twoAlbumsGetTwoPickers(t *testing.T) {

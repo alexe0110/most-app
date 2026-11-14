@@ -29,7 +29,7 @@ func TestRename_onStatusCardKeepsStatusRendering(t *testing.T) {
 			repo.Docs[id] = d
 
 			b.ProcessUpdate(ctx, dataCallbackMsg(11, "d:rn:"+string(id)))
-			require.Equal(t, "Пришли новое название", sent.edits[len(sent.edits)-1])
+			require.Equal(t, "Сейчас: «file0.pdf». Пришли новое название — до 100 символов.", sent.edits[len(sent.edits)-1])
 
 			if finish == "cancel" {
 				b.ProcessUpdate(ctx, dataCallbackMsg(11, "d:rnc:"+string(id)))
@@ -39,7 +39,7 @@ func TestRename_onStatusCardKeepsStatusRendering(t *testing.T) {
 			}
 
 			require.Equal(t, 11, sent.editIDs[len(sent.editIDs)-1])
-			require.Contains(t, sent.edits[len(sent.edits)-1], "❌", "the status storage line")
+			require.Contains(t, sent.edits[len(sent.edits)-1], "⚠️", "the status storage line")
 			require.Contains(t, sent.editMarkups[len(sent.editMarkups)-1], "d:rsm:", "the retry-batch row is kept")
 		})
 	}
@@ -71,7 +71,7 @@ func TestRename_statusRedrawEndsThePrompt(t *testing.T) {
 	for _, c := range e.api.callsOf("sendMessage") {
 		texts = append(texts, c.text)
 	}
-	require.True(t, has(texts, "Ничего не нашёл"), "answered as a search: %q", texts)
+	require.True(t, has(texts, "ничего нет"), "answered as a search: %q", texts)
 }
 
 func TestRename_editsCardInPlace(t *testing.T) {
@@ -83,7 +83,7 @@ func TestRename_editsCardInPlace(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallback("d:rn:"+string(doc.ID)))
 
 	prompt := sent.edits[len(sent.edits)-1]
-	require.Equal(t, "Пришли новое название", prompt, "the card message turns into the prompt")
+	require.Equal(t, "Сейчас: «Старое». Пришли новое название — до 100 символов.", prompt, "the card message turns into the prompt")
 	require.Equal(t, "d:rnc:"+string(doc.ID), cancelData(t, sent.editMarkups[len(sent.editMarkups)-1]))
 	require.Empty(t, sent.texts, "no separate prompt message, no force reply")
 
@@ -159,7 +159,7 @@ func TestRename_cancelRestoresCardAndIsRepeatable(t *testing.T) {
 	b.ProcessUpdate(ctx, textUpdateID(60, "Новое"))
 	require.Equal(t, "Старое", repo.Docs[doc.ID].Title)
 	require.Empty(t, sent.deleteIDs)
-	require.True(t, has(sent.texts, "Ничего не нашёл") || has(sent.texts, "Нашёл"), "texts %q", sent.texts)
+	require.True(t, has(sent.texts, "ничего нет") || has(sent.texts, "Нашёл"), "texts %q", sent.texts)
 }
 
 func TestRename_staleCancelHasNoSideEffects(t *testing.T) {
@@ -221,7 +221,7 @@ func TestRename_newPromptRestoresPreviousCard(t *testing.T) {
 
 	require.Equal(t, []int{7, 9}, sent.editIDs)
 	require.Contains(t, sent.edits[0], "Первое", "the first message is a card again")
-	require.Equal(t, "Пришли новое название", sent.edits[1])
+	require.Equal(t, "Сейчас: «Второе». Пришли новое название — до 100 символов.", sent.edits[1])
 	b.ProcessUpdate(ctx, textUpdateID(63, "Новое для второго"))
 	require.Equal(t, "Новое для второго", repo.Docs[c.ID].Title)
 	require.Equal(t, "Первое", repo.Docs[a.ID].Title)

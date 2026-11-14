@@ -66,7 +66,7 @@ func builtButtons() []string {
 		DriveConnected: true, NotInDrive: 1,
 		Counts: []docsbot.CategoryCount{{Category: slug, Count: 1}},
 	}))
-	addRender(renderSettings(docsbot.SettingsView{DriveConnected: true, Failed: 2, InlineEnabled: true}, "https://example.com/connect", true))
+	addRender(renderSettings(docsbot.SettingsView{DriveConnected: true, Failed: 2, InlineEnabled: true}, "https://example.com/connect", true, screenInfo{}))
 	addRender(renderCategoryPage(docsbot.CategoryPage{
 		Category: slug, Page: 500, Pages: 999, Total: 1, Docs: []docsbot.Document{{ID: uuidDoc, Title: "t"}},
 	}))

@@ -82,8 +82,8 @@ func TestRenderFound_opensCards(t *testing.T) {
 	require.True(t, strings.HasPrefix(btn.CallbackData, "d:oc:"))
 	require.True(t, strings.HasSuffix(btn.CallbackData, ":s"))
 
-	text, kb = renderFound(docsbot.Found{})
-	require.Equal(t, textNothingFound, text)
+	text, kb = renderFound(docsbot.Found{Query: "привет"})
+	require.Equal(t, "По запросу «привет» ничего нет. Я ищу по названиям и категориям — попробуй другое слово или открой /list.", text)
 	require.Nil(t, kb)
 }
 
@@ -251,7 +251,7 @@ func TestRenderCatalog_layout(t *testing.T) {
 
 func TestRenderSettings_noExportButton(t *testing.T) {
 	for _, connected := range []bool{false, true} {
-		_, kb := renderSettings(docsbot.SettingsView{DriveConnected: connected, Total: 5}, "https://x", true)
+		_, kb := renderSettings(docsbot.SettingsView{DriveConnected: connected, Total: 5}, "https://x", true, screenInfo{})
 		for _, row := range kb.InlineKeyboard {
 			for _, btn := range row {
 				require.NotEqual(t, "d:exp", btn.CallbackData)

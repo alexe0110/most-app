@@ -185,7 +185,7 @@ func TestNotifier_UploadOutcome_groupedEditsStatusMessage(t *testing.T) {
 	require.Len(t, edits, 1)
 	require.Equal(t, "70", edits[0].messageID)
 	require.Equal(t, "HTML", edits[0].parseMode)
-	require.Contains(t, edits[0].text, "⏳ Переношу на Google Диск · 1 из 2")
+	require.Contains(t, edits[0].text, "⏳ Загружаю на Google Диск · 1 из 2")
 	require.Empty(t, e.api.callsOf("sendMessage"), "no separate Выгружено notice for a batch")
 	require.False(t, e.status.Msgs[sm.ID].Closed, "still has a line in progress")
 }
@@ -199,7 +199,7 @@ func TestNotifier_UploadOutcome_closesWhenAllTerminal(t *testing.T) {
 	require.True(t, e.status.Msgs[sm.ID].Closed)
 	edits := e.api.callsOf("editMessageText")
 	require.Len(t, edits, 1)
-	require.Contains(t, edits[0].text, "⚠️ Не перенёс 1")
+	require.Contains(t, edits[0].text, "⚠️ Не загрузил 1")
 }
 
 func TestNotifier_UploadOutcome_editErrors(t *testing.T) {
@@ -235,7 +235,7 @@ func TestNotifier_UploadOutcome_editErrors(t *testing.T) {
 			}
 			require.Len(t, sends, 1)
 			require.Equal(t, "HTML", sends[0].parseMode)
-			require.Contains(t, sends[0].text, "⏳ Переношу на Google Диск · 1 из 2")
+			require.Contains(t, sends[0].text, "⏳ Загружаю на Google Диск · 1 из 2")
 			require.Equal(t, 500, e.status.Msgs[sm.ID].MessageID, "new message id is stored for later edits")
 		})
 	}
@@ -395,7 +395,7 @@ func TestNotifier_UploadOutcome_transferDoneText(t *testing.T) {
 
 	edits := e.api.callsOf("editMessageText")
 	require.Len(t, edits, 1)
-	require.Contains(t, edits[0].text, "✅ Перенёс на Google Диск — 3 документа")
+	require.Contains(t, edits[0].text, "✅ Загрузил на Google Диск 3 документа")
 }
 
 type failingLookup struct{ err error }

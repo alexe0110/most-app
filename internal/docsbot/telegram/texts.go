@@ -7,20 +7,21 @@ package telegram
 // Core flow texts.
 const (
 	// textStart is a format string: %s = Drive root folder name.
-	textStart = "Привет! Я Most Docs. Пришли документ — фото, PDF или файл, — " +
-		"я разложу его по категориям и найду по запросу. А ещё сожму фото и поработаю с PDF — команда /convert.\n\n" +
-		"Цель — хранить документы на твоём Google Диске. Пока Google Диск не подключён, " +
-		"они лежат во входящей папке в Telegram — можно начать без настройки.\n\n" +
-		"Подключишь Google Диск — бот будет видеть только файлы, которые сам создал. " +
-		"Он создаёт свою папку «%s» на твоём Диске и не видит папки, которые ты создаёшь сам, " +
-		"поэтому если у тебя уже есть папка с таким именем — появится вторая."
+	textStart = "Привет! Я Most Files — храню документы и быстро нахожу нужный.\n\n" +
+		"Пришли фото, PDF или файл: паспорт, полис, справку. Выбери категорию — и готово. " +
+		"Потом просто напиши «паспорт», и я пришлю документ.\n\n" +
+		"Документы хранятся в Telegram. Хочешь копию на своём Google Диске — подключи его в /settings: " +
+		"я создам там папку «%s» и буду видеть только то, что положу в неё сам."
 
+	// textHelp* are joined by helpText: the inline line needs the bot username.
 	textHelp = "Что я умею:\n" +
-		"• Приём документов — пришли фото, PDF или файл и выбери категорию.\n" +
-		"• /list — твои документы по категориям.\n" +
-		"• Поиск — напиши слово из названия.\n" +
-		"• /convert — фото → PDF, сжать изображение, действия с PDF: повернуть, оставить или убрать страницы, склеить.\n\n" +
-		"Цель — перенести документы на твой Google Диск; пока они хранятся в Telegram."
+		"• Сохраняю документы — пришли фото, PDF или файл и выбери категорию.\n" +
+		"• Нахожу — напиши слово из названия, например «полис».\n" +
+		"• /list — все документы по категориям.\n" +
+		"• /convert — фото в PDF, сжатие, страницы и склейка PDF.\n"
+	textHelpInline = "• В любом чате набери @%s и название — отправлю документ прямо туда.\n" // %s = bot username
+	textHelpTail   = "• /settings — Google Диск, отправка из чатов, удаление данных.\n\n" +
+		"Документы хранятся в Telegram, а после подключения Google Диска — ещё и на твоём Google Диске."
 
 	textDriveConnected = "Google Диск подключён ✅"
 
@@ -29,18 +30,18 @@ const (
 	textChooseCategoryAlbum = "Выбери категорию для альбома:"
 	textAlbumChoice         = "Альбом: %d %s. Что сделать?"                               // count, plural("изображение")
 	textAlbumDuplicates     = "Уже были сохранены: %d"                                    // %d = duplicate files
-	textGroupSaved          = "Сохранил %d %s в категории «%s»."                          // count, plural("файл"), category
+	textGroupSaved          = "Сохранил %d %s в «%s»."                                    // count, plural("документ"), category
 	textGroupTooLarge       = "Слишком большие для Google Диска, остались в Telegram: %d" // %d = files
-	textAlreadySaved        = "Этот файл уже сохранён."
-	textReplacedDone        = "♻️ Исходный файл заменён" // caption of the card after the converter replaced the file
+	textAlreadySaved        = "Этот документ у тебя уже есть:"
+	textReplacedDone        = "♻️ Оригинал заменён" // caption of the card after the converter replaced the file
 
-	textRenamePrompt  = "Пришли новое название"
+	textRenamePrompt  = "Сейчас: «%s». Пришли новое название — до %d символов." // title (HTML-escaped), docsbot.MaxTitleRunes
 	textRenameEmpty   = "Название пустое. Пришли новое название или нажми «Отмена»."
 	textRenameTooLong = "Название слишком длинное, максимум %d символов. Пришли покороче или нажми «Отмена»." // docsbot.MaxTitleRunes
 
-	textDeleteConfirm = "Удалить этот документ? Отменить будет нельзя."
+	textDeleteConfirm = "Удалить «%s»? Вернуть его будет нельзя." // %s = title
 	// textDeleteConfirmDrive is shown for a document in a connected Drive.
-	textDeleteConfirmDrive = "Удалить этот документ? Файл будет перемещён в корзину Google Диска."
+	textDeleteConfirmDrive = "Удалить «%s»? Файл на Google Диске попадёт в корзину — оттуда его можно восстановить в течение 30 дней." // %s = title
 	// textDeletedRemoteKept: the Drive file could not be trashed and stays.
 	textDeletedRemoteKept = "Документ удалён. На Google Диске файл остался — удали его вручную."
 	textDeleted           = "Документ удалён 🗑"
@@ -53,29 +54,30 @@ const (
 	toastNotRetryable = "Уже в работе или готово"
 
 	textCatalogEmpty = "Пока пусто — пришли документ, и он появится здесь."
-	textNothingFound = "Ничего не нашёл. Загляни в /list или пришли новый документ."
+	textNothingFound = "По запросу «%s» ничего нет. Я ищу по названиям и категориям — попробуй другое слово или открой /list." // %s = query
 	textSearchHint   = "Напиши, что искать: часть названия документа."
 
 	textOfferDrive = "Хочешь, чтобы документы лежали на твоём Google Диске? Подключи — " +
 		"новые файлы будут попадать туда автоматически, а бот увидит только то, что сам создал."
 
-	textTransferOffer     = "Перенести %d сохранённых документов на Google Диск?" // %d = count
+	textTransferOffer     = "Загрузить на Google Диск %d %s из Telegram?" // count, plural("документ")
 	textNothingToTransfer = "Всё уже на Google Диске."
-	textTransferDeclined  = "Хорошо. Перенести можно позже — в /list или /settings."
-	textBackedUp          = "☁️ «%s» теперь на Google Диске." // %s = title
-	textBackupFailed      = "Не удалось выгрузить документ на Google Диск. Попробовать ещё раз?"
-	textReconnect         = "Доступ к Google Диску отозван. Подключи заново, чтобы продолжить выгрузку."
-	textRetryQueued       = "Повторяю выгрузку на Google Диск."
-	textStatusMore        = "…и ещё %d" // %d = hidden titles
+	textTransferDeclined  = "Хорошо. Загрузить можно позже — в /list или /settings."
+	textBackedUp          = "☁️ «%s» теперь на Google Диске."                                // %s = title
+	textBackupFailed      = "Не удалось загрузить «%s» на Google Диск. Попробовать ещё раз?" // %s = title
+	textReconnect         = "Я потерял доступ к твоему Google Диску — возможно, его отключили в настройках Google. " +
+		"Документы в Telegram на месте. Подключи Google Диск заново — кнопкой ниже или в /settings."
+	textRetryQueued = "Повторяю загрузку на Google Диск."
+	textStatusMore  = "…и ещё %d" // %d = hidden titles
 
 	textStoragePending      = "⏳ Загружаю на Google Диск…"
 	textStorageInDrive      = "☁️ Google Диск · копия в Telegram"
-	textStorageFailed       = "❌ Не удалось выгрузить на Google Диск"
+	textStorageFailed       = "⚠️ Не удалось загрузить на Google Диск"
 	textStorageTooLarge     = "📥 Слишком большой для Google Диска"
 	textStorageSyncing      = "⏳ Обновляю на Google Диске…"
-	textStorageSyncFailed   = "⚠️ Не удалось обновить в Google Диске"
-	textStorageSyncRevoked  = "⚠️ Не удалось обновить в Google Диске: доступ отозван"
-	textStorageMissing      = "📥 Файл удалён в Google Диске, копия осталась в Telegram"
+	textStorageSyncFailed   = "⚠️ Не удалось обновить на Google Диске"
+	textStorageSyncRevoked  = "⚠️ Не удалось обновить на Google Диске: нет доступа"
+	textStorageMissing      = "📥 На Google Диске файла нет, копия осталась в Telegram"
 	textDriveFileStayed     = "На Google Диске файл остался в прежней папке"
 	textStorageTelegramOnly = "📥 Только в Telegram"
 
@@ -86,7 +88,7 @@ const (
 	textTooManyPending = "Этот файл я не сохранил: сначала выбери категорию для файлов выше. Потом пришли его ещё раз."
 	textRateLimited    = "Часть файлов я не сохранил — слишком много сразу. Подожди минуту и пришли их ещё раз."
 	textQuotaExceeded  = "Достигнут лимит документов (%d). Удали ненужные, чтобы добавить новые." // %d = docsbot.MaxDocumentsPerUser
-	textUnknown        = "Не понимаю эту команду. Я умею /start, /list, /convert и /help."
+	textUnknown        = "Такой команды нет. Вот что есть: /list, /convert, /settings, /help."
 	textError          = "Что-то пошло не так. Попробуй ещё раз."
 	textSendFailed     = "Не удалось отправить файл. Попробуй ещё раз."
 )
@@ -118,32 +120,32 @@ const (
 
 // Command menu descriptions (setMyCommands).
 const (
-	cmdDescStart    = "Начать работу"
+	cmdDescStart    = "Как начать"
 	cmdDescList     = "Мои документы по категориям"
-	cmdDescConvert  = "Фото → PDF или сжать изображение"
-	cmdDescSettings = "Подключить Google Диск"
+	cmdDescConvert  = "Фото в PDF, сжатие, работа с PDF"
+	cmdDescSettings = "Google Диск и мои данные"
 	cmdDescHelp     = "Что умеет бот"
 )
 
 // Settings, disconnect, export and delete texts.
 const (
-	textDisconnected = "Google Диск отключён. Новые документы останутся в Telegram, " +
-		"а уже выгруженные файлы и ссылки на них сохранены."
-	textNoFailed = "Документов с ошибкой выгрузки нет."
+	textDisconnected = "Google Диск отключён. Файлы, которые уже там, остались на месте. " +
+		"Новые документы будут храниться в Telegram. Подключить снова можно в /settings."
+	textNoFailed = "Документов с ошибкой загрузки нет."
 
 	textExportEmpty     = "Пока нечего присылать — сохранённых документов нет."
 	textExportRunning   = "Присылаю документы — подожди, пока закончу."
 	textExportStart     = "Присылаю твои документы…"
-	textExportDone      = "Готово — прислал %d документов."                                      // %d = count
+	textExportDone      = "Готово — прислал %d %s."                                              // count, plural("документ")
 	textExportTruncated = "Прислал %d из %d. Отправь /export ещё раз, чтобы получить остальные." // sent, total
 
 	textDeleteDataPrompt = "Это удалит все твои данные у бота: документы, категории и подключение к Google Диску.\n\n" +
-		"Файлы, уже выгруженные на твой Google Диск, останутся у тебя. Сообщения в этом чате бот удалить не может.\n\n" +
+		"Файлы, уже загруженные на твой Google Диск, останутся у тебя. Сообщения в этом чате бот удалить не может.\n\n" +
 		"Советую сначала забрать документы: кнопка ниже или команда /export.\n\n" +
-		"Чтобы подтвердить, пришли слово УДАЛИТЬ."
+		"Чтобы подтвердить, пришли слово УДАЛИТЬ. Любое другое сообщение отменит удаление."
 	textDataDeleted = "Данные удалены. Файлы на Google Диске остались у тебя; сообщения в этом чате можно удалить вручную.\n\n" +
 		"Напиши /start, чтобы начать заново."
-	textDeleteWrongWord = "Удаление отменено — слово не совпало."
+	textDeleteWrongWord = "Удаление отменено, твои данные на месте."
 )
 
 // Inline button labels for the core flow.
@@ -151,8 +153,8 @@ const (
 	btnConnectDrive       = "☁️ Подключить Google Диск"
 	btnCardSend           = "📤 Прислать"
 	btnCardOpen           = "☁️ Открыть"
-	btnOpenDrive          = "☁️ Открыть в Google Диске"
-	btnOpenFolder         = "📁 Папка в Google Диске"
+	btnOpenDrive          = "☁️ Открыть на Google Диске"
+	btnOpenFolder         = "📁 Папка на Google Диске"
 	btnOpenCategoryFolder = "📁 Папка категории"
 	btnRename             = "✏️ Имя"
 	btnChangeCat          = "🗂 Категория"
@@ -160,21 +162,21 @@ const (
 	btnDeleteYes          = "Да, удалить"
 	btnDeleteNo           = "Отмена"
 	btnRenameCancel       = "Отмена"
-	btnTransfer           = "📤 Перенести на Google Диск"
+	btnTransfer           = "☁️ Загрузить на Google Диск"
 	btnBack               = "⬅️ Назад"
 	btnMyDocs             = "📂 Мои документы"
 	btnBackToCats         = "⬅️ Категории"
-	btnTransferYes        = "Да, перенести"
+	btnTransferYes        = "Да, загрузить"
 	btnTransferNo         = "Не сейчас"
 	btnRetryBackup        = "🔁 Повторить"
-	btnReupload           = "☁️ Выгрузить заново"
-	btnReconnect          = "☁️ Переподключить Google Диск"
+	btnReupload           = "☁️ Загрузить заново"
+	btnReconnect          = "☁️ Подключить заново"
 	btnDisconnect         = "🔌 Отключить Google Диск"
-	btnRetryAll           = "🔁 Повторить выгрузку"
-	btnExportAll          = "📨 Сначала прислать все документы"
+	btnRetryAll           = "🔁 Повторить загрузку"
+	btnExportAll          = "📨 Прислать все документы"
 	btnDeleteData         = "🗑 Удалить мои данные"
-	btnInlineOn           = "💬 Отправка из любого чата: вкл"
-	btnInlineOff          = "💬 Отправка из любого чата: выкл"
+	btnInlineOn           = "💬 Из любого чата: вкл"
+	btnInlineOff          = "💬 Из любого чата: выкл"
 )
 
 // Inline mode: the button on top of the inline results (Telegram allows ~64 chars).
@@ -199,22 +201,27 @@ const (
 
 // Batch status message and /settings.
 const (
-	textStatusProgress    = "⏳ Переношу на Google Диск · %d из %d" // done, total
-	textStatusDone        = "✅ Перенёс на Google Диск — %d %s"     // backed up, plural("документ")
-	textStatusNotDone     = "⚠️ Не перенёс %d: %s"                 // count, reason
-	textStatusNotDoneList = "⚠️ Не перенёс %d:"                    // count; reasons follow
+	textStatusProgress    = "⏳ Загружаю на Google Диск · %d из %d" // done, total
+	textStatusDone        = "✅ Загрузил на Google Диск %d %s"      // backed up, plural("документ")
+	textStatusNotDone     = "⚠️ Не загрузил %d: %s"                // count, reason
+	textStatusNotDoneList = "⚠️ Не загрузил %d:"                   // count; reasons follow
 	textStatusReasonLine  = "• %s — %d"                            // reason, count
 	textStatusCategory    = "📁 %s · %d"                            // category label (maybe a link), count
-	textReasonQuota       = "нет места на Диске"
+	textReasonQuota       = "нет места на Google Диске"
 	textReasonRevoked     = "доступ отозван"
-	textReasonUnavailable = "сервис недоступен"
+	textReasonUnavailable = "Google Диск не отвечает"
 	textReasonTooLarge    = "больше %d МБ"
+	// textStatusQuotaHint follows the quota error: retrying cannot help until space is freed.
+	textStatusQuotaHint = "Освободи место на Google Диске и нажми «Повторить»."
 
-	textNotInDrive       = "📥 %d ещё не на Google Диске" // %d = documents
-	textSettingsOn       = "Google Диск: подключён ✅"
-	textSettingsOff      = "Google Диск: не подключён"
-	textSettingsTotal    = "Документов: %d"          // %d = all documents
-	textSettingsInDrive  = "☁️ На Google Диске: %d"  // %d = backed up
-	textSettingsTelegram = "📥 Только в Telegram: %d" // %d = documents
-	textSettingsFailed   = "⚠️ Не выгрузились: %d"   // %d = documents
+	textNotInDrive = "📥 %d ещё не на Google Диске" // %d = documents
+	textSettingsOn = "Google Диск: подключён ✅"
+	// textSettingsOff is a format string: %s = Drive root folder name.
+	textSettingsOff = "Google Диск: не подключён\n" +
+		"Подключи — документы будут копироваться в папку «%s» на твоём Google Диске. Я буду видеть только эту папку."
+	textSettingsInline   = "💬 Отправка из любого чата: набери @%s в любом чате." // %s = bot username
+	textSettingsTotal    = "Документов: %d"                                      // %d = all documents
+	textSettingsInDrive  = "☁️ На Google Диске: %d"                              // %d = backed up
+	textSettingsTelegram = "📥 Только в Telegram: %d"                             // %d = documents
+	textSettingsFailed   = "⚠️ Не загрузились: %d"                               // %d = documents
 )

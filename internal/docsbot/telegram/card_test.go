@@ -63,12 +63,12 @@ func TestCardText(t *testing.T) {
 		{
 			"file deleted in drive",
 			docsbot.Document{Title: "x", CreatedAt: created, BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing},
-			[]string{"📥 Файл удалён в Google Диске, копия осталась в Telegram"}, nil,
+			[]string{"📥 На Google Диске файла нет, копия осталась в Telegram"}, nil,
 		},
 		{
 			"sync failed keeps its line",
 			docsbot.Document{Title: "x", CreatedAt: created, BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncFailed},
-			[]string{"⚠️ Не удалось обновить в Google Диске"}, nil,
+			[]string{"⚠️ Не удалось обновить на Google Диске"}, nil,
 		},
 		{
 			"title is escaped",
@@ -187,7 +187,7 @@ func TestStorageLine(t *testing.T) {
 		{docsbot.BackupPending, "⏳ Загружаю на Google Диск…"},
 		{docsbot.BackupUploading, "⏳ Загружаю на Google Диск…"},
 		{docsbot.BackupBackedUp, "☁️ Google Диск · копия в Telegram"},
-		{docsbot.BackupFailed, "❌ Не удалось выгрузить на Google Диск"},
+		{docsbot.BackupFailed, "⚠️ Не удалось загрузить на Google Диск"},
 		{docsbot.BackupTooLarge, "📥 Слишком большой для Google Диска"},
 		{docsbot.BackupNone, "📥 Только в Telegram"},
 	}
@@ -198,7 +198,7 @@ func TestStorageLine(t *testing.T) {
 
 func TestStorageLine_fileDeletedInDrive(t *testing.T) {
 	doc := docsbot.Document{BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing}
-	require.Equal(t, "📥 Файл удалён в Google Диске, копия осталась в Telegram", storageLine(doc))
+	require.Equal(t, "📥 На Google Диске файла нет, копия осталась в Telegram", storageLine(doc))
 }
 
 func TestHumanSize_boundaries(t *testing.T) {

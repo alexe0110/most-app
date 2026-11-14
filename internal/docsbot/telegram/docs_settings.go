@@ -62,14 +62,28 @@ func (d *docs) settings(ctx context.Context, b *bot.Bot, u *models.Update) {
 // sendSettings sends the /settings screen for view.
 func (d *docs) sendSettings(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, view docsbot.SettingsView) {
 	url, haveURL := d.connectURL(ctx, user)
-	text, kb := renderSettings(view, url, haveURL)
+	text, kb := renderSettings(view, url, haveURL, d.screenInfo())
 	if id := d.out(b).Send(ctx, chatID, text, tg.WithHTML(), tg.WithKeyboard(kb)); id != 0 {
 		d.settingsMsgs.Set(chatID, id)
 	}
 }
 
 func (d *docs) help(ctx context.Context, b *bot.Bot, u *models.Update) {
-	d.out(b).Send(ctx, u.Message.Chat.ID, textHelp)
+	d.out(b).Send(ctx, u.Message.Chat.ID, d.helpText())
+}
+
+// helpText is /help; the inline-mode line is there only when the bot username is known.
+func (d *docs) helpText() string {
+	text := textHelp
+	if d.botUsername != "" {
+		text += fmt.Sprintf(textHelpInline, d.botUsername)
+	}
+	return text + textHelpTail
+}
+
+// screenInfo is the deployment-specific part of the settings texts.
+func (d *docs) screenInfo() screenInfo {
+	return screenInfo{driveFolder: d.driveFolder, botUsername: d.botUsername}
 }
 
 // onDisconnect turns Drive off and stops pending uploads, leaving stored

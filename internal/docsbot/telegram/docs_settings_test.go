@@ -104,7 +104,7 @@ func TestDeleteData_promptOffersExportFirst(t *testing.T) {
 	require.Contains(t, sent.texts[0], "УДАЛИТЬ")
 	require.Contains(t, sent.texts[0], "/export")
 	require.Contains(t, sent.markups[0], "d:exp")
-	require.Contains(t, sent.markups[0], "Сначала прислать все документы")
+	require.Contains(t, sent.markups[0], "Прислать все документы")
 }
 
 func TestDisconnect_clearsKeyboardWithEmptyArray(t *testing.T) {

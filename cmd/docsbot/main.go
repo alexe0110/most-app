@@ -106,7 +106,7 @@ func run() error {
 		BotURL:       botURL(cfg.TelegramBotUsername),
 	}, oauthStore, func(ctx context.Context, userID string) error {
 		return telegram.NotifyConnected(tgbot, users, svc, log,
-			telegram.WithConnectSettings(settingsMsgs, svc, oauthSvc))(ctx, userID)
+			telegram.WithConnectSettings(settingsMsgs, svc, oauthSvc), telegram.WithConnectBot(cfg.TelegramBotUsername))(ctx, userID)
 	}, log)
 	if err != nil {
 		return fmt.Errorf("new oauth service: %w", err)
@@ -120,7 +120,7 @@ func run() error {
 	}, docsbot.WithPageCounter(pageCounter{}), docsbot.WithLogger(log))
 
 	telegram.Register(tgbot.Client(), telegram.Deps{Log: log, Svc: svc, Auth: oauthSvc, Files: tgbot},
-		telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder))
+		telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder), telegram.WithBotUsername(cfg.TelegramBotUsername))
 	notifier := telegram.NewNotifier(tgbot, users, oauthSvc, svc, log, telegram.WithNotifierRenames(renames))
 
 	workers := river.NewWorkers()

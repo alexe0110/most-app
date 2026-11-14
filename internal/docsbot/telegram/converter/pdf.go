@@ -363,13 +363,11 @@ func pdfMenuKeyboard(id docsbot.DocumentID) *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
 		{
 			{Text: btnPDFRotate, CallbackData: quickCB(id, opRotate)},
-			{Text: btnPDFKeep, CallbackData: quickCB(id, opKeep)},
-			{Text: btnPDFDrop, CallbackData: quickCB(id, opDrop)},
-		},
-		{
 			{Text: btnPDFMerge, CallbackData: quickCB(id, opMerge)},
-			{Text: btnQuickCancel, CallbackData: cbMenuCancel},
 		},
+		{{Text: btnPDFKeep, CallbackData: quickCB(id, opKeep)}},
+		{{Text: btnPDFDrop, CallbackData: quickCB(id, opDrop)}},
+		{{Text: btnQuickCancel, CallbackData: cbMenuCancel}},
 	}}
 }
 
@@ -379,12 +377,10 @@ func pdfActionsKeyboard() *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
 		{
 			{Text: btnPDFRotate, CallbackData: cbSessRotate},
-			{Text: btnPDFKeep, CallbackData: cbSessKeep},
-		},
-		{
-			{Text: btnPDFDrop, CallbackData: cbSessDrop},
 			{Text: btnPDFMerge, CallbackData: cbSessMerge},
 		},
+		{{Text: btnPDFKeep, CallbackData: cbSessKeep}},
+		{{Text: btnPDFDrop, CallbackData: cbSessDrop}},
 		{{Text: btnCancel, CallbackData: cbCancel}},
 	}}
 }

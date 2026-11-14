@@ -133,7 +133,7 @@ func TestConvertDialogue_errorStaysInDialogue(t *testing.T) {
 	require.Equal(t, sends, h.sends(), "the error is an edit of the dialogue message")
 	require.Contains(t, h.lastShown(), "Так я пока не умею")
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:cancel", dialogue))
-	require.Contains(t, h.lastText(), "Режим конвертера выключен", "the session survived for a retry")
+	require.Contains(t, h.lastText(), "Вышел из конвертера", "the session survived for a retry")
 }
 
 func TestConvertDialogue_editAndSendBothFailKeepsMessage(t *testing.T) {
@@ -147,7 +147,7 @@ func TestConvertDialogue_editAndSendBothFailKeepsMessage(t *testing.T) {
 	h.failEdits, h.failSends = false, false
 
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:cancel", start))
-	require.Contains(t, h.lastText(), "Режим конвертера выключен", "the session still owns its dialogue message")
+	require.Contains(t, h.lastText(), "Вышел из конвертера", "the session still owns its dialogue message")
 }
 
 func TestConvert_newCommandStripsPreviousDialogue(t *testing.T) {
@@ -254,7 +254,7 @@ func TestConvertDialogue_resultSendFailureKeepsDialogue(t *testing.T) {
 			if tt.wantSession {
 				h.failDocs = false
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:cancel", dialogue))
-				require.Contains(t, h.lastText(), "Режим конвертера выключен", "the session is back for a retry")
+				require.Contains(t, h.lastText(), "Вышел из конвертера", "the session is back for a retry")
 			}
 		})
 	}
@@ -352,7 +352,7 @@ func TestConvert_cancelStripsDialogueKeyboard(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, commandUpdate("cancel"))
 
 	require.Equal(t, edits+1, h.edits, "the dialogue loses its buttons")
-	require.Contains(t, h.lastText(), "Режим конвертера выключен")
+	require.Contains(t, h.lastText(), "Вышел из конвертера")
 }
 
 const staleReply = "Кнопка устарела, открой заново."

@@ -34,7 +34,7 @@ func TestConvert_cancelReturnsToMainScenario(t *testing.T) {
 	// With the session gone, an unknown command falls through to the catch-all
 	// (plain text is now a search, which needs a stored user).
 	h.bot.ProcessUpdate(ctx, commandUpdate("foobar"))
-	require.Contains(t, h.lastText(), "Не понимаю")
+	require.Contains(t, h.lastText(), "Такой команды нет")
 }
 
 // Every finished conversion is one convert_done event naming only the operation.

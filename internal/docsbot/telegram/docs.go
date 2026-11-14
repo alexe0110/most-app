@@ -36,8 +36,10 @@ type docs struct {
 	// settingsMsgs remembers the /settings message per chat for the OAuth return.
 	settingsMsgs *tg.TTLMap[int64, int]
 	albums       *albumBuffer
-	// driveFolder is the Drive root folder name shown in /start.
+	// driveFolder is the Drive root folder name shown in /start and /settings.
 	driveFolder string
+	// botUsername is the bot's @username (without @), for the inline-mode hints; may be empty.
+	botUsername string
 	// albumPDFs makes the "one PDF" offer of an album; set by Register (the
 	// converter owns the PDF work). Nil: albums are always saved one by one.
 	albumPDFs albumPDFs

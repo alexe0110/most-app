@@ -16,9 +16,9 @@ const textStale = "Кнопка устарела, открой заново."
 
 // Converter mode (/convert) texts.
 const (
-	textConvertStart = "Что сделать?"
+	textConvertStart = "Что сделать? Выйти — /cancel."
 	// textConvertBusy answers a new /convert session while too many are open.
-	textConvertBusy = "Сейчас слишком много открытых сессий конвертера. Попробуй через несколько минут."
+	textConvertBusy = "Сейчас много запросов. Попробуй через пару минут."
 
 	textConvertPDFPrompt      = "Пришли фото — по одному или альбомом. Когда закончишь, нажми «Готово»."
 	textConvertPDFAccepted    = "Принято, страниц: %d. Пришли ещё или нажми «Готово»." // %d = pages so far
@@ -37,13 +37,13 @@ const (
 	textConvertTapButton = "Нажми кнопку выше или /cancel, чтобы выйти."
 	textConvertNoImages  = "Сначала пришли хотя бы одно фото."
 
-	textConvertUnsupported        = "Так я пока не умею. Пришли фото в JPEG, PNG или WEBP. Видео и другие форматы — позже."
+	textConvertUnsupported        = "Так я пока не умею. Пришли фото в JPG, PNG или WEBP. Видео и другие форматы — позже."
 	textConvertDownloadFailed     = "Не удалось получить файл. Попробуй ещё раз."
 	textConvertTooLarge           = "Изображение слишком большое. Пришли снимок поменьше."
 	textConvertFormatNotSupported = "Этот формат пока не поддерживается. Пришли JPG, PNG или WEBP."
-	textConvertFailed             = "Не удалось обработать изображение. Проверь, что это JPEG, PNG или WEBP."
+	textConvertFailed             = "Не удалось обработать изображение. Проверь, что это JPG, PNG или WEBP."
 
-	textConvertCancelled = "Режим конвертера выключен."
+	textConvertCancelled = "Вышел из конвертера. Новые файлы снова сохраняю в документы."
 	textConvertNothing   = "Сейчас нечего отменять."
 
 	textConvertProgress = "⏳ Обрабатываю…"
@@ -53,9 +53,9 @@ const (
 	textConvertSaving    = "💾 Сохраняю…"
 	textConvertResultOld = "Эта кнопка устарела. Преобразуй файл ещё раз."
 
-	textReplaceConfirm = "Исходный файл будет заменён"
-	textReplaceBusy    = "Подожди, файл ещё сохраняется"
-	textReplaceMissing = "Файл удалён в Google Диске: сначала «Выгрузить заново»"
+	textReplaceConfirm = "Заменить оригинал этим файлом? Старую версию вернуть будет нельзя."
+	textReplaceBusy    = "Подожди, файл ещё сохраняется."
+	textReplaceMissing = "Файла нет на Google Диске. Сначала нажми «☁️ Загрузить заново» в карточке документа."
 
 	textAlbumTooMany = "В один PDF помещается не больше %d страниц. Сохрани фото по одному."
 	textAlbumTooBig  = "Фото в альбоме больше %d МБ вместе — в один PDF не поместятся. Сохрани их по одному."
@@ -93,7 +93,7 @@ const (
 	btnLimit2MB    = "до 2 МБ"
 	btnLimit5MB    = "до 5 МБ"
 	btnLimitCustom = "Свой лимит"
-	btnJPEG        = "JPEG"
+	btnJPEG        = "JPG"
 	btnPNG         = "PNG"
 )
 
@@ -105,12 +105,12 @@ const (
 	btnQuickJPG        = "🖼 В JPG"
 	btnQuickPDF        = "📄 В PDF"
 	btnQuickCancel     = "✖️ Отмена"
-	btnPDFRotate       = "🔄 Повернуть ↻"
-	btnPDFKeep         = "✂️ Оставить стр."
-	btnPDFDrop         = "🗑 Убрать стр."
+	btnPDFRotate       = "🔄 Повернуть"
+	btnPDFKeep         = "✂️ Оставить страницы"
+	btnPDFDrop         = "➖ Убрать страницы"
 	btnPDFMerge        = "➕ Склеить"
 	btnSaveResult      = "💾 Сохранить в документы"
-	btnSkipResult      = "⬇️ Только файл"
+	btnSkipResult      = "Не сохранять"
 	btnSaveAsNew       = "💾 Сохранить как новый"
 	btnReplaceOriginal = "♻️ Заменить оригинал"
 	btnReplaceYes      = "Заменить"
