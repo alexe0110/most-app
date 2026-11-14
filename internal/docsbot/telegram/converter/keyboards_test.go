@@ -1,4 +1,4 @@
-package telegram
+package converter
 
 import (
 	"testing"
@@ -6,12 +6,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 func TestCallbackDataFitsTelegramLimit(t *testing.T) {
 	// A UUID doc id is the longest id we use (36 bytes).
 	id := docsbot.DocumentID("123e4567-e89b-12d3-a456-426614174000")
-	token := newToken()
+	token := tg.NewToken()
 
 	var data []string
 	for _, m := range quickKeyboard(id, true).InlineKeyboard {

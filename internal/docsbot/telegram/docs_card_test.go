@@ -2,6 +2,7 @@ package telegram_test
 
 import (
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/go-telegram/bot/models"
@@ -270,4 +271,45 @@ func TestDeleteYes_forgetsTheOriginOfTheMessage(t *testing.T) {
 	last := sent.editMarkups[len(sent.editMarkups)-1]
 	require.Contains(t, last, "d:snd:"+string(kept.ID), "the card is drawn")
 	require.NotContains(t, last, "⬅️ Назад", "no way back to a list the deleted card came from")
+}
+
+func TestCard_convertRowOnlyForConvertible(t *testing.T) {
+	tests := []struct {
+		name string
+		doc  docsbot.Document
+		want bool
+	}{
+		{"photo", docsbot.Document{Kind: docsbot.KindPhoto}, true},
+		{"png file", docsbot.Document{Kind: docsbot.KindDocument, MIME: "image/png"}, true},
+		{"pdf file", docsbot.Document{Kind: docsbot.KindDocument, MIME: "application/pdf"}, true},
+		{"word file", docsbot.Document{Kind: docsbot.KindDocument, MIME: "application/msword"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, sent, repo := newBot(t)
+			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			tt.doc.UserID, tt.doc.Status, tt.doc.Category = testUserID, docsbot.StatusSaved, docsbot.CatOther
+			tt.doc.Title, tt.doc.TgFileID, tt.doc.TgFileUniqueID = "Файл", "f", "u"
+			doc := repo.seed(tt.doc)
+
+			b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(doc.ID)+":s"))
+
+			require.Len(t, sent.editMarkups, 1)
+			require.Equal(t, tt.want, strings.Contains(sent.editMarkups[0], "conv:doc:"+string(doc.ID)), "%q", sent.editMarkups[0])
+		})
+	}
+}
+
+func TestCard_noConvertRowForHEIC(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := repo.seed(docsbot.Document{
+		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "image/heic",
+		Category: docsbot.CatOther, Title: "IMG.heic", TgFileID: "x", TgFileUniqueID: "heic-uniq",
+	})
+
+	b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(doc.ID)+":s"))
+
+	require.Len(t, sent.editMarkups, 1)
+	require.NotContains(t, sent.editMarkups[0], "conv:doc:")
 }

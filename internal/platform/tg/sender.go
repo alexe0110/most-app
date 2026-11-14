@@ -1,4 +1,4 @@
-package telegram
+package tg
 
 import (
 	"context"
@@ -17,42 +17,47 @@ import (
 // or deactivated their account. It is permanent, so callers must not retry.
 var errBlocked = errors.New("telegram: bot blocked by user")
 
-// sender is the only way the adapter talks to Telegram's message API: it traces
+// Sender is the only way a bot adapter talks to Telegram's message API: it traces
 // each call, classifies the error and logs a failure once. The plain methods log
 // a failure here (at Error) and return nothing, for handlers that can do no more.
-// The try methods log nothing and return the error: the caller owns it.
-type sender struct {
+// The Try methods log nothing and return the error: the caller owns it.
+type Sender struct {
 	api *bot.Bot
 	log *slog.Logger
 }
 
-// msgOpt tunes one sender call.
-type msgOpt func(*msgOpts)
+// NewSender makes a Sender over api that logs failures to log.
+func NewSender(api *bot.Bot, log *slog.Logger) Sender {
+	return Sender{api: api, log: log}
+}
+
+// MsgOpt tunes one Sender call.
+type MsgOpt func(*msgOpts)
 
 type msgOpts struct {
 	html    bool
 	caption bool
 	toast   string
-	hasKB   bool // withKeyboard was given, even with a nil keyboard
+	hasKB   bool // WithKeyboard was given, even with a nil keyboard
 	kb      *models.InlineKeyboardMarkup
 }
 
-// withHTML sends the text with HTML parse mode.
-func withHTML() msgOpt { return func(o *msgOpts) { o.html = true } }
+// WithHTML sends the text with HTML parse mode.
+func WithHTML() MsgOpt { return func(o *msgOpts) { o.html = true } }
 
-// withKeyboard sets the inline keyboard. A nil kb sends no keyboard with send,
-// and removes the keyboard with edit (an omitted reply_markup keeps the old one).
-func withKeyboard(kb *models.InlineKeyboardMarkup) msgOpt {
+// WithKeyboard sets the inline keyboard. A nil kb sends no keyboard with Send,
+// and removes the keyboard with Edit (an omitted reply_markup keeps the old one).
+func WithKeyboard(kb *models.InlineKeyboardMarkup) MsgOpt {
 	return func(o *msgOpts) { o.hasKB, o.kb = true, kb }
 }
 
-// withToast shows text as a pop-up when answering a callback query.
-func withToast(text string) msgOpt { return func(o *msgOpts) { o.toast = text } }
+// WithToast shows text as a pop-up when answering a callback query.
+func WithToast(text string) MsgOpt { return func(o *msgOpts) { o.toast = text } }
 
-// onCaption makes edit change the caption of a media message instead of its text.
-func onCaption() msgOpt { return func(o *msgOpts) { o.caption = true } }
+// OnCaption makes edit change the caption of a media message instead of its text.
+func OnCaption() MsgOpt { return func(o *msgOpts) { o.caption = true } }
 
-func collect(opts []msgOpt) msgOpts {
+func collect(opts []MsgOpt) msgOpts {
 	var o msgOpts
 	for _, opt := range opts {
 		opt(&o)
@@ -60,7 +65,7 @@ func collect(opts []msgOpt) msgOpts {
 	return o
 }
 
-// editMarkup is the reply_markup of an edit: omitted unless withKeyboard was
+// editMarkup is the reply_markup of an edit: omitted unless WithKeyboard was
 // given, and the explicit empty keyboard for a nil one.
 func (o msgOpts) editMarkup() models.ReplyMarkup {
 	switch {
@@ -72,15 +77,15 @@ func (o msgOpts) editMarkup() models.ReplyMarkup {
 	return o.kb
 }
 
-// send posts a message and returns its id, 0 if it failed (logged here).
-func (s sender) send(ctx context.Context, chatID int64, text string, opts ...msgOpt) int {
-	id, err := s.trySend(ctx, chatID, text, opts...)
-	s.logFailure(ctx, slog.LevelError, "send telegram message", err)
+// Send posts a message and returns its id, 0 if it failed (logged here).
+func (s Sender) Send(ctx context.Context, chatID int64, text string, opts ...MsgOpt) int {
+	id, err := s.TrySend(ctx, chatID, text, opts...)
+	s.LogFailure(ctx, slog.LevelError, "send telegram message", err)
 	return id
 }
 
-// trySend is send that returns the error instead of logging it.
-func (s sender) trySend(ctx context.Context, chatID int64, text string, opts ...msgOpt) (int, error) {
+// TrySend is Send that returns the error instead of logging it.
+func (s Sender) TrySend(ctx context.Context, chatID int64, text string, opts ...MsgOpt) (int, error) {
 	o := collect(opts)
 	params := &bot.SendMessageParams{ChatID: chatID, Text: text}
 	if o.html {
@@ -91,7 +96,7 @@ func (s sender) trySend(ctx context.Context, chatID int64, text string, opts ...
 	}
 	start := time.Now()
 	msg, err := s.api.SendMessage(ctx, params)
-	traceAPI(ctx, s.log, "sendMessage", start)
+	TraceAPI(ctx, s.log, "sendMessage", start)
 	if err != nil {
 		return 0, apiError("sendMessage", err)
 	}
@@ -101,19 +106,19 @@ func (s sender) trySend(ctx context.Context, chatID int64, text string, opts ...
 	return msg.ID, nil
 }
 
-// edit rewrites the text (or, with onCaption, the caption) of a message; a
+// Edit rewrites the text (or, with OnCaption, the caption) of a message; a
 // failure is logged here.
-func (s sender) edit(ctx context.Context, chatID int64, msgID int, text string, opts ...msgOpt) {
+func (s Sender) Edit(ctx context.Context, chatID int64, msgID int, text string, opts ...MsgOpt) {
 	what := "edit telegram message"
 	if collect(opts).caption {
 		what = "edit result caption"
 	}
-	s.logFailure(ctx, slog.LevelError, what, s.tryEdit(ctx, chatID, msgID, text, opts...))
+	s.LogFailure(ctx, slog.LevelError, what, s.TryEdit(ctx, chatID, msgID, text, opts...))
 }
 
-// tryEdit is edit that returns the error instead of logging it. "Message is not
+// TryEdit is Edit that returns the error instead of logging it. "Message is not
 // modified" is success: the message already looks as asked.
-func (s sender) tryEdit(ctx context.Context, chatID int64, msgID int, text string, opts ...msgOpt) error {
+func (s Sender) TryEdit(ctx context.Context, chatID int64, msgID int, text string, opts ...MsgOpt) error {
 	o := collect(opts)
 	var (
 		op  string
@@ -135,25 +140,25 @@ func (s sender) tryEdit(ctx context.Context, chatID int64, msgID int, text strin
 		}
 		_, err = s.api.EditMessageText(ctx, params)
 	}
-	traceAPI(ctx, s.log, op, start)
+	TraceAPI(ctx, s.log, op, start)
 	return editError(op, err)
 }
 
-// setKeyboard replaces the keyboard of a message and keeps its text; a nil kb
+// SetKeyboard replaces the keyboard of a message and keeps its text; a nil kb
 // removes the keyboard. A failure is logged here.
-func (s sender) setKeyboard(ctx context.Context, chatID int64, msgID int, kb *models.InlineKeyboardMarkup) {
-	o := collect([]msgOpt{withKeyboard(kb)})
+func (s Sender) SetKeyboard(ctx context.Context, chatID int64, msgID int, kb *models.InlineKeyboardMarkup) {
+	o := collect([]MsgOpt{WithKeyboard(kb)})
 	start := time.Now()
 	_, err := s.api.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
 		ChatID: chatID, MessageID: msgID, ReplyMarkup: o.editMarkup(),
 	})
-	traceAPI(ctx, s.log, "editMessageReplyMarkup", start)
-	s.logFailure(ctx, slog.LevelError, "edit telegram markup", editError("editMessageReplyMarkup", err))
+	TraceAPI(ctx, s.log, "editMessageReplyMarkup", start)
+	s.LogFailure(ctx, slog.LevelError, "edit telegram markup", editError("editMessageReplyMarkup", err))
 }
 
-// clearKeyboard removes the keyboard of a message and keeps its text.
-func (s sender) clearKeyboard(ctx context.Context, chatID int64, msgID int) {
-	s.setKeyboard(ctx, chatID, msgID, nil)
+// ClearKeyboard removes the keyboard of a message and keeps its text.
+func (s Sender) ClearKeyboard(ctx context.Context, chatID int64, msgID int) {
+	s.SetKeyboard(ctx, chatID, msgID, nil)
 }
 
 func editError(op string, err error) error {
@@ -163,39 +168,39 @@ func editError(op string, err error) error {
 	return apiError(op, err)
 }
 
-// delete removes a message; a failure is logged here.
-func (s sender) delete(ctx context.Context, chatID int64, msgID int) {
-	s.logFailure(ctx, slog.LevelError, "delete message", s.tryDelete(ctx, chatID, msgID))
+// Delete removes a message; a failure is logged here.
+func (s Sender) Delete(ctx context.Context, chatID int64, msgID int) {
+	s.LogFailure(ctx, slog.LevelError, "delete message", s.TryDelete(ctx, chatID, msgID))
 }
 
-// tryDelete is delete that returns the error instead of logging it.
-func (s sender) tryDelete(ctx context.Context, chatID int64, msgID int) error {
+// TryDelete is Delete that returns the error instead of logging it.
+func (s Sender) TryDelete(ctx context.Context, chatID int64, msgID int) error {
 	start := time.Now()
 	_, err := s.api.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: msgID})
-	traceAPI(ctx, s.log, "deleteMessage", start)
+	TraceAPI(ctx, s.log, "deleteMessage", start)
 	if err != nil {
 		return apiError("deleteMessage", err)
 	}
 	return nil
 }
 
-// answer stops the loading spinner of a pressed button, with a toast if given. A
+// Answer stops the loading spinner of a pressed button, with a toast if given. A
 // failure is logged here.
-func (s sender) answer(ctx context.Context, callbackID string, opts ...msgOpt) {
+func (s Sender) Answer(ctx context.Context, callbackID string, opts ...MsgOpt) {
 	o := collect(opts)
 	start := time.Now()
 	_, err := s.api.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: callbackID, Text: o.toast})
-	traceAPI(ctx, s.log, "answerCallbackQuery", start)
+	TraceAPI(ctx, s.log, "answerCallbackQuery", start)
 	if err != nil {
 		err = apiError("answerCallbackQuery", err)
 	}
-	s.logFailure(ctx, slog.LevelError, "answer callback", err)
+	s.LogFailure(ctx, slog.LevelError, "answer callback", err)
 }
 
-// logFailure is the one place a failed Telegram call is logged. An edit that
+// LogFailure is the one place a failed Telegram call is logged. An edit that
 // changes nothing is no failure, and a blocked bot is routine (Info, no ids, no
 // content); everything else is logged at level.
-func (s sender) logFailure(ctx context.Context, level slog.Level, what string, err error, attrs ...any) {
+func (s Sender) LogFailure(ctx context.Context, level slog.Level, what string, err error, attrs ...any) {
 	switch {
 	case err == nil || isNotModified(err):
 	case errors.Is(err, errBlocked):
@@ -205,13 +210,13 @@ func (s sender) logFailure(ctx context.Context, level slog.Level, what string, e
 	}
 }
 
-// ignoreBlocked turns errBlocked into nil, after logging it: the user left, which
+// IgnoreBlocked turns errBlocked into nil, after logging it: the user left, which
 // is not an error of the caller.
-func (s sender) ignoreBlocked(ctx context.Context, err error) error {
+func (s Sender) IgnoreBlocked(ctx context.Context, err error) error {
 	if !errors.Is(err, errBlocked) {
 		return err
 	}
-	s.logFailure(ctx, slog.LevelInfo, "notify user", err)
+	s.LogFailure(ctx, slog.LevelInfo, "notify user", err)
 	return nil
 }
 
@@ -235,9 +240,9 @@ func isNotModified(err error) bool {
 	return errMentions(err, "message is not modified")
 }
 
-// isMessageGone reports that the message to edit or delete no longer exists or
+// IsMessageGone reports that the message to edit or delete no longer exists or
 // can't be edited (too old, not the bot's own).
-func isMessageGone(err error) bool {
+func IsMessageGone(err error) bool {
 	return errMentions(err, "message to edit not found", "message can't be edited", "message to delete not found")
 }
 
@@ -261,8 +266,8 @@ func emptyKeyboard() *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}}
 }
 
-// traceAPI logs one Telegram API call at Debug: method and timing only. The
+// TraceAPI logs one Telegram API call at Debug: method and timing only. The
 // error, if any, is logged once by the caller.
-func traceAPI(ctx context.Context, log *slog.Logger, op string, start time.Time) {
+func TraceAPI(ctx context.Context, log *slog.Logger, op string, start time.Time) {
 	log.DebugContext(ctx, "telegram api", "op", op, "duration_ms", time.Since(start).Milliseconds())
 }

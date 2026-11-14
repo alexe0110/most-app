@@ -1,4 +1,4 @@
-package telegram_test
+package converter_test
 
 import (
 	"bytes"
@@ -14,7 +14,7 @@ func TestConvert_compressPreset(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
 	h.bot.ProcessUpdate(ctx, photoUpdate(1))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:limit2"))
@@ -33,7 +33,7 @@ func TestConvert_compressCustomLimit(t *testing.T) {
 	h.servePNG()
 	ctx := t.Context()
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
 	h.bot.ProcessUpdate(ctx, pngDocumentUpdate())
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:limitcustom"))
@@ -48,7 +48,7 @@ func TestConvert_customLimitRejectsJunk(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
 	h.bot.ProcessUpdate(ctx, photoUpdate(1))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:limitcustom"))
@@ -62,7 +62,7 @@ func TestConvert_customLimitRejectsJunk(t *testing.T) {
 func TestConvert_compressTwoImagesAskLimitOnce(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
 
 	var wg sync.WaitGroup
@@ -84,7 +84,7 @@ func TestConvert_compressTwoImagesAskLimitOnce(t *testing.T) {
 func TestConvert_compressDownloadsWhenItRuns(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:compress", h.lastMsg()))
 	h.bot.ProcessUpdate(ctx, photoUpdate(1))
 	limitMsg := h.lastMsg()

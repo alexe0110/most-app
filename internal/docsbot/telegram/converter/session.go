@@ -1,14 +1,13 @@
-package telegram
+package converter
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"slices"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // sessionTTL drops a session left idle this long. A restart drops all of them.
@@ -16,7 +15,7 @@ const sessionTTL = 15 * time.Minute
 
 // maxSessions caps the open sessions of all users: a flood of distinct users must
 // not grow the store without bound. Past it a new session is refused.
-const maxSessions = maxStoreEntries
+const maxSessions = tg.MaxStoreEntries
 
 // step is the current stage of a converter dialogue.
 type step int
@@ -266,7 +265,7 @@ type convResult struct {
 type convAlbum struct {
 	user   docsbot.UserID
 	group  string
-	images []albumImage // ordered by message id
+	images []AlbumImage // ordered by message id
 }
 
 // tokenMap holds values by a short token that rides in a button's callback data
@@ -274,7 +273,7 @@ type convAlbum struct {
 // owner, a Telegram user id, and is taken at most once. Memory only: a restart or
 // the TTL drops it, and the chat message stays.
 type tokenMap[V any] struct {
-	m *ttlMap[string, owned[V]]
+	m *tg.TTLMap[string, owned[V]]
 }
 
 type owned[V any] struct {
@@ -283,32 +282,25 @@ type owned[V any] struct {
 }
 
 func newTokenMap[V any](now func() time.Time) *tokenMap[V] {
-	return &tokenMap[V]{m: newTTLMap[string, owned[V]](sessionTTL, maxStoreEntries, now)}
-}
-
-// newToken returns a random 16-character token.
-func newToken() string {
-	var raw [8]byte
-	_, _ = rand.Read(raw[:]) // never fails on supported platforms
-	return hex.EncodeToString(raw[:])
+	return &tokenMap[V]{m: tg.NewTTLMap[string, owned[V]](sessionTTL, tg.MaxStoreEntries, now)}
 }
 
 // put stores v for owner under token, renewing its TTL.
 func (s *tokenMap[V]) put(token string, owner int64, v V) {
-	s.m.set(token, owned[V]{owner: owner, v: v})
+	s.m.Set(token, owned[V]{owner: owner, v: v})
 }
 
 // take removes and returns the owner's value, so a double tap acts once. A token
 // of another owner, an unknown or an expired one reports false; a foreign
 // attempt does not burn the owner's token.
 func (s *tokenMap[V]) take(token string, owner int64) (V, bool) {
-	e, ok := s.m.takeIf(token, func(e owned[V]) bool { return e.owner == owner })
+	e, ok := s.m.TakeIf(token, func(e owned[V]) bool { return e.owner == owner })
 	return e.v, ok
 }
 
 // peek returns the owner's value without removing it.
 func (s *tokenMap[V]) peek(token string, owner int64) (V, bool) {
-	e, ok := s.m.get(token)
+	e, ok := s.m.Get(token)
 	if !ok || e.owner != owner {
 		var zero V
 		return zero, false

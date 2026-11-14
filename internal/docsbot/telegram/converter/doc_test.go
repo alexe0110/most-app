@@ -1,4 +1,4 @@
-package telegram_test
+package converter_test
 
 import (
 	"fmt"
@@ -200,7 +200,7 @@ func TestConvert_commandResultSavedOnlyOnTap(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
 	h.bot.ProcessUpdate(ctx, photoUpdate(1))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:limit2"))
@@ -216,46 +216,6 @@ func TestConvert_commandResultSavedOnlyOnTap(t *testing.T) {
 	for _, d := range h.repo.docs {
 		require.Equal(t, docsbot.StatusSaved, d.Status)
 		require.Equal(t, docsbot.CatOther, d.Category)
-	}
-}
-
-func TestCard_convertRowOnlyForConvertible(t *testing.T) {
-	tests := []struct {
-		name string
-		doc  docsbot.Document
-		want bool
-	}{
-		{"photo", docsbot.Document{Kind: docsbot.KindPhoto}, true},
-		{"png file", docsbot.Document{Kind: docsbot.KindDocument, MIME: "image/png"}, true},
-		{"pdf file", docsbot.Document{Kind: docsbot.KindDocument, MIME: "application/pdf"}, true},
-		{"word file", docsbot.Document{Kind: docsbot.KindDocument, MIME: "application/msword"}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b, sent, repo := newBot(t)
-			ctx := tg.ContextWithUserID(t.Context(), testUserID)
-			tt.doc.UserID, tt.doc.Status, tt.doc.Category = testUserID, docsbot.StatusSaved, docsbot.CatOther
-			tt.doc.Title, tt.doc.TgFileID, tt.doc.TgFileUniqueID = "Файл", "f", "u"
-			doc := repo.seed(tt.doc)
-
-			b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(doc.ID)+":s"))
-
-			require.Len(t, sent.editMarkups, 1)
-			require.Equal(t, tt.want, strings.Contains(sent.editMarkups[0], "conv:doc:"+string(doc.ID)), "%q", sent.editMarkups[0])
-		})
-	}
-}
-
-func TestReceive_photoPickerOffersConvert(t *testing.T) {
-	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-
-	b.ProcessUpdate(ctx, photoUpdate(1))
-
-	require.Len(t, repo.docs, 1)
-	for id := range repo.docs {
-		require.Contains(t, sent.markups[0], "conv:doc:"+string(id))
-		require.Contains(t, sent.markups[0], "d:cat:"+string(id)+":passport", "category buttons stay")
 	}
 }
 

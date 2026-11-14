@@ -1,4 +1,4 @@
-package telegram_test
+package converter_test
 
 import (
 	"fmt"
@@ -15,7 +15,7 @@ import (
 func TestConvertPDF_photosShowOneAcceptedMessage(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:pdf", h.lastMsg()))
 
 	var live []int // dialogue messages that were not deleted
@@ -36,7 +36,7 @@ func TestConvertPDF_photosShowOneAcceptedMessage(t *testing.T) {
 func TestConvertPDF_fileTipOncePerUser(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:pdf", h.lastMsg()))
 
 	h.bot.ProcessUpdate(ctx, photoUpdate(1))
@@ -46,7 +46,7 @@ func TestConvertPDF_fileTipOncePerUser(t *testing.T) {
 
 	// A file (not a compressed photo) never gets it.
 	h2 := newConvHarness(t)
-	h2.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h2.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h2.bot.ProcessUpdate(ctx, callbackOn("conv:pdf", h2.lastMsg()))
 	h2.bot.ProcessUpdate(ctx, namedDocumentUpdate("doc", "image/jpeg", "a.jpg"))
 	require.NotContains(t, h2.lastText(), "как файл")
@@ -73,7 +73,7 @@ func TestConvertCompress_formatQuestionOnlyForPNG(t *testing.T) {
 				h.servePNG()
 			}
 			ctx := t.Context()
-			h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+			h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:compress", h.lastMsg()))
 			if tt.png {
 				h.bot.ProcessUpdate(ctx, pngDocumentUpdate())
@@ -103,7 +103,7 @@ func TestConvertPDFActions_fromCommand(t *testing.T) {
 		h := newConvHarness(t)
 		h.serve("pdf-in", testPDF(t, 3))
 		ctx := t.Context()
-		h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+		h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 		require.Contains(t, h.lastMarkup(), "conv:pdfops")
 		h.bot.ProcessUpdate(ctx, callbackOn("conv:pdfops", h.lastMsg()))
 		require.Contains(t, h.lastShown(), "PDF файлом")
@@ -186,7 +186,7 @@ func TestConvertCompress_resultNameFollowsTheSentFile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newConvHarness(t)
 			ctx := t.Context()
-			h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+			h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:compress", h.lastMsg()))
 			tt.send(h)
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:limit1", h.lastMsg()))

@@ -1,4 +1,4 @@
-package telegram
+package converter
 
 import (
 	"github.com/go-telegram/bot/models"

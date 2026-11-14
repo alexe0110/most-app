@@ -1,4 +1,4 @@
-package telegram
+package tg
 
 import (
 	"bytes"
@@ -74,7 +74,7 @@ func (s *sendServer) last(t *testing.T) apiRequest {
 	return s.reqs[len(s.reqs)-1]
 }
 
-func newSendEnv(t *testing.T, level slog.Level) (sender, *sendServer, *bytes.Buffer) {
+func newSendEnv(t *testing.T, level slog.Level) (Sender, *sendServer, *bytes.Buffer) {
 	t.Helper()
 	srv := &sendServer{}
 	ts := httptest.NewServer(srv)
@@ -83,7 +83,7 @@ func newSendEnv(t *testing.T, level slog.Level) (sender, *sendServer, *bytes.Buf
 	require.NoError(t, err)
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: level}))
-	return sender{api: api, log: log}, srv, &buf
+	return Sender{api: api, log: log}, srv, &buf
 }
 
 var sendTestKeyboard = &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{{Text: "Go", CallbackData: "x"}}}}
@@ -117,7 +117,7 @@ func TestSender_classifiesRealTelegramErrors(t *testing.T) {
 			err = apiError("editMessageText", err)
 
 			require.Equal(t, tt.notModified, isNotModified(err))
-			require.Equal(t, tt.gone, isMessageGone(err))
+			require.Equal(t, tt.gone, IsMessageGone(err))
 			require.Equal(t, tt.blocked, errors.Is(err, errBlocked))
 		})
 	}
@@ -127,7 +127,7 @@ func TestSender_classifiersAcceptNil(t *testing.T) {
 	t.Parallel()
 
 	require.False(t, isNotModified(nil))
-	require.False(t, isMessageGone(nil))
+	require.False(t, IsMessageGone(nil))
 }
 
 func TestSender_keyboardOnTheWire(t *testing.T) {
@@ -135,40 +135,40 @@ func TestSender_keyboardOnTheWire(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		call       func(sender, context.Context)
+		call       func(Sender, context.Context)
 		method     string
 		wantMarkup string // "" means the field must be absent
 	}{
-		{"send without keyboard", func(s sender, ctx context.Context) { s.send(ctx, 42, "hi") }, "sendMessage", ""},
-		{"send with a nil keyboard omits reply_markup", func(s sender, ctx context.Context) {
-			s.send(ctx, 42, "hi", withKeyboard(nil))
+		{"send without keyboard", func(s Sender, ctx context.Context) { s.Send(ctx, 42, "hi") }, "sendMessage", ""},
+		{"send with a nil keyboard omits reply_markup", func(s Sender, ctx context.Context) {
+			s.Send(ctx, 42, "hi", WithKeyboard(nil))
 		}, "sendMessage", ""},
-		{"send keeps the keyboard", func(s sender, ctx context.Context) {
-			s.send(ctx, 42, "hi", withKeyboard(sendTestKeyboard))
+		{"send keeps the keyboard", func(s Sender, ctx context.Context) {
+			s.Send(ctx, 42, "hi", WithKeyboard(sendTestKeyboard))
 		}, "sendMessage", sendTestKeyboardJSON},
-		{"trySend with a nil keyboard omits reply_markup", func(s sender, ctx context.Context) {
-			_, _ = s.trySend(ctx, 42, "hi", withKeyboard(nil))
+		{"trySend with a nil keyboard omits reply_markup", func(s Sender, ctx context.Context) {
+			_, _ = s.TrySend(ctx, 42, "hi", WithKeyboard(nil))
 		}, "sendMessage", ""},
-		{"edit without withKeyboard keeps the old keyboard", func(s sender, ctx context.Context) {
-			s.edit(ctx, 42, 7, "hi")
+		{"edit without WithKeyboard keeps the old keyboard", func(s Sender, ctx context.Context) {
+			s.Edit(ctx, 42, 7, "hi")
 		}, "editMessageText", ""},
-		{"edit with a nil keyboard clears it", func(s sender, ctx context.Context) {
-			s.edit(ctx, 42, 7, "hi", withKeyboard(nil))
+		{"edit with a nil keyboard clears it", func(s Sender, ctx context.Context) {
+			s.Edit(ctx, 42, 7, "hi", WithKeyboard(nil))
 		}, "editMessageText", `{"inline_keyboard":[]}`},
-		{"edit keeps the keyboard", func(s sender, ctx context.Context) {
-			s.edit(ctx, 42, 7, "hi", withKeyboard(sendTestKeyboard))
+		{"edit keeps the keyboard", func(s Sender, ctx context.Context) {
+			s.Edit(ctx, 42, 7, "hi", WithKeyboard(sendTestKeyboard))
 		}, "editMessageText", sendTestKeyboardJSON},
-		{"tryEdit with a nil keyboard clears it", func(s sender, ctx context.Context) {
-			_ = s.tryEdit(ctx, 42, 7, "hi", withKeyboard(nil))
+		{"tryEdit with a nil keyboard clears it", func(s Sender, ctx context.Context) {
+			_ = s.TryEdit(ctx, 42, 7, "hi", WithKeyboard(nil))
 		}, "editMessageText", `{"inline_keyboard":[]}`},
-		{"edit caption with a nil keyboard clears it", func(s sender, ctx context.Context) {
-			s.edit(ctx, 42, 7, "cap", onCaption(), withKeyboard(nil))
+		{"edit caption with a nil keyboard clears it", func(s Sender, ctx context.Context) {
+			s.Edit(ctx, 42, 7, "cap", OnCaption(), WithKeyboard(nil))
 		}, "editMessageCaption", `{"inline_keyboard":[]}`},
-		{"clearKeyboard sends an empty array, not null", func(s sender, ctx context.Context) {
-			s.clearKeyboard(ctx, 42, 7)
+		{"clearKeyboard sends an empty array, not null", func(s Sender, ctx context.Context) {
+			s.ClearKeyboard(ctx, 42, 7)
 		}, "editMessageReplyMarkup", `{"inline_keyboard":[]}`},
-		{"setKeyboard replaces the keyboard", func(s sender, ctx context.Context) {
-			s.setKeyboard(ctx, 42, 7, sendTestKeyboard)
+		{"setKeyboard replaces the keyboard", func(s Sender, ctx context.Context) {
+			s.SetKeyboard(ctx, 42, 7, sendTestKeyboard)
 		}, "editMessageReplyMarkup", sendTestKeyboardJSON},
 	}
 	for _, tt := range tests {
@@ -195,26 +195,26 @@ func TestSender_sendsTextOptions(t *testing.T) {
 	t.Parallel()
 	s, srv, _ := newSendEnv(t, slog.LevelDebug)
 
-	require.Equal(t, 9, s.send(t.Context(), 42, "<b>hi</b>", withHTML()))
+	require.Equal(t, 9, s.Send(t.Context(), 42, "<b>hi</b>", WithHTML()))
 	require.Equal(t, models.ParseModeHTML, models.ParseMode(srv.last(t).form["parse_mode"]))
 
-	s.send(t.Context(), 42, "plain")
+	s.Send(t.Context(), 42, "plain")
 	require.Empty(t, srv.last(t).form["parse_mode"])
 
-	s.edit(t.Context(), 42, 7, "<b>hi</b>", withHTML())
+	s.Edit(t.Context(), 42, 7, "<b>hi</b>", WithHTML())
 	require.Equal(t, models.ParseModeHTML, models.ParseMode(srv.last(t).form["parse_mode"]))
 
-	s.edit(t.Context(), 42, 7, "<b>cap</b>", onCaption(), withHTML())
+	s.Edit(t.Context(), 42, 7, "<b>cap</b>", OnCaption(), WithHTML())
 	got := srv.last(t)
 	require.Equal(t, "editMessageCaption", got.method)
 	require.Equal(t, models.ParseModeHTML, models.ParseMode(got.form["parse_mode"]))
 
-	s.answer(t.Context(), "cb1", withToast("Готово"))
+	s.Answer(t.Context(), "cb1", WithToast("Готово"))
 	got = srv.last(t)
 	require.Equal(t, "answerCallbackQuery", got.method)
 	require.Equal(t, "Готово", got.form["text"])
 
-	s.delete(t.Context(), 42, 7)
+	s.Delete(t.Context(), 42, 7)
 	require.Equal(t, "deleteMessage", srv.last(t).method)
 }
 
@@ -223,9 +223,9 @@ func TestSender_editNotModifiedIsSuccess(t *testing.T) {
 	s, srv, buf := newSendEnv(t, slog.LevelDebug)
 	srv.fail = &apiFailure{code: 400, desc: "Bad Request: message is not modified: specified new message content and reply markup are exactly the same"}
 
-	require.NoError(t, s.tryEdit(t.Context(), 42, 7, "same"))
-	s.edit(t.Context(), 42, 7, "same")
-	s.clearKeyboard(t.Context(), 42, 7)
+	require.NoError(t, s.TryEdit(t.Context(), 42, 7, "same"))
+	s.Edit(t.Context(), 42, 7, "same")
+	s.ClearKeyboard(t.Context(), 42, 7)
 	require.NotContains(t, buf.String(), `"level":"ERROR"`)
 	require.NotContains(t, buf.String(), `"level":"WARN"`)
 }
@@ -241,13 +241,13 @@ func TestSender_failureIsLoggedByPlainMethodsOnly(t *testing.T) {
 		s, srv, buf := newSendEnv(t, slog.LevelInfo)
 		srv.fail = failure
 
-		require.Zero(t, s.send(t.Context(), 42, "secret text"))
-		s.edit(t.Context(), 42, 7, "secret text")
-		s.edit(t.Context(), 42, 7, "secret text", onCaption())
-		s.delete(t.Context(), 42, 7)
-		s.answer(t.Context(), "cb")
-		s.clearKeyboard(t.Context(), 42, 7)
-		s.setKeyboard(t.Context(), 42, 7, sendTestKeyboard)
+		require.Zero(t, s.Send(t.Context(), 42, "secret text"))
+		s.Edit(t.Context(), 42, 7, "secret text")
+		s.Edit(t.Context(), 42, 7, "secret text", OnCaption())
+		s.Delete(t.Context(), 42, 7)
+		s.Answer(t.Context(), "cb")
+		s.ClearKeyboard(t.Context(), 42, 7)
+		s.SetKeyboard(t.Context(), 42, 7, sendTestKeyboard)
 
 		out := buf.String()
 		require.Equal(t, 7, strings.Count(out, `"level":"ERROR"`), "one line per failed call")
@@ -259,11 +259,11 @@ func TestSender_failureIsLoggedByPlainMethodsOnly(t *testing.T) {
 		s, srv, buf := newSendEnv(t, slog.LevelInfo)
 		srv.fail = failure
 
-		id, err := s.trySend(t.Context(), 42, "secret text")
+		id, err := s.TrySend(t.Context(), 42, "secret text")
 		require.Zero(t, id)
 		require.ErrorContains(t, err, "sendMessage")
-		require.ErrorContains(t, s.tryEdit(t.Context(), 42, 7, "secret text"), "editMessageText")
-		require.ErrorContains(t, s.tryDelete(t.Context(), 42, 7), "deleteMessage")
+		require.ErrorContains(t, s.TryEdit(t.Context(), 42, 7, "secret text"), "editMessageText")
+		require.ErrorContains(t, s.TryDelete(t.Context(), 42, 7), "deleteMessage")
 		require.Empty(t, buf.String())
 	})
 }
@@ -278,10 +278,10 @@ func TestSender_blockedUserIsNotAnError(t *testing.T) {
 		s, srv, buf := newSendEnv(t, slog.LevelInfo)
 		srv.fail = &apiFailure{code: 403, desc: "Forbidden: bot was blocked by the user"}
 
-		_, err := s.trySend(t.Context(), 42, "secret text", withHTML(), withKeyboard(sendTestKeyboard))
+		_, err := s.TrySend(t.Context(), 42, "secret text", WithHTML(), WithKeyboard(sendTestKeyboard))
 		require.ErrorIs(t, err, errBlocked)
-		require.ErrorIs(t, s.tryEdit(t.Context(), 42, 7, "secret text"), errBlocked)
-		require.ErrorIs(t, s.tryDelete(t.Context(), 42, 7), errBlocked)
+		require.ErrorIs(t, s.TryEdit(t.Context(), 42, 7, "secret text"), errBlocked)
+		require.ErrorIs(t, s.TryDelete(t.Context(), 42, 7), errBlocked)
 		require.Empty(t, buf.String())
 	})
 
@@ -291,12 +291,12 @@ func TestSender_blockedUserIsNotAnError(t *testing.T) {
 		srv.fail = &apiFailure{code: 403, desc: "Forbidden: bot was blocked by the user"}
 
 		const calls = 6
-		s.send(t.Context(), 42, "secret text", withHTML(), withKeyboard(sendTestKeyboard))
-		s.edit(t.Context(), 42, 7, "secret text")
-		s.clearKeyboard(t.Context(), 42, 7)
-		s.setKeyboard(t.Context(), 42, 7, sendTestKeyboard)
-		s.delete(t.Context(), 42, 7)
-		s.answer(t.Context(), "cb", withToast("secret text"))
+		s.Send(t.Context(), 42, "secret text", WithHTML(), WithKeyboard(sendTestKeyboard))
+		s.Edit(t.Context(), 42, 7, "secret text")
+		s.ClearKeyboard(t.Context(), 42, 7)
+		s.SetKeyboard(t.Context(), 42, 7, sendTestKeyboard)
+		s.Delete(t.Context(), 42, 7)
+		s.Answer(t.Context(), "cb", WithToast("secret text"))
 
 		out := buf.String()
 		require.Equal(t, calls, strings.Count(out, "\n"), "one line per call")
@@ -313,13 +313,13 @@ func TestSender_ignoreBlocked(t *testing.T) {
 	s, srv, buf := newSendEnv(t, slog.LevelInfo)
 	other := errors.New("boom")
 
-	require.NoError(t, s.ignoreBlocked(t.Context(), nil))
-	require.Equal(t, other, s.ignoreBlocked(t.Context(), other))
+	require.NoError(t, s.IgnoreBlocked(t.Context(), nil))
+	require.Equal(t, other, s.IgnoreBlocked(t.Context(), other))
 	require.Empty(t, buf.String())
 
 	srv.fail = &apiFailure{code: 403, desc: "Forbidden: user is deactivated"}
-	_, err := s.trySend(t.Context(), 42, "x")
-	require.NoError(t, s.ignoreBlocked(t.Context(), err))
+	_, err := s.TrySend(t.Context(), 42, "x")
+	require.NoError(t, s.IgnoreBlocked(t.Context(), err))
 	require.Contains(t, buf.String(), `"level":"INFO"`)
 	require.NotContains(t, buf.String(), `"level":"ERROR"`)
 }
@@ -329,9 +329,9 @@ func TestSender_goneMessageIsReportedToTheCaller(t *testing.T) {
 	s, srv, _ := newSendEnv(t, slog.LevelInfo)
 	srv.fail = &apiFailure{code: 400, desc: "Bad Request: message to edit not found"}
 
-	err := s.tryEdit(t.Context(), 42, 7, "x")
+	err := s.TryEdit(t.Context(), 42, 7, "x")
 
-	require.True(t, isMessageGone(err))
+	require.True(t, IsMessageGone(err))
 	require.False(t, isNotModified(err))
 }
 
@@ -353,7 +353,7 @@ func TestSender_logFailure(t *testing.T) {
 			t.Parallel()
 			s, _, buf := newSendEnv(t, slog.LevelDebug)
 
-			s.logFailure(t.Context(), slog.LevelWarn, "what", tt.err, "user_id", "u1")
+			s.LogFailure(t.Context(), slog.LevelWarn, "what", tt.err, "user_id", "u1")
 
 			if tt.want == "" {
 				require.Empty(t, buf.String())
@@ -376,12 +376,12 @@ func TestSender_transportErrorDoesNotLeakToken(t *testing.T) {
 	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	api, err := bot.New(sendTestToken, bot.WithServerURL(url), bot.WithSkipGetMe())
 	require.NoError(t, err)
-	s := sender{api: api, log: log}
+	s := Sender{api: api, log: log}
 
-	_, err = s.trySend(t.Context(), 42, "secret message text")
+	_, err = s.TrySend(t.Context(), 42, "secret message text")
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), sendTestToken)
-	s.send(t.Context(), 42, "secret message text")
+	s.Send(t.Context(), 42, "secret message text")
 
 	out := buf.String()
 	require.Contains(t, out, `"op":"sendMessage"`)
@@ -397,7 +397,7 @@ func TestSender_keepsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	_, err := s.trySend(ctx, 42, "x")
+	_, err := s.TrySend(ctx, 42, "x")
 
 	require.ErrorIs(t, err, context.Canceled)
 }

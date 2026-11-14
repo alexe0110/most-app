@@ -1,4 +1,4 @@
-package telegram_test
+package converter_test
 
 import (
 	"bytes"
@@ -20,7 +20,7 @@ func TestConvert_photosToPDF(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:pdf"))
 	for i := 1; i <= 3; i++ {
 		h.bot.ProcessUpdate(ctx, photoUpdate(i))
@@ -42,7 +42,7 @@ func TestConvert_photosToPDF_pageLimit(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:pdf"))
 	for i := 1; i <= 21; i++ {
 		h.bot.ProcessUpdate(ctx, photoUpdate(i))
@@ -62,7 +62,7 @@ func TestConvert_photosToPDF_sizeLimit(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:pdf"))
 	big := photoUpdate(1)
 	big.Message.Photo[1].FileSize = 21 << 20
@@ -82,7 +82,7 @@ func TestConvert_photosToPDF_realSizeOverLimitEndsSession(t *testing.T) {
 	ctx := t.Context()
 	h.serve("large", make([]byte, 11<<20))
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:pdf"))
 	h.bot.ProcessUpdate(ctx, photoUpdate(1))
 	h.bot.ProcessUpdate(ctx, photoUpdate(2))
@@ -253,23 +253,12 @@ func TestConvert_commandRefusesPDF(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
 	h.bot.ProcessUpdate(ctx, pdfUpdate("pdf-x", 100))
 
 	require.Empty(t, h.docs)
 	require.Contains(t, h.lastShown(), "пока не умею")
-}
-
-func TestReceive_pdfPickerOffersActions(t *testing.T) {
-	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-
-	b.ProcessUpdate(ctx, pdfUpdate("pdf-x", 100))
-
-	require.Len(t, repo.docs, 1)
-	require.Contains(t, sent.markups[0], "conv:doc:")
-	require.Contains(t, sent.markups[0], "Действия с PDF")
 }
 
 func TestConvertPDF_doubleDoneMergesOnce(t *testing.T) {

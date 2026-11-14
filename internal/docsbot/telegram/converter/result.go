@@ -1,4 +1,4 @@
-package telegram
+package converter
 
 import (
 	"bytes"
@@ -11,19 +11,20 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/platform/convert"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // clearButtons removes the keyboard from the message a button was pressed on.
-func (c *converter) clearButtons(ctx context.Context, b *bot.Bot, p press) {
+func (c *Converter) clearButtons(ctx context.Context, b *bot.Bot, p press) {
 	if p.hasMsg {
-		c.out(b).clearKeyboard(ctx, p.chatID, p.msgID)
+		c.out(b).ClearKeyboard(ctx, p.chatID, p.msgID)
 	}
 }
 
 // deleteCallbackMessage removes the message a button was pressed on.
-func (c *converter) deleteCallbackMessage(ctx context.Context, b *bot.Bot, p press) {
+func (c *Converter) deleteCallbackMessage(ctx context.Context, b *bot.Bot, p press) {
 	if p.hasMsg {
-		c.out(b).delete(ctx, p.chatID, p.msgID)
+		c.out(b).Delete(ctx, p.chatID, p.msgID)
 	}
 }
 
@@ -32,7 +33,7 @@ func (c *converter) deleteCallbackMessage(ctx context.Context, b *bot.Bot, p pre
 // Telegram echoes the stored file back; if it doesn't, the buttons are removed
 // again, since they could not work. Without the user's internal id the file goes
 // out without buttons.
-func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser int64, filename string, data []byte,
+func (c *Converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser int64, filename string, data []byte,
 	sourceDoc docsbot.DocumentID, suffix string,
 ) bool {
 	params := &bot.SendDocumentParams{
@@ -40,7 +41,7 @@ func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 		Document: &models.InputFileUpload{Filename: filename, Data: bytes.NewReader(data)},
 	}
 	user, haveUser := userID(ctx)
-	token := newToken()
+	token := tg.NewToken()
 	if haveUser {
 		params.ReplyMarkup = saveKeyboard(token, sourceDoc != "")
 	}
@@ -78,15 +79,15 @@ func (c *converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 }
 
 // removeKeyboard strips the buttons from a sent message, when there is one.
-func (c *converter) removeKeyboard(ctx context.Context, b *bot.Bot, chatID int64, msg *models.Message) {
+func (c *Converter) removeKeyboard(ctx context.Context, b *bot.Bot, chatID int64, msg *models.Message) {
 	if msg != nil {
-		c.out(b).clearKeyboard(ctx, chatID, msg.ID)
+		c.out(b).ClearKeyboard(ctx, chatID, msg.ID)
 	}
 }
 
 // download fetches a Telegram file's bytes; the cap and the token-safe errors
 // belong to the downloader.
-func (c *converter) download(ctx context.Context, fileID string) ([]byte, error) {
+func (c *Converter) download(ctx context.Context, fileID string) ([]byte, error) {
 	data, _, err := c.files.Download(ctx, fileID)
 	return data, err
 }

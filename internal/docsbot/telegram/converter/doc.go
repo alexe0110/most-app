@@ -1,4 +1,4 @@
-package telegram
+package converter
 
 import (
 	"context"
@@ -10,26 +10,27 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/platform/convert"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // loadDoc reads the user's document (the domain checks ownership) and answers
 // the user itself when it can't.
-func (c *converter) loadDoc(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID) (docsbot.Document, bool) {
+func (c *Converter) loadDoc(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID) (docsbot.Document, bool) {
 	card, err := c.svc.Card(ctx, user, id)
 	if errors.Is(err, docsbot.ErrNotFound) {
-		c.out(b).send(ctx, chatID, textGone)
+		c.out(b).Send(ctx, chatID, textGone)
 		return docsbot.Document{}, false
 	}
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert load document", "err", err, "user_id", user, "doc_id", id)
-		c.out(b).send(ctx, chatID, textError)
+		c.out(b).Send(ctx, chatID, textError)
 		return docsbot.Document{}, false
 	}
 	return card.Doc, true
 }
 
 // onMenu offers the operations that fit the document's type.
-func (c *converter) onMenu(ctx context.Context, b *bot.Bot, chatID int64, id docsbot.DocumentID) {
+func (c *Converter) onMenu(ctx context.Context, b *bot.Bot, chatID int64, id docsbot.DocumentID) {
 	user, ok := userID(ctx)
 	if !ok {
 		return
@@ -39,17 +40,17 @@ func (c *converter) onMenu(ctx context.Context, b *bot.Bot, chatID int64, id doc
 		return
 	}
 	switch {
-	case isPDF(doc):
-		c.out(b).send(ctx, chatID, textConvertMenu, withKeyboard(pdfMenuKeyboard(id)))
-	case convertible(doc):
-		c.out(b).send(ctx, chatID, textConvertMenu, withKeyboard(quickKeyboard(id, isWebP(doc))))
+	case IsPDF(doc):
+		c.out(b).Send(ctx, chatID, textConvertMenu, tg.WithKeyboard(pdfMenuKeyboard(id)))
+	case Convertible(doc):
+		c.out(b).Send(ctx, chatID, textConvertMenu, tg.WithKeyboard(quickKeyboard(id, isWebP(doc))))
 	default:
-		c.out(b).send(ctx, chatID, unsupportedText(doc))
+		c.out(b).Send(ctx, chatID, unsupportedText(doc))
 	}
 }
 
 // onQuick converts a stored document straight from the menu: conv:q:<docID>:<op>.
-func (c *converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
+func (c *Converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
 	chatID, id, op := p.chatID, p.data.docID, p.data.token()
 	if id == "" || len(p.data.args) == 0 || !p.hasUser {
 		return
@@ -58,7 +59,7 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
 	release, ok := c.claimMenu(chatID, p.msgID)
 	if !ok {
 		// The running tap owns the message: only tell the user, keep its buttons.
-		c.out(b).send(ctx, chatID, textStale)
+		c.out(b).Send(ctx, chatID, textStale)
 		return
 	}
 	defer release()
@@ -67,11 +68,11 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
 	if !ok {
 		return
 	}
-	if !convertible(doc) {
-		c.out(b).send(ctx, chatID, unsupportedText(doc))
+	if !Convertible(doc) {
+		c.out(b).Send(ctx, chatID, unsupportedText(doc))
 		return
 	}
-	if isPDF(doc) {
+	if IsPDF(doc) {
 		c.onPDFOp(ctx, b, p, doc, op)
 		return
 	}
@@ -114,7 +115,7 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
 	c.log.InfoContext(ctx, "document converted", "user_id", user, "doc_id", id, "op", op,
 		"in_bytes", len(src), "out_bytes", len(out))
 	if known && len(out) > maxBytes {
-		c.out(b).send(ctx, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
+		c.out(b).Send(ctx, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
 	}
 	if !c.sendResult(ctx, b, chatID, p.tgUser, name, out, id, suffix) {
 		c.show(ctx, b, chatID, msgID, textSendFailed, menu)
@@ -124,23 +125,23 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
 }
 
 // onSave stores the result as a document: conv:save:<token>.
-func (c *converter) onSave(ctx context.Context, b *bot.Bot, p press) {
+func (c *Converter) onSave(ctx context.Context, b *bot.Bot, p press) {
 	chatID := p.chatID
 	res, ok := c.results.take(p.data.token(), p.tgUser)
 	if !ok {
-		c.out(b).send(ctx, chatID, textConvertResultOld)
+		c.out(b).Send(ctx, chatID, textConvertResultOld)
 		return
 	}
 	c.clearButtons(ctx, b, p)
 
 	rep, err := c.svc.SaveDerived(ctx, res.user, res.sourceDoc, res.file, res.suffix)
 	if errors.Is(err, docsbot.ErrNotFound) {
-		c.out(b).send(ctx, chatID, textGone)
+		c.out(b).Send(ctx, chatID, textGone)
 		return
 	}
 	if err != nil {
 		c.log.ErrorContext(ctx, "save converted file", "err", err, "user_id", res.user)
-		c.out(b).send(ctx, chatID, textError)
+		c.out(b).Send(ctx, chatID, textError)
 		return
 	}
 
@@ -148,39 +149,35 @@ func (c *converter) onSave(ctx context.Context, b *bot.Bot, p press) {
 	case docsbot.Saved:
 		// The result message is a file, which can't be edited into a card: the
 		// card replaces a fresh placeholder instead.
-		id := c.out(b).send(ctx, chatID, textConvertSaving)
+		id := c.out(b).Send(ctx, chatID, textConvertSaving)
 		if id == 0 {
 			return
 		}
-		c.docs.renderSaved(ctx, b, chatID, id, res.user, r)
-	case docsbot.NeedCategory:
-		c.out(b).send(ctx, chatID, textChooseCategory, withKeyboard(categoryKeyboard(actCategory, r.Doc.ID)))
+		c.docs.RenderSaved(ctx, b, chatID, id, res.user, r)
 	case docsbot.AlreadySaved:
-		c.docs.sendAlreadySaved(ctx, b, chatID, res.user, r.Doc.ID)
+		c.docs.SendAlreadySaved(ctx, b, chatID, res.user, r.Doc.ID)
 	default:
-		if text, ok := rejectionText(rep); ok {
-			c.out(b).send(ctx, chatID, text)
-		}
+		c.docs.SendNotice(ctx, b, chatID, rep)
 	}
 }
 
 // onReplaceAsk turns the result's caption into a confirmation: conv:rp:<token>.
 // The result stays in the store until the user confirms or cancels.
-func (c *converter) onReplaceAsk(ctx context.Context, b *bot.Bot, p press) {
+func (c *Converter) onReplaceAsk(ctx context.Context, b *bot.Bot, p press) {
 	token := p.data.token()
 	res, ok := c.results.peek(token, p.tgUser)
 	if !ok || res.sourceDoc == "" {
-		c.out(b).send(ctx, p.chatID, textConvertResultOld)
+		c.out(b).Send(ctx, p.chatID, textConvertResultOld)
 		return
 	}
 	c.editResultCaption(ctx, b, p, textReplaceConfirm, replaceKeyboard(token))
 }
 
 // onReplaceCancel puts the result's caption and buttons back: conv:rpn:<token>.
-func (c *converter) onReplaceCancel(ctx context.Context, b *bot.Bot, p press) {
+func (c *Converter) onReplaceCancel(ctx context.Context, b *bot.Bot, p press) {
 	token := p.data.token()
 	if _, ok := c.results.peek(token, p.tgUser); !ok {
-		c.out(b).send(ctx, p.chatID, textConvertResultOld)
+		c.out(b).Send(ctx, p.chatID, textConvertResultOld)
 		return
 	}
 	c.editResultCaption(ctx, b, p, "", saveKeyboard(token, true))
@@ -189,23 +186,23 @@ func (c *converter) onReplaceCancel(ctx context.Context, b *bot.Bot, p press) {
 // onReplace swaps the source document's file for the result: conv:rpy:<token>.
 // The result is taken first, so a double tap replaces once. When the document
 // cannot be replaced right now the result is put back, so the user can try again.
-func (c *converter) onReplace(ctx context.Context, b *bot.Bot, p press) {
+func (c *Converter) onReplace(ctx context.Context, b *bot.Bot, p press) {
 	chatID, token := p.chatID, p.data.token()
 	res, ok := c.results.take(token, p.tgUser)
 	if !ok || res.sourceDoc == "" {
-		c.out(b).send(ctx, chatID, textConvertResultOld)
+		c.out(b).Send(ctx, chatID, textConvertResultOld)
 		return
 	}
 	retry := func(text string) {
 		c.results.put(token, p.tgUser, res)
 		c.editResultCaption(ctx, b, p, "", saveKeyboard(token, true))
-		c.out(b).send(ctx, chatID, text)
+		c.out(b).Send(ctx, chatID, text)
 	}
 
 	rep, err := c.svc.ReplaceContent(ctx, res.user, res.sourceDoc, res.file)
 	if errors.Is(err, docsbot.ErrNotFound) {
 		c.editResultCaption(ctx, b, p, "", nil)
-		c.out(b).send(ctx, chatID, textGone)
+		c.out(b).Send(ctx, chatID, textGone)
 		return
 	}
 	if err != nil {
@@ -221,23 +218,21 @@ func (c *converter) onReplace(ctx context.Context, b *bot.Bot, p press) {
 		retry(textReplaceMissing)
 	case docsbot.Replaced:
 		c.editResultCaption(ctx, b, p, "", nil)
-		c.docs.sendReplaced(ctx, b, chatID, res.user, r.Doc.ID)
+		c.docs.SendReplaced(ctx, b, chatID, res.user, r.Doc.ID)
 	case docsbot.AlreadySaved:
 		c.editResultCaption(ctx, b, p, "", nil)
-		c.docs.sendAlreadySaved(ctx, b, chatID, res.user, r.Doc.ID)
+		c.docs.SendAlreadySaved(ctx, b, chatID, res.user, r.Doc.ID)
 	default:
 		c.editResultCaption(ctx, b, p, "", nil)
-		if text, ok := rejectionText(rep); ok {
-			c.out(b).send(ctx, chatID, text)
-		}
+		c.docs.SendNotice(ctx, b, chatID, rep)
 	}
 }
 
 // editResultCaption sets the caption and buttons (nil removes them) of the
 // result message a button was pressed on, best effort.
-func (c *converter) editResultCaption(ctx context.Context, b *bot.Bot, p press, caption string, kb *models.InlineKeyboardMarkup) {
+func (c *Converter) editResultCaption(ctx context.Context, b *bot.Bot, p press, caption string, kb *models.InlineKeyboardMarkup) {
 	if !p.hasMsg {
 		return
 	}
-	c.out(b).edit(ctx, p.chatID, p.msgID, caption, onCaption(), withKeyboard(kb))
+	c.out(b).Edit(ctx, p.chatID, p.msgID, caption, tg.OnCaption(), tg.WithKeyboard(kb))
 }

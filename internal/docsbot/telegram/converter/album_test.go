@@ -1,10 +1,12 @@
-package telegram_test
+package converter_test
 
 import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
@@ -15,6 +17,47 @@ import (
 )
 
 var albumToken = regexp.MustCompile(`conv:alb:([0-9a-f]+)`)
+
+// fakeTimer is a manual telegram.AfterFunc: nothing fires until the test says so.
+type fakeTimer struct {
+	mu     sync.Mutex
+	timers []*fakeTimerEntry
+}
+
+type fakeTimerEntry struct {
+	f       func()
+	stopped bool
+}
+
+func (ft *fakeTimer) after(_ time.Duration, f func()) func() bool {
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	e := &fakeTimerEntry{f: f}
+	ft.timers = append(ft.timers, e)
+	return func() bool {
+		ft.mu.Lock()
+		defer ft.mu.Unlock()
+		was := !e.stopped
+		e.stopped = true
+		return was
+	}
+}
+
+// fire runs every timer that was not stopped, once.
+func (ft *fakeTimer) fire() {
+	ft.mu.Lock()
+	var run []func()
+	for _, e := range ft.timers {
+		if !e.stopped {
+			e.stopped = true
+			run = append(run, e.f)
+		}
+	}
+	ft.mu.Unlock()
+	for _, f := range run {
+		f()
+	}
+}
 
 // albumImageUpdate is album photo n (message id n), sent as part of album "alb".
 func albumImageUpdate(n, size int) *models.Update {

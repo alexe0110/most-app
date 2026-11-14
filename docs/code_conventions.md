@@ -55,7 +55,8 @@ internal/
     reply.go               # ответы юзкейсов (смысл, не UI)
     service*_test.go       # unit-тесты по темам, фейки в fakes_test.go
     fakes_test.go          # фейки портов
-    telegram/              # входящий адаптер: апдейт → service → рендер; texts.go — тексты; send.go — единственный путь отправки, правки и удаления сообщений
+    telegram/              # входящий адаптер: апдейт → service → рендер; texts.go — тексты; сообщения отправляет только tg.Sender (platform/tg)
+      converter/           # диалог /convert и меню «Преобразовать»; свои тексты, кнопки и сессии; не импортирует telegram
     jobs/                  # входящий адаптер: воркеры River (upload, sync, trash, sweep, purge_pending)
     web/                   # входящий адаптер: публичные страницы /, /privacy, /terms
     postgres/              # исходящий адаптер: по типу на порт (Documents, StatusMessages, Users, …) через sqlc; inTx — единственная транзакция

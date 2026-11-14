@@ -1,4 +1,4 @@
-package telegram_test
+package converter_test
 
 import (
 	"bytes"
@@ -36,7 +36,7 @@ func TestConvert_staleButtons(t *testing.T) {
 			name: "second tap of a limit button",
 			run: func(h *convHarness) (func(), int) {
 				h.servePNG()
-				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
+				h.bot.ProcessUpdate(t.Context(), commandUpdate("convert"))
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", h.lastMsg()))
 				h.bot.ProcessUpdate(t.Context(), pngDocumentUpdate())
 				limitMsg := h.lastMsg()
@@ -52,7 +52,7 @@ func TestConvert_staleButtons(t *testing.T) {
 			name: "second tap of a format button",
 			run: func(h *convHarness) (func(), int) {
 				h.servePNG()
-				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
+				h.bot.ProcessUpdate(t.Context(), commandUpdate("convert"))
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", h.lastMsg()))
 				h.bot.ProcessUpdate(t.Context(), pngDocumentUpdate())
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:limit2", h.lastMsg()))
@@ -66,7 +66,7 @@ func TestConvert_staleButtons(t *testing.T) {
 			name: "format button at the limit step",
 			run: func(h *convHarness) (func(), int) {
 				h.servePNG()
-				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
+				h.bot.ProcessUpdate(t.Context(), commandUpdate("convert"))
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", h.lastMsg()))
 				h.bot.ProcessUpdate(t.Context(), pngDocumentUpdate())
 				limitMsg := h.lastMsg()
@@ -81,7 +81,7 @@ func TestConvert_staleButtons(t *testing.T) {
 		{
 			name: "second tap of the PDF button",
 			run: func(h *convHarness) (func(), int) {
-				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
+				h.bot.ProcessUpdate(t.Context(), commandUpdate("convert"))
 				startMsg := h.lastMsg()
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:pdf", startMsg))
 				return func() { h.bot.ProcessUpdate(t.Context(), callbackOn("conv:pdf", startMsg)) }, 0
@@ -95,7 +95,7 @@ func TestConvert_staleButtons(t *testing.T) {
 		{
 			name: "compress button after the PDF button",
 			run: func(h *convHarness) (func(), int) {
-				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
+				h.bot.ProcessUpdate(t.Context(), commandUpdate("convert"))
 				startMsg := h.lastMsg()
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:pdf", startMsg))
 				return func() { h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", startMsg)) }, 0
@@ -109,7 +109,7 @@ func TestConvert_staleButtons(t *testing.T) {
 		{
 			name: "second tap of done",
 			run: func(h *convHarness) (func(), int) {
-				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
+				h.bot.ProcessUpdate(t.Context(), commandUpdate("convert"))
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:pdf", h.lastMsg()))
 				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
 				doneMsg := h.lastMsg()
@@ -121,7 +121,7 @@ func TestConvert_staleButtons(t *testing.T) {
 		{
 			name: "tap after cancel",
 			run: func(h *convHarness) (func(), int) {
-				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
+				h.bot.ProcessUpdate(t.Context(), commandUpdate("convert"))
 				startMsg := h.lastMsg()
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:cancel", startMsg))
 				return func() { h.bot.ProcessUpdate(t.Context(), callbackOn("conv:pdf", startMsg)) }, 0
@@ -131,7 +131,7 @@ func TestConvert_staleButtons(t *testing.T) {
 		{
 			name: "tap on an old message",
 			run: func(h *convHarness) (func(), int) {
-				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
+				h.bot.ProcessUpdate(t.Context(), commandUpdate("convert"))
 				return func() { h.bot.ProcessUpdate(t.Context(), callbackOn("conv:pdf", 9999)) }, 0
 			},
 			followUp: func(h *convHarness, dialogue int) {
@@ -144,7 +144,7 @@ func TestConvert_staleButtons(t *testing.T) {
 		{
 			name: "cancel on an old message",
 			run: func(h *convHarness) (func(), int) {
-				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
+				h.bot.ProcessUpdate(t.Context(), commandUpdate("convert"))
 				return func() { h.bot.ProcessUpdate(t.Context(), callbackOn("conv:cancel", 9999)) }, 0
 			},
 			followUp: func(h *convHarness, dialogue int) {
@@ -203,9 +203,9 @@ func (h *convHarness) servePNG() {
 func TestConvertDialogue_restartKillsOldButtons(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	old := h.lastMsg()
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	fresh := h.lastMsg()
 	require.NotEqual(t, old, fresh)
 
@@ -231,7 +231,7 @@ func TestConvert_inaccessibleMessageDoesNothing(t *testing.T) {
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := compressFromMenu(t, h, src.ID)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	before := append([]string(nil), h.events...)
 	edits, docs, stored := h.edits, len(h.docs), len(h.repo.docs)
 
@@ -262,7 +262,7 @@ func TestConvert_unknownActionsAreStale(t *testing.T) {
 	for _, data := range []string{"conv:zzz", "conv:", "conv:p:", "conv:p:rot:x", "conv:p:zzz", "conv:fmt", "conv:limit3"} {
 		t.Run(data, func(t *testing.T) {
 			h := newConvHarness(t)
-			h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
+			h.bot.ProcessUpdate(t.Context(), commandUpdate("convert"))
 			dialogue := h.lastMsg()
 			before := len(h.events)
 

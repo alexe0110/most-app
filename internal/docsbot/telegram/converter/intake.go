@@ -1,4 +1,4 @@
-package telegram
+package converter
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 )
 
 // onDocument accepts image documents (and PDFs while merging) and rejects the rest.
-func (c *converter) onDocument(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (c *Converter) onDocument(ctx context.Context, b *bot.Bot, update *models.Update) {
 	doc := update.Message.Document
 	if doc.MimeType == mimePDF {
 		c.onPDFPart(ctx, b, update)
@@ -21,15 +21,15 @@ func (c *converter) onDocument(ctx context.Context, b *bot.Bot, update *models.U
 	}
 	user, _ := messageUser(update)
 	if sess, ok := c.sessions.live(user); ok && awaitsPDF(sess.step) {
-		c.out(b).send(ctx, update.Message.Chat.ID, textPDFNotPDF)
+		c.out(b).Send(ctx, update.Message.Chat.ID, textPDFNotPDF)
 		return
 	}
-	if !supportedImageMIME(doc.MimeType) {
+	if !SupportedImageMIME(doc.MimeType) {
 		text := textConvertUnsupported
 		if unsupportedImage(doc.MimeType, doc.FileName) {
 			text = textConvertFormatNotSupported
 		}
-		c.out(b).send(ctx, update.Message.Chat.ID, text)
+		c.out(b).Send(ctx, update.Message.Chat.ID, text)
 		return
 	}
 	c.onImage(ctx, b, update, doc.FileID, doc.FileSize)
@@ -39,7 +39,7 @@ func (c *converter) onDocument(ctx context.Context, b *bot.Bot, update *models.U
 // bytes are downloaded when the operation runs. A PNG is told from a JPEG by the
 // MIME type of the file (a photo is always a JPEG), so the format question needs
 // no download.
-func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Update, fileID string, size int64) {
+func (c *Converter) onImage(ctx context.Context, b *bot.Bot, update *models.Update, fileID string, size int64) {
 	user, _ := messageUser(update)
 	chatID := update.Message.Chat.ID
 
@@ -53,12 +53,12 @@ func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Upda
 		return
 	case stepAwaitImage:
 	default:
-		c.out(b).send(ctx, chatID, textConvertTapButton)
+		c.out(b).Send(ctx, chatID, textConvertTapButton)
 		return
 	}
 
 	if size > tg.MaxFileBytes {
-		c.out(b).send(ctx, chatID, textConvertDownloadFailed) // the Bot API would refuse to serve it
+		c.out(b).Send(ctx, chatID, textConvertDownloadFailed) // the Bot API would refuse to serve it
 		return
 	}
 
@@ -86,7 +86,7 @@ func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Upda
 
 // addPage adds a photo to a PDF in progress without downloading it. The limits
 // are those of an album PDF; a photo over them is refused and the session goes on.
-func (c *converter) addPage(ctx context.Context, b *bot.Bot, update *models.Update, fileID string, size int64) {
+func (c *Converter) addPage(ctx context.Context, b *bot.Bot, update *models.Update, fileID string, size int64) {
 	user, _ := messageUser(update)
 	chatID := update.Message.Chat.ID
 
@@ -108,7 +108,7 @@ func (c *converter) addPage(ctx context.Context, b *bot.Bot, update *models.Upda
 	})
 	switch {
 	case refusal != "":
-		c.out(b).send(ctx, chatID, refusal)
+		c.out(b).Send(ctx, chatID, refusal)
 	case pages > 0 && !c.dialogue.busy(user):
 		// Photos of an album arrive in parallel: only the last one waiting shows
 		// the total, so the chat gets one message, not one per photo.
@@ -119,7 +119,7 @@ func (c *converter) addPage(ctx context.Context, b *bot.Bot, update *models.Upda
 
 // fileTip is the "send as file" tip for a user who just sent a compressed photo
 // (not a file). It is returned once per user per process, "" afterwards.
-func (c *converter) fileTip(user int64, update *models.Update) string {
+func (c *Converter) fileTip(user int64, update *models.Update) string {
 	if len(update.Message.Photo) == 0 {
 		return ""
 	}
@@ -136,20 +136,20 @@ func (c *converter) fileTip(user int64, update *models.Update) string {
 func awaitsPDF(s step) bool { return s == stepMergePDF || s == stepAwaitPDF }
 
 // onText reads a typed custom size; other text just nudges to tap a button.
-func (c *converter) onText(ctx context.Context, b *bot.Bot, update *models.Update, at step) {
+func (c *Converter) onText(ctx context.Context, b *bot.Bot, update *models.Update, at step) {
 	chatID := update.Message.Chat.ID
 	if at == stepAwaitRange {
 		c.onRange(ctx, b, update)
 		return
 	}
 	if at != stepCustomLimit {
-		c.out(b).send(ctx, chatID, textConvertTapButton)
+		c.out(b).Send(ctx, chatID, textConvertTapButton)
 		return
 	}
 
 	kb, ok := parseLimitKB(update.Message.Text)
 	if !ok {
-		c.out(b).send(ctx, chatID, textConvertBadNumber)
+		c.out(b).Send(ctx, chatID, textConvertBadNumber)
 		return
 	}
 	user, _ := messageUser(update)

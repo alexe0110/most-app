@@ -8,6 +8,7 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // inlineCacheSeconds is how long Telegram may reuse an answer: short, so a newly
@@ -39,7 +40,7 @@ func (d *docs) inline(ctx context.Context, b *bot.Bot, u *models.Update) {
 		NextOffset:    res.NextOffset,
 		Button:        button,
 	})
-	traceAPI(ctx, d.log, "answerInlineQuery", start)
+	tg.TraceAPI(ctx, d.log, "answerInlineQuery", start)
 	if err != nil {
 		d.log.ErrorContext(ctx, "answer inline query", "err", err, "user_id", user)
 		return

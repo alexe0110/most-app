@@ -54,7 +54,7 @@ func TestDeleteData_revokeFailureIsWarnedAndConfirmed(t *testing.T) {
 func TestStart_driveFolder(t *testing.T) {
 	b, sent, _ := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithDriveFolder("Most Docs Test"))
 
-	b.ProcessUpdate(t.Context(), commandUpdate(100, "start"))
+	b.ProcessUpdate(t.Context(), commandUpdate("start"))
 
 	require.True(t, has(sent.texts, "«Most Docs Test»"), "sent %q", sent.texts)
 }
@@ -65,7 +65,7 @@ func TestSettings_showsCountsAndControls(t *testing.T) {
 	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatPassport, Title: "p", TgFileUniqueID: "u1"})
 	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "o", TgFileUniqueID: "u2"})
 
-	b.ProcessUpdate(ctx, commandUpdate(100, "settings"))
+	b.ProcessUpdate(ctx, commandUpdate("settings"))
 
 	require.True(t, has(sent.texts, "Google Диск"), "sent %q", sent.texts)
 	require.True(t, has(sent.texts, "Документов: 2"), "sent %q", sent.texts)

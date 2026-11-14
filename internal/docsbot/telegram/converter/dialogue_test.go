@@ -1,4 +1,4 @@
-package telegram_test
+package converter_test
 
 import (
 	"context"
@@ -26,7 +26,7 @@ func TestConvertDialogue_editFallback(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	start := h.lastMsg()
 	sends := h.sends()
 
@@ -57,7 +57,7 @@ func TestConvertDialogue_editFallback(t *testing.T) {
 func TestConvertDialogue_notModifiedIsSuccess(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	start := h.lastMsg()
 	sends := h.sends()
 
@@ -82,7 +82,7 @@ func TestConvertDialogue_resultReplacesProgress(t *testing.T) {
 			h := newConvHarness(t)
 			h.failDeletes = tt.failDeletes
 			ctx := t.Context()
-			h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+			h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 			start := h.lastMsg()
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:pdf", start))
 			h.bot.ProcessUpdate(ctx, photoUpdate(1))
@@ -105,7 +105,7 @@ func TestConvertDialogue_resultReplacesProgress(t *testing.T) {
 func TestConvertDialogue_photoMovesDialogueDown(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	start := h.lastMsg()
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:compress", start))
 
@@ -119,7 +119,7 @@ func TestConvertDialogue_errorStaysInDialogue(t *testing.T) {
 	h := newConvHarness(t)
 	h.serve("large", []byte("not an image"))
 	ctx := t.Context()
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	start := h.lastMsg()
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:pdf", start))
 	h.bot.ProcessUpdate(ctx, photoUpdate(1))
@@ -138,7 +138,7 @@ func TestConvertDialogue_errorStaysInDialogue(t *testing.T) {
 func TestConvertDialogue_editAndSendBothFailKeepsMessage(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	start := h.lastMsg()
 
 	h.failEdits, h.failSends = true, true
@@ -152,10 +152,10 @@ func TestConvertDialogue_editAndSendBothFailKeepsMessage(t *testing.T) {
 func TestConvert_newCommandStripsPreviousDialogue(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	edits := h.edits
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 
 	require.Equal(t, edits+1, h.edits, "the old dialogue loses its buttons")
 }
@@ -164,7 +164,7 @@ func TestConvertPDFActions_offStepInputAtMenu(t *testing.T) {
 	h := newConvHarness(t)
 	h.serve("pdf-in", testPDF(t, 2))
 	ctx := t.Context()
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:pdfops", h.lastMsg()))
 	h.bot.ProcessUpdate(ctx, namedDocumentUpdate("pdf-in", "application/pdf", "a.pdf"))
 
@@ -243,7 +243,7 @@ func TestConvertDialogue_resultSendFailureKeepsDialogue(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newConvHarness(t)
-			h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
+			h.bot.ProcessUpdate(t.Context(), commandUpdate("convert"))
 			tt.run(h)
 			dialogue := h.lastMsg()
 
@@ -262,7 +262,7 @@ func TestConvertDialogue_resultSendFailureKeepsDialogue(t *testing.T) {
 func TestConvertDialogue_moveDownSendFailureKeepsDialogue(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:pdf", h.lastMsg()))
 	prompt := h.lastMsg()
 
@@ -345,10 +345,10 @@ func TestConvertMenu_doubleTap(t *testing.T) {
 func TestConvert_cancelStripsDialogueKeyboard(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	edits := h.edits
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "cancel"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("cancel"))
 
 	require.Equal(t, edits+1, h.edits, "the dialogue loses its buttons")
 	require.Contains(t, h.lastText(), "Режим конвертера выключен")
@@ -376,7 +376,7 @@ func TestConvertPDF_parallelAlbumLeavesOneDialogue(t *testing.T) {
 	const photos = 8
 	h := newConvHarness(t)
 	ctx := t.Context()
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:pdf", h.lastMsg()))
 
 	var wg sync.WaitGroup
@@ -424,7 +424,7 @@ func TestConvertDialogue_everythingRefusedStillFinishes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newConvHarness(t)
-			h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
+			h.bot.ProcessUpdate(t.Context(), commandUpdate("convert"))
 			start := h.lastMsg()
 			h.failEdits, h.failDeletes = true, true
 
@@ -442,7 +442,7 @@ func TestConvertCompress_badCustomLimitKeepsStep(t *testing.T) {
 		t.Run(text, func(t *testing.T) {
 			h := newConvHarness(t)
 			ctx := t.Context()
-			h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+			h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:compress", h.lastMsg()))
 			h.bot.ProcessUpdate(ctx, photoUpdate(1))
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:limitcustom", h.lastMsg()))
@@ -466,7 +466,7 @@ func TestConvertPDFActions_offStepInputKeepsMenu(t *testing.T) {
 	h := newConvHarness(t)
 	h.serve("pdf-in", testPDF(t, 2))
 	ctx := t.Context()
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:pdfops", h.lastMsg()))
 	h.bot.ProcessUpdate(ctx, namedDocumentUpdate("pdf-in", "application/pdf", "a.pdf"))
 	menu := h.lastMsg()
@@ -485,7 +485,7 @@ func TestConvertPDFActions_offStepInputKeepsMenu(t *testing.T) {
 // session claimed forever.
 func TestConvertDialogue_cancelledContextDoesNotPanic(t *testing.T) {
 	h := newConvHarness(t)
-	h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(t.Context(), commandUpdate("convert"))
 	h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", h.lastMsg()))
 	h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
 	limit := h.lastMsg()

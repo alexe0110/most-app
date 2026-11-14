@@ -1,4 +1,4 @@
-package telegram_test
+package converter_test
 
 import (
 	"bytes"
@@ -34,7 +34,7 @@ func TestConvertWebP_compressInCommand(t *testing.T) {
 	h.serve("webp-in", tinyWebP(t))
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
 	h.bot.ProcessUpdate(ctx, namedDocumentUpdate("webp-in", "image/webp", "a.webp"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:limit1"))
@@ -51,7 +51,7 @@ func TestConvertWebP_pdfInCommand(t *testing.T) {
 	h.serve("webp-in", tinyWebP(t))
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:pdf"))
 	h.bot.ProcessUpdate(ctx, namedDocumentUpdate("webp-in", "image/webp", "a.webp"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
@@ -115,7 +115,7 @@ func TestConvertHEIC_refusedInCommand(t *testing.T) {
 			h := newConvHarness(t)
 			ctx := tg.ContextWithUserID(t.Context(), testUserID)
 
-			h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+			h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
 			h.bot.ProcessUpdate(ctx, namedDocumentUpdate("x", tt.mime, tt.file))
 
@@ -125,7 +125,7 @@ func TestConvertHEIC_refusedInCommand(t *testing.T) {
 	}
 }
 
-func TestConvertHEIC_noConvertRowAndRefusedCallbacks(t *testing.T) {
+func TestConvertHEIC_callbacksAreRefused(t *testing.T) {
 	h := newConvHarness(t)
 	heic := h.repo.seed(docsbot.Document{
 		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "image/heic",
@@ -138,13 +138,4 @@ func TestConvertHEIC_noConvertRowAndRefusedCallbacks(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(heic.ID)+":c1"))
 	require.Contains(t, h.lastText(), "не поддерживается")
 	require.Empty(t, h.docs)
-
-	b, sent, repo := newBot(t)
-	doc := repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "image/heic",
-		Category: docsbot.CatOther, Title: "IMG.heic", TgFileID: "x", TgFileUniqueID: "heic-uniq",
-	})
-	b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(doc.ID)+":s"))
-	require.Len(t, sent.editMarkups, 1)
-	require.NotContains(t, sent.editMarkups[0], "conv:doc:")
 }

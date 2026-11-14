@@ -11,6 +11,7 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
 	"github.com/alexe0110/most-app/internal/platform/gdrive"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
@@ -23,23 +24,23 @@ type docs struct {
 	auth Authorizer
 	log  *slog.Logger
 	// renames: the document a user is renaming and the message showing the prompt.
-	renames *ttlMap[int64, renameEntry]
+	renames *tg.TTLMap[int64, renameEntry]
 	// confirms: users asked to confirm data deletion; a stale arm just means the
 	// user taps "Удалить мои данные" again.
-	confirms *ttlMap[int64, struct{}]
+	confirms *tg.TTLMap[int64, struct{}]
 	// searches: a user's last search query, for "Назад" from a card opened from the
 	// results. get keeps the entry so repeated presses work.
-	searches *ttlMap[int64, string]
+	searches *tg.TTLMap[int64, string]
 	// origins: where each card message was opened from, see originKey.
-	origins *ttlMap[originKey, string]
+	origins *tg.TTLMap[originKey, string]
 	// settingsMsgs remembers the /settings message per chat for the OAuth return.
-	settingsMsgs *ttlMap[int64, int]
+	settingsMsgs *tg.TTLMap[int64, int]
 	albums       *albumBuffer
 	// driveFolder is the Drive root folder name shown in /start.
 	driveFolder string
-	// registerAlbum remembers an album's images for the "one PDF" button and
-	// returns its token; set by Register (the converter owns the PDF work).
-	registerAlbum func(user docsbot.UserID, tgUser int64, group string, images []albumImage) string
+	// albumPDFs makes the "one PDF" offer of an album; set by Register (the
+	// converter owns the PDF work). Nil: albums are always saved one by one.
+	albumPDFs albumPDFs
 	// pauseFile and pauseAlbum space out export sends under the Bot API rate limit.
 	pauseFile, pauseAlbum time.Duration
 	// exports holds the users with an export in flight: one at a time per user.
@@ -50,11 +51,11 @@ type docs struct {
 func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Option) *docs {
 	d := &docs{
 		svc: svc, auth: auth, log: log,
-		renames:      newTTLMap[int64, renameEntry](renameTTL, maxStoreEntries, time.Now),
-		confirms:     newTTLMap[int64, struct{}](confirmTTL, maxStoreEntries, time.Now),
-		searches:     newTTLMap[int64, string](searchTTL, maxStoreEntries, time.Now),
-		origins:      newTTLMap[originKey, string](originTTL, maxStoreEntries, time.Now),
-		settingsMsgs: newTTLMap[int64, int](settingsTTL, maxStoreEntries, time.Now),
+		renames:      tg.NewTTLMap[int64, renameEntry](renameTTL, tg.MaxStoreEntries, time.Now),
+		confirms:     tg.NewTTLMap[int64, struct{}](confirmTTL, tg.MaxStoreEntries, time.Now),
+		searches:     tg.NewTTLMap[int64, string](searchTTL, tg.MaxStoreEntries, time.Now),
+		origins:      tg.NewTTLMap[originKey, string](originTTL, tg.MaxStoreEntries, time.Now),
+		settingsMsgs: tg.NewTTLMap[int64, int](settingsTTL, tg.MaxStoreEntries, time.Now),
 		albums:       newAlbumBuffer(),
 
 		driveFolder: gdrive.DefaultRootFolder,
@@ -66,6 +67,12 @@ func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Op
 		opt(d)
 	}
 	return d
+}
+
+// albumPDFs remembers an album's images for the "one PDF" button and returns the
+// button's token. Declared here, at the consumer; the converter implements it.
+type albumPDFs interface {
+	RegisterAlbum(user docsbot.UserID, tgUser int64, group string, images []converter.AlbumImage) string
 }
 
 // ownsCallback matches this feature's inline buttons.
@@ -88,7 +95,7 @@ func (d *docs) ownsUnsupported(u *models.Update) bool {
 
 // onUnsupported tells the user which media the bot takes.
 func (d *docs) onUnsupported(ctx context.Context, b *bot.Bot, u *models.Update) {
-	d.out(b).send(ctx, u.Message.Chat.ID, textUnsupported)
+	d.out(b).Send(ctx, u.Message.Chat.ID, textUnsupported)
 }
 
 // onText handles any non-command text: a pending rename, otherwise a search. A
@@ -99,22 +106,22 @@ func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 	}
 	chatID := u.Message.Chat.ID
 	if strings.HasPrefix(u.Message.Text, "/") {
-		d.out(b).send(ctx, chatID, textUnknown)
+		d.out(b).Send(ctx, chatID, textUnknown)
 		return
 	}
 	user, ok := userID(ctx)
 	if !ok {
 		return
 	}
-	if _, armed := d.confirms.take(u.Message.From.ID); armed {
+	if _, armed := d.confirms.Take(u.Message.From.ID); armed {
 		d.onDeleteConfirm(ctx, b, chatID, user, u.Message.Text)
 		return
 	}
-	if e, ok := d.renames.take(u.Message.From.ID); ok {
+	if e, ok := d.renames.Take(u.Message.From.ID); ok {
 		d.applyRename(ctx, b, user, e, u.Message)
 		return
 	}
-	d.searches.set(u.Message.From.ID, u.Message.Text)
+	d.searches.Set(u.Message.From.ID, u.Message.Text)
 	d.runSearch(ctx, b, chatID, user, u.Message.Text)
 }
 
@@ -122,11 +129,11 @@ func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 	p := newPress(ctx, u.CallbackQuery)
 	if !answersItself(p.data) {
-		d.out(b).answer(ctx, p.queryID, withToast(toastFor(p.data)))
+		d.out(b).Answer(ctx, p.queryID, tg.WithToast(toastFor(p.data)))
 	}
 	if !p.hasUser {
 		if answersItself(p.data) {
-			d.out(b).answer(ctx, p.queryID) // never leave the button spinning
+			d.out(b).Answer(ctx, p.queryID) // never leave the button spinning
 		}
 		return
 	}
@@ -207,7 +214,7 @@ func toastFor(c callbackData) string {
 }
 
 // out is the one way this handler talks to Telegram's message API.
-func (d *docs) out(b *bot.Bot) sender { return sender{api: b, log: d.log} }
+func (d *docs) out(b *bot.Bot) tg.Sender { return tg.NewSender(b, d.log) }
 
 // fail logs the real error once and shows the user a generic message.
 func (d *docs) fail(ctx context.Context, b *bot.Bot, chatID int64, what string, err error) {
@@ -216,7 +223,7 @@ func (d *docs) fail(ctx context.Context, b *bot.Bot, chatID int64, what string, 
 	} else {
 		d.log.ErrorContext(ctx, what, "err", err)
 	}
-	d.out(b).send(ctx, chatID, textError)
+	d.out(b).Send(ctx, chatID, textError)
 }
 
 // userID reads the internal user id the ensureUser middleware put in ctx.

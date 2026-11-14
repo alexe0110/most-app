@@ -191,8 +191,8 @@ func newBotOpts(t *testing.T, log *slog.Logger, drive fakeDrive, opts ...telegra
 	b, err := bot.New("123:ABC", bot.WithServerURL(ts.URL), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
 	require.NoError(t, err)
 
-	svc, auth, repo := fakeDepsWith(drive)
-	telegram.Register(b, telegram.Deps{Log: log, Svc: svc, Auth: auth, Files: noFiles{}}, opts...)
+	svc, repo := fakeDepsWith(drive)
+	telegram.Register(b, telegram.Deps{Log: log, Svc: svc, Auth: fakeAuth{}, Files: noFiles{}}, opts...)
 	return b, sent, repo
 }
 
@@ -208,7 +208,8 @@ const sentMessageID = 777
 
 const testUserID = "11111111-1111-1111-1111-111111111111"
 
-func commandUpdate(chatID int64, cmd string) *models.Update {
+func commandUpdate(cmd string) *models.Update {
+	const chatID = 100
 	text := "/" + cmd
 	return &models.Update{Message: &models.Message{
 		From: &models.User{ID: chatID},
@@ -236,6 +237,15 @@ func dataCallbackMsg(msgID int, data string) *models.Update {
 			Message: &models.Message{ID: msgID, Chat: models.Chat{ID: chatID, Type: models.ChatTypePrivate}},
 		},
 	}}
+}
+
+// inaccessible is a press on a message Telegram no longer gives (too old).
+func inaccessible(u *models.Update) *models.Update {
+	u.CallbackQuery.Message = models.MaybeInaccessibleMessage{
+		Type:                models.MaybeInaccessibleMessageTypeInaccessibleMessage,
+		InaccessibleMessage: &models.InaccessibleMessage{Chat: models.Chat{ID: 100, Type: models.ChatTypePrivate}},
+	}
+	return u
 }
 
 // textUpdateID is textUpdate from user 100 with a message id (the bot deletes renamed-title messages).
@@ -723,21 +733,16 @@ func (s fakeSyncs) DeleteDocument(_ context.Context, user docsbot.UserID, id doc
 
 func (fakeSyncs) RequeueSync(context.Context, docsbot.UserID, docsbot.DocumentID) error { return nil }
 
-// fakeDeps builds a Service over in-memory fakes, plus the fake authorizer.
-func fakeDeps() (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
-	return fakeDepsWith(fakeDrive{})
-}
-
-// fakeDepsWith is fakeDeps with a chosen Drive state. Files are never reached
-// and uploads is a no-op.
-func fakeDepsWith(drive fakeDrive) (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
+// fakeDepsWith builds a Service over in-memory fakes with a chosen Drive state.
+// Files are never reached and uploads is a no-op.
+func fakeDepsWith(drive fakeDrive) (*docsbot.Service, *fakeRepo) {
 	repo := newFakeRepo()
 	repo.status = newFakeStatus(repo)
 	uploads := fakeUploads{repo: repo}
 	return docsbot.NewService(docsbot.Ports{
 		Repo: repo, Drive: drive, Uploads: uploads, Jobs: uploads,
 		Folders: repo, Status: repo.status, Syncs: fakeSyncs{repo: repo},
-	}), fakeAuth{}, repo
+	}), repo
 }
 
 func (r *fakeRepo) MarkSynced(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, version int) (bool, error) {

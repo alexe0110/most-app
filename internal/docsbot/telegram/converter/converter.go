@@ -1,4 +1,8 @@
-package telegram
+// Package converter is the /convert inbound adapter of docsbot: the dialogue that
+// turns photos into a PDF, compresses an image or edits a PDF, and the convert
+// menu of stored documents. The work itself is done by platform/convert; the docs
+// adapter renders what saving a result produced.
+package converter
 
 import (
 	"context"
@@ -16,31 +20,6 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/platform/convert"
 	"github.com/alexe0110/most-app/internal/platform/tg"
-)
-
-// callbackPrefix tags every inline button this feature owns.
-const callbackPrefix = "conv:"
-
-// Callback data for the inline buttons that carry no argument.
-const (
-	cbPDF         = callbackPrefix + convActPDF
-	cbCompress    = callbackPrefix + convActCompress
-	cbDone        = callbackPrefix + convActDone
-	cbCancel      = callbackPrefix + convActCancel
-	cbLimit1      = callbackPrefix + convActLimit1
-	cbLimit2      = callbackPrefix + convActLimit2
-	cbLimit5      = callbackPrefix + convActLimit5
-	cbLimitCustom = callbackPrefix + convActLimitCustom
-	cbFmtJPEG     = callbackPrefix + convActFmtJPEG
-	cbFmtPNG      = callbackPrefix + convActFmtPNG
-	cbMenuCancel  = callbackPrefix + convActMenuCancel
-	cbPDFActions  = callbackPrefix + convActPDFOps
-
-	// PDF operations on a PDF sent to /convert (bound to the session).
-	cbSessRotate = callbackPrefix + convActPDFOp + ":" + opRotate
-	cbSessKeep   = callbackPrefix + convActPDFOp + ":" + opKeep
-	cbSessDrop   = callbackPrefix + convActPDFOp + ":" + opDrop
-	cbSessMerge  = callbackPrefix + convActPDFOp + ":" + opMerge
 )
 
 // Limits of an album PDF.
@@ -64,9 +43,36 @@ const (
 	photosDownloadBudget = 80 * time.Second
 )
 
-// converter runs the /convert dialogue. State lives in sessions; the image work
+// FileDownloader fetches a Telegram file's bytes and content type by file_id.
+// Declared here, at the consumer; platform/tg.Bot implements it.
+type FileDownloader interface {
+	Download(ctx context.Context, fileID string) (data []byte, mime string, err error)
+}
+
+// SavedView shows the docs side of a saved result: cards, the category picker and
+// limit notices. Declared here, at the consumer; the docs adapter implements it.
+type SavedView interface {
+	// RenderSaved turns message msgID into the card of the saved document.
+	RenderSaved(ctx context.Context, b *bot.Bot, chatID int64, msgID int, user docsbot.UserID, saved docsbot.Saved)
+	SendAlreadySaved(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID)
+	// SendReplaced shows the card of a document whose file was replaced.
+	SendReplaced(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID)
+	// SendNotice answers a reply the converter does not own: the category picker
+	// of a new document or an intake limit.
+	SendNotice(ctx context.Context, b *bot.Bot, chatID int64, rep docsbot.Reply)
+}
+
+// Deps are the required collaborators of the converter.
+type Deps struct {
+	Log   *slog.Logger
+	Svc   *docsbot.Service
+	Files FileDownloader
+	Saved SavedView
+}
+
+// Converter runs the /convert dialogue. State lives in sessions; the image work
 // is done by platform/convert.
-type converter struct {
+type Converter struct {
 	log      *slog.Logger
 	sessions *sessionStore
 	results  *tokenMap[convResult]
@@ -87,47 +93,50 @@ type converter struct {
 
 	svc *docsbot.Service
 	// docs shows what saving a result produced; the docs adapter owns that rendering.
-	docs savedView
+	docs SavedView
 }
 
-// savedView renders the outcome of saving a converted result. Declared here, at
-// the consumer; the docs adapter implements it.
-type savedView interface {
-	renderSaved(ctx context.Context, b *bot.Bot, chatID int64, msgID int, user docsbot.UserID, saved docsbot.Saved)
-	sendAlreadySaved(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID)
-	// sendReplaced shows the card of a document whose file was replaced.
-	sendReplaced(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID)
-}
-
-func newConverter(log *slog.Logger, svc *docsbot.Service, files FileDownloader, docs savedView) *converter {
-	return &converter{
-		log:      log,
+// New makes the converter.
+func New(deps Deps) *Converter {
+	return &Converter{
+		log:      deps.Log,
 		sessions: newSessionStore(time.Now),
 		results:  newTokenMap[convResult](time.Now),
 		albums:   newTokenMap[convAlbum](time.Now),
 		now:      time.Now,
-		files:    files,
+		files:    deps.Files,
 		inflight: map[string]struct{}{},
 		tipShown: map[int64]bool{},
 		dialogue: newKeyedMutex(),
-		svc:      svc,
-		docs:     docs,
+		svc:      deps.Svc,
+		docs:     deps.Saved,
 	}
 }
 
+// Register wires the /convert and /cancel commands and the converter's buttons
+// and in-session messages onto b. Call it after the docs commands and before the
+// docs catch-all handlers: the first matching handler wins, and a user with a
+// live session gets all their messages here.
+func (c *Converter) Register(b *bot.Bot) {
+	b.RegisterHandler(bot.HandlerTypeMessageText, "convert", bot.MatchTypeCommand, c.start)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "cancel", bot.MatchTypeCommand, c.cancel)
+	b.RegisterHandlerMatchFunc(c.ownsCallback, c.callback)
+	b.RegisterHandlerMatchFunc(c.ownsMessage, c.message)
+}
+
 // ownsCallback matches this feature's inline buttons.
-func (c *converter) ownsCallback(update *models.Update) bool {
+func (c *Converter) ownsCallback(update *models.Update) bool {
 	return update.CallbackQuery != nil && strings.HasPrefix(update.CallbackQuery.Data, callbackPrefix)
 }
 
 // ownsMessage matches any message from a user with a live session.
-func (c *converter) ownsMessage(update *models.Update) bool {
+func (c *Converter) ownsMessage(update *models.Update) bool {
 	user, ok := messageUser(update)
 	return ok && c.sessions.has(user)
 }
 
 // start opens a session and offers the two actions.
-func (c *converter) start(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (c *Converter) start(ctx context.Context, b *bot.Bot, update *models.Update) {
 	user, ok := messageUser(update)
 	if !ok {
 		return
@@ -135,18 +144,18 @@ func (c *converter) start(ctx context.Context, b *bot.Bot, update *models.Update
 	unlock := c.dialogue.lock(user)
 	defer unlock()
 	if prev, ok := c.sessions.live(user); ok && prev.msgID != 0 {
-		c.out(b).clearKeyboard(ctx, update.Message.Chat.ID, prev.msgID)
+		c.out(b).ClearKeyboard(ctx, update.Message.Chat.ID, prev.msgID)
 	}
 	if !c.sessions.start(user) {
-		c.out(b).send(ctx, update.Message.Chat.ID, textConvertBusy)
+		c.out(b).Send(ctx, update.Message.Chat.ID, textConvertBusy)
 		return
 	}
-	id := c.out(b).send(ctx, update.Message.Chat.ID, textConvertStart, withKeyboard(actionKeyboard())) // 0: no dialogue message
+	id := c.out(b).Send(ctx, update.Message.Chat.ID, textConvertStart, tg.WithKeyboard(actionKeyboard())) // 0: no dialogue message
 	c.sessions.setMsg(user, id)
 }
 
 // cancel leaves converter mode.
-func (c *converter) cancel(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (c *Converter) cancel(ctx context.Context, b *bot.Bot, update *models.Update) {
 	user, ok := messageUser(update)
 	if !ok {
 		return
@@ -155,14 +164,14 @@ func (c *converter) cancel(ctx context.Context, b *bot.Bot, update *models.Updat
 	if sess, ok := c.sessions.claim(user, 0); ok {
 		text = textConvertCancelled
 		if sess.msgID != 0 {
-			c.out(b).clearKeyboard(ctx, update.Message.Chat.ID, sess.msgID)
+			c.out(b).ClearKeyboard(ctx, update.Message.Chat.ID, sess.msgID)
 		}
 	}
-	c.out(b).send(ctx, update.Message.Chat.ID, text)
+	c.out(b).Send(ctx, update.Message.Chat.ID, text)
 }
 
 // message routes an in-session message by content and step.
-func (c *converter) message(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (c *Converter) message(ctx context.Context, b *bot.Bot, update *models.Update) {
 	user, ok := messageUser(update)
 	if !ok {
 		return
@@ -175,7 +184,7 @@ func (c *converter) message(ctx context.Context, b *bot.Bot, update *models.Upda
 
 	switch {
 	case len(update.Message.Photo) > 0 && awaitsPDF(sess.step):
-		c.out(b).send(ctx, chatID, textPDFNotPDF)
+		c.out(b).Send(ctx, chatID, textPDFNotPDF)
 	case len(update.Message.Photo) > 0:
 		photo := largestPhoto(update.Message.Photo)
 		c.onImage(ctx, b, update, photo.FileID, int64(photo.FileSize))
@@ -184,7 +193,7 @@ func (c *converter) message(ctx context.Context, b *bot.Bot, update *models.Upda
 	case update.Message.Text != "":
 		c.onText(ctx, b, update, sess.step)
 	default:
-		c.out(b).send(ctx, chatID, textConvertUnsupported)
+		c.out(b).Send(ctx, chatID, textConvertUnsupported)
 	}
 }
 
@@ -230,13 +239,13 @@ func formatExt(f convert.Format) string {
 	return "jpg"
 }
 
-// convertible reports whether the converter can work with the document: a photo,
+// Convertible reports whether the converter can work with the document: a photo,
 // a JPEG/PNG/WEBP file or a PDF.
-func convertible(doc docsbot.Document) bool {
+func Convertible(doc docsbot.Document) bool {
 	if doc.Kind == docsbot.KindPhoto {
 		return true
 	}
-	return doc.Kind == docsbot.KindDocument && (supportedImageMIME(doc.MIME) || isPDF(doc))
+	return doc.Kind == docsbot.KindDocument && (SupportedImageMIME(doc.MIME) || IsPDF(doc))
 }
 
 // isWebP reports whether the document is a WEBP image.
@@ -250,13 +259,13 @@ const (
 	mimePNG = "image/png"
 )
 
-// isPDF reports whether the document is a PDF file.
-func isPDF(doc docsbot.Document) bool {
+// IsPDF reports whether the document is a PDF file.
+func IsPDF(doc docsbot.Document) bool {
 	return doc.Kind == docsbot.KindDocument && doc.MIME == mimePDF
 }
 
-// supportedImageMIME reports whether we can decode this MIME type.
-func supportedImageMIME(mime string) bool {
+// SupportedImageMIME reports whether we can decode this MIME type.
+func SupportedImageMIME(mime string) bool {
 	switch mime {
 	case "image/jpeg", "image/jpg", mimePNG, "image/webp":
 		return true

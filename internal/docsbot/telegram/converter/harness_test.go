@@ -1,4 +1,4 @@
-package telegram_test
+package converter_test
 
 import (
 	"bytes"
@@ -355,4 +355,16 @@ func callbackOn(data string, msgID int) *models.Update {
 	u := callbackUpdate(data)
 	u.CallbackQuery.Message.Message.ID = msgID
 	return u
+}
+
+func commandUpdate(cmd string) *models.Update {
+	text := "/" + cmd
+	return &models.Update{Message: &models.Message{
+		From: &models.User{ID: testUser},
+		Chat: models.Chat{ID: testChat, Type: models.ChatTypePrivate},
+		Text: text,
+		Entities: []models.MessageEntity{
+			{Type: models.MessageEntityTypeBotCommand, Offset: 0, Length: len(text)},
+		},
+	}}
 }

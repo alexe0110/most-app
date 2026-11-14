@@ -16,9 +16,9 @@ func TestRegister_routing(t *testing.T) {
 		update   *models.Update
 		wantText string
 	}{
-		{"start", commandUpdate(100, "start"), "«Most Docs»"},
-		{"help", commandUpdate(100, "help"), "умею"},
-		{"unknown command", commandUpdate(100, "foo"), "Не понимаю"},
+		{"start", commandUpdate("start"), "«Most Docs»"},
+		{"help", commandUpdate("help"), "умею"},
+		{"unknown command", commandUpdate("foo"), "Не понимаю"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

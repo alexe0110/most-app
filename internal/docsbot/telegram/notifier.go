@@ -30,13 +30,13 @@ const editInterval = time.Second
 // Notifier posts upload outcomes to the user in Telegram. It satisfies
 // docsbot/jobs.Notifier (checked where it is bound to the worker in cmd).
 type Notifier struct {
-	out   sender
+	out   tg.Sender
 	users userLookup
 	auth  Authorizer
 	svc   statusService
 	log   *slog.Logger
 
-	renames *ttlMap[int64, renameEntry] // shared with the docs handlers; nil when not wired
+	renames *tg.TTLMap[int64, renameEntry] // shared with the docs handlers; nil when not wired
 
 	mu        sync.Mutex
 	lastEdit  map[docsbot.StatusMessageID]time.Time
@@ -49,7 +49,7 @@ const reconnectDebounce = 10 * time.Minute
 
 // NewNotifier builds the Telegram Notifier that the upload worker reports to.
 func NewNotifier(b *tg.Bot, users userLookup, auth Authorizer, svc statusService, log *slog.Logger, opts ...NotifierOption) *Notifier {
-	n := &Notifier{out: sender{api: b.Client(), log: log}, users: users, auth: auth, svc: svc, log: log,
+	n := &Notifier{out: tg.NewSender(b.Client(), log), users: users, auth: auth, svc: svc, log: log,
 		lastEdit: map[docsbot.StatusMessageID]time.Time{}, revokedAt: map[docsbot.UserID]time.Time{}}
 	for _, opt := range opts {
 		opt(n)
@@ -86,14 +86,14 @@ func (n *Notifier) UploadOutcome(ctx context.Context, user docsbot.UserID, doc d
 	text, kb := renderStatusMessage(view.Message, view.Lines, view.FolderByCat)
 	n.throttle(view.Message.ID)
 	n.dropRename(view.Message.ChatID, view.Message.MessageID) // the redraw overwrites a prompt shown here
-	err = n.out.tryEdit(ctx, view.Message.ChatID, view.Message.MessageID, text, withHTML(), withKeyboard(kb))
+	err = n.out.TryEdit(ctx, view.Message.ChatID, view.Message.MessageID, text, tg.WithHTML(), tg.WithKeyboard(kb))
 	n.dropRename(view.Message.ChatID, view.Message.MessageID)
 	var errs []error
-	switch err = n.out.ignoreBlocked(ctx, err); {
+	switch err = n.out.IgnoreBlocked(ctx, err); {
 	case err == nil:
-	case isMessageGone(err):
-		mid, serr := n.out.trySend(ctx, view.Message.ChatID, text, withHTML(), withKeyboard(kb))
-		if serr = n.out.ignoreBlocked(ctx, serr); serr != nil {
+	case tg.IsMessageGone(err):
+		mid, serr := n.out.TrySend(ctx, view.Message.ChatID, text, tg.WithHTML(), tg.WithKeyboard(kb))
+		if serr = n.out.IgnoreBlocked(ctx, serr); serr != nil {
 			errs = append(errs, fmt.Errorf("resend status message: %w", serr))
 		} else if mid != 0 { // 0: the resend hit a blocked user
 			if uerr := n.svc.SetStatusMessageID(ctx, user, view.Message.ID, mid); uerr != nil {
@@ -132,7 +132,7 @@ func (n *Notifier) singleOutcome(ctx context.Context, user docsbot.UserID, doc d
 	if err != nil {
 		return fmt.Errorf("resolve tg user: %w", err)
 	}
-	_, err = n.out.trySend(ctx, chatID, text, withKeyboard(kb))
+	_, err = n.out.TrySend(ctx, chatID, text, tg.WithKeyboard(kb))
 	return err
 }
 
@@ -158,8 +158,8 @@ func (n *Notifier) SyncOutcome(ctx context.Context, user docsbot.UserID, doc doc
 			url = ""
 		}
 	}
-	_, err = n.out.trySend(ctx, chatID, cardText(card.Doc), withHTML(), withKeyboard(cardKeyboardWith(card.Doc, "", "", url)))
-	return n.out.ignoreBlocked(ctx, err)
+	_, err = n.out.TrySend(ctx, chatID, cardText(card.Doc), tg.WithHTML(), tg.WithKeyboard(cardKeyboardWith(card.Doc, "", "", url)))
+	return n.out.IgnoreBlocked(ctx, err)
 }
 
 // RemoteKept tells the user a deleted document's Drive file could not be trashed.
@@ -168,8 +168,8 @@ func (n *Notifier) RemoteKept(ctx context.Context, user docsbot.UserID) error {
 	if err != nil {
 		return fmt.Errorf("resolve tg user: %w", err)
 	}
-	_, err = n.out.trySend(ctx, chatID, textDeletedRemoteKept)
-	return n.out.ignoreBlocked(ctx, err)
+	_, err = n.out.TrySend(ctx, chatID, textDeletedRemoteKept)
+	return n.out.IgnoreBlocked(ctx, err)
 }
 
 // throttle sleeps so consecutive edits of one status message are at least
@@ -207,11 +207,11 @@ func (n *Notifier) Reconnect(ctx context.Context, user docsbot.UserID) error {
 	}
 	if url, uErr := n.auth.AuthURL(ctx, string(user), docsbot.BotName); uErr != nil {
 		n.log.ErrorContext(ctx, "build auth url", "err", uErr)
-		_, err = n.out.trySend(ctx, chatID, textReconnect)
+		_, err = n.out.TrySend(ctx, chatID, textReconnect)
 	} else {
-		_, err = n.out.trySend(ctx, chatID, textReconnect, withKeyboard(reconnectKeyboard(url)))
+		_, err = n.out.TrySend(ctx, chatID, textReconnect, tg.WithKeyboard(reconnectKeyboard(url)))
 	}
-	if err = n.out.ignoreBlocked(ctx, err); err != nil {
+	if err = n.out.IgnoreBlocked(ctx, err); err != nil {
 		return err
 	}
 	n.mu.Lock()

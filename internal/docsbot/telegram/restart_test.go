@@ -57,18 +57,6 @@ func TestRestart_callbacksWithoutStoreEntries(t *testing.T) {
 	require.True(t, has(sent.edits, "Этого документа уже нет"), "edits %q", sent.edits)
 }
 
-func TestRestart_convertCallbackWithoutSession(t *testing.T) {
-	for _, data := range []string{"conv:pdf", "conv:compress", "conv:done", "conv:cancel"} {
-		t.Run(data, func(t *testing.T) {
-			h := newConvHarness(t)
-
-			h.bot.ProcessUpdate(t.Context(), callbackUpdate(data))
-
-			require.Equal(t, "Кнопка устарела, открой заново.", h.lastText())
-		})
-	}
-}
-
 func TestRestart_deleteWordWithoutArmedConfirmationIsASearch(t *testing.T) {
 	b, sent, repo := newBot(t)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)

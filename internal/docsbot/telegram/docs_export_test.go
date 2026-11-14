@@ -22,12 +22,12 @@ func TestIsExport(t *testing.T) {
 		u    *models.Update
 		want bool
 	}{
-		{"command", convText("/export"), true},
-		{"command with bot name", convText("/export@most_bot"), true},
-		{"export button", callbackUpdate("d:exp"), true},
-		{"other command", convText("/list"), false},
-		{"similar command", convText("/exports"), false},
-		{"other button", callbackUpdate("d:del"), false},
+		{"command", textUpdate("/export"), true},
+		{"command with bot name", textUpdate("/export@most_bot"), true},
+		{"export button", dataCallback("d:exp"), true},
+		{"other command", textUpdate("/list"), false},
+		{"similar command", textUpdate("/exports"), false},
+		{"other button", dataCallback("d:del"), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -55,7 +55,7 @@ func TestExport_rateLimitIsRetriedOnceAndSentIsCounted(t *testing.T) {
 			ctx := tg.ContextWithUserID(t.Context(), testUserID)
 			seedExport(repo, docsbot.KindDocument, 3, "d", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
-			b.ProcessUpdate(ctx, commandUpdate(100, "export"))
+			b.ProcessUpdate(ctx, commandUpdate("export"))
 
 			require.Len(t, sent.groups, tt.wantAlbum)
 			require.True(t, has(sent.texts, tt.wantDone), "texts %q", sent.texts)
@@ -79,7 +79,7 @@ func TestExport_buttonIsSpentAndASecondRunIsRefused(t *testing.T) {
 	}()
 	require.Eventually(t, func() bool { return len(sent.snapshot(&sent.files)) == 1 }, 5*time.Second, 5*time.Millisecond)
 
-	b.ProcessUpdate(ctx, commandUpdate(100, "export")) // a parallel run
+	b.ProcessUpdate(ctx, commandUpdate("export")) // a parallel run
 	b.ProcessUpdate(ctx, dataCallbackMsg(9, "d:exp"))
 	stop()
 	<-done
@@ -114,7 +114,7 @@ func TestExport_sendsAlbumsByKind(t *testing.T) {
 	seedExport(repo, docsbot.KindDocument, 1, "d", base.Add(time.Hour)) // a lone document
 	seedExport(repo, docsbot.KindPhoto, 1, "q", base.Add(2*time.Hour))  // a lone photo
 
-	b.ProcessUpdate(ctx, commandUpdate(100, "export"))
+	b.ProcessUpdate(ctx, commandUpdate("export"))
 
 	require.Len(t, sent.groups, 2, "two albums")
 	require.Equal(t, 10, strings.Count(sent.groups[0], `"type":"photo"`))
@@ -141,7 +141,7 @@ func TestExport_empty(t *testing.T) {
 	b, sent, _ := newBot(t)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 
-	b.ProcessUpdate(ctx, commandUpdate(100, "export"))
+	b.ProcessUpdate(ctx, commandUpdate("export"))
 
 	require.True(t, has(sent.texts, "нечего присылать"), "texts %q", sent.texts)
 	require.Empty(t, sent.groups)
@@ -161,7 +161,7 @@ func TestExport_cancelStopsBetweenBatches(t *testing.T) {
 	seedExport(repo, docsbot.KindDocument, 1, "d", base.Add(time.Hour))
 	time.AfterFunc(100*time.Millisecond, cancel)
 
-	b.ProcessUpdate(ctx, commandUpdate(100, "export"))
+	b.ProcessUpdate(ctx, commandUpdate("export"))
 
 	require.Len(t, sent.files, 1, "stops before the second batch")
 	require.False(t, has(sent.texts, "Готово"), "texts %q", sent.texts)
@@ -177,7 +177,7 @@ func TestExport_exactlyTenDocumentsIsOneAlbumAndElevenSplits(t *testing.T) {
 		ctx := tg.ContextWithUserID(t.Context(), testUserID)
 		seedExport(repo, docsbot.KindDocument, tt.n, "d", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
-		b.ProcessUpdate(ctx, commandUpdate(100, "export"))
+		b.ProcessUpdate(ctx, commandUpdate("export"))
 
 		require.Len(t, sent.groups, tt.wantGroups, "n=%d", tt.n)
 		require.Len(t, sent.files, tt.wantFiles, "n=%d", tt.n)

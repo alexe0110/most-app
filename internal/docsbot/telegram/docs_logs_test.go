@@ -112,10 +112,10 @@ func TestLogs_blockedUserIsNotAnErrorInHandlers(t *testing.T) {
 		method string // the call Telegram refused
 	}{
 		{"help", func(ctx context.Context, b *bot.Bot, _ *fakeRepo) {
-			b.ProcessUpdate(ctx, commandUpdate(100, "help"))
+			b.ProcessUpdate(ctx, commandUpdate("help"))
 		}, "sendMessage"},
 		{"start", func(ctx context.Context, b *bot.Bot, _ *fakeRepo) {
-			b.ProcessUpdate(ctx, commandUpdate(100, "start"))
+			b.ProcessUpdate(ctx, commandUpdate("start"))
 		}, "sendMessage"},
 		{"document intake keeps the document", func(ctx context.Context, b *bot.Bot, repo *fakeRepo) {
 			b.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
@@ -138,7 +138,7 @@ func TestLogs_blockedUserIsNotAnErrorInHandlers(t *testing.T) {
 			b.ProcessUpdate(ctx, dataCallback("d:exp"))
 		}, "editMessageReplyMarkup"},
 		{"converter start", func(ctx context.Context, b *bot.Bot, _ *fakeRepo) {
-			b.ProcessUpdate(ctx, commandUpdate(100, "convert"))
+			b.ProcessUpdate(ctx, commandUpdate("convert"))
 		}, "sendMessage"},
 		{"converter stale button", func(ctx context.Context, b *bot.Bot, _ *fakeRepo) {
 			b.ProcessUpdate(ctx, dataCallback("conv:cancel"))

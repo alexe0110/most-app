@@ -35,7 +35,7 @@ func TestNotifyConnected_settingsMessage(t *testing.T) {
 			msgs := telegram.NewSettingsMessages()
 			if tt.openFrom {
 				b, _, _ := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithSettingsMessages(msgs))
-				b.ProcessUpdate(tg.ContextWithUserID(t.Context(), testUserID), commandUpdate(100, "settings"))
+				b.ProcessUpdate(tg.ContextWithUserID(t.Context(), testUserID), commandUpdate("settings"))
 			}
 			e := newNotifierEnv(t)
 			notify := telegram.NotifyConnected(e.bot, chatLookup{}, e.svc, slog.New(slog.DiscardHandler),
@@ -63,7 +63,7 @@ func TestNotifyConnected_settingsFailuresDoNotFailTheCallback(t *testing.T) {
 	remember := func(t *testing.T) *telegram.SettingsMessages {
 		msgs := telegram.NewSettingsMessages()
 		b, _, _ := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithSettingsMessages(msgs))
-		b.ProcessUpdate(tg.ContextWithUserID(t.Context(), testUserID), commandUpdate(100, "settings"))
+		b.ProcessUpdate(tg.ContextWithUserID(t.Context(), testUserID), commandUpdate("settings"))
 		return msgs
 	}
 

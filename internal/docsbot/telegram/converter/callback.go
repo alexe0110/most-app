@@ -1,4 +1,4 @@
-package telegram
+package converter
 
 import (
 	"context"
@@ -9,12 +9,13 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/platform/convert"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // callback handles a button press.
-func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (c *Converter) callback(ctx context.Context, b *bot.Bot, update *models.Update) {
 	p := newPress(ctx, update.CallbackQuery)
-	c.out(b).answer(ctx, p.queryID)
+	c.out(b).Answer(ctx, p.queryID)
 	if !p.hasMsg {
 		return
 	}
@@ -60,7 +61,7 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 // onSessionButton handles the buttons of a /convert session. Every one is valid
 // only on the dialogue message, at its own step; anything else is a stale press
 // with no side effects.
-func (c *converter) onSessionButton(ctx context.Context, b *bot.Bot, p press) {
+func (c *Converter) onSessionButton(ctx context.Context, b *bot.Bot, p press) {
 	user, msgID := p.tgUser, p.msgID
 	switch p.data.action {
 	case convActPDF:
@@ -104,7 +105,7 @@ func (c *converter) onSessionButton(ctx context.Context, b *bot.Bot, p press) {
 			return
 		}
 		c.clearButtons(ctx, b, p)
-		c.out(b).send(ctx, p.chatID, textConvertCancelled)
+		c.out(b).Send(ctx, p.chatID, textConvertCancelled)
 	case convActLimit1, convActLimit2, convActLimit5:
 		sess, ok := c.sessions.advance(user, msgID, []step{stepChooseLimit}, func(s *session) {
 			s.maxBytes = limitBytes(p.data.action)
@@ -136,20 +137,20 @@ func (c *converter) onSessionButton(ctx context.Context, b *bot.Bot, p press) {
 }
 
 // out is the one way this handler talks to Telegram's message API.
-func (c *converter) out(b *bot.Bot) sender { return sender{api: b, log: c.log} }
+func (c *Converter) out(b *bot.Bot) tg.Sender { return tg.NewSender(b, c.log) }
 
 // stale answers a press that no longer applies (an old message, a wrong step,
 // an ended session, a double tap) and strips the message's buttons. It does
 // nothing else.
-func (c *converter) stale(ctx context.Context, b *bot.Bot, p press) {
-	c.out(b).send(ctx, p.chatID, textStale)
+func (c *Converter) stale(ctx context.Context, b *bot.Bot, p press) {
+	c.out(b).Send(ctx, p.chatID, textStale)
 	c.clearButtons(ctx, b, p)
 }
 
 // next moves the dialogue on after a button press: the pressed message becomes
 // the next step, and stays the session's dialogue message (or its replacement,
 // if Telegram refused the edit).
-func (c *converter) next(ctx context.Context, b *bot.Bot, p press, text string, kb *models.InlineKeyboardMarkup) {
+func (c *Converter) next(ctx context.Context, b *bot.Bot, p press, text string, kb *models.InlineKeyboardMarkup) {
 	unlock := c.dialogue.lock(p.tgUser)
 	defer unlock()
 	c.sessions.setMsg(p.tgUser, c.show(ctx, b, p.chatID, p.msgID, text, kb))
@@ -159,21 +160,21 @@ func (c *converter) next(ctx context.Context, b *bot.Bot, p press, text string, 
 // If the edit fails (the message is gone, too old, can't be edited) it sends a new
 // message instead; either way it returns the id of the live message. An edit that
 // changes nothing counts as success.
-func (c *converter) show(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup) int {
+func (c *Converter) show(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup) int {
 	out := c.out(b)
 	if msgID > 0 {
 		// An omitted keyboard keeps the old one, which is what a nil kb means here.
-		var opts []msgOpt
+		var opts []tg.MsgOpt
 		if kb != nil {
-			opts = append(opts, withKeyboard(kb))
+			opts = append(opts, tg.WithKeyboard(kb))
 		}
-		err := out.tryEdit(ctx, chatID, msgID, text, opts...)
+		err := out.TryEdit(ctx, chatID, msgID, text, opts...)
 		if err == nil {
 			return msgID
 		}
-		out.logFailure(ctx, slog.LevelWarn, "edit dialogue message failed, sending a new one", err)
+		out.LogFailure(ctx, slog.LevelWarn, "edit dialogue message failed, sending a new one", err)
 	}
-	if id := out.send(ctx, chatID, text, withKeyboard(kb)); id != 0 {
+	if id := out.Send(ctx, chatID, text, tg.WithKeyboard(kb)); id != 0 {
 		return id
 	}
 	return msgID // both failed: keep the old dialogue message so the session survives
@@ -182,12 +183,12 @@ func (c *converter) show(ctx context.Context, b *bot.Bot, chatID int64, msgID in
 // moveDown shows the next step of a dialogue that a user's message advanced: a
 // new message at the bottom of the chat, next to what the user just sent, then
 // the previous dialogue message is removed. Callers hold the user's dialogue lock.
-func (c *converter) moveDown(ctx context.Context, b *bot.Bot, chatID, user int64, text string, kb *models.InlineKeyboardMarkup) {
+func (c *Converter) moveDown(ctx context.Context, b *bot.Bot, chatID, user int64, text string, kb *models.InlineKeyboardMarkup) {
 	prev := 0
 	if sess, ok := c.sessions.live(user); ok {
 		prev = sess.msgID
 	}
-	id := c.out(b).send(ctx, chatID, text, withKeyboard(kb))
+	id := c.out(b).Send(ctx, chatID, text, tg.WithKeyboard(kb))
 	if id == 0 {
 		return // keep the previous dialogue message: the session still owns it
 	}
@@ -199,20 +200,20 @@ func (c *converter) moveDown(ctx context.Context, b *bot.Bot, chatID, user int64
 
 // drop deletes a dialogue message; if Telegram refuses (too old), its buttons are
 // removed instead so they can't be pressed.
-func (c *converter) drop(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
+func (c *Converter) drop(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
 	out := c.out(b)
-	if err := out.tryDelete(ctx, chatID, msgID); err != nil {
-		out.clearKeyboard(ctx, chatID, msgID)
+	if err := out.TryDelete(ctx, chatID, msgID); err != nil {
+		out.ClearKeyboard(ctx, chatID, msgID)
 	}
 }
 
 // finish removes the progress message once the result is sent; if it can't be
 // deleted it turns into a short "done" note without buttons.
-func (c *converter) finish(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
+func (c *Converter) finish(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
 	if msgID == 0 {
 		return
 	}
-	if err := c.out(b).tryDelete(ctx, chatID, msgID); err != nil {
+	if err := c.out(b).TryDelete(ctx, chatID, msgID); err != nil {
 		c.show(ctx, b, chatID, msgID, textConvertDone, nil)
 	}
 }
@@ -220,7 +221,7 @@ func (c *converter) finish(ctx context.Context, b *bot.Bot, chatID int64, msgID 
 // retry shows an error on the dialogue message with a keyboard and puts the
 // claimed session back, so the user can try again.
 // Callers must not hold the user's dialogue lock.
-func (c *converter) retry(ctx context.Context, b *bot.Bot, chatID, user int64, sess session, msgID int, text string, kb *models.InlineKeyboardMarkup) {
+func (c *Converter) retry(ctx context.Context, b *bot.Bot, chatID, user int64, sess session, msgID int, text string, kb *models.InlineKeyboardMarkup) {
 	unlock := c.dialogue.lock(user)
 	defer unlock()
 	sess.msgID = c.show(ctx, b, chatID, msgID, text, kb)
@@ -229,7 +230,7 @@ func (c *converter) retry(ctx context.Context, b *bot.Bot, chatID, user int64, s
 
 // claimMenu marks a menu message as being worked on; false means another tap on
 // it is already running.
-func (c *converter) claimMenu(chatID int64, msgID int) (release func(), ok bool) {
+func (c *Converter) claimMenu(chatID int64, msgID int) (release func(), ok bool) {
 	key := strconv.FormatInt(chatID, 10) + ":" + strconv.Itoa(msgID)
 	c.inflightMu.Lock()
 	defer c.inflightMu.Unlock()

@@ -1,4 +1,4 @@
-package telegram
+package converter
 
 import (
 	"io"
@@ -15,6 +15,8 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
+
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 func TestResultStore_take(t *testing.T) {
@@ -48,7 +50,7 @@ func TestResultStore_putEvictsExpired(t *testing.T) {
 	s.put("a", 1, convResult{})
 	now = now.Add(sessionTTL + time.Minute)
 	s.put("b", 1, convResult{})
-	require.Len(t, s.m.m, 1)
+	require.Equal(t, 1, s.m.Len())
 }
 
 func TestAlbumStore(t *testing.T) {
@@ -211,7 +213,7 @@ func TestSessionStore_unknownDialogueMessageRejectsPresses(t *testing.T) {
 }
 
 func TestConverter_claimMenuOnce(t *testing.T) {
-	c := newConverter(slog.New(slog.DiscardHandler), nil, nil, nil)
+	c := New(Deps{Log: slog.New(slog.DiscardHandler)})
 
 	release, ok := c.claimMenu(1, 10)
 	require.True(t, ok)
@@ -313,7 +315,7 @@ func TestConverter_startWhenSessionsAreFull(t *testing.T) {
 	t.Cleanup(ts.Close)
 	b, err := bot.New("123:ABC", bot.WithServerURL(ts.URL), bot.WithSkipGetMe())
 	require.NoError(t, err)
-	c := newConverter(slog.New(slog.DiscardHandler), nil, nil, nil)
+	c := New(Deps{Log: slog.New(slog.DiscardHandler)})
 	c.sessions.max = 1
 	from := func(user int64) *models.Update {
 		return &models.Update{Message: &models.Message{
@@ -434,12 +436,22 @@ func TestTokenMap_foreignPressesNeverWinARace(t *testing.T) {
 }
 
 func TestTokenMap_isBoundedByTheCap(t *testing.T) {
-	s := newTokenMap[convResult](time.Now)
-	s.m.limit = 5
+	s := &tokenMap[convResult]{m: tg.NewTTLMap[string, owned[convResult]](sessionTTL, 5, time.Now)}
 
 	for i := range 20 {
 		s.put(strconv.Itoa(i), 1, convResult{})
 	}
 
-	require.Len(t, s.m.m, 5, "a flood of results does not pile up")
+	require.Equal(t, 5, s.m.Len(), "a flood of results does not pile up")
+}
+
+// The token stores are the ones that leaked; this pins their TTL and cap to the
+// constants.
+func TestTokenMaps_areBoundedByTTLAndCap(t *testing.T) {
+	results, albums := newTokenMap[convResult](time.Now), newTokenMap[convAlbum](time.Now)
+
+	require.Equal(t, sessionTTL, results.m.TTL())
+	require.Equal(t, tg.MaxStoreEntries, results.m.Limit())
+	require.Equal(t, sessionTTL, albums.m.TTL())
+	require.Equal(t, tg.MaxStoreEntries, albums.m.Limit())
 }

@@ -1,4 +1,4 @@
-package telegram
+package converter
 
 import (
 	"context"
@@ -10,21 +10,31 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/platform/convert"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
-// registerAlbum remembers an album's images for the "one PDF" button and returns
+// AlbumImage is one image of an album offered as a PDF. MsgID keeps the page
+// order: album photos arrive as separate updates in any order. Only the file id
+// and the declared size are kept, the bytes are downloaded when the PDF is built.
+type AlbumImage struct {
+	MsgID  int
+	FileID string
+	Size   int64
+}
+
+// RegisterAlbum remembers an album's images for the "one PDF" button and returns
 // the button's token.
-func (c *converter) registerAlbum(user docsbot.UserID, tgUser int64, group string, images []albumImage) string {
+func (c *Converter) RegisterAlbum(user docsbot.UserID, tgUser int64, group string, images []AlbumImage) string {
 	sorted := slices.Clone(images)
-	slices.SortFunc(sorted, func(a, b albumImage) int { return a.msgID - b.msgID })
-	token := newToken()
+	slices.SortFunc(sorted, func(a, b AlbumImage) int { return a.MsgID - b.MsgID })
+	token := tg.NewToken()
 	c.albums.put(token, tgUser, convAlbum{user: user, group: group, images: sorted})
 	return token
 }
 
 // onAlbum merges an album into one PDF: conv:alb:<token>. On success the album's
 // pending documents are dropped, so they don't wait for a category.
-func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, p press) {
+func (c *Converter) onAlbum(ctx context.Context, b *bot.Bot, p press) {
 	chatID, token, tgUser := p.chatID, p.data.token(), p.tgUser
 	if !p.hasUser {
 		return
@@ -32,19 +42,19 @@ func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, p press) {
 	user := p.user
 	album, ok := c.albums.peek(token, tgUser)
 	if !ok {
-		c.out(b).send(ctx, chatID, textConvertResultOld)
+		c.out(b).Send(ctx, chatID, textConvertResultOld)
 		return
 	}
 	var declared int64
 	for _, img := range album.images {
-		declared += img.size
+		declared += img.Size
 	}
 	switch {
 	case len(album.images) > maxAlbumPages:
-		c.out(b).send(ctx, chatID, fmt.Sprintf(textAlbumTooMany, maxAlbumPages)) // the buttons stay: save one by one
+		c.out(b).Send(ctx, chatID, fmt.Sprintf(textAlbumTooMany, maxAlbumPages)) // the buttons stay: save one by one
 		return
 	case declared > maxAlbumBytes:
-		c.out(b).send(ctx, chatID, fmt.Sprintf(textAlbumTooBig, maxAlbumBytes>>20))
+		c.out(b).Send(ctx, chatID, fmt.Sprintf(textAlbumTooBig, maxAlbumBytes>>20))
 		return
 	}
 	album, ok = c.albums.take(token, tgUser) // a double tap stops here
@@ -61,7 +71,7 @@ func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, p press) {
 	pages := make([][]byte, 0, len(album.images))
 	var total int
 	for _, img := range album.images {
-		data, err := c.download(ctx, img.fileID)
+		data, err := c.download(ctx, img.FileID)
 		if err != nil {
 			c.log.ErrorContext(ctx, "convert download album image", "err", err, "user_id", user)
 			c.albums.put(token, tgUser, album) // let the user retry
@@ -102,7 +112,7 @@ func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, p press) {
 }
 
 // onSkip keeps only the file: conv:skip:<token>.
-func (c *converter) onSkip(ctx context.Context, b *bot.Bot, p press) {
+func (c *Converter) onSkip(ctx context.Context, b *bot.Bot, p press) {
 	c.results.take(p.data.token(), p.tgUser)
 	c.clearButtons(ctx, b, p)
 }

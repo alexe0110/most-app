@@ -1,4 +1,4 @@
-package telegram_test
+package converter_test
 
 import (
 	"testing"
@@ -10,7 +10,7 @@ func TestConvert_unsupportedDocument(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
 	h.bot.ProcessUpdate(ctx, documentUpdate("application/zip"))
 
@@ -22,11 +22,11 @@ func TestConvert_cancelReturnsToMainScenario(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := t.Context()
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:cancel"))
 
 	// With the session gone, an unknown command falls through to the catch-all
 	// (plain text is now a search, which needs a stored user).
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "foobar"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("foobar"))
 	require.Contains(t, h.lastText(), "Не понимаю")
 }

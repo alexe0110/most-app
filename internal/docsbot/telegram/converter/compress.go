@@ -1,4 +1,4 @@
-package telegram
+package converter
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 // first, so a double «Готово» builds it once; it goes back when the user can
 // retry. The dialogue lock covers the claim and the progress note, so a photo
 // arriving at the same time can't move the dialogue under them.
-func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, p press) {
+func (c *Converter) finishPDF(ctx context.Context, b *bot.Bot, p press) {
 	user, chatID := p.tgUser, p.chatID
 	unlock := c.dialogue.lock(user)
 	msgID := p.msgID
@@ -74,7 +74,7 @@ func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, p press) {
 
 // finishCompress compresses the stored image to the chosen format. The session
 // is claimed first (one run per tap); it goes back when the user can retry.
-func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, p press, format convert.Format) {
+func (c *Converter) finishCompress(ctx context.Context, b *bot.Bot, p press, format convert.Format) {
 	if !c.compress(ctx, b, p.chatID, p.tgUser, p.msgID, format) {
 		c.stale(ctx, b, p)
 	}
@@ -83,7 +83,7 @@ func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, p press, for
 // compress runs the compression for a session at the format step; pressMsg is the
 // message a button was pressed on (0 when a typed size got here). It reports
 // false if there was nothing to claim. Callers must not hold the dialogue lock.
-func (c *converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64, pressMsg int, format convert.Format) bool {
+func (c *Converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64, pressMsg int, format convert.Format) bool {
 	unlock := c.dialogue.lock(user)
 	sess, ok := c.sessions.claim(user, pressMsg, stepChooseFormat)
 	if !ok {
@@ -121,7 +121,7 @@ func (c *converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64
 	}
 
 	if len(out) > maxBytes {
-		c.out(b).send(ctx, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
+		c.out(b).Send(ctx, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
 	}
 	name := resultFileName(sess.sourceTitle, nameFallbackPhoto, nameTagCompressed, formatExt(format))
 	if !c.sendResult(ctx, b, chatID, user, name, out, "", suffixCompressed) {

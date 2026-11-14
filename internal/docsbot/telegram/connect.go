@@ -54,7 +54,7 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 	for _, opt := range opts {
 		opt(&cs)
 	}
-	out := sender{api: b.Client(), log: log}
+	out := tg.NewSender(b.Client(), log)
 	return func(ctx context.Context, userID string) error {
 		chatID, err := users.TgUserID(ctx, userID)
 		if err != nil {
@@ -64,8 +64,8 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 			return fmt.Errorf("reset drive folders: %w", err)
 		}
 		log.InfoContext(ctx, "drive folder cache reset", "user_id", userID, "reason", "reconnect")
-		if _, err := out.trySend(ctx, chatID, textDriveConnected); err != nil {
-			return out.ignoreBlocked(ctx, err)
+		if _, err := out.TrySend(ctx, chatID, textDriveConnected); err != nil {
+			return out.IgnoreBlocked(ctx, err)
 		}
 		log.InfoContext(ctx, "drive connected", "user_id", userID)
 		cs.refresh(ctx, out, chatID, docsbot.UserID(userID))
@@ -76,25 +76,25 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 		if n == 0 {
 			return nil
 		}
-		_, err = out.trySend(ctx, chatID, fmt.Sprintf(textTransferOffer, n), withKeyboard(transferOfferKeyboard()))
-		return out.ignoreBlocked(ctx, err)
+		_, err = out.TrySend(ctx, chatID, fmt.Sprintf(textTransferOffer, n), tg.WithKeyboard(transferOfferKeyboard()))
+		return out.IgnoreBlocked(ctx, err)
 	}
 }
 
 // refresh edits the remembered /settings message into the connected screen. An
 // unknown message (restart, expired) is skipped silently; a failure is logged
 // at Warn and never fails the OAuth callback.
-func (c connectSettings) refresh(ctx context.Context, out sender, chatID int64, user docsbot.UserID) {
+func (c connectSettings) refresh(ctx context.Context, out tg.Sender, chatID int64, user docsbot.UserID) {
 	if c.msgs == nil || c.svc == nil {
 		return
 	}
-	msgID, ok := c.msgs.m.get(chatID)
+	msgID, ok := c.msgs.m.Get(chatID)
 	if !ok {
 		return
 	}
 	view, err := c.svc.Settings(ctx, user)
 	if err != nil {
-		out.logFailure(ctx, slog.LevelWarn, "load settings after connect", err, "user_id", user)
+		out.LogFailure(ctx, slog.LevelWarn, "load settings after connect", err, "user_id", user)
 		return
 	}
 	var (
@@ -103,12 +103,12 @@ func (c connectSettings) refresh(ctx context.Context, out sender, chatID int64, 
 	)
 	if c.auth != nil {
 		if u, err := c.auth.AuthURL(ctx, string(user), docsbot.BotName); err != nil {
-			out.logFailure(ctx, slog.LevelWarn, "build auth url after connect", err, "user_id", user)
+			out.LogFailure(ctx, slog.LevelWarn, "build auth url after connect", err, "user_id", user)
 		} else {
 			url, haveURL = u, true
 		}
 	}
 	text, kb := renderSettings(view, url, haveURL)
-	err = out.tryEdit(ctx, chatID, msgID, text, withHTML(), withKeyboard(kb))
-	out.logFailure(ctx, slog.LevelWarn, "edit settings after connect", err, "user_id", user)
+	err = out.TryEdit(ctx, chatID, msgID, text, tg.WithHTML(), tg.WithKeyboard(kb))
+	out.LogFailure(ctx, slog.LevelWarn, "edit settings after connect", err, "user_id", user)
 }

@@ -158,7 +158,7 @@ func TestSettings_inlineToggle(t *testing.T) {
 	b, sent, repo := newBot(t)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 
-	b.ProcessUpdate(ctx, commandUpdate(100, "settings"))
+	b.ProcessUpdate(ctx, commandUpdate("settings"))
 	require.True(t, has(sent.markups, "Отправка из любого чата: вкл"), "markups %q", sent.markups)
 	require.True(t, has(sent.markups, "d:inl:0"), "markups %q", sent.markups)
 

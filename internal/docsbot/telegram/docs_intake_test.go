@@ -97,3 +97,37 @@ func TestChooseCategory_savesAndShowsCard(t *testing.T) {
 	require.Equal(t, docsbot.StatusSaved, repo.docs[doc.ID].Status)
 	require.Equal(t, docsbot.CatOther, repo.docs[doc.ID].Category)
 }
+
+func TestReceive_photoPickerOffersConvert(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	b.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
+		ID:    1,
+		From:  &models.User{ID: 100},
+		Chat:  models.Chat{ID: 100, Type: models.ChatTypePrivate},
+		Photo: []models.PhotoSize{{FileID: "large", FileUniqueID: "u1", Width: 1280, Height: 960}},
+	}})
+
+	require.Len(t, repo.docs, 1)
+	for id := range repo.docs {
+		require.Contains(t, sent.markups[0], "conv:doc:"+string(id))
+		require.Contains(t, sent.markups[0], "d:cat:"+string(id)+":passport", "category buttons stay")
+	}
+}
+
+func TestReceive_pdfPickerOffersActions(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+
+	b.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
+		ID:       9,
+		From:     &models.User{ID: 100},
+		Chat:     models.Chat{ID: 100, Type: models.ChatTypePrivate},
+		Document: &models.Document{FileID: "pdf-x", FileUniqueID: "u-pdf-x", MimeType: "application/pdf", FileSize: 100},
+	}})
+
+	require.Len(t, repo.docs, 1)
+	require.Contains(t, sent.markups[0], "conv:doc:")
+	require.Contains(t, sent.markups[0], "Действия с PDF")
+}

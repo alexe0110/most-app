@@ -1,4 +1,4 @@
-package telegram_test
+package converter_test
 
 import (
 	"regexp"
@@ -47,7 +47,7 @@ func TestConvertReplace_commandResultKeyboardUnchanged(t *testing.T) {
 	h := newConvHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), testUserID)
 
-	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
 	h.bot.ProcessUpdate(ctx, photoUpdate(1))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:limit2"))

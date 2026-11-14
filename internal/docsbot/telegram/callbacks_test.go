@@ -19,10 +19,7 @@ func TestBackFromOrig(t *testing.T) {
 	require.Empty(t, backFromOrig(""))
 }
 
-const (
-	uuidDoc  = docsbot.DocumentID("123e4567-e89b-12d3-a456-426614174000")
-	hexToken = "0123456789abcdef"
-)
+const uuidDoc = docsbot.DocumentID("123e4567-e89b-12d3-a456-426614174000")
 
 // longestSlug is the longest category slug: the worst case for the 64-byte limit.
 func longestSlug() string {
@@ -43,10 +40,7 @@ func callbackCases() []struct {
 } {
 	slug := longestSlug()
 	d := func(action string, id docsbot.DocumentID, args ...string) callbackData {
-		return callbackData{prefix: cbPrefix, action: action, docID: id, args: args}
-	}
-	conv := func(action string, id docsbot.DocumentID, args ...string) callbackData {
-		return callbackData{prefix: callbackPrefix, action: action, docID: id, args: args}
+		return callbackData{action: action, docID: id, args: args}
 	}
 	return []struct {
 		name string
@@ -82,39 +76,6 @@ func callbackCases() []struct {
 		{"dd", "d:dd", d(actDeleteData, "")},
 		{"sb", "d:sb", d(actSearchBack, "")},
 		{"noop", "d:noop", d(actNoop, "")},
-
-		{"conv doc", "conv:doc:" + string(uuidDoc), conv(convActDoc, uuidDoc)},
-		{"conv quick", "conv:q:" + string(uuidDoc) + ":" + opCompress1, conv(convActQuick, uuidDoc, opCompress1)},
-		{"conv quick c2", "conv:q:" + string(uuidDoc) + ":" + opCompress2, conv(convActQuick, uuidDoc, opCompress2)},
-		{"conv quick c5", "conv:q:" + string(uuidDoc) + ":" + opCompress5, conv(convActQuick, uuidDoc, opCompress5)},
-		{"conv quick pdf", "conv:q:" + string(uuidDoc) + ":" + opPDF, conv(convActQuick, uuidDoc, opPDF)},
-		{"conv quick jpg", "conv:q:" + string(uuidDoc) + ":" + opJPG, conv(convActQuick, uuidDoc, opJPG)},
-		{"conv quick rotate", "conv:q:" + string(uuidDoc) + ":" + opRotate, conv(convActQuick, uuidDoc, opRotate)},
-		{"conv quick keep", "conv:q:" + string(uuidDoc) + ":" + opKeep, conv(convActQuick, uuidDoc, opKeep)},
-		{"conv quick drop", "conv:q:" + string(uuidDoc) + ":" + opDrop, conv(convActQuick, uuidDoc, opDrop)},
-		{"conv quick merge", "conv:q:" + string(uuidDoc) + ":" + opMerge, conv(convActQuick, uuidDoc, opMerge)},
-		{"conv save", "conv:save:" + hexToken, conv(convActSave, "", hexToken)},
-		{"conv skip", "conv:skip:" + hexToken, conv(convActSkip, "", hexToken)},
-		{"conv rp", "conv:rp:" + hexToken, conv(convActRepAsk, "", hexToken)},
-		{"conv rpy", "conv:rpy:" + hexToken, conv(convActRepYes, "", hexToken)},
-		{"conv rpn", "conv:rpn:" + hexToken, conv(convActRepNo, "", hexToken)},
-		{"conv alb", "conv:alb:" + hexToken, conv(convActAlbum, "", hexToken)},
-		{"conv x", "conv:x", conv(convActMenuCancel, "")},
-		{"conv session op", "conv:p:" + opRotate, conv(convActPDFOp, "", opRotate)},
-		{"conv session keep", "conv:p:" + opKeep, conv(convActPDFOp, "", opKeep)},
-		{"conv session drop", "conv:p:" + opDrop, conv(convActPDFOp, "", opDrop)},
-		{"conv session merge", "conv:p:" + opMerge, conv(convActPDFOp, "", opMerge)},
-		{"conv pdf", cbPDF, conv("pdf", "")},
-		{"conv pdfops", cbPDFActions, conv("pdfops", "")},
-		{"conv compress", cbCompress, conv("compress", "")},
-		{"conv done", cbDone, conv("done", "")},
-		{"conv cancel", cbCancel, conv("cancel", "")},
-		{"conv limit1", cbLimit1, conv("limit1", "")},
-		{"conv limit2", cbLimit2, conv("limit2", "")},
-		{"conv limit5", cbLimit5, conv("limit5", "")},
-		{"conv limitcustom", cbLimitCustom, conv("limitcustom", "")},
-		{"conv fmtjpeg", cbFmtJPEG, conv("fmtjpeg", "")},
-		{"conv fmtpng", cbFmtPNG, conv("fmtpng", "")},
 	}
 }
 
@@ -136,10 +97,6 @@ func TestCallbackConstructors_matchWireFormat(t *testing.T) {
 	require.Equal(t, "d:lc:"+slug+":3", docCB(actListCat, "", slug, "3"))
 	require.Equal(t, "d:lb", docCB(actListBack, ""))
 	require.Equal(t, "d:oc:"+string(uuidDoc)+":s", docCB(actOpenCard, uuidDoc, "s"))
-	require.Equal(t, "conv:save:"+hexToken, convCB(convActSave, hexToken))
-	require.Equal(t, "conv:q:"+string(uuidDoc)+":c1", convDocCB(convActQuick, uuidDoc, opCompress1))
-	require.Equal(t, cbMenuCancel, convCB(convActMenuCancel))
-	require.Equal(t, cbSessRotate, convCB(convActPDFOp, opRotate))
 }
 
 func TestCallbackData_worstCaseFitsTheLimit(t *testing.T) {
@@ -149,8 +106,6 @@ func TestCallbackData_worstCaseFitsTheLimit(t *testing.T) {
 		docCB(actSetCategory, uuidDoc, slug),
 		docCB(actListCat, "", slug, "999"),
 		docCB(actRetryBatch, "", string(uuidDoc)),
-		convDocCB(convActQuick, uuidDoc, opCompress5),
-		convCB(convActRepYes, hexToken),
 	}
 	for _, c := range docsbot.AllCategories {
 		worst = append(worst,
@@ -179,36 +134,27 @@ func TestParseCallback_edges(t *testing.T) {
 	}{
 		{"empty", "", false, callbackData{}, ""},
 		{"foreign prefix", "x:cat:1", false, callbackData{}, ""},
+		{"converter prefix is not ours", "conv:save:x", false, callbackData{}, ""},
 		{"prefix without colon", "d", false, callbackData{}, ""},
-		{"bare prefix", "d:", true, callbackData{prefix: cbPrefix}, ""},
-		{"bare conv prefix", "conv:", true, callbackData{prefix: callbackPrefix}, ""},
-		{"doc action without id", "d:oc:", true, callbackData{prefix: cbPrefix, action: actOpenCard}, "d:oc"},
-		{"doc action without segment", "d:oc", true, callbackData{prefix: cbPrefix, action: actOpenCard}, ""},
-		{"extra colons stay arguments", "d:lc:a:1:2", true, callbackData{prefix: cbPrefix, action: actListCat, args: []string{"a", "1", "2"}}, ""},
-		{"unknown action", "d:zzz:1", true, callbackData{prefix: cbPrefix, action: "zzz", args: []string{"1"}}, ""},
-		{"unknown conv action", "conv:zzz", true, callbackData{prefix: callbackPrefix, action: "zzz"}, ""},
+		{"bare prefix", "d:", true, callbackData{}, ""},
+		{"doc action without id", "d:oc:", true, callbackData{action: actOpenCard}, "d:oc"},
+		{"doc action without segment", "d:oc", true, callbackData{action: actOpenCard}, ""},
+		{"extra colons stay arguments", "d:lc:a:1:2", true, callbackData{action: actListCat, args: []string{"a", "1", "2"}}, ""},
+		{"unknown action", "d:zzz:1", true, callbackData{action: "zzz", args: []string{"1"}}, ""},
 		{"prefix is case sensitive", "D:cat:1", false, callbackData{}, ""},
 		{"leading space", " d:lb", false, callbackData{}, ""},
-		{"conv without colon", "conv", false, callbackData{}, ""},
 		{"prefix only inside", "x" + "d:lb", false, callbackData{}, ""},
-		{"category without slug", "d:cat:id", true, callbackData{prefix: cbPrefix, action: actCategory, docID: "id"}, ""},
-		{"category with empty slug", "d:cat:id:", true, callbackData{prefix: cbPrefix, action: actCategory, docID: "id", args: []string{""}}, ""},
-		{"doc id never swallows a list argument", "d:lc:auto:2", true, callbackData{prefix: cbPrefix, action: actListCat, args: []string{"auto", "2"}}, ""},
-		{"retry batch keeps its id as argument", "d:rsm:sm", true, callbackData{prefix: cbPrefix, action: actRetryBatch, args: []string{"sm"}}, ""},
-		{"open card from search with extras", "d:oc:id:s:x", true, callbackData{prefix: cbPrefix, action: actOpenCard, docID: "id", args: []string{"s", "x"}}, ""},
-		{"conv quick without op", "conv:q:abc", true, callbackData{prefix: callbackPrefix, action: convActQuick, docID: "abc"}, ""},
-		{"conv quick without id", "conv:q::c1", true, callbackData{prefix: callbackPrefix, action: convActQuick, args: []string{"c1"}}, ""},
-		{"conv quick with empty op", "conv:q:abc:", true, callbackData{prefix: callbackPrefix, action: convActQuick, docID: "abc", args: []string{""}}, ""},
-		{"conv quick with unknown op", "conv:q:abc:zzz", true, callbackData{prefix: callbackPrefix, action: convActQuick, docID: "abc", args: []string{"zzz"}}, ""},
-		{"conv token empty", "conv:save:", true, callbackData{prefix: callbackPrefix, action: convActSave, args: []string{""}}, ""},
-		{"conv session op empty", "conv:p:", true, callbackData{prefix: callbackPrefix, action: convActPDFOp, args: []string{""}}, ""},
-		{"conv menu without id", "conv:doc:", true, callbackData{prefix: callbackPrefix, action: convActDoc}, "conv:doc"},
-		{"unicode argument", "d:lc:паспорт:1", true, callbackData{prefix: cbPrefix, action: actListCat, args: []string{"паспорт", "1"}}, ""},
+		{"category without slug", "d:cat:id", true, callbackData{action: actCategory, docID: "id"}, ""},
+		{"category with empty slug", "d:cat:id:", true, callbackData{action: actCategory, docID: "id", args: []string{""}}, ""},
+		{"doc id never swallows a list argument", "d:lc:auto:2", true, callbackData{action: actListCat, args: []string{"auto", "2"}}, ""},
+		{"retry batch keeps its id as argument", "d:rsm:sm", true, callbackData{action: actRetryBatch, args: []string{"sm"}}, ""},
+		{"open card from search with extras", "d:oc:id:s:x", true, callbackData{action: actOpenCard, docID: "id", args: []string{"s", "x"}}, ""},
+		{"unicode argument", "d:lc:паспорт:1", true, callbackData{action: actListCat, args: []string{"паспорт", "1"}}, ""},
 		{"empty id with arguments keeps the arguments in place", "d:cat::auto", true,
-			callbackData{prefix: cbPrefix, action: actCategory, args: []string{"auto"}}, ""},
-		{"open card without id from search", "d:oc::s", true, callbackData{prefix: cbPrefix, action: actOpenCard, args: []string{"s"}}, ""},
+			callbackData{action: actCategory, args: []string{"auto"}}, ""},
+		{"open card without id from search", "d:oc::s", true, callbackData{action: actOpenCard, args: []string{"s"}}, ""},
 		{"a huge number of arguments", cbPrefix + actListCat + strings.Repeat(":a", 50_000), true,
-			callbackData{prefix: cbPrefix, action: actListCat, args: slices.Repeat([]string{"a"}, 50_000)}, ""},
+			callbackData{action: actListCat, args: slices.Repeat([]string{"a"}, 50_000)}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -233,7 +179,7 @@ func TestNewPress(t *testing.T) {
 	})
 	require.Equal(t, press{
 		queryID: "q", tgUser: 42, user: "u1", hasUser: true, chatID: 100, msgID: 7, hasMsg: true, msg: msg,
-		data: callbackData{prefix: cbPrefix, action: actOpenCard, docID: "doc", args: []string{"s"}},
+		data: callbackData{action: actOpenCard, docID: "doc", args: []string{"s"}},
 	}, p)
 
 	p = newPress(t.Context(), &models.CallbackQuery{ID: "q", From: models.User{ID: 42}, Data: "d:lb"})
@@ -244,7 +190,7 @@ func TestNewPress(t *testing.T) {
 }
 
 func TestParseCallback_wellFormedDataRoundTrips(t *testing.T) {
-	// Every shape of up to four non-empty segments after either prefix, with an
+	// Every shape of up to four non-empty segments after the prefix, with an
 	// action that carries a document id and one that does not.
 	segments := []string{"oc", "lc", "q", "doc", "save", "zzz", "1", "a"}
 	var shapes [][]string
@@ -262,15 +208,12 @@ func TestParseCallback_wellFormedDataRoundTrips(t *testing.T) {
 		build([]string{s})
 	}
 
-	for _, prefix := range []string{cbPrefix, callbackPrefix} {
-		for _, segs := range shapes {
-			data := prefix + strings.Join(segs, ":")
-			got, ok := parseCallback(data)
-			require.True(t, ok, data)
-			require.Equal(t, prefix, got.prefix, data)
-			require.Equal(t, segs[0], got.action, data)
-			require.Equal(t, data, got.String(), "String inverts parse")
-		}
+	for _, segs := range shapes {
+		data := cbPrefix + strings.Join(segs, ":")
+		got, ok := parseCallback(data)
+		require.True(t, ok, data)
+		require.Equal(t, segs[0], got.action, data)
+		require.Equal(t, data, got.String(), "String inverts parse")
 	}
 }
 
@@ -295,7 +238,7 @@ func TestParseCallback_positionsMatchTheSplitHandlersUsedToRead(t *testing.T) {
 			require.Equal(t, parts[1], got.action)
 
 			rest := parts[2:]
-			if carriesDocID(cbPrefix, got.action) && len(rest) > 0 {
+			if carriesDocID(got.action) && len(rest) > 0 {
 				require.Equal(t, docsbot.DocumentID(rest[0]), got.docID)
 				rest = rest[1:]
 			}
@@ -339,25 +282,6 @@ func TestCallbackData_categoryReadsTheSlugAfterTheDocID(t *testing.T) {
 		got, ok := cd.category()
 		require.True(t, ok, c)
 		require.Equal(t, c, got)
-	}
-}
-
-func TestCallbackData_tokenIsEverythingAfterTheAction(t *testing.T) {
-	tests := []struct {
-		data string
-		want string
-	}{
-		{"conv:save:" + hexToken, hexToken},
-		{"conv:save:", ""},
-		{"conv:x", ""},
-		{"conv:p:rot", "rot"},
-		{"conv:save:a:b", "a:b"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.data, func(t *testing.T) {
-			cd, _ := parseCallback(tt.data)
-			require.Equal(t, tt.want, cd.token())
-		})
 	}
 }
 

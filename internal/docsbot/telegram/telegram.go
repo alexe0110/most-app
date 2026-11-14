@@ -10,6 +10,7 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
 )
 
 // Authorizer builds the Google consent URL for a user. Declared here, at the
@@ -19,18 +20,12 @@ type Authorizer interface {
 	AuthURL(ctx context.Context, userID, bot string) (string, error)
 }
 
-// FileDownloader fetches a Telegram file's bytes and content type by file_id.
-// Declared here, at the consumer; platform/tg.Bot implements it.
-type FileDownloader interface {
-	Download(ctx context.Context, fileID string) (data []byte, mime string, err error)
-}
-
 // Deps are the required collaborators of the adapter.
 type Deps struct {
 	Log   *slog.Logger
 	Svc   *docsbot.Service
 	Auth  Authorizer
-	Files FileDownloader
+	Files converter.FileDownloader
 }
 
 // Register wires the docsbot handlers onto b. Order matters: the first matching
@@ -39,19 +34,16 @@ type Deps struct {
 // catch-all text handler (search) is last.
 func Register(b *bot.Bot, deps Deps, opts ...Option) {
 	d := newDocs(deps.Svc, deps.Auth, deps.Log, opts...)
-	conv := newConverter(deps.Log, deps.Svc, deps.Files, d)
-	d.registerAlbum = conv.registerAlbum
+	conv := converter.New(converter.Deps{Log: deps.Log, Svc: deps.Svc, Files: deps.Files, Saved: d})
+	d.albumPDFs = conv
 
 	b.RegisterHandler(bot.HandlerTypeMessageText, "start", bot.MatchTypeCommand, d.start)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "help", bot.MatchTypeCommand, d.help)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "settings", bot.MatchTypeCommand, d.settings)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "list", bot.MatchTypeCommand, d.list)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "export", bot.MatchTypeCommand, d.exportCmd) // not in Commands(): reached from the delete-data prompt
-	b.RegisterHandler(bot.HandlerTypeMessageText, "convert", bot.MatchTypeCommand, conv.start)
-	b.RegisterHandler(bot.HandlerTypeMessageText, "cancel", bot.MatchTypeCommand, conv.cancel)
+	conv.Register(b)                                                                           // /convert, /cancel, its buttons and in-session messages
 	b.RegisterHandlerMatchFunc(ownsInline, d.inline)
-	b.RegisterHandlerMatchFunc(conv.ownsCallback, conv.callback)
-	b.RegisterHandlerMatchFunc(conv.ownsMessage, conv.message)
 	b.RegisterHandlerMatchFunc(d.ownsCallback, d.callback)
 	b.RegisterHandlerMatchFunc(d.ownsUnsupported, d.onUnsupported) // before files: an animation also carries a document
 	b.RegisterHandlerMatchFunc(d.ownsFile, d.receive)

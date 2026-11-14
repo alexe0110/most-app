@@ -13,6 +13,7 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // onSetCategory changes an existing document's category.
@@ -55,7 +56,7 @@ func (d *docs) onChangeCat(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 	chatID, msgID := p.chatID, p.msgID
-	d.out(b).setKeyboard(ctx, chatID, msgID, categoryKeyboard(actSetCategory, id))
+	d.out(b).SetKeyboard(ctx, chatID, msgID, categoryKeyboard(actSetCategory, id))
 }
 
 // onSend resends the original file from Telegram by its file_id.
@@ -71,7 +72,7 @@ func (d *docs) onSend(ctx context.Context, b *bot.Bot, p press) {
 	chatID := p.chatID
 	card, err := d.svc.Card(ctx, user, id)
 	if errors.Is(err, docsbot.ErrNotFound) {
-		d.out(b).send(ctx, chatID, textGone)
+		d.out(b).Send(ctx, chatID, textGone)
 		return
 	}
 	if err != nil {
@@ -92,8 +93,8 @@ func (d *docs) onRenamePrompt(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 	chatID, msgID := p.chatID, p.msgID
-	d.renames.set(p.tgUser, renameEntry{id: id, chat: chatID, msg: msgID})
-	d.out(b).edit(ctx, chatID, msgID, textRenamePrompt, withHTML(), withKeyboard(renameCancelKeyboard(id)))
+	d.renames.Set(p.tgUser, renameEntry{id: id, chat: chatID, msg: msgID})
+	d.out(b).Edit(ctx, chatID, msgID, textRenamePrompt, tg.WithHTML(), tg.WithKeyboard(renameCancelKeyboard(id)))
 }
 
 // onRenameCancel drops the rename armed on this message, if any, and puts the
@@ -115,7 +116,7 @@ func (d *docs) onRenameCancel(ctx context.Context, b *bot.Bot, p press) {
 // releaseRename ends the user's armed rename when they press a button on another
 // message and returns that message to the card it was.
 func (d *docs) releaseRename(ctx context.Context, b *bot.Bot, p press) {
-	e, ok := d.renames.take(p.tgUser)
+	e, ok := d.renames.Take(p.tgUser)
 	if !ok {
 		return
 	}
@@ -148,7 +149,7 @@ func (d *docs) showCard(ctx context.Context, b *bot.Bot, user docsbot.UserID, ch
 	if view, err := d.svc.StatusView(ctx, user, doc.ID); err == nil && view.Grouped &&
 		view.Message.ChatID == chatID && view.Message.MessageID == msgID {
 		text, kb := renderStatusMessage(view.Message, view.Lines, view.FolderByCat)
-		d.out(b).edit(ctx, chatID, msgID, text, withHTML(), withKeyboard(kb))
+		d.out(b).Edit(ctx, chatID, msgID, text, tg.WithHTML(), tg.WithKeyboard(kb))
 		return
 	}
 	d.editCard(ctx, b, chatID, msgID, doc, folderID, orig)
@@ -160,7 +161,7 @@ func (d *docs) showCard(ctx context.Context, b *bot.Bot, user docsbot.UserID, ch
 func (d *docs) applyRename(ctx context.Context, b *bot.Bot, user docsbot.UserID, e renameEntry, m *models.Message) {
 	// Cosmetic: a failure (too old, no right) is no reason to fail the rename.
 	out := d.out(b)
-	out.logFailure(ctx, slog.LevelWarn, "delete user message", out.tryDelete(ctx, m.Chat.ID, m.ID))
+	out.LogFailure(ctx, slog.LevelWarn, "delete user message", out.TryDelete(ctx, m.Chat.ID, m.ID))
 	card, err := d.svc.Rename(ctx, user, e.id, m.Text)
 	switch {
 	case errors.Is(err, docsbot.ErrEmptyTitle):
@@ -180,8 +181,8 @@ func (d *docs) applyRename(ctx context.Context, b *bot.Bot, user docsbot.UserID,
 
 // renameHint re-arms the rename and tells, in the prompt message itself, what was wrong.
 func (d *docs) renameHint(ctx context.Context, b *bot.Bot, tgUser int64, e renameEntry, hint string) {
-	d.renames.set(tgUser, e)
-	d.out(b).edit(ctx, e.chat, e.msg, hint, withHTML(), withKeyboard(renameCancelKeyboard(e.id)))
+	d.renames.Set(tgUser, e)
+	d.out(b).Edit(ctx, e.chat, e.msg, hint, tg.WithHTML(), tg.WithKeyboard(renameCancelKeyboard(e.id)))
 }
 
 // onDeleteAsk asks to confirm before deleting.
@@ -199,7 +200,7 @@ func (d *docs) onDeleteAsk(ctx context.Context, b *bot.Bot, p press) {
 		{Text: btnDeleteYes, CallbackData: docCB(actDeleteYes, id)},
 		{Text: btnDeleteNo, CallbackData: docCB(actDeleteNo, id)},
 	}}}
-	d.out(b).edit(ctx, chatID, msgID, d.deleteConfirmText(ctx, user, id), withKeyboard(kb))
+	d.out(b).Edit(ctx, chatID, msgID, d.deleteConfirmText(ctx, user, id), tg.WithKeyboard(kb))
 }
 
 // deleteConfirmText warns that the Drive file goes to the trash when the document
@@ -232,10 +233,10 @@ func (d *docs) onDeleteYes(ctx context.Context, b *bot.Bot, p press) {
 	}
 	d.log.InfoContext(ctx, "document deleted", "user_id", user, "doc_id", id, "remote_kept", deleted.RemoteKept)
 	// The message stops being a card; its origin is read once more below to return there.
-	defer d.origins.delete(originKey{chatID, msgID})
+	defer d.origins.Delete(originKey{chatID, msgID})
 	if deleted.RemoteKept {
 		// The Drive file stays: say so on the "deleted" note instead of returning to the list.
-		d.out(b).edit(ctx, chatID, msgID, textDeletedRemoteKept, withKeyboard(myDocsKeyboard()))
+		d.out(b).Edit(ctx, chatID, msgID, textDeletedRemoteKept, tg.WithKeyboard(myDocsKeyboard()))
 		return
 	}
 	d.returnToOrigin(ctx, b, p)
@@ -262,12 +263,12 @@ func (d *docs) returnToOrigin(ctx context.Context, b *bot.Bot, p press) {
 		}
 		if cp.Total > 0 {
 			text, kb := renderCategoryPage(cp)
-			d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(kb))
+			d.out(b).Edit(ctx, chatID, msgID, text, tg.WithKeyboard(kb))
 			return
 		}
 		d.editCatalog(ctx, b, user, chatID, msgID)
 	case orig == "s":
-		q, ok := d.searches.get(p.tgUser)
+		q, ok := d.searches.Get(p.tgUser)
 		if !ok {
 			d.editCatalog(ctx, b, user, chatID, msgID)
 			return
@@ -278,7 +279,7 @@ func (d *docs) returnToOrigin(ctx context.Context, b *bot.Bot, p press) {
 			return
 		}
 		text, kb := renderFound(found)
-		d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(kb))
+		d.out(b).Edit(ctx, chatID, msgID, text, tg.WithKeyboard(kb))
 	default:
 		d.editDeleted(ctx, b, chatID, msgID)
 	}
@@ -286,7 +287,7 @@ func (d *docs) returnToOrigin(ctx context.Context, b *bot.Bot, p press) {
 
 // editDeleted shows the "deleted" note with a way back to the catalog.
 func (d *docs) editDeleted(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
-	d.out(b).edit(ctx, chatID, msgID, textDeleted, withKeyboard(myDocsKeyboard()))
+	d.out(b).Edit(ctx, chatID, msgID, textDeleted, tg.WithKeyboard(myDocsKeyboard()))
 }
 
 // onDeleteNo puts the card back in place of the confirmation.
@@ -330,10 +331,10 @@ func (d *docs) sendFile(ctx context.Context, b *bot.Bot, chatID int64, doc docsb
 		}
 		return err
 	})
-	traceAPI(ctx, d.log, op, start)
+	tg.TraceAPI(ctx, d.log, op, start)
 	if err != nil {
 		d.log.ErrorContext(ctx, "send file", "err", err, "user_id", doc.UserID, "doc_id", doc.ID)
-		d.out(b).send(ctx, chatID, textSendFailed)
+		d.out(b).Send(ctx, chatID, textSendFailed)
 		return false
 	}
 	d.log.InfoContext(ctx, "document sent", "user_id", doc.UserID, "doc_id", doc.ID)
@@ -345,7 +346,7 @@ func (d *docs) sendCard(ctx context.Context, b *bot.Bot, chatID int64, doc docsb
 	if header != "" {
 		text = header + "\n\n" + text
 	}
-	d.out(b).send(ctx, chatID, text, withHTML(), withKeyboard(d.cardKB(ctx, doc, folderID, "")))
+	d.out(b).Send(ctx, chatID, text, tg.WithHTML(), tg.WithKeyboard(d.cardKB(ctx, doc, folderID, "")))
 }
 
 // editCard replaces a message with a document's card and remembers where the
@@ -356,8 +357,8 @@ func (d *docs) editCard(ctx context.Context, b *bot.Bot, chatID int64, msgID int
 
 // editCardText is editCard with a prepared HTML text (the card plus a note).
 func (d *docs) editCardText(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup, orig string) {
-	d.out(b).edit(ctx, chatID, msgID, text, withHTML(), withKeyboard(kb))
-	d.origins.set(originKey{chatID, msgID}, orig)
+	d.out(b).Edit(ctx, chatID, msgID, text, tg.WithHTML(), tg.WithKeyboard(kb))
+	d.origins.Set(originKey{chatID, msgID}, orig)
 }
 
 // cardKB is the card keyboard; a card whose sync failed on revoked access gets a
@@ -372,7 +373,7 @@ func (d *docs) cardKB(ctx context.Context, doc docsbot.Document, folderID, orig 
 
 // gone replaces a message about a vanished document with a way back to the catalog.
 func (d *docs) gone(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
-	d.out(b).edit(ctx, chatID, msgID, textGone, withKeyboard(myDocsKeyboard()))
+	d.out(b).Edit(ctx, chatID, msgID, textGone, tg.WithKeyboard(myDocsKeyboard()))
 }
 
 // onOpenCard renders a document's card in place of the list/search message, with
