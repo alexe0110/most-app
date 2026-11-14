@@ -18,6 +18,11 @@ select exists (select 1
                  and bot = $2
                  and name = $3);
 
+-- name: DeleteUserEvents :exec
+delete
+from events
+where user_id = $1;
+
 -- name: SetUserSource :exec
 -- Attribution is the first source only: a stored one is never overwritten.
 update users

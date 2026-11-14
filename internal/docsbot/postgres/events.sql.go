@@ -11,6 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteUserEvents = `-- name: DeleteUserEvents :exec
+delete
+from events
+where user_id = $1
+`
+
+func (q *Queries) DeleteUserEvents(ctx context.Context, userID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteUserEvents, userID)
+	return err
+}
+
 const insertEvent = `-- name: InsertEvent :exec
 insert into events (user_id, bot, name, props)
 values ($1, $2, $3, $4)

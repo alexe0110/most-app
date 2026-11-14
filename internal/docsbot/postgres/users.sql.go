@@ -77,10 +77,12 @@ func (q *Queries) GetUserTgID(ctx context.Context, id pgtype.UUID) (int64, error
 
 const softDeleteUser = `-- name: SoftDeleteUser :exec
 update users
-set deleted_at = now()
+set deleted_at = now(),
+    source     = null
 where id = $1
 `
 
+// The acquisition source is personal data too: it goes with the rest.
 func (q *Queries) SoftDeleteUser(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, softDeleteUser, id)
 	return err

@@ -84,8 +84,9 @@ type Repo interface {
 	// StuckSyncs lists backed-up documents whose sync has been pending since before
 	// olderThan, for users with an active Drive integration, oldest first.
 	StuckSyncs(ctx context.Context, olderThan time.Time, limit int) ([]StuckUpload, error)
-	// DeleteUserData deletes the user's documents, drive_folders and integrations and
-	// soft-deletes the user (users.deleted_at), all in one transaction.
+	// DeleteUserData deletes the user's documents, drive_folders, integrations and
+	// events, clears users.source and soft-deletes the user (users.deleted_at), all
+	// in one transaction.
 	DeleteUserData(ctx context.Context, user UserID) error
 }
 

@@ -20,6 +20,8 @@ where id = $1
   and deleted_at is null;
 
 -- name: SoftDeleteUser :exec
+-- The acquisition source is personal data too: it goes with the rest.
 update users
-set deleted_at = now()
+set deleted_at = now(),
+    source     = null
 where id = $1;
