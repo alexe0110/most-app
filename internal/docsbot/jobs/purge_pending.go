@@ -43,15 +43,12 @@ func (w *purgePendingWorker) Work(ctx context.Context, _ *river.Job[PurgePending
 	return nil
 }
 
-// RegisterPurgePending registers the worker and returns a binder that injects
-// its dependency plus the periodic job. Call the binder before queue.Start.
-func RegisterPurgePending(workers *river.Workers, log *slog.Logger) (bind func(PendingPurger), periodic *river.PeriodicJob) {
-	w := &purgePendingWorker{log: log}
-	river.AddWorker(workers, w)
-	periodic = river.NewPeriodicJob(
+// RegisterPurgePending registers the purge worker and returns its periodic job.
+func RegisterPurgePending(workers *river.Workers, log *slog.Logger, svc PendingPurger) *river.PeriodicJob {
+	river.AddWorker(workers, &purgePendingWorker{svc: svc, log: log})
+	return river.NewPeriodicJob(
 		river.PeriodicInterval(purgePendingInterval),
 		func() (river.JobArgs, *river.InsertOpts) { return PurgePendingArgs{}, nil },
 		&river.PeriodicJobOpts{RunOnStart: true},
 	)
-	return func(svc PendingPurger) { w.svc = svc }, periodic
 }

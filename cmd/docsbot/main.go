@@ -60,36 +60,40 @@ func run() error {
 	}
 	log.Info("migrations applied")
 
-	workers := river.NewWorkers()
-	purge := jobs.RegisterPurgeUsers(workers, pool, log)
-	purgeStates := jobs.RegisterPurgeOAuthStates(workers, pool, log)
-	bindUpload := docjobs.RegisterUploadDocument(workers, log)
-	bindSync := docjobs.RegisterStorageSync(workers, log)
-	bindTrash := docjobs.RegisterStorageTrash(workers, log)
-	bindSweep, sweepPeriodic := docjobs.RegisterSweepUploads(workers, log)
-	bindPurgePending, purgePendingPeriodic := docjobs.RegisterPurgePending(workers, log)
-	queue, err := jobs.New(pool, log, workers, map[string]river.QueueConfig{docjobs.UploadQueue: {MaxWorkers: 1}}, purge, purgeStates, sweepPeriodic, purgePendingPeriodic) // started below, once wired
+	// The inserter only enqueues, so the repositories can hold it before the
+	// workers exist; the working client is built last, once the service is ready.
+	inserter, err := jobs.NewInserter(pool, log)
 	if err != nil {
 		return err
 	}
-
 	// Passing jobQueue to NewDocuments is also the compile-time check that it
 	// satisfies postgres.JobInserter (postgres cannot import the jobs adapter).
-	jobQueue := docjobs.NewQueue(queue)
+	jobQueue := docjobs.NewQueue(inserter)
 	documents := postgres.NewDocuments(pool, jobQueue)
 	statusMessages := postgres.NewStatusMessages(pool)
 	users := postgres.NewUsers(pool)
 	oauthStore := postgres.NewOAuthStore(pool)
 	folders := postgres.NewFolderCache(pool)
-	files := &tgFiles{} // bot is set once it is built
 
-	// oauth.Service and the bot each need the other (the bot shows the consent
-	// link; oauth notifies the bot when Drive connects). tgbot is filled just
-	// below, and both closures run only after startup, so the cycle is safe.
+	tgbot, err := tg.New(tg.Config{
+		Token:         cfg.TelegramToken,
+		Mode:          tg.Mode(cfg.TelegramMode),
+		PublicURL:     cfg.PublicURL,
+		WebhookSecret: cfg.TelegramWebhookSecret,
+		GroupNotice:   telegram.GroupNotice(),
+		Unbounded:     telegram.IsExport,
+	}, users, log)
+	if err != nil {
+		return err
+	}
+
 	renames := telegram.NewRenames()               // shared by the bot handlers and the notifier
 	settingsMsgs := telegram.NewSettingsMessages() // shared by the /settings handlers and the connect callback
+	// oauth.Service and docsbot.Service need each other: the service checks the
+	// Drive connection through oauth, and oauth notifies the user through the
+	// service when Drive connects. The closure reads svc and oauthSvc only when a
+	// user connects Drive, which cannot happen before startup finishes.
 	var (
-		tgbot    *tg.Bot
 		svc      *docsbot.Service
 		oauthSvc *oauth.Service
 	)
@@ -110,30 +114,26 @@ func run() error {
 	gdriveSvc := gdrive.New(gdriveClients{oauth: oauthSvc}, folders, gdrive.WithLogger(log), gdrive.WithRootFolder(cfg.DriveRootFolder))
 	driveAdapter := driveBridge{oauth: oauthSvc, gd: gdriveSvc}
 	svc = docsbot.NewService(docsbot.Ports{
-		Repo: documents, Drive: driveAdapter, Files: files, Uploads: documents, Jobs: jobQueue,
+		Repo: documents, Drive: driveAdapter, Files: tgFiles{bot: tgbot}, Uploads: documents, Jobs: jobQueue,
 		Folders: folders, Status: statusMessages, Syncs: documents,
 	}, docsbot.WithPageCounter(pageCounter{}))
 
-	tgbot, err = tg.New(tg.Config{
-		Token:         cfg.TelegramToken,
-		Mode:          tg.Mode(cfg.TelegramMode),
-		PublicURL:     cfg.PublicURL,
-		WebhookSecret: cfg.TelegramWebhookSecret,
-		GroupNotice:   telegram.GroupNotice(),
-		Unbounded:     telegram.IsExport,
-	}, users, log)
+	telegram.Register(tgbot.Client(), telegram.Deps{Log: log, Svc: svc, Auth: oauthSvc, Files: tgbot},
+		telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder))
+	notifier := telegram.NewNotifier(tgbot, users, oauthSvc, svc, log, telegram.WithNotifierRenames(renames))
+
+	workers := river.NewWorkers()
+	purge := jobs.RegisterPurgeUsers(workers, pool, log)
+	purgeStates := jobs.RegisterPurgeOAuthStates(workers, pool, log)
+	docjobs.RegisterUploadDocument(workers, log, svc, notifier)
+	docjobs.RegisterStorageSync(workers, log, svc, notifier)
+	docjobs.RegisterStorageTrash(workers, log, svc, notifier)
+	sweepPeriodic := docjobs.RegisterSweepUploads(workers, log, svc, notifier)
+	purgePendingPeriodic := docjobs.RegisterPurgePending(workers, log, svc)
+	queue, err := jobs.New(pool, log, workers, map[string]river.QueueConfig{docjobs.UploadQueue: {MaxWorkers: 1}}, purge, purgeStates, sweepPeriodic, purgePendingPeriodic) // started below
 	if err != nil {
 		return err
 	}
-	telegram.Register(tgbot.Client(), telegram.Deps{Log: log, Svc: svc, Auth: oauthSvc, Files: tgbot},
-		telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder))
-	files.bot = tgbot
-	notifier := telegram.NewNotifier(tgbot, users, oauthSvc, svc, log, telegram.WithNotifierRenames(renames))
-	bindUpload(svc, notifier)
-	bindSync(svc, notifier)
-	bindTrash(svc, notifier)
-	bindSweep(svc, notifier)
-	bindPurgePending(svc)
 	if err := tgbot.SetCommands(ctx, telegram.Commands()); err != nil {
 		log.Error("set bot commands", "err", err) // not fatal
 	}
@@ -289,11 +289,10 @@ func (d driveBridge) Disconnect(ctx context.Context, user docsbot.UserID) error 
 	return d.oauth.DisconnectBestEffort(ctx, string(user), docsbot.BotName)
 }
 
-// tgFiles implements docsbot.FileSource over the Telegram bot. bot is set after
-// the bot is built (before the queue starts), breaking the svc-bot cycle.
+// tgFiles implements docsbot.FileSource over the Telegram bot.
 type tgFiles struct{ bot *tg.Bot }
 
-func (f *tgFiles) Download(ctx context.Context, fileID string) ([]byte, string, error) {
+func (f tgFiles) Download(ctx context.Context, fileID string) ([]byte, string, error) {
 	data, mime, err := f.bot.Download(ctx, fileID)
 	if errors.Is(err, tg.ErrFileTooLarge) {
 		return nil, "", docsbot.ErrFileTooLarge

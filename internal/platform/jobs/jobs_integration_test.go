@@ -115,6 +115,44 @@ func TestClient_retriesUntilSuccess(t *testing.T) {
 	}
 }
 
+// TestInserter_jobsAreWorkedByFullClient covers: an insert-only client accepts a
+// kind it has no worker for, stores the same max_attempts as the full client,
+// can cancel queued jobs, and the jobs it leaves are worked by the full client.
+func TestInserter_jobsAreWorkedByFullClient(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := t.Context()
+
+	inserter, err := jobs.NewInserter(pool, discardLog())
+	require.NoError(t, err)
+
+	_, err = inserter.Insert(ctx, uplArgs{UserID: "gone", DocumentID: "doc"}, nil)
+	require.NoError(t, err)
+	n, err := inserter.DeleteJobsByArg(ctx, "upload_document", "UserID", "gone")
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	done := make(chan struct{}, 1)
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	_, err = inserter.InsertTx(ctx, tx, okArgs{}, nil)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+
+	var maxAttempts int
+	require.NoError(t, pool.QueryRow(ctx, `select max_attempts from river_job where kind = 'test_ok'`).Scan(&maxAttempts))
+	require.Equal(t, 5, maxAttempts)
+
+	workers := river.NewWorkers()
+	river.AddWorker(workers, &okWorker{done: done})
+	startedClient(t, pool, workers)
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("job inserted by the inserter was not worked")
+	}
+}
+
 // TestClient_insertTxRollback covers: a job enqueued in a transaction that
 // rolls back never reaches the queue; the same enqueue committed does.
 func TestClient_insertTxRollback(t *testing.T) {

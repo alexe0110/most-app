@@ -125,16 +125,16 @@ func setupSync(t *testing.T, drive docsbot.Drive) syncEnv {
 		`insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, backup_status, drive_file_id, mime_type)
 		 values ($1::uuid, 'saved', 'document', 'other', 'Старое', 'file', 'uniq', 'backed_up', 'remote-1', 'application/pdf') returning id::text`, uid).Scan(&did))
 
-	workers := river.NewWorkers()
-	bindSync := jobs.RegisterStorageSync(workers, log)
-	bindTrash := jobs.RegisterStorageTrash(workers, log)
-	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
+	inserter, err := pjobs.NewInserter(pool, log)
 	require.NoError(t, err)
-	jq := jobs.NewQueue(queue)
+	jq := jobs.NewQueue(inserter)
 	svc := newService(pool, postgres.NewDocuments(pool, jq), jq, drive, fakeFiles{})
 	spy := &syncSpy{}
-	bindSync(svc, spy)
-	bindTrash(svc, spy)
+	workers := river.NewWorkers()
+	jobs.RegisterStorageSync(workers, log, svc, spy)
+	jobs.RegisterStorageTrash(workers, log, svc, spy)
+	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
+	require.NoError(t, err)
 	return syncEnv{pool: pool, svc: svc, queue: queue, spy: spy, user: docsbot.UserID(uid), id: docsbot.DocumentID(did)}
 }
 

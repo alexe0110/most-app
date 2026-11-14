@@ -50,15 +50,12 @@ func (w *sweepWorker) Work(ctx context.Context, _ *river.Job[SweepUploadsArgs]) 
 	return nil
 }
 
-// RegisterSweepUploads registers the worker and returns a binder that injects
-// its dependencies plus the periodic job. Call the binder before queue.Start.
-func RegisterSweepUploads(workers *river.Workers, log *slog.Logger) (bind func(Sweeper, Notifier), periodic *river.PeriodicJob) {
-	w := &sweepWorker{log: log}
-	river.AddWorker(workers, w)
-	periodic = river.NewPeriodicJob(
+// RegisterSweepUploads registers the sweep worker and returns its periodic job.
+func RegisterSweepUploads(workers *river.Workers, log *slog.Logger, svc Sweeper, notify Notifier) *river.PeriodicJob {
+	river.AddWorker(workers, &sweepWorker{svc: svc, notify: notify, log: log})
+	return river.NewPeriodicJob(
 		river.PeriodicInterval(sweepInterval),
 		func() (river.JobArgs, *river.InsertOpts) { return SweepUploadsArgs{}, nil },
 		&river.PeriodicJobOpts{RunOnStart: true},
 	)
-	return func(svc Sweeper, n Notifier) { w.svc, w.notify = svc, n }, periodic
 }

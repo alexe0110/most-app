@@ -116,15 +116,16 @@ func setupUpload(t *testing.T, files docsbot.FileSource, drive docsbot.Drive, lo
 		 values ($1::uuid, 'saved', 'document', 'other', 'ПаспортSECRET.pdf', 'file', 'uniq') returning id::text`, uid).Scan(&did))
 	user, id = docsbot.UserID(uid), docsbot.DocumentID(did)
 
-	workers := river.NewWorkers()
-	bind := jobs.RegisterUploadDocument(workers, log)
-	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
+	inserter, err := pjobs.NewInserter(pool, log)
 	require.NoError(t, err)
-	jq := jobs.NewQueue(queue)
+	jq := jobs.NewQueue(inserter)
 	enq = postgres.NewDocuments(pool, jq)
 	svc := newService(pool, enq, jq, drive, files)
 	spy = &spyNotifier{}
-	bind(svc, spy)
+	workers := river.NewWorkers()
+	jobs.RegisterUploadDocument(workers, log, svc, spy)
+	queue, err = pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
+	require.NoError(t, err)
 	return pool, user, id, spy, enq, queue
 }
 

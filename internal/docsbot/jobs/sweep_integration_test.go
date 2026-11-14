@@ -48,7 +48,7 @@ func TestDisconnect_resetsQueuedAndUploading(t *testing.T) {
 func setupSweep(t *testing.T, drive docsbot.Drive, backup, age, integrationStatus string) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, svc *docsbot.Service, spy *spyNotifier, enq *postgres.Documents, start func()) {
 	t.Helper()
 	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, slog.New(slog.DiscardHandler))
-	svc = newService(pool, enq, jobs.NewQueue(queue), drive, fakeFiles{})
+	svc = newService(pool, enq, jobs.NewQueue(queue.Inserter), drive, fakeFiles{})
 
 	ctx := t.Context()
 	_, err := pool.Exec(ctx, `update documents set backup_status = $2, updated_at = now() - $3::interval where id = $1::uuid`,
@@ -143,9 +143,8 @@ func TestSweepWorker_notifiesFailed(t *testing.T) {
 	pool, _, id, svc, spy, _, _ := setupSweep(t, &countingDrive{}, "uploading", "25 hours", "active")
 
 	workers := river.NewWorkers()
-	bind, periodic := jobs.RegisterSweepUploads(workers, slog.New(slog.DiscardHandler))
+	periodic := jobs.RegisterSweepUploads(workers, slog.New(slog.DiscardHandler), svc, spy)
 	require.NotNil(t, periodic)
-	bind(svc, spy)
 	queue, err := pjobs.New(pool, slog.New(slog.DiscardHandler), workers, nil, periodic)
 	require.NoError(t, err)
 	startQueue(t, queue)
