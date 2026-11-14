@@ -16,10 +16,12 @@ import (
 
 // Limits that keep a hostile or huge PDF from exhausting memory or CPU.
 const (
-	// MaxPDFBytes caps one input PDF, and the total of a merge. It equals the Bot
-	// API download limit tg.MaxFileBytes, not imported to keep this package free
-	// of the Telegram SDK.
-	MaxPDFBytes = 20 << 20
+	// MaxInputBytes caps one input file of any operation, and the total of a PDF
+	// merge. It equals the Bot API download limit tg.MaxFileBytes, not imported
+	// to keep this package free of the Telegram SDK.
+	MaxInputBytes = 20 << 20
+	// MaxPDFBytes is MaxInputBytes under its older, PDF-specific name.
+	MaxPDFBytes = MaxInputBytes
 	// MaxPDFPages caps the pages of an input (and of a merge result).
 	MaxPDFPages = 500
 )

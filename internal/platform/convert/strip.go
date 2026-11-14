@@ -14,6 +14,9 @@ const exifPrefix = "Exif\x00\x00"
 // from the content; an unknown one is ErrUnsupportedFormat, a password-protected
 // PDF is ErrEncrypted.
 func Strip(ctx context.Context, data []byte) ([]byte, error) {
+	if len(data) > MaxInputBytes {
+		return nil, ErrFileTooLarge
+	}
 	var out []byte
 	err := metaOp(ctx, func(ctx context.Context) error {
 		var err error

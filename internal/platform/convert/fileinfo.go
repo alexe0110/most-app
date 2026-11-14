@@ -50,6 +50,8 @@ var (
 	// ErrEncrypted means the file is password-protected, so its metadata can
 	// neither be read nor removed.
 	ErrEncrypted = errors.New("convert: file is encrypted")
+	// ErrFileTooLarge means the file exceeds MaxInputBytes.
+	ErrFileTooLarge = errors.New("convert: file exceeds size limit")
 )
 
 // maxValueRunes caps one metadata string: the values come from a stranger's file
@@ -112,6 +114,9 @@ func (i FileInfo) Clean() bool { return len(i.Blocks) == 0 }
 // A password-protected PDF is not an error: PDF.Encrypted is set and nothing
 // else can be known about it.
 func Inspect(ctx context.Context, data []byte) (FileInfo, error) {
+	if len(data) > MaxInputBytes {
+		return FileInfo{}, ErrFileTooLarge
+	}
 	var info FileInfo
 	err := metaOp(ctx, func(ctx context.Context) error {
 		var err error

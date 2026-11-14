@@ -136,3 +136,13 @@ func TestInspect_corruptImageIsUnreadable(t *testing.T) {
 		})
 	}
 }
+
+func TestInspectAndStrip_sizeLimit(t *testing.T) {
+	big := append([]byte{0xFF, 0xD8, 0xFF}, make([]byte, convert.MaxInputBytes)...)
+
+	_, err := convert.Inspect(t.Context(), big)
+	require.ErrorIs(t, err, convert.ErrFileTooLarge)
+
+	_, err = convert.Strip(t.Context(), big)
+	require.ErrorIs(t, err, convert.ErrFileTooLarge)
+}

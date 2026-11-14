@@ -17,6 +17,12 @@ const maxConcurrent = 2
 // slot became free in time.
 var ErrTimeout = errors.New("convert: operation timed out")
 
+// errPanic is what run returns for a panic inside fn, so callers can tell a
+// parser crash from an ordinary failure.
+type errPanic struct{ value any }
+
+func (e errPanic) Error() string { return fmt.Sprintf("convert: panic: %v", e.value) }
+
 // slots is the semaphore of running operations. It is process-wide on purpose:
 // the cap protects the memory of the whole process, not of one caller.
 var slots = make(chan struct{}, maxConcurrent)
@@ -60,7 +66,7 @@ func run(ctx context.Context, fn func(ctx context.Context) error) error {
 		func() {
 			defer func() {
 				if p := recover(); p != nil {
-					err = fmt.Errorf("convert: panic: %v", p)
+					err = errPanic{value: p}
 				}
 			}()
 			err = fn(ctx)
@@ -80,7 +86,19 @@ func run(ctx context.Context, fn func(ctx context.Context) error) error {
 	}
 }
 
-// metaOp runs a metadata operation under the shared cap.
+// metaOp runs a metadata operation under the shared cap and reduces its failures
+// to the sentinels of fileinfo.go: a timeout stays ErrTimeout, and a panic or any
+// parser error that is not already one of them means the file is unreadable.
 func metaOp(ctx context.Context, fn func(ctx context.Context) error) error {
-	return run(ctx, fn)
+	err := run(ctx, fn)
+	switch {
+	case err == nil,
+		errors.Is(err, ErrTimeout),
+		errors.Is(err, ErrUnsupportedFormat),
+		errors.Is(err, ErrUnreadable),
+		errors.Is(err, ErrEncrypted):
+		return err
+	default:
+		return unreadable(err)
+	}
 }
