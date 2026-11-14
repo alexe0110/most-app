@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -94,9 +95,14 @@ func TestTexts_noDoubleSpacesOrStrayFormatVerbs(t *testing.T) {
 			require.NotContains(t, text, "  ", "%s in %s: double space", name, file)
 			require.NotContains(t, text, "%!", "%s in %s", name, file)
 			require.NotContains(t, text, "%v", "%s in %s: use a typed verb", name, file)
+			require.False(t, numberThenPlainSpace.MatchString(text), "%s in %s: a non-breaking space goes between a number and its unit", name, file)
 		}
 	}
 }
+
+// numberThenPlainSpace finds a number (or its %d) split from the unit by a plain
+// space, which lets the unit wrap to the next line alone.
+var numberThenPlainSpace = regexp.MustCompile(`(\d|%d) (МБ|КБ|стр\.)`)
 
 // A user-facing string spelled out in code instead of texts.go skips the
 // glossary check above, so the phrases are looked for in every literal of the

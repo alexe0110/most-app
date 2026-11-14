@@ -90,7 +90,7 @@ func TestConvertAlbum_tooBigRefused(t *testing.T) {
 
 	require.Empty(t, h.docs)
 	require.Empty(t, h.downloads, "limits are checked before downloading")
-	require.Contains(t, h.lastText(), "20 МБ")
+	require.Contains(t, h.lastText(), "20\u00a0МБ")
 	require.Len(t, h.repo.Docs, 2, "photos stay pending to save one by one")
 }
 

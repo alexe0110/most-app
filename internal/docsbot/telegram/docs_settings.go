@@ -221,8 +221,19 @@ func (d *docs) offerDrive(ctx context.Context, b *bot.Bot, chatID int64) {
 	d.out(b).Send(ctx, chatID, textOfferDrive, tg.WithKeyboard(connectAskKeyboard()))
 }
 
-// onConnectAsk sends the screen before Google's consent page with the link to it.
+// onConnectAsk sends the screen before Google's consent page with the link to it,
+// or just confirms the connection when Drive is already linked.
 func (d *docs) onConnectAsk(ctx context.Context, b *bot.Bot, p press) {
+	// A stale button of an old offer: Drive is already linked, nothing to explain.
+	connected, err := d.svc.DriveConnected(ctx, p.user)
+	if err != nil {
+		d.fail(ctx, b, p.chatID, "drive status", err)
+		return
+	}
+	if connected {
+		d.out(b).Send(ctx, p.chatID, textDriveConnected)
+		return
+	}
 	url, ok := d.connectURL(ctx, p.user)
 	if !ok {
 		d.out(b).Send(ctx, p.chatID, textError)

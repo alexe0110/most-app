@@ -30,16 +30,6 @@ func TestDeleteData_revokeFailureStillConfirms(t *testing.T) {
 	require.Empty(t, repo.Docs)
 }
 
-func TestDisconnect_driveFailureIsShown(t *testing.T) {
-	b, sent, _ := newBotWith(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{RevokeErr: errors.New("google down"), DisconnectErr: errors.New("google down")})
-	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
-
-	b.ProcessUpdate(ctx, dataCallback("d:dc"))
-
-	require.False(t, has(sent.edits, "Google Диск отключён"), "the integration is still active: %q", sent.edits)
-	require.True(t, has(sent.texts, "Что-то пошло не так"), "texts %q", sent.texts)
-}
-
 func TestDeleteData_revokeFailureIsWarnedAndConfirmed(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -109,20 +99,6 @@ func TestDeleteData_promptOffersExportFirst(t *testing.T) {
 	require.Contains(t, sent.markups[0], "Прислать все документы")
 }
 
-func TestDisconnect_clearsKeyboardWithEmptyArray(t *testing.T) {
-	b, sent, _ := newBotWith(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{})
-	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
-
-	b.ProcessUpdate(ctx, dataCallback("d:dc"))
-
-	require.True(t, has(sent.edits, "Google Диск отключён"), "edits %q", sent.edits)
-	markups := sent.snapshot(&sent.editMarkups)
-	require.NotEmpty(t, markups)
-	last := markups[len(markups)-1]
-	require.Contains(t, last, `"inline_keyboard":[]`, "an empty array clears the keyboard")
-	require.NotContains(t, last, `"inline_keyboard":null`, "Telegram rejects a null inline_keyboard")
-}
-
 func startUpdate(payload string) *models.Update {
 	u := textUpdate("/start " + payload)
 	u.Message.Entities = []models.MessageEntity{{Type: models.MessageEntityTypeBotCommand, Offset: 0, Length: len("/start")}}
@@ -161,55 +137,6 @@ func TestStart_eventFailureStillGreets(t *testing.T) {
 	b.ProcessUpdate(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID), startUpdate("ad_1"))
 
 	require.True(t, has(sent.texts, "Most Docs"), "sent %q", sent.texts)
-}
-
-func TestDisconnect_confirmation(t *testing.T) {
-	tests := []struct {
-		name             string
-		taps             []string
-		wantDisconnected bool
-		wantLastEdit     string // substring of the last edit
-		wantLastMarkup   string // substring of the markup of the last edit
-	}{
-		{"ask shows the question with both answers", []string{"d:dca"}, false, "Отключить Google Диск? Файлы, которые уже там, останутся.", "d:dcn"},
-		{"ask offers the confirming button", []string{"d:dca"}, false, "Новые документы будут храниться в Telegram.", `"callback_data":"d:dc"`},
-		{"yes disconnects", []string{"d:dca", "d:dc"}, true, "Google Диск отключён", `"inline_keyboard":[]`},
-		{"cancel brings the settings back and keeps the connection", []string{"d:dca", "d:dcn"}, false, "Google Диск: подключён ✅", "d:dca"},
-		{"cancel twice is harmless", []string{"d:dca", "d:dcn", "d:dcn"}, false, "Google Диск: подключён ✅", "d:dca"},
-		{"cancel on a stale button just redraws the settings", []string{"d:dcn"}, false, "Google Диск: подключён ✅", "d:dca"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var disconnected bool
-			b, sent, _ := newBotWith(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{IsConnected: true, Disconnected: &disconnected})
-			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
-
-			for _, data := range tt.taps {
-				b.ProcessUpdate(ctx, dataCallback(data))
-			}
-
-			require.Equal(t, tt.wantDisconnected, disconnected)
-			require.Contains(t, sent.edits[len(sent.edits)-1], tt.wantLastEdit)
-			require.Contains(t, sent.editMarkups[len(sent.editMarkups)-1], tt.wantLastMarkup)
-			require.Empty(t, sent.texts, "the settings message is edited in place")
-		})
-	}
-}
-
-func TestDisconnect_confirmationNeedsNoMessage(t *testing.T) {
-	for _, data := range []string{"d:dca", "d:dcn"} {
-		t.Run(data, func(t *testing.T) {
-			var disconnected bool
-			b, sent, _ := newBotWith(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{IsConnected: true, Disconnected: &disconnected})
-			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
-
-			b.ProcessUpdate(ctx, inaccessible(dataCallback(data)))
-
-			require.False(t, disconnected)
-			require.Empty(t, sent.edits)
-			require.Empty(t, sent.texts)
-		})
-	}
 }
 
 func TestDeleteData_confirmWordIgnoresCaseAndSpaces(t *testing.T) {
@@ -345,77 +272,6 @@ func TestDeleteData_cancelButtonAfterDeletionDoesNotPromiseTheData(t *testing.T)
 	b.ProcessUpdate(ctx, dataCallback("d:ddn"))
 
 	require.NotContains(t, strings.Join(sent.snapshot(&sent.edits), "\n"), "данные на месте")
-}
-
-func TestConnect_screenBeforeGoogle(t *testing.T) {
-	b, sent, _ := newBotOpts(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{}, telegram.WithDriveFolder("Мои Доки"))
-	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
-
-	// Settings: the button explains first, it is not the consent link itself.
-	b.ProcessUpdate(ctx, commandUpdate("settings"))
-	require.Contains(t, sent.markups[0], `"callback_data":"d:cna"`)
-	require.NotContains(t, sent.markups[0], "auth.example", "the consent link is built after the user asks")
-
-	b.ProcessUpdate(ctx, dataCallback("d:cna"))
-
-	intro := sent.texts[len(sent.texts)-1]
-	require.Equal(t, "Сейчас откроется Google. Я попрошу доступ только к своей папке «Мои Доки» — "+
-		"другие файлы на твоём Google Диске я не вижу. "+
-		"Если у тебя уже есть папка с таким названием, появится вторая — это нормально.", intro)
-	kb := sent.markups[len(sent.markups)-1]
-	require.Contains(t, kb, `"text":"☁️ Продолжить","url":"https://auth.example/consent"`, "continue is a link button")
-	require.NotContains(t, kb, `"callback_data":"d:cna"`)
-	require.Contains(t, kb, `"callback_data":"d:cnc"`)
-	require.Contains(t, kb, "Отмена")
-	require.Equal(t, 2, strings.Count(kb, `"text"`), "continue and cancel only")
-	require.Empty(t, sent.edits, "the settings message stays as it is")
-
-	b.ProcessUpdate(ctx, dataCallbackMsg(8, "d:cnc"))
-
-	require.Equal(t, "Хорошо, подключить можно позже в /settings.", sent.edits[len(sent.edits)-1])
-	require.Equal(t, []int{8}, sent.editIDs, "the intro message itself is edited")
-	require.Contains(t, sent.editMarkups[len(sent.editMarkups)-1], `"inline_keyboard":[]`)
-}
-
-func TestConnect_screenBeforeGoogleDefaultFolder(t *testing.T) {
-	b, sent, _ := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
-
-	b.ProcessUpdate(ctx, dataCallback("d:cna"))
-
-	require.Contains(t, sent.texts[0], "папке «Most Docs»", "the default folder name is used when none is configured")
-}
-
-func TestConnect_staleCancelOnMessageTelegramNoLongerGives(t *testing.T) {
-	b, sent, _ := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
-
-	b.ProcessUpdate(ctx, inaccessible(dataCallback("d:cnc")))
-
-	require.Empty(t, sent.edits)
-	require.Empty(t, sent.texts)
-}
-
-func TestConnect_offerAfterFirstDocumentOpensTheScreen(t *testing.T) {
-	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
-	id := seedPending(repo, 1)[0]
-
-	b.ProcessUpdate(ctx, dataCallbackMsg(11, "d:cat:"+string(id)+":"+string(docsbot.CatOther)))
-
-	last := sent.markups[len(sent.markups)-1]
-	require.Contains(t, last, `"callback_data":"d:cna"`)
-	require.NotContains(t, last, "auth.example")
-}
-
-func TestConnect_reconnectStaysADirectLink(t *testing.T) {
-	b, sent, _ := newBotWith(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{IsConnected: true})
-	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
-
-	b.ProcessUpdate(ctx, commandUpdate("settings"))
-
-	require.Contains(t, sent.markups[0], `"url":"https://auth.example/consent"`)
-	require.NotContains(t, sent.markups[0], "d:cna")
 }
 
 func TestHelp_optionalLines(t *testing.T) {

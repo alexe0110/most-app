@@ -123,6 +123,7 @@ func TestService_ChooseCategory(t *testing.T) {
 		wantErr     error
 		wantOffer   bool
 		wantBackup  docsbot.BackupStatus
+		countErr    error // CountSaved fails after the save
 	}{
 		{name: "first document offers Drive", cat: docsbot.CatPassport, wantOffer: true},
 		{name: "second document does not offer", savedBefore: 1, cat: docsbot.CatPassport},
@@ -130,6 +131,9 @@ func TestService_ChooseCategory(t *testing.T) {
 		{name: "connected queues backup, never offers", connected: true, cat: docsbot.CatPassport, wantBackup: docsbot.BackupPending},
 		{name: "connected, file above the Drive limit: too large, no upload", connected: true, size: docsbot.MaxDriveBytes + 1,
 			cat: docsbot.CatPassport, wantBackup: docsbot.BackupTooLarge},
+		{name: "connected, count fails: still saved, no error", connected: true, countErr: errors.New("db down"),
+			cat: docsbot.CatPassport, wantBackup: docsbot.BackupPending},
+		{name: "not connected, count fails: still saved, no nudge", countErr: errors.New("db down"), cat: docsbot.CatPassport},
 		{name: "unknown category rejected", cat: docsbot.Category("bogus"), wantErr: docsbot.ErrUnknownCategory},
 	}
 	for _, tt := range tests {
@@ -139,6 +143,7 @@ func TestService_ChooseCategory(t *testing.T) {
 				repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther})
 			}
 			doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: "Паспорт", TgFileUniqueID: "u", FileSize: tt.size})
+			repo.CountSavedErr = tt.countErr
 			uploads := &docsbottest.FakeUploads{Repo: repo}
 			svc := docsbottest.NewService(repo, docsbottest.FakeDrive{IsConnected: tt.connected}, docsbottest.FakeFiles{}, uploads, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
@@ -149,6 +154,7 @@ func TestService_ChooseCategory(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Equal(t, tt.wantOffer, got.OfferDrive)
+			require.False(t, got.First && tt.countErr != nil, "no hint without a count")
 			require.Equal(t, docsbot.StatusSaved, repo.Docs[doc.ID].Status)
 			require.Equal(t, tt.cat, repo.Docs[doc.ID].Category)
 			wantBackup := cmp.Or(tt.wantBackup, docsbot.BackupNone)

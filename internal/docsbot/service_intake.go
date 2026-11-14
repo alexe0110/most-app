@@ -250,16 +250,17 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 	if choice.Title != "" {
 		doc.Title = choice.Title
 	}
-	count, err := s.repo.CountSaved(ctx, user)
-	if err != nil {
-		return Saved{}, fmt.Errorf("count saved: %w", err)
-	}
-	first := count == 1
 	if connected {
 		doc.BackupStatus = choice.Backup
-		return Saved{Doc: doc, First: first}, nil
 	}
-	return Saved{Doc: doc, OfferDrive: count == 1 || count == 5, First: first}, nil
+	// The document is committed: a failed count only drops the hint and the Drive
+	// nudge, it must not turn a saved document into an error.
+	count, err := s.repo.CountSaved(ctx, user)
+	if err != nil {
+		s.log.WarnContext(ctx, "count saved documents", "err", err, "user_id", user)
+		return Saved{Doc: doc}, nil
+	}
+	return Saved{Doc: doc, OfferDrive: !connected && (count == 1 || count == 5), First: count == 1}, nil
 }
 
 // defaultTitle builds "<category> — dd.mm.yyyy", adding " (n)" until it is unique

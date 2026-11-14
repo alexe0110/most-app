@@ -48,10 +48,13 @@ func WithConnectSettings(msgs *SettingsMessages, svc settingsReader, auth Author
 	return func(c *connectSettings) { c.msgs, c.svc, c.auth = msgs, svc, auth }
 }
 
-// WithConnectBot sets the bot's @username and the privacy page URL named on the
-// redrawn settings screen; an empty value leaves its line out.
-func WithConnectBot(username, privacyURL string) ConnectOption {
-	return func(c *connectSettings) { c.info.botUsername, c.info.privacyURL = username, privacyURL }
+// WithConnectBot sets what the redrawn settings screen names: the bot's @username,
+// the privacy page URL and the Drive root folder. An empty username or URL leaves
+// its line out.
+func WithConnectBot(username, privacyURL, driveFolder string) ConnectOption {
+	return func(c *connectSettings) {
+		c.info = screenInfo{botUsername: username, privacyURL: privacyURL, driveFolder: driveFolder}
+	}
 }
 
 // NotifyConnected builds the OnConnected callback: after Drive is linked it tells

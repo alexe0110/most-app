@@ -120,6 +120,16 @@ func TestService_Search(t *testing.T) {
 	require.Equal(t, "Паспорт РК", found.Docs[0].Title)
 }
 
+func TestService_Search_driveStatusFailure(t *testing.T) {
+	repo := docsbottest.NewFakeRepo()
+	boom := errors.New("drive status down")
+	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{Err: boom}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
+
+	_, err := svc.Search(t.Context(), user, "паспорт")
+
+	require.ErrorIs(t, err, boom)
+}
+
 func TestService_folderLinks(t *testing.T) {
 	tests := []struct {
 		name    string

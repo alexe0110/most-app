@@ -110,7 +110,7 @@ func run() error {
 		BotURL:       botURL(cfg.TelegramBotUsername),
 	}, oauthStore, func(ctx context.Context, userID string) error {
 		return telegram.NotifyConnected(tgbot, users, svc, log,
-			telegram.WithConnectSettings(settingsMsgs, svc, oauthSvc), telegram.WithConnectBot(cfg.TelegramBotUsername, privacyURL))(ctx, userID)
+			telegram.WithConnectSettings(settingsMsgs, svc, oauthSvc), telegram.WithConnectBot(cfg.TelegramBotUsername, privacyURL, cfg.DriveRootFolder))(ctx, userID)
 	}, log)
 	if err != nil {
 		return fmt.Errorf("new oauth service: %w", err)

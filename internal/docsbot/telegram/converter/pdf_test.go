@@ -104,7 +104,7 @@ func TestConvert_photosToPDF_sizeLimit(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, photoUpdate(2))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
 
-	require.Contains(t, h.allTexts(), "больше 20 МБ")
+	require.Contains(t, h.allTexts(), "больше 20\u00a0МБ")
 	require.Len(t, h.docs, 1)
 	require.Contains(t, string(h.docs[0].data), "/Count 1", "only the photo that fit")
 }
@@ -122,7 +122,7 @@ func TestConvert_photosToPDF_realSizeOverLimitEndsSession(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, photoUpdate(2))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
 
-	require.Contains(t, strings.Join(h.editTexts, "\n"), "больше 20 МБ", "the progress note turns into the refusal")
+	require.Contains(t, strings.Join(h.editTexts, "\n"), "больше 20\u00a0МБ", "the progress note turns into the refusal")
 	require.Empty(t, h.docs)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
@@ -283,7 +283,7 @@ func TestConvertPDF_mergeRefusesOversizeAndGarbage(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":merge"))
 
 	h.bot.ProcessUpdate(ctx, pdfUpdate("big", convert.MaxPDFBytes))
-	require.Contains(t, h.lastShown(), "20 МБ")
+	require.Contains(t, h.lastShown(), "20\u00a0МБ")
 	require.Empty(t, h.downloads[1:], "the declared size is checked before downloading")
 
 	h.bot.ProcessUpdate(ctx, pdfUpdate("junk", 9))
