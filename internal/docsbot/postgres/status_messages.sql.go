@@ -51,6 +51,22 @@ func (q *Queries) CloseStatusMessage(ctx context.Context, arg CloseStatusMessage
 	return err
 }
 
+const deleteClosedStatusMessages = `-- name: DeleteClosedStatusMessages :execrows
+delete
+from status_messages
+where closed_at < $1
+`
+
+// Global TTL purge: status messages closed before @older_than. Documents keep
+// living: documents.status_message_id is on delete set null.
+func (q *Queries) DeleteClosedStatusMessages(ctx context.Context, olderThan pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteClosedStatusMessages, olderThan)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteUserStatusMessages = `-- name: DeleteUserStatusMessages :exec
 delete
 from status_messages

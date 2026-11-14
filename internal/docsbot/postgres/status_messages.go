@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -116,6 +117,15 @@ func (r *StatusMessages) ByID(ctx context.Context, user docsbot.UserID, id docsb
 		return docsbot.StatusMessage{}, notFoundOr(err, "get status message")
 	}
 	return toStatusMessage(row), nil
+}
+
+// PurgeClosed deletes every user's status messages closed before olderThan.
+func (r *StatusMessages) PurgeClosed(ctx context.Context, olderThan time.Time) (int, error) {
+	n, err := r.q.DeleteClosedStatusMessages(ctx, pgtype.Timestamptz{Time: olderThan, Valid: true})
+	if err != nil {
+		return 0, fmt.Errorf("delete closed status messages: %w", err)
+	}
+	return int(n), nil
 }
 
 // statusIDs parses a (status message, user) id pair in one step.

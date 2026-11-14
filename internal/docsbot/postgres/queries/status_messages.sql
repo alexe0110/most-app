@@ -47,6 +47,13 @@ where status_message_id = @status_message_id
   and user_id = @user_id
 order by created_at;
 
+-- name: DeleteClosedStatusMessages :execrows
+-- Global TTL purge: status messages closed before @older_than. Documents keep
+-- living: documents.status_message_id is on delete set null.
+delete
+from status_messages
+where closed_at < @older_than;
+
 -- name: DeleteUserStatusMessages :exec
 delete
 from status_messages

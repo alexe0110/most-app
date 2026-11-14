@@ -863,6 +863,8 @@ func (s *fakeStatus) Create(_ context.Context, user docsbot.UserID, chatID int64
 	return m, nil
 }
 
+func (s *fakeStatus) PurgeClosed(context.Context, time.Time) (int, error) { return 0, nil }
+
 func (s *fakeStatus) Close(_ context.Context, user docsbot.UserID, id docsbot.StatusMessageID) error {
 	if m, ok := s.msgs[id]; ok && m.UserID == user {
 		m.Closed = true

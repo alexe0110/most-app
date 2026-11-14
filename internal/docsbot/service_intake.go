@@ -128,14 +128,28 @@ func (s *Service) DiscardAlbum(ctx context.Context, user UserID, group string) (
 	return n, nil
 }
 
+// PurgeResult counts what one purge removed.
+type PurgeResult struct {
+	// Pending is the documents nobody categorized in time.
+	Pending int
+	// StatusMessages is the closed status messages past the same TTL.
+	StatusMessages int
+}
+
 // PurgeStalePending deletes pending documents nobody categorized within the TTL
-// and returns how many were removed. It is the purge_pending job's use case.
-func (s *Service) PurgeStalePending(ctx context.Context) (int, error) {
-	n, err := s.repo.PurgeStalePending(ctx, s.now().Add(-pendingTTL))
-	if err != nil {
-		return 0, fmt.Errorf("purge stale pending: %w", err)
+// and the status messages closed longer ago than that, and counts both. It is
+// the purge_pending job's use case; on error the result keeps what was done.
+func (s *Service) PurgeStalePending(ctx context.Context) (PurgeResult, error) {
+	cutoff := s.now().Add(-pendingTTL)
+	var res PurgeResult
+	var err error
+	if res.Pending, err = s.repo.PurgeStalePending(ctx, cutoff); err != nil {
+		return res, fmt.Errorf("purge stale pending: %w", err)
 	}
-	return n, nil
+	if res.StatusMessages, err = s.status.PurgeClosed(ctx, cutoff); err != nil {
+		return res, fmt.Errorf("purge closed status messages: %w", err)
+	}
+	return res, nil
 }
 
 // ChooseCategoryGroup saves every pending document of the album that anyDocID

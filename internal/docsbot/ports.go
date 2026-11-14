@@ -256,4 +256,7 @@ type StatusMessages interface {
 	DocumentsIn(ctx context.Context, user UserID, id StatusMessageID) ([]Document, error)
 	// ByID returns the user's status message, or ErrNotFound (also for another user's).
 	ByID(ctx context.Context, user UserID, id StatusMessageID) (StatusMessage, error)
+	// PurgeClosed deletes every user's status messages closed before olderThan
+	// and returns how many were removed; the documents they listed stay.
+	PurgeClosed(ctx context.Context, olderThan time.Time) (int, error)
 }

@@ -308,6 +308,9 @@ type FailDocumentBackupParams struct {
 	UserID       pgtype.UUID
 }
 
+// Unconditional on purpose: correct only while the upload queue runs one worker
+// (MaxWorkers: 1). Not guarded by the current status: the worker also fails a
+// document that was reset to none or already failed by the sweeper meanwhile.
 func (q *Queries) FailDocumentBackup(ctx context.Context, arg FailDocumentBackupParams) error {
 	_, err := q.db.Exec(ctx, failDocumentBackup, arg.BackupReason, arg.ID, arg.UserID)
 	return err
@@ -763,6 +766,8 @@ type MarkDocumentBackedUpSyncParams struct {
 
 // Marks the document backed up and, in the same statement, queues a sync when the
 // title or category changed since the upload started (meta_version differs).
+// Unconditional on purpose: correct only while the upload queue runs one worker
+// (MaxWorkers: 1), so no second upload of the same document races this one.
 func (q *Queries) MarkDocumentBackedUpSync(ctx context.Context, arg MarkDocumentBackedUpSyncParams) (int32, error) {
 	row := q.db.QueryRow(ctx, markDocumentBackedUpSync,
 		arg.DriveFileID,
@@ -789,6 +794,9 @@ type MarkDocumentUploadingParams struct {
 	UserID pgtype.UUID
 }
 
+// Unconditional on purpose: correct only while the upload queue runs one worker
+// (MaxWorkers: 1). Not guarded by the current status: a worker that outlived the
+// sweeper's failing of its document still claims it (see Service.Backup).
 func (q *Queries) MarkDocumentUploading(ctx context.Context, arg MarkDocumentUploadingParams) error {
 	_, err := q.db.Exec(ctx, markDocumentUploading, arg.ID, arg.UserID)
 	return err
@@ -1089,6 +1097,9 @@ type SetSyncStatusParams struct {
 	UserID     pgtype.UUID
 }
 
+// Unconditional on purpose: correct only while the upload queue, which also runs
+// the sync workers, has one worker (MaxWorkers: 1). A check that must not overwrite
+// a newer state uses TransitionSyncStatus instead.
 func (q *Queries) SetSyncStatus(ctx context.Context, arg SetSyncStatusParams) error {
 	_, err := q.db.Exec(ctx, setSyncStatus,
 		arg.SyncStatus,
@@ -1269,6 +1280,9 @@ type UpdateDocumentBackupStatusParams struct {
 	UserID       pgtype.UUID
 }
 
+// Unconditional on purpose: correct only while the upload queue runs one worker
+// (MaxWorkers: 1), so no other writer races this status. Callers set it from any
+// state (a retry, a reset after a disconnect, too_large).
 func (q *Queries) UpdateDocumentBackupStatus(ctx context.Context, arg UpdateDocumentBackupStatusParams) error {
 	_, err := q.db.Exec(ctx, updateDocumentBackupStatus, arg.BackupStatus, arg.ID, arg.UserID)
 	return err

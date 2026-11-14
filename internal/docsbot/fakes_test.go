@@ -967,6 +967,20 @@ func (s *fakeStatus) Create(_ context.Context, user docsbot.UserID, chatID int64
 	return m, nil
 }
 
+// PurgeClosed drops closed messages created before olderThan (the fake keeps no close time).
+func (s *fakeStatus) PurgeClosed(_ context.Context, olderThan time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for id, m := range s.msgs {
+		if m.Closed && m.CreatedAt.Before(olderThan) {
+			delete(s.msgs, id)
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (s *fakeStatus) Close(_ context.Context, user docsbot.UserID, id docsbot.StatusMessageID) error {
 	return s.update(user, id, func(m *docsbot.StatusMessage) { m.Closed = true })
 }

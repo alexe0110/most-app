@@ -41,6 +41,9 @@ where id = @id
   and status = 'pending';
 
 -- name: UpdateDocumentBackupStatus :exec
+-- Unconditional on purpose: correct only while the upload queue runs one worker
+-- (MaxWorkers: 1), so no other writer races this status. Callers set it from any
+-- state (a retry, a reset after a disconnect, too_large).
 update documents
 set backup_status = @backup_status,
     backup_reason = null,
@@ -49,6 +52,9 @@ where id = @id
   and user_id = @user_id;
 
 -- name: FailDocumentBackup :exec
+-- Unconditional on purpose: correct only while the upload queue runs one worker
+-- (MaxWorkers: 1). Not guarded by the current status: the worker also fails a
+-- document that was reset to none or already failed by the sweeper meanwhile.
 update documents
 set backup_status = 'failed',
     backup_reason = @backup_reason,
@@ -57,6 +63,9 @@ where id = @id
   and user_id = @user_id;
 
 -- name: MarkDocumentUploading :exec
+-- Unconditional on purpose: correct only while the upload queue runs one worker
+-- (MaxWorkers: 1). Not guarded by the current status: a worker that outlived the
+-- sweeper's failing of its document still claims it (see Service.Backup).
 update documents
 set backup_status = 'uploading',
     backup_reason = null
@@ -181,6 +190,8 @@ limit @lim offset @off;
 -- name: MarkDocumentBackedUpSync :one
 -- Marks the document backed up and, in the same statement, queues a sync when the
 -- title or category changed since the upload started (meta_version differs).
+-- Unconditional on purpose: correct only while the upload queue runs one worker
+-- (MaxWorkers: 1), so no second upload of the same document races this one.
 update documents
 set backup_status = 'backed_up',
     backup_reason = null,
@@ -255,6 +266,9 @@ where id = @id
   and sync_status = 'pending';
 
 -- name: SetSyncStatus :exec
+-- Unconditional on purpose: correct only while the upload queue, which also runs
+-- the sync workers, has one worker (MaxWorkers: 1). A check that must not overwrite
+-- a newer state uses TransitionSyncStatus instead.
 update documents
 set sync_status = @sync_status,
     sync_reason = @sync_reason

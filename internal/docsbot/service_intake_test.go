@@ -425,12 +425,19 @@ func TestService_PurgeStalePending(t *testing.T) {
 	stale := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a", CreatedAt: now.Add(-25 * time.Hour)})
 	fresh := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "b", CreatedAt: now.Add(-23 * time.Hour)})
 	oldSaved := repo.seed(docsbot.Document{UserID: stranger, Status: docsbot.StatusSaved, TgFileUniqueID: "c", CreatedAt: now.Add(-48 * time.Hour)})
-	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
+	status := newFakeStatus(repo)
+	status.msgs["old-closed"] = docsbot.StatusMessage{ID: "old-closed", UserID: user, Closed: true, CreatedAt: now.Add(-48 * time.Hour)}
+	status.msgs["old-open"] = docsbot.StatusMessage{ID: "old-open", UserID: user, CreatedAt: now.Add(-48 * time.Hour)}
+	status.msgs["new-closed"] = docsbot.StatusMessage{ID: "new-closed", UserID: user, Closed: true, CreatedAt: now.Add(-time.Hour)}
+	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, status, &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
 
-	n, err := svc.PurgeStalePending(t.Context())
+	res, err := svc.PurgeStalePending(t.Context())
 
 	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	require.Equal(t, docsbot.PurgeResult{Pending: 1, StatusMessages: 1}, res)
+	require.NotContains(t, status.msgs, docsbot.StatusMessageID("old-closed"))
+	require.Contains(t, status.msgs, docsbot.StatusMessageID("old-open"), "an open message is never purged")
+	require.Contains(t, status.msgs, docsbot.StatusMessageID("new-closed"))
 	require.NotContains(t, repo.docs, stale.ID)
 	require.Contains(t, repo.docs, fresh.ID)
 	require.Contains(t, repo.docs, oldSaved.ID, "saved documents are never purged")
