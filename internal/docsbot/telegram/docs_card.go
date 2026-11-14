@@ -191,8 +191,8 @@ func (d *docs) onDeleteAsk(ctx context.Context, b *bot.Bot, u *models.Update, us
 		return
 	}
 	kb := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: btnDeleteYes, CallbackData: cb(actDeleteYes, id)},
-		{Text: btnDeleteNo, CallbackData: cb(actDeleteNo, id)},
+		{Text: btnDeleteYes, CallbackData: docCB(actDeleteYes, id)},
+		{Text: btnDeleteNo, CallbackData: docCB(actDeleteNo, id)},
 	}}}
 	d.out(b).edit(ctx, chatID, msgID, d.deleteConfirmText(ctx, user, id), withKeyboard(kb))
 }

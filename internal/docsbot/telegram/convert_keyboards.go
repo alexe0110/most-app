@@ -52,7 +52,7 @@ func cancelKeyboard() *models.InlineKeyboardMarkup {
 
 // quickKeyboard is the menu of an image; a WEBP also gets a plain conversion to JPG.
 func quickKeyboard(id docsbot.DocumentID, webp bool) *models.InlineKeyboardMarkup {
-	q := func(op string) string { return cbQuickPrefix + string(id) + ":" + op }
+	q := func(op string) string { return convDocCB(convActQuick, id, op) }
 	second := []models.InlineKeyboardButton{{Text: btnQuickPDF, CallbackData: q(opPDF)}}
 	if webp {
 		second = append(second, models.InlineKeyboardButton{Text: btnQuickJPG, CallbackData: q(opJPG)})
@@ -73,22 +73,22 @@ func quickKeyboard(id docsbot.DocumentID, webp bool) *models.InlineKeyboardMarku
 func saveKeyboard(token string, replace bool) *models.InlineKeyboardMarkup {
 	if replace {
 		return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-			{{Text: btnSaveAsNew, CallbackData: cbSavePrefix + token}},
-			{{Text: btnReplaceOriginal, CallbackData: cbRepAsk + token}},
-			{{Text: btnSkipResult, CallbackData: cbSkipPrefix + token}},
+			{{Text: btnSaveAsNew, CallbackData: convCB(convActSave, token)}},
+			{{Text: btnReplaceOriginal, CallbackData: convCB(convActRepAsk, token)}},
+			{{Text: btnSkipResult, CallbackData: convCB(convActSkip, token)}},
 		}}
 	}
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-		{{Text: btnSaveResult, CallbackData: cbSavePrefix + token}},
-		{{Text: btnSkipResult, CallbackData: cbSkipPrefix + token}},
+		{{Text: btnSaveResult, CallbackData: convCB(convActSave, token)}},
+		{{Text: btnSkipResult, CallbackData: convCB(convActSkip, token)}},
 	}}
 }
 
 // replaceKeyboard confirms replacing the original.
 func replaceKeyboard(token string) *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: btnReplaceYes, CallbackData: cbRepYes + token},
-		{Text: btnReplaceNo, CallbackData: cbRepNo + token},
+		{Text: btnReplaceYes, CallbackData: convCB(convActRepYes, token)},
+		{Text: btnReplaceNo, CallbackData: convCB(convActRepNo, token)},
 	}}}
 }
 

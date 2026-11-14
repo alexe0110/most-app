@@ -35,26 +35,26 @@ const (
 	cbLimitCustom = callbackPrefix + "limitcustom"
 	cbFmtJPEG     = callbackPrefix + "fmtjpeg"
 	cbFmtPNG      = callbackPrefix + "fmtpng"
-	cbMenuCancel  = callbackPrefix + "x" // closes the convert menu
+	cbMenuCancel  = callbackPrefix + convActCancel // closes the convert menu
 	cbPDFActions  = callbackPrefix + "pdfops"
 
 	// PDF operations on a PDF sent to /convert (bound to the session).
-	cbSessRotate = callbackPrefix + "p:" + opRotate
-	cbSessKeep   = callbackPrefix + "p:" + opKeep
-	cbSessDrop   = callbackPrefix + "p:" + opDrop
-	cbSessMerge  = callbackPrefix + "p:" + opMerge
+	cbSessRotate = callbackPrefix + convActPDFOp + ":" + opRotate
+	cbSessKeep   = callbackPrefix + convActPDFOp + ":" + opKeep
+	cbSessDrop   = callbackPrefix + convActPDFOp + ":" + opDrop
+	cbSessMerge  = callbackPrefix + convActPDFOp + ":" + opMerge
 )
 
 // Prefixes of the buttons that work without a /convert session.
 const (
-	cbDocPrefix   = callbackPrefix + "doc:"  // conv:doc:<docID> opens the menu
-	cbQuickPrefix = callbackPrefix + "q:"    // conv:q:<docID>:<op> converts a document
-	cbSavePrefix  = callbackPrefix + "save:" // conv:save:<token> saves the result
-	cbSkipPrefix  = callbackPrefix + "skip:" // conv:skip:<token> keeps only the file
-	cbRepAsk      = callbackPrefix + "rp:"   // conv:rp:<token> asks to replace the original
-	cbRepYes      = callbackPrefix + "rpy:"  // conv:rpy:<token> confirms the replacement
-	cbRepNo       = callbackPrefix + "rpn:"  // conv:rpn:<token> cancels it
-	cbAlbumPrefix = callbackPrefix + "alb:"  // conv:alb:<token> merges an album into a PDF
+	cbDocPrefix   = callbackPrefix + convActDoc + ":"    // conv:doc:<docID> opens the menu
+	cbQuickPrefix = callbackPrefix + convActQuick + ":"  // conv:q:<docID>:<op> converts a document
+	cbSavePrefix  = callbackPrefix + convActSave + ":"   // conv:save:<token> saves the result
+	cbSkipPrefix  = callbackPrefix + convActSkip + ":"   // conv:skip:<token> keeps only the file
+	cbRepAsk      = callbackPrefix + convActRepAsk + ":" // conv:rp:<token> asks to replace the original
+	cbRepYes      = callbackPrefix + convActRepYes + ":" // conv:rpy:<token> confirms the replacement
+	cbRepNo       = callbackPrefix + convActRepNo + ":"  // conv:rpn:<token> cancels it
+	cbAlbumPrefix = callbackPrefix + convActAlbum + ":"  // conv:alb:<token> merges an album into a PDF
 )
 
 // Limits of an album PDF.

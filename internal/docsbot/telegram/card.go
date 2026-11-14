@@ -131,7 +131,7 @@ func revoked(doc docsbot.Document) bool {
 // link such a card has no retry button.
 func cardKeyboardWith(doc docsbot.Document, folderID, orig, reconnectURL string) *models.InlineKeyboardMarkup {
 	// At most two buttons per row, short labels: more are cut off on narrow screens.
-	top := []models.InlineKeyboardButton{{Text: btnCardSend, CallbackData: cb(actSend, doc.ID)}}
+	top := []models.InlineKeyboardButton{{Text: btnCardSend, CallbackData: docCB(actSend, doc.ID)}}
 	if doc.InDrive() && doc.SyncStatus != docsbot.SyncMissing {
 		top = append(top, models.InlineKeyboardButton{Text: btnCardOpen, URL: driveURL(doc.DriveFileID)})
 	}
@@ -141,26 +141,26 @@ func cardKeyboardWith(doc docsbot.Document, folderID, orig, reconnectURL string)
 		case docsbot.SyncFailed:
 			switch {
 			case !revoked(doc):
-				rows = append(rows, []models.InlineKeyboardButton{{Text: btnRetryBackup, CallbackData: cb(actRetrySync, doc.ID)}})
+				rows = append(rows, []models.InlineKeyboardButton{{Text: btnRetryBackup, CallbackData: docCB(actRetrySync, doc.ID)}})
 			case reconnectURL != "":
 				rows = append(rows, []models.InlineKeyboardButton{{Text: btnReconnect, URL: reconnectURL}})
 			}
 		case docsbot.SyncMissing:
-			rows = append(rows, []models.InlineKeyboardButton{{Text: btnReupload, CallbackData: cb(actRetry, doc.ID)}})
+			rows = append(rows, []models.InlineKeyboardButton{{Text: btnReupload, CallbackData: docCB(actRetry, doc.ID)}})
 		}
 	}
 	if folderID != "" {
 		rows = append(rows, []models.InlineKeyboardButton{{Text: btnOpenFolder, URL: folderURL(folderID)}})
 	}
 	rows = append(rows, []models.InlineKeyboardButton{
-		{Text: btnRename, CallbackData: cb(actRename, doc.ID)},
-		{Text: btnChangeCat, CallbackData: cb(actChangeCat, doc.ID)},
+		{Text: btnRename, CallbackData: docCB(actRename, doc.ID)},
+		{Text: btnChangeCat, CallbackData: docCB(actChangeCat, doc.ID)},
 	})
 	var last []models.InlineKeyboardButton
 	if convertible(doc) {
 		last = append(last, convertRow(doc.ID, btnConvertCard)...)
 	}
-	last = append(last, models.InlineKeyboardButton{Text: btnDelete, CallbackData: cb(actDeleteAsk, doc.ID)})
+	last = append(last, models.InlineKeyboardButton{Text: btnDelete, CallbackData: docCB(actDeleteAsk, doc.ID)})
 	rows = append(rows, last)
 	if back := backFromOrig(orig); back != "" {
 		rows = append(rows, []models.InlineKeyboardButton{{Text: btnBack, CallbackData: back}})

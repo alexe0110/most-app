@@ -62,7 +62,7 @@ func (d *docs) onInlineSwitch(ctx context.Context, b *bot.Bot, u *models.Update,
 // myDocsKeyboard is a single "Мои документы" button back to the catalog.
 func myDocsKeyboard() *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: btnMyDocs, CallbackData: cbPrefix + actListBack},
+		{Text: btnMyDocs, CallbackData: docCB(actListBack, "")},
 	}}}
 }
 

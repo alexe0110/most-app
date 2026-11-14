@@ -346,7 +346,7 @@ func pdfErrorText(err error) string {
 
 // pdfMenuKeyboard is the menu of a PDF document.
 func pdfMenuKeyboard(id docsbot.DocumentID) *models.InlineKeyboardMarkup {
-	q := func(op string) string { return cbQuickPrefix + string(id) + ":" + op }
+	q := func(op string) string { return convDocCB(convActQuick, id, op) }
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
 		{
 			{Text: btnPDFRotate, CallbackData: q(opRotate)},

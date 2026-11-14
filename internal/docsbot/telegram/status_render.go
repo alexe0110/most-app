@@ -179,11 +179,11 @@ func statusKeyboard(id docsbot.StatusMessageID, st statusTally) *models.InlineKe
 	if st.failed > 0 {
 		row = append(row, models.InlineKeyboardButton{
 			Text:         fmt.Sprintf("%s (%d)", btnRetryBackup, st.failed),
-			CallbackData: cbPrefix + actRetryBatch + ":" + string(id),
+			CallbackData: docCB(actRetryBatch, "", string(id)),
 		})
 	}
 	if st.done == st.total && st.total > 0 {
-		row = append(row, models.InlineKeyboardButton{Text: btnMyDocs, CallbackData: cbPrefix + actListBack})
+		row = append(row, models.InlineKeyboardButton{Text: btnMyDocs, CallbackData: docCB(actListBack, "")})
 	}
 	if len(row) == 0 {
 		return nil
@@ -205,6 +205,6 @@ func renderSingleStatus(sm docsbot.StatusMessage, doc docsbot.Document, folderBy
 
 func retryBatchKeyboard(id docsbot.StatusMessageID) *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: btnRetryBackup, CallbackData: cbPrefix + actRetryBatch + ":" + string(id)},
+		{Text: btnRetryBackup, CallbackData: docCB(actRetryBatch, "", string(id))},
 	}}}
 }

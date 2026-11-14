@@ -193,7 +193,7 @@ func pause(ctx context.Context, d time.Duration) bool {
 // outlast a regular handler budget and runs without one.
 func IsExport(u *models.Update) bool {
 	if cb := u.CallbackQuery; cb != nil {
-		return cb.Data == cbPrefix+actExport
+		return cb.Data == docCB(actExport, "")
 	}
 	if m := u.Message; m != nil {
 		cmd, _, _ := strings.Cut(m.Text, " ")
