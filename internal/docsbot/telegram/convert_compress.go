@@ -112,7 +112,7 @@ func (c *converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64
 	}
 
 	if len(out) > maxBytes {
-		reply(ctx, b, c.log, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
+		c.out(b).send(ctx, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
 	}
 	name := resultFileName(sess.sourceTitle, nameFallbackPhoto, nameTagCompressed, formatExt(format))
 	if !c.sendResult(ctx, b, chatID, user, name, out, "", suffixCompressed) {

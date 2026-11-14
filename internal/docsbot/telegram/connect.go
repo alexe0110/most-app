@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -55,6 +54,7 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 	for _, opt := range opts {
 		opt(&cs)
 	}
+	out := sender{api: b.Client(), log: log}
 	return func(ctx context.Context, userID string) error {
 		chatID, err := users.TgUserID(ctx, userID)
 		if err != nil {
@@ -64,11 +64,11 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 			return fmt.Errorf("reset drive folders: %w", err)
 		}
 		log.InfoContext(ctx, "drive folder cache reset", "user_id", userID, "reason", "reconnect")
-		if err := b.Send(ctx, chatID, textDriveConnected); err != nil {
-			return ignoreBlocked(err) // a block is already logged at Warn by tg.Bot
+		if _, err := out.trySend(ctx, chatID, textDriveConnected); err != nil {
+			return out.ignoreBlocked(ctx, err)
 		}
 		log.InfoContext(ctx, "drive connected", "user_id", userID)
-		cs.refresh(ctx, b, log, chatID, docsbot.UserID(userID))
+		cs.refresh(ctx, out, chatID, docsbot.UserID(userID))
 		n, err := counter.NotBackedUpCount(ctx, docsbot.UserID(userID))
 		if err != nil {
 			return fmt.Errorf("count not backed up: %w", err)
@@ -76,14 +76,15 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 		if n == 0 {
 			return nil
 		}
-		return ignoreBlocked(b.SendMarkup(ctx, chatID, fmt.Sprintf(textTransferOffer, n), transferOfferKeyboard()))
+		_, err = out.trySend(ctx, chatID, fmt.Sprintf(textTransferOffer, n), withKeyboard(transferOfferKeyboard()))
+		return out.ignoreBlocked(ctx, err)
 	}
 }
 
 // refresh edits the remembered /settings message into the connected screen. An
 // unknown message (restart, expired) is skipped silently; a failure is logged
 // at Warn and never fails the OAuth callback.
-func (c connectSettings) refresh(ctx context.Context, b *tg.Bot, log *slog.Logger, chatID int64, user docsbot.UserID) {
+func (c connectSettings) refresh(ctx context.Context, out sender, chatID int64, user docsbot.UserID) {
 	if c.msgs == nil || c.svc == nil {
 		return
 	}
@@ -93,7 +94,7 @@ func (c connectSettings) refresh(ctx context.Context, b *tg.Bot, log *slog.Logge
 	}
 	view, err := c.svc.Settings(ctx, user)
 	if err != nil {
-		log.WarnContext(ctx, "load settings after connect", "err", err, "user_id", user)
+		out.logFailure(ctx, slog.LevelWarn, "load settings after connect", err, "user_id", user)
 		return
 	}
 	var (
@@ -102,22 +103,12 @@ func (c connectSettings) refresh(ctx context.Context, b *tg.Bot, log *slog.Logge
 	)
 	if c.auth != nil {
 		if u, err := c.auth.AuthURL(ctx, string(user), docsbot.BotName); err != nil {
-			log.WarnContext(ctx, "build auth url after connect", "err", err, "user_id", user)
+			out.logFailure(ctx, slog.LevelWarn, "build auth url after connect", err, "user_id", user)
 		} else {
 			url, haveURL = u, true
 		}
 	}
 	text, kb := renderSettings(view, url, haveURL)
-	if err := b.EditHTML(ctx, chatID, msgID, text, kb); err != nil && !isNotModified(err) {
-		log.WarnContext(ctx, "edit settings after connect", "err", err, "user_id", user)
-	}
-}
-
-// ignoreBlocked drops tg.ErrBlocked: it is already logged at Warn by tg.Bot and
-// is not an error of the caller.
-func ignoreBlocked(err error) error {
-	if errors.Is(err, tg.ErrBlocked) {
-		return nil
-	}
-	return err
+	err = out.tryEdit(ctx, chatID, msgID, text, withHTML(), withKeyboard(kb))
+	out.logFailure(ctx, slog.LevelWarn, "edit settings after connect", err, "user_id", user)
 }

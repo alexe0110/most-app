@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -14,7 +15,7 @@ import (
 
 // callback handles a button press.
 func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Update) {
-	c.answer(ctx, b, update.CallbackQuery.ID)
+	c.out(b).answer(ctx, update.CallbackQuery.ID)
 
 	chatID, ok := callbackChat(update)
 	if !ok {
@@ -100,7 +101,7 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 			return
 		}
 		c.clearButtons(ctx, b, update, chatID)
-		reply(ctx, b, c.log, chatID, textConvertCancelled)
+		c.out(b).send(ctx, chatID, textConvertCancelled)
 	case cbLimit1, cbLimit2, cbLimit5:
 		sess, ok := c.sessions.advance(user, msgID, []step{stepChooseLimit}, func(s *session) {
 			s.maxBytes = limitBytes(data)
@@ -131,11 +132,14 @@ func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 	}
 }
 
+// out is the one way this handler talks to Telegram's message API.
+func (c *converter) out(b *bot.Bot) sender { return sender{api: b, log: c.log} }
+
 // stale answers a press that no longer applies (an old message, a wrong step,
 // an ended session, a double tap) and strips the message's buttons. It does
 // nothing else.
 func (c *converter) stale(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
-	reply(ctx, b, c.log, chatID, textStale)
+	c.out(b).send(ctx, chatID, textStale)
 	c.clearButtons(ctx, b, update, chatID)
 }
 
@@ -153,31 +157,23 @@ func (c *converter) next(ctx context.Context, b *bot.Bot, update *models.Update,
 // message instead; either way it returns the id of the live message. An edit that
 // changes nothing counts as success.
 func (c *converter) show(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup) int {
+	out := c.out(b)
 	if msgID > 0 {
-		params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text}
+		// An omitted keyboard keeps the old one, which is what a nil kb means here.
+		var opts []msgOpt
 		if kb != nil {
-			params.ReplyMarkup = kb
+			opts = append(opts, withKeyboard(kb))
 		}
-		_, err := b.EditMessageText(ctx, params)
-		if err == nil || isNotModified(err) {
+		err := out.tryEdit(ctx, chatID, msgID, text, opts...)
+		if err == nil {
 			return msgID
 		}
-		c.log.WarnContext(ctx, "edit dialogue message failed, sending a new one", "err", err)
+		out.logFailure(ctx, slog.LevelWarn, "edit dialogue message failed, sending a new one", err)
 	}
-	var markup models.ReplyMarkup
-	if kb != nil {
-		markup = kb
-	}
-	if id := c.send(ctx, b, chatID, text, markup); id != 0 {
+	if id := out.send(ctx, chatID, text, withKeyboard(kb)); id != 0 {
 		return id
 	}
 	return msgID // both failed: keep the old dialogue message so the session survives
-}
-
-// isNotModified reports Telegram's answer to an edit that changes nothing. The Bot
-// API has no error code for it, only the description text.
-func isNotModified(err error) bool {
-	return strings.Contains(strings.ToLower(err.Error()), "message is not modified")
 }
 
 // moveDown shows the next step of a dialogue that a user's message advanced: a
@@ -188,11 +184,7 @@ func (c *converter) moveDown(ctx context.Context, b *bot.Bot, chatID, user int64
 	if sess, ok := c.sessions.live(user); ok {
 		prev = sess.msgID
 	}
-	var markup models.ReplyMarkup
-	if kb != nil {
-		markup = kb
-	}
-	id := c.send(ctx, b, chatID, text, markup)
+	id := c.out(b).send(ctx, chatID, text, withKeyboard(kb))
 	if id == 0 {
 		return // keep the previous dialogue message: the session still owns it
 	}
@@ -205,8 +197,9 @@ func (c *converter) moveDown(ctx context.Context, b *bot.Bot, chatID, user int64
 // drop deletes a dialogue message; if Telegram refuses (too old), its buttons are
 // removed instead so they can't be pressed.
 func (c *converter) drop(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
-	if _, err := b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: msgID}); err != nil {
-		c.stripKeyboard(ctx, b, chatID, msgID)
+	out := c.out(b)
+	if err := out.tryDelete(ctx, chatID, msgID); err != nil {
+		out.clearKeyboard(ctx, chatID, msgID)
 	}
 }
 
@@ -216,7 +209,7 @@ func (c *converter) finish(ctx context.Context, b *bot.Bot, chatID int64, msgID 
 	if msgID == 0 {
 		return
 	}
-	if _, err := b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: msgID}); err != nil {
+	if err := c.out(b).tryDelete(ctx, chatID, msgID); err != nil {
 		c.show(ctx, b, chatID, msgID, textConvertDone, nil)
 	}
 }

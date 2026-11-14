@@ -1,6 +1,7 @@
 package telegram_test
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"io"
@@ -33,11 +34,12 @@ type botCall struct {
 
 // fakeBotAPI is a Bot API stand-in whose editMessageText answer is configurable.
 type fakeBotAPI struct {
-	mu      sync.Mutex
-	calls   []botCall
-	editErr string // when set, editMessageText fails with this description
-	nextID  int    // message_id returned by sendMessage
-	blocked bool   // when set, sendMessage fails with 403 (user blocked the bot)
+	mu       sync.Mutex
+	calls    []botCall
+	editErr  string // when set, editMessageText fails with this description
+	editCode int    // status of that failure, 400 when zero
+	nextID   int    // message_id returned by sendMessage
+	blocked  bool   // when set, sendMessage fails with 403 (user blocked the bot)
 }
 
 func (f *fakeBotAPI) callsOf(method string) []botCall {
@@ -70,8 +72,9 @@ func (f *fakeBotAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = io.WriteString(w, `{"ok":false,"error_code":400,"description":"Bad Request: object expected as reply markup"}`)
 	case method == "editMessageText" && f.editErr != "":
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = io.WriteString(w, `{"ok":false,"error_code":400,"description":"`+f.editErr+`"}`)
+		code := cmp.Or(f.editCode, http.StatusBadRequest)
+		w.WriteHeader(code)
+		_, _ = io.WriteString(w, `{"ok":false,"error_code":`+itoa(code)+`,"description":"`+f.editErr+`"}`)
 	case method == "sendMessage" && f.blocked:
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = io.WriteString(w, `{"ok":false,"error_code":403,"description":"Forbidden: bot was blocked by the user"}`)
@@ -230,6 +233,37 @@ func TestNotifier_UploadOutcome_editErrors(t *testing.T) {
 	}
 }
 
+// A user who left cannot be reached: it is no error for the worker, and the
+// remembered message id stays as it was.
+func TestNotifier_UploadOutcome_blockedUserIsNotAnError(t *testing.T) {
+	tests := []struct {
+		name      string
+		editErr   string
+		editCode  int
+		blocked   bool // the resend is refused too
+		wantSends int
+	}{
+		{name: "blocked on edit", editErr: "Forbidden: bot was blocked by the user", editCode: http.StatusForbidden},
+		{name: "deactivated on edit", editErr: "Forbidden: user is deactivated", editCode: http.StatusForbidden},
+		{name: "blocked on resend", editErr: "Bad Request: message to edit not found", blocked: true, wantSends: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newNotifierEnv(t)
+			e.api.editErr, e.api.editCode, e.api.blocked = tt.editErr, tt.editCode, tt.blocked
+			sm, docs := e.batch(t, docsbot.BackupBackedUp, docsbot.BackupUploading)
+			var buf lockedBuffer
+			n := telegram.NewNotifier(e.bot, chatLookup{}, fakeAuth{}, e.svc, slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+
+			require.NoError(t, n.UploadOutcome(t.Context(), testUserID, docs[0].ID))
+
+			require.Len(t, e.api.callsOf("sendMessage"), tt.wantSends)
+			require.Equal(t, 70, e.status.msgs[sm.ID].MessageID)
+			require.NotContains(t, buf.String(), `"level":"ERROR"`)
+		})
+	}
+}
+
 func TestNotifier_UploadOutcome_resendStillClosesWhenDone(t *testing.T) {
 	e := newNotifierEnv(t)
 	e.api.editErr = "Bad Request: message to edit not found"
@@ -381,7 +415,7 @@ func TestNotifier_Reconnect_blockedArmsDebounce(t *testing.T) {
 	require.Len(t, e.api.callsOf("sendMessage"), 1, "the second call is debounced")
 }
 
-// tg.Bot already logs a block at Warn; NotifyConnected must not return it as an error.
+// A block is logged by the sender; NotifyConnected must not return it as an error.
 func TestNotifyConnected_blockedIsNotAnError(t *testing.T) {
 	e := newNotifierEnv(t)
 	e.api.blocked = true

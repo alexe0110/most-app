@@ -24,7 +24,7 @@ func (d *docs) onRetryAll(ctx context.Context, b *bot.Bot, u *models.Update, use
 		return
 	}
 	if !ok {
-		d.editText(ctx, b, chatID, msgID, textNoFailed)
+		d.out(b).edit(ctx, chatID, msgID, textNoFailed, withKeyboard(nil))
 		return
 	}
 	d.log.InfoContext(ctx, "retry all", "user_id", user, "count", len(view.Lines))
@@ -35,7 +35,7 @@ func (d *docs) onRetryAll(ctx context.Context, b *bot.Bot, u *models.Update, use
 // toast when the document is no longer failed (double tap, stale button).
 func (d *docs) onRetry(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
 	toast := ""
-	defer func() { d.answerText(ctx, b, u.CallbackQuery.ID, toast) }()
+	defer func() { d.out(b).answer(ctx, u.CallbackQuery.ID, withToast(toast)) }()
 	id, ok := docID(parts)
 	if !ok {
 		return
@@ -53,14 +53,14 @@ func (d *docs) onRetry(ctx context.Context, b *bot.Bot, u *models.Update, user d
 		d.fail(ctx, b, chatID, "retry backup", err)
 		return
 	}
-	d.editText(ctx, b, chatID, msgID, textRetryQueued)
+	d.out(b).edit(ctx, chatID, msgID, textRetryQueued, withKeyboard(nil))
 }
 
 // onRetrySync re-queues a failed cloud sync and redraws the card as updating. It
 // answers the callback itself, like onRetry.
 func (d *docs) onRetrySync(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
 	toast := ""
-	defer func() { d.answerText(ctx, b, u.CallbackQuery.ID, toast) }()
+	defer func() { d.out(b).answer(ctx, u.CallbackQuery.ID, withToast(toast)) }()
 	id, ok := docID(parts)
 	if !ok {
 		return
@@ -111,7 +111,7 @@ func (d *docs) redrawStatus(ctx context.Context, b *bot.Bot, user docsbot.UserID
 	// must not outlive it. Dropped on both sides of the edit: a prompt armed while
 	// it is in flight is overwritten by it too.
 	d.renames.dropMessage(view.Message.ChatID, view.Message.MessageID)
-	d.editHTML(ctx, b, view.Message.ChatID, view.Message.MessageID, text, kb)
+	d.out(b).edit(ctx, view.Message.ChatID, view.Message.MessageID, text, withHTML(), withKeyboard(kb))
 	d.renames.dropMessage(view.Message.ChatID, view.Message.MessageID)
 	if view.AllTerminal {
 		if err := d.svc.CloseStatus(ctx, user, view.Message.ID); err != nil {

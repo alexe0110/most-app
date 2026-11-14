@@ -38,10 +38,6 @@ const downloadWait = 30 * time.Second
 // ErrFileTooLarge means the file is above the Bot API download limit (20 MB).
 var ErrFileTooLarge = errors.New("tg: file exceeds download limit")
 
-// ErrBlocked means Telegram refused delivery with 403: the user blocked the bot
-// or deactivated their account. It is permanent, so callers must not retry.
-var ErrBlocked = errors.New("tg: bot blocked by user")
-
 // Config carries the Telegram settings resolved from the environment.
 type Config struct {
 	Token         string
@@ -54,8 +50,9 @@ type Config struct {
 	GroupNotice string // sent once when the bot is used in a group, before it leaves
 }
 
-// Bot wraps the go-telegram client. The inbound adapter adds its handlers
-// through the register callback and never sees the client otherwise.
+// Bot wraps the go-telegram client: it owns the lifecycle (polling or webhook,
+// middleware, command menu) and file downloads. A bot adapter adds its handlers
+// through the register callback and sends messages with the client from Client.
 type Bot struct {
 	api  *bot.Bot
 	cfg  Config
@@ -84,6 +81,10 @@ func New(cfg Config, users Users, log *slog.Logger, register func(*bot.Bot)) (*B
 	return &Bot{api: api, cfg: cfg, http: &http.Client{Timeout: downloadWait}, log: log}, nil
 }
 
+// Client is the underlying go-telegram client, for adapters that send messages
+// outside an update handler (e.g. upload notices, the OAuth return).
+func (b *Bot) Client() *bot.Bot { return b.api }
+
 // RegisterRoutes mounts the webhook handler on mux. It is a no-op in polling
 // mode, so callers can always call it.
 func (b *Bot) RegisterRoutes(mux *http.ServeMux) {
@@ -108,63 +109,6 @@ func (b *Bot) Run(ctx context.Context) error {
 	}
 
 	b.api.Start(ctx)
-	return nil
-}
-
-// Send delivers a plain-text message, for notifications sent outside an update
-// handler (e.g. the OAuth callback).
-func (b *Bot) Send(ctx context.Context, chatID int64, text string) error {
-	start := time.Now()
-	_, err := b.api.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text})
-	b.trace(ctx, "sendMessage", start, err)
-	if err != nil {
-		return b.sendErr(ctx, "send message", err)
-	}
-	return nil
-}
-
-// SendMarkup delivers a message with a reply markup (e.g. an inline keyboard),
-// for notifications sent outside an update handler.
-func (b *Bot) SendMarkup(ctx context.Context, chatID int64, text string, markup models.ReplyMarkup) error {
-	start := time.Now()
-	_, err := b.api.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text, ReplyMarkup: markupOrNil(markup)})
-	b.trace(ctx, "sendMessage", start, err)
-	if err != nil {
-		return b.sendErr(ctx, "send message", err)
-	}
-	return nil
-}
-
-// SendHTML delivers an HTML-formatted message (markup may be nil) and returns
-// its message id.
-func (b *Bot) SendHTML(ctx context.Context, chatID int64, text string, markup models.ReplyMarkup) (int, error) {
-	start := time.Now()
-	res, err := b.api.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: chatID, Text: text, ParseMode: models.ParseModeHTML, ReplyMarkup: markupOrNil(markup),
-	})
-	b.trace(ctx, "sendMessage", start, err)
-	if err != nil {
-		return 0, b.sendErr(ctx, "send message", err)
-	}
-	return res.ID, nil
-}
-
-// EditHTML rewrites a message with HTML text and markup. A nil markup, typed or
-// untyped, removes the keyboard. The error is returned for the caller to classify.
-func (b *Bot) EditHTML(ctx context.Context, chatID int64, messageID int, text string, markup models.ReplyMarkup) error {
-	start := time.Now()
-	markup = markupOrNil(markup)
-	if markup == nil {
-		// An explicit empty keyboard is how editMessageText clears it.
-		markup = EmptyKeyboard()
-	}
-	_, err := b.api.EditMessageText(ctx, &bot.EditMessageTextParams{
-		ChatID: chatID, MessageID: messageID, Text: text, ParseMode: models.ParseModeHTML, ReplyMarkup: markup,
-	})
-	b.trace(ctx, "editMessageText", start, err)
-	if err != nil {
-		return b.sendErr(ctx, "edit message", err)
-	}
 	return nil
 }
 
@@ -229,51 +173,6 @@ func (b *Bot) Download(ctx context.Context, fileID string) (data []byte, mime st
 		return nil, "", ErrFileTooLarge
 	}
 	return data, resp.Header.Get("Content-Type"), nil
-}
-
-// EmptyKeyboard is the markup that removes an inline keyboard. The slice must be
-// non-nil: a nil one marshals to "inline_keyboard": null, which Telegram rejects
-// ("must be of type Array"); an empty array clears the keyboard.
-func EmptyKeyboard() *models.InlineKeyboardMarkup {
-	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}}
-}
-
-// markupOrNil returns m, or an untyped nil when m is nil or a typed nil pointer
-// (e.g. (*models.InlineKeyboardMarkup)(nil)), so omitempty drops reply_markup
-// instead of sending null, which Telegram rejects with 400. It covers every
-// pointer type go-telegram/bot v1.27.0 accepts as a reply markup.
-func markupOrNil(m models.ReplyMarkup) models.ReplyMarkup {
-	switch v := m.(type) {
-	case nil:
-		return nil
-	case *models.InlineKeyboardMarkup:
-		if v == nil {
-			return nil
-		}
-	case *models.ReplyKeyboardMarkup:
-		if v == nil {
-			return nil
-		}
-	case *models.ReplyKeyboardRemove:
-		if v == nil {
-			return nil
-		}
-	case *models.ForceReply:
-		if v == nil {
-			return nil
-		}
-	}
-	return m
-}
-
-// sendErr wraps a failed outgoing call. A 403 becomes ErrBlocked and is logged
-// once here at Warn (no ids, no content); callers should not log it again.
-func (b *Bot) sendErr(ctx context.Context, what string, err error) error {
-	if errors.Is(err, bot.ErrorForbidden) {
-		b.log.WarnContext(ctx, "telegram refused delivery: bot blocked by user", "op", what)
-		return fmt.Errorf("%s: %w", what, ErrBlocked)
-	}
-	return fmt.Errorf("%s: %w", what, err)
 }
 
 // trace logs one Telegram API call at Debug: the method and timing, never
