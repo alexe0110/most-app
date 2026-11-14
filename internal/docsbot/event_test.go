@@ -3,6 +3,7 @@ package docsbot_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -30,6 +31,13 @@ func TestParseSource(t *testing.T) {
 		{"space", "ad 1", "", false},
 		{"cyrillic", "канал", "", false},
 		{"sql", "a';--", "", false},
+		{"trailing newline", "ad\n", "", false},
+		{"nul byte", "ad\x00", "", false},
+		{"leading space", " ad", "", false},
+		{"arabic-indic digit", "ad_\u0663", "", false},
+		{"fullwidth latin", "\uff41d", "", false},
+		{"multibyte letter", "é", "", false},
+		{"only underscores", "________", "________", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -122,7 +130,7 @@ func eventScenarios() []struct {
 		{"derived copy is a saved document", func(t *testing.T, svc *docsbot.Service, repo *docsbottest.FakeRepo) error {
 			src := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatPassport, Title: "Паспорт"})
 			_, err := svc.SaveDerived(t.Context(), user, src.ID, docsbot.IncomingFile{
-				Kind: docsbot.KindDocument, FileID: "f", FileUniqueID: "d1", Title: "x",
+				Kind: docsbot.KindDocument, FileID: "derived-file-secret", FileUniqueID: "d1", Title: "Секретная копия",
 			}, " (PDF)")
 			return err
 		}, []docsbot.Event{{
@@ -229,4 +237,119 @@ func TestService_Start_writeFailureIsLogged(t *testing.T) {
 	require.Empty(t, repo.Events)
 	require.Contains(t, logs.String(), `"event":"start"`)
 	require.NotContains(t, logs.String(), "ad_1")
+}
+
+// Nothing the user typed or sent may reach an event: titles, file ids and a
+// hostile /start payload all go through the scenarios below.
+func TestService_eventsCarryNoUserText(t *testing.T) {
+	secrets := []string{"Секретное название", "file-id-secret", "Секретная копия", "derived-file-secret", "Секретная кампания"}
+	scenarios := eventScenarios()
+	scenarios = append(scenarios, struct {
+		name string
+		run  func(t *testing.T, svc *docsbot.Service, repo *docsbottest.FakeRepo) error
+		want []docsbot.Event
+	}{"hostile start payload", func(t *testing.T, svc *docsbot.Service, _ *docsbottest.FakeRepo) error {
+		svc.Start(t.Context(), user, "Секретная кампания")
+		return nil
+	}, nil})
+	for _, tt := range scenarios {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := docsbottest.NewFakeRepo()
+			svc, _ := edgeService(repo, docsbottest.FakeDrive{})
+
+			require.NoError(t, tt.run(t, svc, repo))
+
+			dump := fmt.Sprintf("%+v", repo.Events)
+			for _, secret := range secrets {
+				require.NotContains(t, dump, secret)
+			}
+		})
+	}
+}
+
+// A scenario that did not happen leaves no event behind.
+func TestService_noEventWhenScenarioFails(t *testing.T) {
+	boom := errors.New("boom")
+	tests := []struct {
+		name    string
+		drive   docsbottest.FakeDrive
+		enqueue error
+		run     func(svc *docsbot.Service, repo *docsbottest.FakeRepo) error
+		wantErr error
+	}{
+		{"unknown category", docsbottest.FakeDrive{}, nil, func(svc *docsbot.Service, repo *docsbottest.FakeRepo) error {
+			doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending})
+			_, err := svc.ChooseCategory(t.Context(), user, doc.ID, "nope")
+			return err
+		}, docsbot.ErrUnknownCategory},
+		{"someone else's document", docsbottest.FakeDrive{}, nil, func(svc *docsbot.Service, repo *docsbottest.FakeRepo) error {
+			doc := repo.Seed(docsbot.Document{UserID: stranger, Status: docsbot.StatusPending})
+			_, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
+			return err
+		}, docsbot.ErrNotFound},
+		{"upload could not be queued", docsbottest.FakeDrive{IsConnected: true}, boom, func(svc *docsbot.Service, repo *docsbottest.FakeRepo) error {
+			doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending})
+			_, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
+			return err
+		}, boom},
+		{"someone else's card", docsbottest.FakeDrive{}, nil, func(svc *docsbot.Service, repo *docsbottest.FakeRepo) error {
+			doc := repo.Seed(docsbot.Document{UserID: stranger, Status: docsbot.StatusSaved})
+			_, err := svc.OpenCard(t.Context(), user, doc.ID)
+			return err
+		}, docsbot.ErrNotFound},
+		{"disconnect failed", docsbottest.FakeDrive{DisconnectErr: boom}, nil, func(svc *docsbot.Service, _ *docsbottest.FakeRepo) error {
+			return svc.Disconnect(t.Context(), user)
+		}, boom},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := docsbottest.NewFakeRepo()
+			uploads := &docsbottest.FakeUploads{Repo: repo, EnqueueErr: tt.enqueue}
+			svc := docsbottest.NewService(repo, tt.drive, docsbottest.FakeFiles{}, uploads, repo,
+				docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
+
+			require.ErrorIs(t, tt.run(svc, repo), tt.wantErr)
+
+			require.Empty(t, repo.Events)
+		})
+	}
+}
+
+// The data is gone even when Google refused the revoke, so the deletion counts.
+func TestService_DeleteAllData_revokeFailureStillCountsTheDeletion(t *testing.T) {
+	repo := docsbottest.NewFakeRepo()
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{RevokeErr: errors.New("google down")})
+
+	err := svc.DeleteAllData(t.Context(), user)
+
+	require.ErrorIs(t, err, docsbot.ErrRevokeIncomplete)
+	require.Equal(t, []docsbot.Event{{Name: docsbot.EventDataDeleted}}, repo.Events)
+}
+
+func TestService_ChooseCategory_parallelTapsRecordOneDocSaved(t *testing.T) {
+	repo := docsbottest.NewFakeRepo()
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
+	doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Kind: docsbot.KindPhoto})
+
+	parallel(8, func(int) {
+		_, _ = svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
+	})
+
+	require.Equal(t, []docsbot.EventName{docsbot.EventDocSaved}, repo.EventNames())
+}
+
+func TestService_Start_parallelStartsHaveOneNewUser(t *testing.T) {
+	repo := docsbottest.NewFakeRepo()
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
+
+	parallel(8, func(int) { svc.Start(t.Context(), user, "ad_1") })
+
+	newCount := 0
+	for _, e := range repo.Events {
+		if *e.Props.New {
+			newCount++
+		}
+	}
+	require.Len(t, repo.Events, 8)
+	require.Equal(t, 1, newCount)
 }

@@ -148,6 +148,21 @@ func TestEnsureUser_inlineQuery(t *testing.T) {
 		require.Equal(t, int64(42), users.lookedUpTg)
 	})
 
+	t.Run("chosen inline result of a user never created: passes without id", func(t *testing.T) {
+		users := &fakeUsers{}
+		var nextCalled, gotOK bool
+		h := ensureUser(users, discardLog())(func(ctx context.Context, _ *bot.Bot, _ *models.Update) {
+			nextCalled = true
+			_, gotOK = UserIDFromContext(ctx)
+		})
+
+		h(context.Background(), nil, &models.Update{ChosenInlineResult: &models.ChosenInlineResult{From: models.User{ID: 42}}})
+
+		require.True(t, nextCalled)
+		require.False(t, gotOK)
+		require.Zero(t, users.calls, "a stranger must not be created by an inline report")
+	})
+
 	t.Run("no sender: passes without lookup", func(t *testing.T) {
 		users := &fakeUsers{id: "user-1", found: true}
 		var nextCalled, gotOK bool

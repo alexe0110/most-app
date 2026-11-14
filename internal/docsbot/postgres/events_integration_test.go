@@ -3,9 +3,11 @@
 package postgres_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
@@ -129,4 +131,76 @@ func TestEvents_RecordStart_parallelStartsHaveOneFirst(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, count)
+}
+
+// Deleting the data resets the user to a stranger: their next /start is new again
+// and may claim a source, because neither the events nor the source survive.
+func TestEvents_RecordStart_afterDataDeletionIsNewAgain(t *testing.T) {
+	pool := dbtest.New(t)
+	repo := newAdapters(pool, noJobs{})
+	events := postgres.NewEvents(pool)
+	ctx := t.Context()
+	user := docsbot.UserID(makeUser(t, repo, 704).ID.String())
+
+	_, err := events.RecordStart(ctx, user, "ad_1")
+	require.NoError(t, err)
+	require.NoError(t, repo.DeleteUserData(ctx, user))
+	require.Empty(t, userSource(t, pool, user))
+
+	// Soft-deleted and not yet revived: the lock and the insert still work.
+	first, err := events.RecordStart(ctx, user, "ad_2")
+	require.NoError(t, err)
+	require.True(t, first, "the earlier start went with the data")
+	require.Equal(t, "ad_2", userSource(t, pool, user))
+
+	_, err = repo.Ensure(ctx, 704, "ru") // the returning user is revived
+	require.NoError(t, err)
+	again, err := events.RecordStart(ctx, user, "ad_3")
+	require.NoError(t, err)
+	require.False(t, again)
+	require.Equal(t, "ad_2", userSource(t, pool, user))
+}
+
+func TestEvents_failuresAreReturned(t *testing.T) {
+	pool := dbtest.New(t)
+	events := postgres.NewEvents(pool)
+	missing := docsbot.UserID(uuid.NewString())
+
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{"start of a user that does not exist", func() error {
+			_, err := events.RecordStart(t.Context(), missing, "ad_1")
+			return err
+		}},
+		{"start with a malformed user id", func() error {
+			_, err := events.RecordStart(t.Context(), "not-a-uuid", "")
+			return err
+		}},
+		{"event of a user that does not exist", func() error {
+			return events.Record(t.Context(), docsbot.Event{User: missing, Name: docsbot.EventSearch})
+		}},
+		{"event with a malformed user id", func() error {
+			return events.Record(t.Context(), docsbot.Event{User: "not-a-uuid", Name: docsbot.EventSearch})
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Error(t, tt.run())
+
+			var n int
+			require.NoError(t, pool.QueryRow(t.Context(), "select count(*) from events").Scan(&n))
+			require.Zero(t, n, "a failed start leaves nothing behind")
+		})
+	}
+}
+
+func TestEvents_Record_cancelledContext(t *testing.T) {
+	pool := dbtest.New(t)
+	events := postgres.NewEvents(pool)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	require.Error(t, events.Record(ctx, docsbot.Event{Name: docsbot.EventDataDeleted}))
 }

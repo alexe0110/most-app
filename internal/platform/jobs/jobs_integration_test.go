@@ -237,6 +237,8 @@ func TestPurgeUsers(t *testing.T) {
 	insertEvent(t, pool, keptID, "old", "181 days")
 	insertEvent(t, pool, keptID, "recent", "179 days")
 	insertEvent(t, pool, keptID, "fresh", "0 days")
+	insertEvent(t, pool, "", "old_anonymous", "200 days")
+	insertEvent(t, pool, "", "fresh_anonymous", "1 day")
 
 	workers := river.NewWorkers()
 	purge := jobs.RegisterPurgeUsers(workers, pool, discardLog())
@@ -268,6 +270,8 @@ func TestPurgeUsers(t *testing.T) {
 	require.Equal(t, 0, countRows(t, pool, byName, "old"), "events past 180 days are purged")
 	require.Equal(t, 1, countRows(t, pool, byName, "recent"), "younger events are kept")
 	require.Equal(t, 1, countRows(t, pool, byName, "fresh"))
+	require.Equal(t, 0, countRows(t, pool, byName, "old_anonymous"), "anonymous events expire too")
+	require.Equal(t, 1, countRows(t, pool, byName, "fresh_anonymous"))
 }
 
 // TestClient_deleteJobsByArg covers: cancelling one user's queued jobs of a kind
@@ -317,11 +321,12 @@ func insertDocument(t *testing.T, pool *pgxpool.Pool, userID, uniq string) {
 	require.NoError(t, err)
 }
 
-// insertEvent stores an event of the user that is age old.
+// insertEvent stores an event of the user that is age old; an empty userID makes
+// it anonymous.
 func insertEvent(t *testing.T, pool *pgxpool.Pool, userID, name, age string) {
 	t.Helper()
 	_, err := pool.Exec(t.Context(),
-		`insert into events (user_id, bot, name, created_at) values ($1::uuid, 'docs', $2, now() - $3::interval)`,
+		`insert into events (user_id, bot, name, created_at) values (nullif($1, '')::uuid, 'docs', $2, now() - $3::interval)`,
 		userID, name, age)
 	require.NoError(t, err)
 }
