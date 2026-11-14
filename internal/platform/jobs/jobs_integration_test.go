@@ -234,6 +234,11 @@ func TestPurgeUsers(t *testing.T) {
 	delID := insertUser(t, pool, 2, true)
 	insertDocument(t, pool, keptID, "kept")
 	insertDocument(t, pool, delID, "doomed")
+	insertEvent(t, pool, keptID, "old", "181 days")
+	insertEvent(t, pool, keptID, "recent", "179 days")
+	insertEvent(t, pool, keptID, "fresh", "0 days")
+	insertEvent(t, pool, "", "old_anonymous", "200 days")
+	insertEvent(t, pool, "", "fresh_anonymous", "1 day")
 
 	workers := river.NewWorkers()
 	purge := jobs.RegisterPurgeUsers(workers, pool, discardLog())
@@ -260,6 +265,13 @@ func TestPurgeUsers(t *testing.T) {
 	require.Equal(t, 1, countRows(t, pool, `select count(*) from users where id = $1::uuid`, keptID), "kept user survives")
 	require.Equal(t, 1, countRows(t, pool, `select count(*) from documents where user_id = $1::uuid`, keptID), "kept user's document survives")
 	require.Equal(t, 0, countRows(t, pool, `select count(*) from documents where user_id = $1::uuid`, delID), "deleted user's document cascades")
+
+	const byName = `select count(*) from events where name = $1`
+	require.Equal(t, 0, countRows(t, pool, byName, "old"), "events past 180 days are purged")
+	require.Equal(t, 1, countRows(t, pool, byName, "recent"), "younger events are kept")
+	require.Equal(t, 1, countRows(t, pool, byName, "fresh"))
+	require.Equal(t, 0, countRows(t, pool, byName, "old_anonymous"), "anonymous events expire too")
+	require.Equal(t, 1, countRows(t, pool, byName, "fresh_anonymous"))
 }
 
 // TestClient_deleteJobsByArg covers: cancelling one user's queued jobs of a kind
@@ -306,6 +318,16 @@ func insertDocument(t *testing.T, pool *pgxpool.Pool, userID, uniq string) {
 		`insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id)
 		 values ($1::uuid, 'pending', 'document', 'misc', 'title', 'file', $2)`,
 		userID, uniq)
+	require.NoError(t, err)
+}
+
+// insertEvent stores an event of the user that is age old; an empty userID makes
+// it anonymous.
+func insertEvent(t *testing.T, pool *pgxpool.Pool, userID, name, age string) {
+	t.Helper()
+	_, err := pool.Exec(t.Context(),
+		`insert into events (user_id, bot, name, created_at) values (nullif($1, '')::uuid, 'docs', $2, now() - $3::interval)`,
+		userID, name, age)
 	require.NoError(t, err)
 }
 

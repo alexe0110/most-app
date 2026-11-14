@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-telegram/bot"
 
+	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/platform/convert"
 )
 
@@ -69,6 +70,7 @@ func (c *Converter) finishPDF(ctx context.Context, b *bot.Bot, p press) {
 		c.retry(ctx, b, chatID, user, sess, msgID, textSendFailed, pdfKeyboard())
 		return
 	}
+	c.done(ctx, docsbot.ConvertPhotoPDF)
 	c.finish(ctx, b, chatID, msgID)
 }
 
@@ -128,6 +130,7 @@ func (c *Converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64
 		c.retry(ctx, b, chatID, user, sess, msgID, textSendFailed, retryKB)
 		return true
 	}
+	c.done(ctx, docsbot.ConvertCompress)
 	c.finish(ctx, b, chatID, msgID)
 	return true
 }

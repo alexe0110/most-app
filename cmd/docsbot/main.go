@@ -74,6 +74,7 @@ func run() error {
 	users := postgres.NewUsers(pool)
 	oauthStore := postgres.NewOAuthStore(pool)
 	folders := postgres.NewFolderCache(pool)
+	events := postgres.NewEvents(pool)
 
 	tgbot, err := tg.New(tg.Config{
 		Token:         cfg.TelegramToken,
@@ -115,8 +116,8 @@ func run() error {
 	driveAdapter := driveBridge{oauth: oauthSvc, gd: gdriveSvc}
 	svc = docsbot.NewService(docsbot.Ports{
 		Repo: documents, Drive: driveAdapter, Files: tgFiles{bot: tgbot}, Uploads: documents, Jobs: jobQueue,
-		Folders: folders, Status: statusMessages, Syncs: documents,
-	}, docsbot.WithPageCounter(pageCounter{}))
+		Folders: folders, Status: statusMessages, Syncs: documents, Events: events,
+	}, docsbot.WithPageCounter(pageCounter{}), docsbot.WithLogger(log))
 
 	telegram.Register(tgbot.Client(), telegram.Deps{Log: log, Svc: svc, Auth: oauthSvc, Files: tgbot},
 		telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder))

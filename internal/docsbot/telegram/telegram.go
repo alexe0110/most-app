@@ -44,6 +44,7 @@ func Register(b *bot.Bot, deps Deps, opts ...Option) {
 	b.RegisterHandler(bot.HandlerTypeMessageText, "export", bot.MatchTypeCommand, d.exportCmd) // not in Commands(): reached from the delete-data prompt
 	conv.Register(b)                                                                           // /convert, /cancel, its buttons and in-session messages
 	b.RegisterHandlerMatchFunc(ownsInline, d.inline)
+	b.RegisterHandlerMatchFunc(ownsChosenInline, d.chosenInline)
 	b.RegisterHandlerMatchFunc(d.ownsCallback, d.callback)
 	b.RegisterHandlerMatchFunc(d.ownsUnsupported, d.onUnsupported) // before files: an animation also carries a document
 	b.RegisterHandlerMatchFunc(d.ownsFile, d.receive)

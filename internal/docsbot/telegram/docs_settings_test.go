@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
@@ -118,4 +119,44 @@ func TestDisconnect_clearsKeyboardWithEmptyArray(t *testing.T) {
 	last := markups[len(markups)-1]
 	require.Contains(t, last, `"inline_keyboard":[]`, "an empty array clears the keyboard")
 	require.NotContains(t, last, `"inline_keyboard":null`, "Telegram rejects a null inline_keyboard")
+}
+
+func startUpdate(payload string) *models.Update {
+	u := textUpdate("/start " + payload)
+	u.Message.Entities = []models.MessageEntity{{Type: models.MessageEntityTypeBotCommand, Offset: 0, Length: len("/start")}}
+	return u
+}
+
+func TestStart_recordsSource(t *testing.T) {
+	yes := true
+	tests := []struct {
+		name    string
+		payload string
+		want    docsbot.EventProps
+	}{
+		{"campaign", "ad_1", docsbot.EventProps{Source: "ad_1", New: &yes}},
+		{"no payload", "", docsbot.EventProps{New: &yes}},
+		{"malformed payload", "Ad-1", docsbot.EventProps{New: &yes}},
+		{"connected redirect is navigation", "connected", docsbot.EventProps{New: &yes}},
+		{"inline button is navigation", "inline", docsbot.EventProps{New: &yes}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, sent, repo := newBot(t)
+
+			b.ProcessUpdate(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID), startUpdate(tt.payload))
+
+			require.Equal(t, []docsbot.Event{{User: docsbottest.TestUserID, Name: docsbot.EventStart, Props: tt.want}}, repo.Events)
+			require.NotEmpty(t, sent.texts, "the greeting is sent as before")
+		})
+	}
+}
+
+func TestStart_eventFailureStillGreets(t *testing.T) {
+	b, sent, repo := newBot(t)
+	repo.EventsErr = errors.New("db down")
+
+	b.ProcessUpdate(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID), startUpdate("ad_1"))
+
+	require.True(t, has(sent.texts, "Most Docs"), "sent %q", sent.texts)
 }

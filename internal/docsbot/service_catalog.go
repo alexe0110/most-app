@@ -36,6 +36,7 @@ func (s *Service) OpenCard(ctx context.Context, user UserID, id DocumentID) (Car
 	if err != nil {
 		return Card{}, err
 	}
+	s.track(ctx, Event{User: user, Name: EventDocOpened})
 	doc := card.Doc
 	if !doc.InDrive() || doc.DriveFileID == "" || (doc.SyncStatus != SyncOK && doc.SyncStatus != SyncMissing) {
 		return card, nil

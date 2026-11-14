@@ -80,6 +80,41 @@ func (c *Converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 	return true
 }
 
+// done records a finished conversion. Call it once Telegram accepted the result,
+// so a failed send, which the user retries, is not counted twice. The operation is
+// one of the fixed docsbot.ConvertOp values, never anything the user typed.
+func (c *Converter) done(ctx context.Context, op docsbot.ConvertOp) {
+	if user, ok := userID(ctx); ok {
+		c.svc.Track(ctx, user, docsbot.EventConvertDone, docsbot.EventProps{Operation: op})
+	}
+}
+
+// quickConvertOp maps a quick operation of a stored image to its event name.
+func quickConvertOp(op string) docsbot.ConvertOp {
+	switch op {
+	case opPDF:
+		return docsbot.ConvertPhotoPDF
+	case opJPG:
+		return docsbot.ConvertWebPJPG
+	default:
+		return docsbot.ConvertCompress
+	}
+}
+
+// pdfConvertOp maps a PDF operation to its event name.
+func pdfConvertOp(op string) docsbot.ConvertOp {
+	switch op {
+	case opRotate:
+		return docsbot.ConvertPDFRotate
+	case opKeep:
+		return docsbot.ConvertPDFKeep
+	case opDrop:
+		return docsbot.ConvertPDFRemove
+	default:
+		return docsbot.ConvertPDFMerge
+	}
+}
+
 // removeKeyboard strips the buttons from a sent message, when there is one.
 func (c *Converter) removeKeyboard(ctx context.Context, b *bot.Bot, chatID int64, msg *models.Message) {
 	if msg != nil {

@@ -6,10 +6,12 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
+	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 )
 
 // saveDoc inserts a saved document for u with the given backup_status.
@@ -27,7 +29,8 @@ func saveDoc(t *testing.T, repo *adapters, u postgres.User, uniq, backup string)
 }
 
 func TestRepo_DeleteUserData(t *testing.T) {
-	repo := newRepo(t)
+	pool := dbtest.New(t)
+	repo := newAdapters(pool, noJobs{})
 	ctx := t.Context()
 
 	u := makeUser(t, repo, 400)
@@ -42,10 +45,22 @@ func TestRepo_DeleteUserData(t *testing.T) {
 		UserID: u.ID, Category: "passport", DriveFolderID: "folder-1",
 	})
 	require.NoError(t, err)
+	require.NoError(t, repo.q.SetUserSource(ctx, postgres.SetUserSourceParams{ID: u.ID, Source: pgtype.Text{String: "ad_1", Valid: true}}))
+	for _, owner := range []pgtype.UUID{u.ID, other.ID, {}} { // the last is an anonymous event
+		require.NoError(t, repo.q.InsertEvent(ctx, postgres.InsertEventParams{UserID: owner, Bot: "docs", Name: "search", Props: []byte("{}")}))
+	}
 
 	require.NoError(t, repo.DeleteUserData(ctx, docsbot.UserID(u.ID.String())))
 
 	// The user's own data is gone.
+	var events int
+	require.NoError(t, pool.QueryRow(ctx, "select count(*) from events where user_id = $1", u.ID).Scan(&events))
+	require.Zero(t, events, "events deleted")
+	require.NoError(t, pool.QueryRow(ctx, "select count(*) from events").Scan(&events))
+	require.Equal(t, 2, events, "other user's and anonymous events survive")
+	var source *string
+	require.NoError(t, pool.QueryRow(ctx, "select source from users where id = $1", u.ID).Scan(&source))
+	require.Nil(t, source, "acquisition source cleared")
 	n, err := repo.CountSaved(ctx, docsbot.UserID(u.ID.String()))
 	require.NoError(t, err)
 	require.Equal(t, 0, n, "documents deleted")

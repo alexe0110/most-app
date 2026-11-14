@@ -85,7 +85,7 @@ func TestPages_get(t *testing.T) {
 			require.NotEmpty(t, rec.Header().Get("Cache-Control"))
 			require.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
 			require.Contains(t, rec.Header().Get("Content-Security-Policy"), "default-src 'none'")
-			require.Equal(t, "13.11.2026", revisionIn(t, rec.Body.String()))
+			require.Equal(t, "14.11.2026", revisionIn(t, rec.Body.String()))
 
 			body := rec.Body.String()
 			for _, s := range tt.contains {
@@ -132,7 +132,7 @@ func TestTemplates_revisionDefinedOnce(t *testing.T) {
 		found = append(found, dateRe.FindAllString(string(src), -1)...)
 	}
 
-	require.Equal(t, []string{"13.11.2026"}, found)
+	require.Equal(t, []string{"14.11.2026"}, found)
 }
 
 func revisionIn(t *testing.T, body string) string {

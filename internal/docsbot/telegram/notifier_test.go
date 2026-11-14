@@ -155,6 +155,7 @@ func newNotifierEnv(t *testing.T) *notifierEnv {
 	svc := docsbot.NewService(docsbot.Ports{
 		Repo: repo, Drive: docsbottest.FakeDrive{IsConnected: true, ExistsRes: true}, Uploads: &docsbottest.FakeUploads{}, Jobs: &docsbottest.FakeUploads{},
 		Folders: repo, Status: status, Syncs: &docsbottest.FakeSyncs{Repo: repo},
+		Events: docsbottest.NoEvents{},
 	})
 	return &notifierEnv{api: api, repo: repo, status: status, bot: b, svc: svc, n: telegram.NewNotifier(b, chatLookup{}, docsbottest.FakeAuth{}, svc, log)}
 }

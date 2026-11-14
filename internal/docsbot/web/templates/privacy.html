@@ -15,6 +15,7 @@
 <li>идентификатор чата и идентификаторы сообщений бота со статусами;</li>
 <li>для каждого документа: Telegram <code>file_id</code> и <code>file_unique_id</code>, идентификатор альбома Telegram (если файл пришёл в составе альбома), название (имя файла или подпись, которую вы отправили), категория, тип (фото или документ), MIME-тип, размер, число страниц или размеры изображения, даты, статус резервного копирования и синхронизации с причиной сбоя, идентификатор файла на Google Диске и кешированные идентификаторы папок на Диске;</li>
 <li>настройки (включён ли inline-режим);</li>
+<li>события использования: что произошло (например, «сохранён документ», «выполнен поиск», «конвертация») и когда, с категорией, типом файла или видом операции, без содержимого документов, названий, подписей и текста поисковых запросов; а также метка источника, если вы пришли по ссылке с такой меткой;</li>
 <li>токен обновления (refresh token) Google в зашифрованном виде (AES-GCM); ключ шифрования хранится вне базы данных;</li>
 <li>одноразовое состояние OAuth: действует 10 минут, просроченные записи удаляются раз в сутки;</li>
 <li>очередь фоновых заданий (копирование, синхронизация, удаление на Google Диске): внутренние идентификаторы пользователя и документа, идентификатор файла на Google Диске;</li>
@@ -43,13 +44,14 @@
 </div>
 
 <h3>6. Удаление данных</h3>
-<p>В боте: <code>/settings</code> &rarr; «🗑 Удалить мои данные» &rarr; подтвердите, отправив слово «УДАЛИТЬ». Метаданные всех документов, подключение к Google Диску и настройки удаляются сразу, доступ к Google отзывается (если Google в этот момент недоступен, отзовите доступ вручную на <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>), а запись об аккаунте окончательно удаляется ежедневной задачей очистки, обычно в течение суток.</p>
+<p>В боте: <code>/settings</code> &rarr; «🗑 Удалить мои данные» &rarr; подтвердите, отправив слово «УДАЛИТЬ». Метаданные всех документов, подключение к Google Диску, настройки и события использования удаляются сразу, доступ к Google отзывается (если Google в этот момент недоступен, отзовите доступ вручную на <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>), а запись об аккаунте окончательно удаляется ежедневной задачей очистки, обычно в течение суток.</p>
 <p>Отдельные документы можно удалять в боте (копия на Google Диске перемещается в корзину Диска). Файлы на вашем Google Диске и сообщения в чате Telegram остаются у вас. Удаление данных также можно запросить по электронной почте.</p>
 
 <h3>7. Сроки хранения</h3>
 <ul>
 <li>Пока вы пользуетесь сервисом.</li>
 <li>Документы, которым не выбрана категория, удаляются примерно через сутки.</li>
+<li>События использования — 180 дней, затем удаляются ежедневной задачей очистки; при удалении данных пользователя удаляются сразу.</li>
 <li>Состояние OAuth — действует до 10 минут, просроченные записи удаляются раз в сутки.</li>
 <li>После запроса на удаление — см. раздел 6.</li>
 <li>Технические логи хранятся хостинг-провайдером ограниченное время в соответствии с его политикой; мы не используем их для иных целей.</li>
@@ -90,6 +92,7 @@
 <li>chat ID and message IDs of the bot's status messages;</li>
 <li>for each document: Telegram <code>file_id</code> and <code>file_unique_id</code>, Telegram album ID (if the file arrived in an album), title (the file name or the caption you sent), category, type (photo or document), MIME type, size, page count or image dimensions, dates, backup and sync status with the failure reason, Google Drive file ID and cached Drive folder IDs;</li>
 <li>settings (inline mode on or off);</li>
+<li>usage events: what happened (for example "document saved", "search made", "conversion done") and when, with a category, file type or operation kind, but without document contents, titles, captions or search text; and the source tag, if you arrived through a link carrying one;</li>
 <li>your Google refresh token, encrypted with AES-GCM; the encryption key is kept outside the database;</li>
 <li>one-time OAuth state: valid for 10 minutes, expired records are removed once a day;</li>
 <li>the background job queue (copying, sync, Drive deletion): internal user and document IDs and the Google Drive file ID;</li>
@@ -117,13 +120,14 @@
 </div>
 
 <h3>6. Deleting your data</h3>
-<p>In the bot: <code>/settings</code> &rarr; "🗑 Удалить мои данные" (Delete my data) &rarr; confirm by typing the word "УДАЛИТЬ" (the bot's interface is in Russian). Metadata of all your documents, your Google Drive connection and your settings are deleted immediately, Google access is revoked (if Google is unreachable at that moment, revoke it manually at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>), and your account record is permanently removed by a daily cleanup job, usually within a day.</p>
+<p>In the bot: <code>/settings</code> &rarr; "🗑 Удалить мои данные" (Delete my data) &rarr; confirm by typing the word "УДАЛИТЬ" (the bot's interface is in Russian). Metadata of all your documents, your Google Drive connection, your settings and your usage events are deleted immediately, Google access is revoked (if Google is unreachable at that moment, revoke it manually at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>), and your account record is permanently removed by a daily cleanup job, usually within a day.</p>
 <p>You can also delete individual documents in the bot (the Drive copy is moved to the Drive trash). Files in your Google Drive and messages in your Telegram chat stay with you. You can also request deletion by email.</p>
 
 <h3>7. Retention</h3>
 <ul>
 <li>While you use the service.</li>
 <li>Documents without a chosen category are deleted after about one day.</li>
+<li>Usage events are kept for 180 days and then removed by the daily cleanup job; they are deleted immediately when you delete your data.</li>
 <li>OAuth state is valid for up to 10 minutes; expired records are removed once a day.</li>
 <li>After a deletion request, see section 6.</li>
 <li>Technical logs are retained by the hosting provider for a limited time under its own policy; we do not use them for any other purpose.</li>

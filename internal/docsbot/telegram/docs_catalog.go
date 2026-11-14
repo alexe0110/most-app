@@ -26,11 +26,17 @@ func (d *docs) list(ctx context.Context, b *bot.Bot, u *models.Update) {
 	d.out(b).Send(ctx, u.Message.Chat.ID, text, tg.WithKeyboard(kb))
 }
 
+// runSearch answers a typed query. It records the search here, not in Service.Search:
+// that is also used to redraw the results on "back", and only this entry point
+// knows the user asked a new question.
 func (d *docs) runSearch(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, query string) {
 	found, err := d.svc.Search(ctx, user, query)
 	if err != nil {
 		d.fail(ctx, b, chatID, "search", err)
 		return
+	}
+	if !found.BlankQuery {
+		d.svc.Track(ctx, user, docsbot.EventSearch, docsbot.EventProps{})
 	}
 	text, kb := renderFound(found)
 	d.out(b).Send(ctx, chatID, text, tg.WithKeyboard(kb))

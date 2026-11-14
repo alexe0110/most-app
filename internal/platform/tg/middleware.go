@@ -84,13 +84,13 @@ type leaveFunc func(ctx context.Context, b *bot.Bot, chatID int64)
 // privateOnly lets only private-chat updates through, so documents never leak
 // into a group. In a group or supergroup it calls leave (notice + leave the
 // chat); channel posts and updates without a chat are dropped silently. It runs
-// before ensureUser, so nothing is stored for them. Inline queries pass: they
-// carry no chat and answer only to the sender.
+// before ensureUser, so nothing is stored for them. Inline queries and chosen
+// inline results pass: they carry no chat and concern only the sender.
 func privateOnly(leave leaveFunc, log *slog.Logger) bot.Middleware {
 	return func(next bot.HandlerFunc) bot.HandlerFunc {
 		return func(ctx context.Context, b *bot.Bot, update *models.Update) {
-			if update.InlineQuery != nil {
-				// An inline query has no chat: the user is typing in some other chat.
+			if isInline(update) {
+				// An inline update has no chat: the user is typing in some other chat.
 				next(ctx, b, update)
 				return
 			}
@@ -179,17 +179,18 @@ func logUpdate(log *slog.Logger) bot.Middleware {
 
 // ensureUser upserts the sender and stashes the internal user id in ctx.
 // Senderless updates pass through; a storage error drops the update. An inline
-// query only looks the user up: a stranger is not created, the handler just
-// gets no id.
+// update (query or chosen result) only looks the user up: a stranger is not
+// created, the handler just gets no id.
 func ensureUser(users Users, log *slog.Logger) bot.Middleware {
 	return func(next bot.HandlerFunc) bot.HandlerFunc {
 		return func(ctx context.Context, b *bot.Bot, update *models.Update) {
-			if q := update.InlineQuery; q != nil {
-				if q.From == nil {
+			if isInline(update) {
+				from := inlineSender(update)
+				if from == nil {
 					next(ctx, b, update)
 					return
 				}
-				id, found, err := users.Lookup(ctx, q.From.ID)
+				id, found, err := users.Lookup(ctx, from.ID)
 				if err != nil {
 					log.ErrorContext(ctx, "lookup user", "err", err)
 					return
@@ -215,6 +216,23 @@ func ensureUser(users Users, log *slog.Logger) bot.Middleware {
 	}
 }
 
+// isInline reports an update that comes from inline mode.
+func isInline(update *models.Update) bool {
+	return update.InlineQuery != nil || update.ChosenInlineResult != nil
+}
+
+// inlineSender returns the user behind an inline update, or nil if there's none.
+func inlineSender(update *models.Update) *models.User {
+	switch {
+	case update.InlineQuery != nil:
+		return update.InlineQuery.From
+	case update.ChosenInlineResult != nil:
+		return &update.ChosenInlineResult.From
+	default:
+		return nil
+	}
+}
+
 // sender returns the user behind a message or callback, or nil if there's none.
 func sender(update *models.Update) *models.User {
 	switch {
@@ -236,6 +254,8 @@ func updateKind(update *models.Update) string {
 		return "callback"
 	case update.InlineQuery != nil:
 		return "inline_query"
+	case update.ChosenInlineResult != nil:
+		return "chosen_inline_result"
 	default:
 		return "other"
 	}

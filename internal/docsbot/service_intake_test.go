@@ -477,7 +477,10 @@ func TestService_PurgeStalePending_errors(t *testing.T) {
 			repo := docsbottest.NewFakeRepo()
 			repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a", CreatedAt: now.Add(-25 * time.Hour)})
 			var purgeSeen bool
-			var r docsbot.Repo = repo
+			var r interface {
+				docsbot.Repo
+				docsbot.Events
+			} = repo
 			var st docsbot.StatusMessages = failingPurgeStatus{FakeStatus: docsbottest.NewFakeStatus(repo), err: boom, called: &purgeSeen}
 			if tt.failRepo {
 				r = failingPurgeRepo{FakeRepo: repo, err: boom}

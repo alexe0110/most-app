@@ -48,7 +48,7 @@ func TestPurgePendingWorker_deletesStalePendingAndClosedStatusMessagesOnly(t *te
 	_, err := pool.Exec(ctx, `update documents set status_message_id = $1::uuid where id = $2::uuid`, oldClosed, oldSaved)
 	require.NoError(t, err)
 
-	svc := docsbot.NewService(docsbot.Ports{Repo: repo, Drive: fakeDrive{}, Files: fakeFiles{}, Folders: postgres.NewFolderCache(pool), Status: postgres.NewStatusMessages(pool)})
+	svc := docsbot.NewService(docsbot.Ports{Repo: repo, Drive: fakeDrive{}, Files: fakeFiles{}, Folders: postgres.NewFolderCache(pool), Status: postgres.NewStatusMessages(pool), Events: postgres.NewEvents(pool)})
 	workers := river.NewWorkers()
 	periodic := jobs.RegisterPurgePending(workers, slog.New(slog.DiscardHandler), svc)
 	queue, err := pjobs.New(pool, slog.New(slog.DiscardHandler), workers, nil, periodic)

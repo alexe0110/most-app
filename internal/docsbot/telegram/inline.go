@@ -18,6 +18,19 @@ const inlineCacheSeconds = 5
 // ownsInline matches an inline query (the user typing @bot in some chat).
 func ownsInline(u *models.Update) bool { return u.InlineQuery != nil }
 
+// ownsChosenInline matches the report that the user picked one of our results.
+func ownsChosenInline(u *models.Update) bool { return u.ChosenInlineResult != nil }
+
+// chosenInline records that a document was sent from inline mode. Telegram sends
+// this only after the user picks a result (an inline query fires on every
+// keystroke) and only when inline feedback is on in BotFather. A stranger has no
+// id in ctx and is not counted. The query text and the result id are not read.
+func (d *docs) chosenInline(ctx context.Context, _ *bot.Bot, _ *models.Update) {
+	if user, ok := userID(ctx); ok {
+		d.svc.Track(ctx, user, docsbot.EventInlineSent, docsbot.EventProps{})
+	}
+}
+
 // inline answers an inline query with the sender's own documents. The sender may
 // be unknown (no user in ctx): they get an empty answer with a button to the bot.
 // Query text, titles and file ids are never logged.

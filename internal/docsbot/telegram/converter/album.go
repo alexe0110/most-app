@@ -102,6 +102,7 @@ func (c *Converter) onAlbum(ctx context.Context, b *bot.Bot, p press) {
 		c.albums.put(token, tgUser, album)
 		return
 	}
+	c.done(ctx, docsbot.ConvertAlbumPDF)
 	c.finish(ctx, b, chatID, msgID)
 	n, err := c.svc.DiscardAlbum(ctx, user, album.group)
 	if err != nil {

@@ -19,7 +19,11 @@ import (
 // settings screen to turn it on.
 func (d *docs) start(ctx context.Context, b *bot.Bot, u *models.Update) {
 	chatID := u.Message.Chat.ID
-	switch startPayload(u.Message.Text) {
+	payload := startPayload(u.Message.Text)
+	if user, ok := userID(ctx); ok {
+		d.svc.Start(ctx, user, sourcePayload(payload))
+	}
+	switch payload {
 	case startConnected:
 		d.out(b).Send(ctx, chatID, textDriveConnected)
 		return
@@ -177,6 +181,15 @@ const (
 func startPayload(text string) string {
 	_, arg, _ := strings.Cut(text, " ")
 	return strings.TrimSpace(arg)
+}
+
+// sourcePayload is the /start argument as an acquisition source: the two payloads
+// the bot sends itself are navigation, not a campaign, so they carry no source.
+func sourcePayload(payload string) string {
+	if payload == startConnected || payload == startInline {
+		return ""
+	}
+	return payload
 }
 
 // confirmWord is the exact word the user must type to delete all their data.

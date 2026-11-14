@@ -1,6 +1,7 @@
 package docsbot
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -57,6 +58,8 @@ type Service struct {
 	folders Folders
 	status  StatusMessages
 	syncs   Syncs
+	events  Events
+	log     *slog.Logger
 	now     func() time.Time
 	loc     *time.Location
 
@@ -82,6 +85,12 @@ func WithPageCounter(pc PageCounter) Option {
 	return func(s *Service) { s.pages = pc }
 }
 
+// WithLogger sets the logger for failures the service absorbs, such as a product
+// event that could not be written. The default discards them.
+func WithLogger(log *slog.Logger) Option {
+	return func(s *Service) { s.log = log }
+}
+
 // WithLocation sets the time zone used for the date in default titles.
 func WithLocation(loc *time.Location) Option {
 	return func(s *Service) { s.loc = loc }
@@ -98,13 +107,15 @@ type Ports struct {
 	Folders Folders
 	Status  StatusMessages
 	Syncs   Syncs
+	Events  Events
 }
 
 // NewService wires the service around its ports.
 func NewService(p Ports, opts ...Option) *Service {
 	s := &Service{
 		repo: p.Repo, drive: p.Drive, files: p.Files, uploads: p.Uploads, jobs: p.Jobs,
-		folders: p.Folders, status: p.Status, syncs: p.Syncs,
+		folders: p.Folders, status: p.Status, syncs: p.Syncs, events: p.Events,
+		log: slog.New(slog.DiscardHandler),
 		now: time.Now,
 		loc: defaultLocation(),
 

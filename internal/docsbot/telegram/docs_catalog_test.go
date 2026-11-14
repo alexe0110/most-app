@@ -1,6 +1,7 @@
 package telegram_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/go-telegram/bot/models"
@@ -38,6 +39,27 @@ func TestSearch_findsSavedDocument(t *testing.T) {
 	b.ProcessUpdate(ctx, update)
 
 	require.True(t, has(sent.texts, "Нашёл"), "sent %q", sent.texts)
+	require.Equal(t, []docsbot.Event{{User: docsbottest.TestUserID, Name: docsbot.EventSearch}}, repo.Events,
+		"the event carries no query text")
+}
+
+func TestSearch_eventFailureStillAnswers(t *testing.T) {
+	b, sent, repo := newBot(t)
+	repo.EventsErr = errors.New("db down")
+	seedPassport(repo, "Паспорт РК", "u1")
+
+	b.ProcessUpdate(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID), textUpdate("паспорт"))
+
+	require.True(t, has(sent.texts, "Нашёл"), "sent %q", sent.texts)
+	require.Empty(t, repo.Events)
+}
+
+func TestSearch_blankQueryIsNotRecorded(t *testing.T) {
+	b, _, repo := newBot(t)
+
+	b.ProcessUpdate(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID), textUpdate("   "))
+
+	require.Empty(t, repo.Events)
 }
 
 func TestSearchBack_rerunsLastSearch(t *testing.T) {
@@ -55,6 +77,7 @@ func TestSearchBack_rerunsLastSearch(t *testing.T) {
 
 	require.Len(t, sent.edits, 2)
 	require.True(t, has(sent.edits, "Нашёл (1):"), "edits %q", sent.edits)
+	require.Equal(t, []docsbot.EventName{docsbot.EventSearch}, repo.EventNames(), "redrawing the results is not a new search")
 }
 
 func TestSearchBack_withoutQueryFallsBackToCatalog(t *testing.T) {

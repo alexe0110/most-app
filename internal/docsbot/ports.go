@@ -84,8 +84,9 @@ type Repo interface {
 	// StuckSyncs lists backed-up documents whose sync has been pending since before
 	// olderThan, for users with an active Drive integration, oldest first.
 	StuckSyncs(ctx context.Context, olderThan time.Time, limit int) ([]StuckUpload, error)
-	// DeleteUserData deletes the user's documents, drive_folders and integrations and
-	// soft-deletes the user (users.deleted_at), all in one transaction.
+	// DeleteUserData deletes the user's documents, drive_folders, integrations and
+	// events, clears users.source and users.first_start_at and soft-deletes the user
+	// (users.deleted_at), all in one transaction.
 	DeleteUserData(ctx context.Context, user UserID) error
 }
 
@@ -260,4 +261,19 @@ type StatusMessages interface {
 	// and returns how many were removed; the documents they listed stay. A message
 	// with a failed upload is kept: its retry button still needs it.
 	PurgeClosed(ctx context.Context, olderThan time.Time) (int, error)
+}
+
+// Events stores product events (docs/metrics.sql reads them). Declared here, at the
+// consumer; implemented by docsbot/postgres. A failure is never fatal to the
+// caller, see Service.Track.
+type Events interface {
+	// Record stores one event; an empty Event.User stores it anonymously.
+	Record(ctx context.Context, e Event) error
+	// RecordStart stores a start event, with source and first as its props, in one
+	// transaction with the attribution: first is true when users.first_start_at is
+	// still empty, and it is set then. That mark is durable: neither the rollout of
+	// event tracking (existing users are backfilled) nor the expiry of old events
+	// makes a user new. Only on a first start is source (if not empty) written to
+	// users.source, and never over a stored one.
+	RecordStart(ctx context.Context, user UserID, source string) (first bool, err error)
 }

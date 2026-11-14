@@ -15,12 +15,13 @@
 
 | Таблица         | Зачем                                                                                                                                                                                        | Ограничения и индексы                                                                                                                                              |
 |-----------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `users`         | Пользователь Most. Создаётся при первом `/start` в любом боте серии. Один Telegram-аккаунт = один пользователь. Мягкое удаление через `deleted_at`.                                          | `unique (tg_user_id)`                                                                                                                                              |
+| `users`         | Пользователь Most. Создаётся при первом `/start` в любом боте серии. Один Telegram-аккаунт = один пользователь. Мягкое удаление через `deleted_at`. `source` — метка из ссылки первого `/start` (`?start=<источник>`), `first_start_at` — время первого `/start`: по нему определяется «новый пользователь», он не зависит от событий (они стираются через 180 дней); у пользователей, созданных до появления событий, заполнено `created_at`. Оба поля очищаются при удалении данных.                                          | `unique (tg_user_id)`                                                                                                                                              |
 | `integrations`  | Подключение внешнего аккаунта для конкретного бота. У Most Files и будущего Most Calendar свои токены и свои разрешения (scope).                                                              | `unique (user_id, bot, provider)`                                                                                                                                  |
 | `oauth_states`  | Одноразовый `state` + PKCE verifier OAuth-флоу, привязан к `user_id` и боту. Создаётся при выдаче auth-ссылки, удаляется в callback. TTL 10 минут через `expires_at`.                        | `primary key (state)`<br>`index (expires_at)` — чистка протухших                                                                                                   |
 | `documents`     | Документ, присланный боту. Создаётся при получении, сохраняется сразу после выбора категории (в Telegram по `tg_file_id`). Drive-поля (`drive_file_id`, `backup_status`) заполняются только при выгрузке на Drive. Удаляется сразу, без мягкого удаления. `category` — slug из `docsbot/category.go` (без CHECK); неизвестный slug читается как `other`.                            | `unique (user_id, tg_file_unique_id)` — один файл сохраняется один раз<br>`index (user_id, category)` — каталог<br>`gin (title gin_trgm_ops)` — поиск с опечатками |
 | `status_messages` | Сообщение с прогрессом выгрузки, которое бот редактирует на месте. Документы привязаны через `documents.status_message_id`. `kind`: `single`, `batch`, `transfer`; `closed_at` — когда сообщение закрыто. Владелец: `docs`. | `index (user_id) where closed_at is null` — открытое сообщение пользователя |
 | `docs_settings` | Настройки пользователя в Most Files (сейчас `inline_enabled`, по умолчанию включено). Отдельная таблица, а не колонки `users`: `users` общая для всех ботов. Нет строки — значения по умолчанию. Владелец: `docs`. | `primary key (user_id)` |
+| `events`        | Продуктовые события для метрик активации и удержания (`start`, `doc_saved`, `search`, …). Общая для всех ботов, бот — в `bot`. В `props` только перечислимые значения (категория, тип, операция, источник), никогда названия, подписи, текст поиска и `file_id`. `user_id` пуст только у `data_deleted`: событие остаётся анонимным, чтобы удаления можно было считать. Хранится 180 дней (`purge_users`), события пользователя удаляются вместе с его данными. Владелец: `platform`. | `index (name, created_at)`<br>`index (user_id, created_at)`<br>`index (created_at)` — суточная очистка |
 | `drive_folders` | Кеш папок `Most Docs/<категория>` (имя корневой папки — `DRIVE_ROOT_FOLDER`) на Drive пользователя, чтобы не искать папку через Drive API при каждой загрузке. Если папку удалили на Drive — запись удаляется и папка создаётся заново. | `primary key (user_id, category)`                                                                                                                                  |
 
 ```mermaid
@@ -31,12 +32,15 @@ erDiagram
     users ||--o{ oauth_states : "начинает флоу"
     users ||--o{ status_messages : "видит прогресс"
     users ||--o| docs_settings : "настраивает"
+    users ||--o{ events : "порождает"
     status_messages ||--o{ documents : "показывает"
 
     users {
         uuid id PK
         bigint tg_user_id UK
         text lang
+        text source "nullable"
+        timestamptz first_start_at "nullable"
         timestamptz deleted_at
     }
     integrations {
@@ -78,6 +82,14 @@ erDiagram
     docs_settings {
         uuid user_id PK
         bool inline_enabled
+    }
+    events {
+        uuid id PK
+        uuid user_id FK "nullable"
+        text bot
+        text name
+        jsonb props
+        timestamptz created_at
     }
     drive_folders {
         uuid user_id FK
@@ -127,11 +139,7 @@ erDiagram
 
 ### Миграции
 
-`0001_init` — `users`, `integrations`, `documents`, `drive_folders`; `0002_oauth_states`; `0003_documents_backup` — `backup_status`, `kind`, статусы `pending`/`saved`; `0004_documents_too_large` — `too_large`; `0005_status_messages`; `0006_documents_size_mime`; `0007_status_messages_kind`; `0008_documents_media_group`; `0009_documents_sync` — `sync_*`, `meta_version`, `content_dirty`; `0010_documents_card_details`; `0011_docs_settings`; `0012_backup_reason`.
-
-## v1
-
-> Заглушка. Продуктовые события `events` (`user_id`, `bot`, `name`, `props`, `created_at`) для метрик активации и удержания.
+`0001_init` — `users`, `integrations`, `documents`, `drive_folders`; `0002_oauth_states`; `0003_documents_backup` — `backup_status`, `kind`, статусы `pending`/`saved`; `0004_documents_too_large` — `too_large`; `0005_status_messages`; `0006_documents_size_mime`; `0007_status_messages_kind`; `0008_documents_media_group`; `0009_documents_sync` — `sync_*`, `meta_version`, `content_dirty`; `0010_documents_card_details`; `0011_docs_settings`; `0012_backup_reason`; `0013_events` — `events`, `users.source`, `users.first_start_at`, индекс `events (created_at)`.
 
 ## v2+
 

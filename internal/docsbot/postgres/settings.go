@@ -46,8 +46,9 @@ func (r *Documents) SavedForExport(ctx context.Context, user docsbot.UserID, lim
 	return toDocuments(rows), nil
 }
 
-// DeleteUserData deletes the user's documents, drive_folders, integrations and
-// settings and soft-deletes the user, all in one transaction.
+// DeleteUserData deletes the user's documents, drive_folders, integrations,
+// settings and events, clears their acquisition source and first-start mark and soft-deletes the
+// user, all in one transaction.
 func (r *Documents) DeleteUserData(ctx context.Context, user docsbot.UserID) error {
 	uid, err := parseUUID(string(user))
 	if err != nil {
@@ -68,6 +69,9 @@ func (r *Documents) DeleteUserData(ctx context.Context, user docsbot.UserID) err
 		}
 		if err := q.DeleteUserDocsSettings(ctx, uid); err != nil {
 			return fmt.Errorf("delete user docs settings: %w", err)
+		}
+		if err := q.DeleteUserEvents(ctx, uid); err != nil {
+			return fmt.Errorf("delete user events: %w", err)
 		}
 		if err := q.SoftDeleteUser(ctx, uid); err != nil {
 			return fmt.Errorf("soft delete user: %w", err)
