@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -351,4 +352,204 @@ func TestSearchStore_keepsEntryAndDropsExpiredOnSet(t *testing.T) {
 	require.Len(t, s.m, 1, "users who never come back do not pile up")
 	_, ok := s.get(3)
 	require.True(t, ok)
+}
+
+func TestTTLMap_takeIfRefusesWhatIsGone(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	m := newTTLMap[string, int](time.Minute, 10, func() time.Time { return now })
+	allow := func(int) bool { return true }
+
+	_, ok := m.takeIf("unknown", allow)
+	require.False(t, ok, "unknown key")
+
+	m.set("k", 1)
+	now = now.Add(time.Minute + time.Second)
+	_, ok = m.takeIf("k", allow)
+	require.False(t, ok, "an expired entry is refused even for the owner")
+	require.Empty(t, m.m, "and dropped")
+}
+
+func TestTTLMap_takeOnUnknownKeyChangesNothing(t *testing.T) {
+	m := newTTLMap[int, string](time.Hour, 10, time.Now)
+	m.set(1, "a")
+
+	v, ok := m.take(2)
+
+	require.False(t, ok)
+	require.Empty(t, v)
+	require.Len(t, m.m, 1)
+}
+
+func TestTTLMap_setRenewsTheTTL(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	m := newTTLMap[int, string](time.Minute, 10, func() time.Time { return now })
+
+	m.set(1, "a")
+	now = now.Add(40 * time.Second)
+	m.set(1, "b")
+	now = now.Add(40 * time.Second) // 80s after the first set, 40s after the second
+
+	v, ok := m.get(1)
+	require.True(t, ok, "the second set started a new lifetime")
+	require.Equal(t, "b", v)
+}
+
+func TestTTLMap_sizeCapEdges(t *testing.T) {
+	base := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+
+	t.Run("a renewed key is not the oldest", func(t *testing.T) {
+		now := base
+		m := newTTLMap[int, int](time.Hour, 2, func() time.Time { return now })
+		m.set(1, 1)
+		now = now.Add(time.Second)
+		m.set(2, 2)
+		now = now.Add(time.Second)
+		m.set(1, 11) // key 1 is now the newest, key 2 the oldest
+
+		m.set(3, 3)
+
+		_, ok := m.get(2)
+		require.False(t, ok, "the least recently set is evicted")
+		_, ok = m.get(1)
+		require.True(t, ok)
+	})
+	t.Run("expired entries make room before a live one is evicted", func(t *testing.T) {
+		now := base
+		m := newTTLMap[int, int](time.Minute, 2, func() time.Time { return now })
+		m.set(1, 1)
+		now = now.Add(time.Minute + time.Second)
+		m.set(2, 2)
+
+		m.set(3, 3)
+
+		_, ok := m.get(2)
+		require.True(t, ok, "a live entry survives while expired ones were enough")
+		_, ok = m.get(3)
+		require.True(t, ok)
+	})
+	t.Run("capacity of one keeps the newest", func(t *testing.T) {
+		m := newTTLMap[int, int](time.Hour, 1, func() time.Time { return base })
+		for i := range 5 {
+			m.set(i, i)
+		}
+		require.Len(t, m.m, 1)
+		_, ok := m.get(4)
+		require.True(t, ok)
+	})
+	t.Run("equal timestamps stay bounded and keep the new key", func(t *testing.T) {
+		m := newTTLMap[int, int](time.Hour, 3, func() time.Time { return base })
+		for i := range 50 {
+			m.set(i, i)
+			_, ok := m.get(i)
+			require.True(t, ok, "the key just set is never the one evicted")
+			require.LessOrEqual(t, len(m.m), 3)
+		}
+	})
+}
+
+func TestTTLMap_deleteFuncSeesOnlyStoredValues(t *testing.T) {
+	m := newTTLMap[int, int](time.Hour, 10, time.Now)
+	m.deleteFunc(func(int, int) bool { return true }) // on an empty map
+	m.set(1, 10)
+	m.set(2, 20)
+
+	var seen []int
+	m.deleteFunc(func(k, v int) bool {
+		seen = append(seen, v)
+		return k == 1
+	})
+
+	require.ElementsMatch(t, []int{10, 20}, seen)
+	require.Len(t, m.m, 1)
+}
+
+func TestTTLMap_concurrentMixedOperations(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	const limit = 20
+	m := newTTLMap[int, int](time.Second, limit, clock)
+
+	var wg sync.WaitGroup
+	for i := range 200 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			k := i % 30
+			m.set(k, i)
+			m.get(k)
+			m.takeIf(k, func(v int) bool { return v%2 == 0 })
+			m.take(k + 1)
+			m.deleteFunc(func(_ int, v int) bool { return v == i })
+			m.delete(k + 2)
+			if i%50 == 0 {
+				mu.Lock()
+				now = now.Add(2 * time.Second) // expire entries while others run
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	require.LessOrEqual(t, len(m.m), limit)
+}
+
+func TestTTLMap_concurrentSetsStayWithinTheCap(t *testing.T) {
+	const limit = 50
+	m := newTTLMap[int, int](time.Hour, limit, time.Now)
+
+	var wg sync.WaitGroup
+	for i := range 500 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.set(i, i)
+		}()
+	}
+	wg.Wait()
+
+	require.Len(t, m.m, limit)
+}
+
+// The stores of the docs handlers and the shared Renames/SettingsMessages are
+// the ones that leaked; this pins their TTL and cap to the constants.
+func TestStores_areBoundedByTTLAndCap(t *testing.T) {
+	d := newDocs(nil, nil, slog.New(slog.DiscardHandler))
+
+	tests := []struct {
+		name    string
+		ttl     time.Duration
+		limit   int
+		wantTTL time.Duration
+	}{
+		{"renames", d.renames.ttl, d.renames.limit, renameTTL},
+		{"confirms", d.confirms.ttl, d.confirms.limit, confirmTTL},
+		{"searches", d.searches.ttl, d.searches.limit, searchTTL},
+		{"origins", d.origins.ttl, d.origins.limit, originTTL},
+		{"settings messages", d.settingsMsgs.ttl, d.settingsMsgs.limit, settingsTTL},
+		{"shared renames", NewRenames().m.ttl, NewRenames().m.limit, renameTTL},
+		{"shared settings messages", NewSettingsMessages().m.ttl, NewSettingsMessages().m.limit, settingsTTL},
+		{"result tokens", newTokenMap[convResult](time.Now).m.ttl, newTokenMap[convResult](time.Now).m.limit, sessionTTL},
+		{"album tokens", newTokenMap[convAlbum](time.Now).m.ttl, newTokenMap[convAlbum](time.Now).m.limit, sessionTTL},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.wantTTL, tt.ttl)
+			require.Equal(t, maxStoreEntries, tt.limit)
+		})
+	}
+}
+
+func TestOrigin_expiredIsReadAsNoOrigin(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	d := newDocs(nil, nil, slog.New(slog.DiscardHandler))
+	d.origins = newTTLMap[originKey, string](originTTL, maxStoreEntries, func() time.Time { return now })
+
+	d.origins.set(originKey{chat: 1, msg: 2}, "s")
+	require.Equal(t, "s", d.origin(1, 2))
+	require.Empty(t, d.origin(1, 3), "another message")
+	require.Empty(t, d.origin(2, 2), "another chat")
+
+	now = now.Add(originTTL + time.Second)
+	require.Empty(t, d.origin(1, 2), "after the TTL the way back is gone")
 }

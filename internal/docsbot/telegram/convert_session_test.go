@@ -246,3 +246,96 @@ func TestSessionStore_expiredSessionsAreSwept(t *testing.T) {
 	require.Len(t, store.byUser, 1, "only the fresh session is left")
 	require.Contains(t, store.byUser, int64(3))
 }
+
+func TestTokenMap_ownership(t *testing.T) {
+	now := time.Now()
+	s := newTokenMap[convResult](func() time.Time { return now })
+
+	t.Run("a foreign peek and take leave the token to its owner", func(t *testing.T) {
+		s.put("a", 1, convResult{suffix: "x"})
+		_, ok := s.peek("a", 2)
+		require.False(t, ok)
+		_, ok = s.take("a", 2)
+		require.False(t, ok)
+		_, ok = s.take("a", 0)
+		require.False(t, ok, "the zero owner owns nothing")
+		r, ok := s.take("a", 1)
+		require.True(t, ok)
+		require.Equal(t, "x", r.suffix)
+	})
+	t.Run("peek does not consume", func(t *testing.T) {
+		s.put("b", 1, convResult{})
+		for range 3 {
+			_, ok := s.peek("b", 1)
+			require.True(t, ok)
+		}
+		_, ok := s.take("b", 1)
+		require.True(t, ok)
+		_, ok = s.peek("b", 1)
+		require.False(t, ok, "taken")
+	})
+	t.Run("putting a token back renews its life and keeps one owner", func(t *testing.T) {
+		s.put("c", 1, convResult{})
+		now = now.Add(sessionTTL - time.Second)
+		v, ok := s.take("c", 1)
+		require.True(t, ok)
+		s.put("c", 1, v) // a failed run gives the token back
+		now = now.Add(sessionTTL - time.Second)
+		_, ok = s.peek("c", 1)
+		require.True(t, ok, "the retry got a fresh TTL")
+
+		s.put("c", 2, convResult{}) // the same token under another owner replaces it
+		_, ok = s.peek("c", 1)
+		require.False(t, ok)
+		_, ok = s.peek("c", 2)
+		require.True(t, ok)
+	})
+	t.Run("an expired token is gone for the owner too", func(t *testing.T) {
+		s.put("d", 1, convResult{})
+		now = now.Add(sessionTTL + time.Second)
+		_, ok := s.peek("d", 1)
+		require.False(t, ok)
+		_, ok = s.take("d", 1)
+		require.False(t, ok)
+	})
+}
+
+func TestTokenMap_foreignPressesNeverWinARace(t *testing.T) {
+	s := newTokenMap[convAlbum](time.Now)
+	s.put("t", 1, convAlbum{user: "u1"})
+
+	var owner, foreign int
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for i := range 40 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			who := int64(1 + i%2) // half the presses are somebody else's
+			_, ok := s.take("t", who)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case ok && who == 1:
+				owner++
+			case ok:
+				foreign++
+			}
+		}()
+	}
+	wg.Wait()
+
+	require.Equal(t, 1, owner, "the owner's double tap acts once")
+	require.Zero(t, foreign)
+}
+
+func TestTokenMap_isBoundedByTheCap(t *testing.T) {
+	s := newTokenMap[convResult](time.Now)
+	s.m.limit = 5
+
+	for i := range 20 {
+		s.put(strconv.Itoa(i), 1, convResult{})
+	}
+
+	require.Len(t, s.m.m, 5, "a flood of results does not pile up")
+}

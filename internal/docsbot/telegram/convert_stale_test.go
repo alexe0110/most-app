@@ -7,7 +7,11 @@ import (
 	"image/png"
 	"testing"
 
+	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
+
+	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // lastMsg is the id of the last message the bot sent.
@@ -206,4 +210,65 @@ func TestConvertDialogue_restartKillsOldButtons(t *testing.T) {
 
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:pdf", fresh))
 	require.Contains(t, h.lastShown(), "Пришли фото")
+}
+
+// inaccessible is a press on a message Telegram no longer gives (too old).
+func inaccessible(u *models.Update) *models.Update {
+	u.CallbackQuery.Message = models.MaybeInaccessibleMessage{
+		Type:                models.MaybeInaccessibleMessageTypeInaccessibleMessage,
+		InaccessibleMessage: &models.InaccessibleMessage{Chat: models.Chat{ID: testChat, Type: models.ChatTypePrivate}},
+	}
+	return u
+}
+
+func TestConvert_inaccessibleMessageDoesNothing(t *testing.T) {
+	h := newConvHarness(t)
+	src := seedSource(h, docsbot.StatusSaved)
+	tok := compressFromMenu(t, h, src.ID)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
+	before := append([]string(nil), h.events...)
+	edits, docs, stored := h.edits, len(h.docs), len(h.repo.docs)
+
+	for _, data := range []string{
+		"conv:doc:" + string(src.ID), "conv:q:" + string(src.ID) + ":c1", "conv:x",
+		"conv:save:" + tok, "conv:skip:" + tok, "conv:rp:" + tok, "conv:rpy:" + tok, "conv:rpn:" + tok, "conv:alb:" + tok,
+		"conv:pdf", "conv:pdfops", "conv:p:rot", "conv:compress", "conv:done", "conv:cancel",
+		"conv:limit1", "conv:limitcustom", "conv:fmtjpeg", "conv:fmtpng", "conv:zzz", "conv:",
+	} {
+		t.Run(data, func(t *testing.T) {
+			h.bot.ProcessUpdate(ctx, inaccessible(callbackUpdate(data)))
+
+			require.Equal(t, before, h.events, "nothing is sent, edited or deleted")
+			require.Equal(t, edits, h.edits)
+			require.Len(t, h.docs, docs, "no conversion ran")
+			require.Len(t, h.repo.docs, stored, "nothing was saved")
+		})
+	}
+
+	// None of it burned the result: the token still saves from a real message.
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok))
+	require.Len(t, h.repo.docs, stored+1)
+}
+
+func TestConvert_unknownActionsAreStale(t *testing.T) {
+	const staleText = "Кнопка устарела, открой заново."
+
+	for _, data := range []string{"conv:zzz", "conv:", "conv:p:", "conv:p:rot:x", "conv:p:zzz", "conv:fmt", "conv:limit3"} {
+		t.Run(data, func(t *testing.T) {
+			h := newConvHarness(t)
+			h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
+			dialogue := h.lastMsg()
+			before := len(h.events)
+
+			h.bot.ProcessUpdate(t.Context(), callbackOn(data, dialogue))
+
+			require.Equal(t, staleText, h.lastText())
+			require.Len(t, h.events, before+1, "only the stale notice")
+			require.Empty(t, h.docs)
+			// The dialogue is still alive for its real buttons.
+			h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", dialogue))
+			require.Contains(t, h.lastShown(), "Пришли")
+		})
+	}
 }

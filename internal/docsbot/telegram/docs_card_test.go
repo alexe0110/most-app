@@ -254,3 +254,20 @@ func TestCard_isAlwaysSentAsHTML(t *testing.T) {
 	}
 	require.Equal(t, []string{"HTML"}, sent.sendModes, "the already-saved card")
 }
+
+func TestDeleteYes_forgetsTheOriginOfTheMessage(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	gone := seedPassport(repo, "Первый", "u1")
+	kept := seedPassport(repo, "Второй", "u2")
+	b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(gone.ID)+":l:"+string(docsbot.CatPassport)+":1"))
+	b.ProcessUpdate(ctx, dataCallback("d:dy:"+string(gone.ID)))
+
+	// The same message shows another card later (a stale card button pressed on
+	// it): it must not inherit the way back of the card that was deleted.
+	b.ProcessUpdate(ctx, dataCallback("d:dn:"+string(kept.ID)))
+
+	last := sent.editMarkups[len(sent.editMarkups)-1]
+	require.Contains(t, last, "d:snd:"+string(kept.ID), "the card is drawn")
+	require.NotContains(t, last, "⬅️ Назад", "no way back to a list the deleted card came from")
+}

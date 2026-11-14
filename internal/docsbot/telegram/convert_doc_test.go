@@ -258,3 +258,23 @@ func TestReceive_photoPickerOffersConvert(t *testing.T) {
 		require.Contains(t, sent.markups[0], "d:cat:"+string(id)+":passport", "category buttons stay")
 	}
 }
+
+func TestConvertDoc_strangerCannotSpendTheResult(t *testing.T) {
+	h := newConvHarness(t)
+	src := seedSource(h, docsbot.StatusSaved)
+	tok := compressFromMenu(t, h, src.ID)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	stored := len(h.repo.docs)
+
+	for _, data := range []string{"conv:save:", "conv:skip:", "conv:rp:", "conv:rpy:", "conv:rpn:"} {
+		u := callbackUpdate(data + tok)
+		u.CallbackQuery.From.ID = testUser + 1
+		h.bot.ProcessUpdate(ctx, u)
+	}
+
+	require.Len(t, h.repo.docs, stored, "nothing was saved or replaced")
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok))
+	require.Len(t, h.repo.docs, stored+1, "the owner's token survived the strangers")
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok))
+	require.Len(t, h.repo.docs, stored+1, "and acts once")
+}

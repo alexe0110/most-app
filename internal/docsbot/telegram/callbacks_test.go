@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/go-telegram/bot/models"
@@ -82,6 +83,14 @@ func callbackCases() []struct {
 
 		{"conv doc", "conv:doc:" + string(uuidDoc), conv(convActDoc, uuidDoc)},
 		{"conv quick", "conv:q:" + string(uuidDoc) + ":" + opCompress1, conv(convActQuick, uuidDoc, opCompress1)},
+		{"conv quick c2", "conv:q:" + string(uuidDoc) + ":" + opCompress2, conv(convActQuick, uuidDoc, opCompress2)},
+		{"conv quick c5", "conv:q:" + string(uuidDoc) + ":" + opCompress5, conv(convActQuick, uuidDoc, opCompress5)},
+		{"conv quick pdf", "conv:q:" + string(uuidDoc) + ":" + opPDF, conv(convActQuick, uuidDoc, opPDF)},
+		{"conv quick jpg", "conv:q:" + string(uuidDoc) + ":" + opJPG, conv(convActQuick, uuidDoc, opJPG)},
+		{"conv quick rotate", "conv:q:" + string(uuidDoc) + ":" + opRotate, conv(convActQuick, uuidDoc, opRotate)},
+		{"conv quick keep", "conv:q:" + string(uuidDoc) + ":" + opKeep, conv(convActQuick, uuidDoc, opKeep)},
+		{"conv quick drop", "conv:q:" + string(uuidDoc) + ":" + opDrop, conv(convActQuick, uuidDoc, opDrop)},
+		{"conv quick merge", "conv:q:" + string(uuidDoc) + ":" + opMerge, conv(convActQuick, uuidDoc, opMerge)},
 		{"conv save", "conv:save:" + hexToken, conv(convActSave, "", hexToken)},
 		{"conv skip", "conv:skip:" + hexToken, conv(convActSkip, "", hexToken)},
 		{"conv rp", "conv:rp:" + hexToken, conv(convActRepAsk, "", hexToken)},
@@ -90,6 +99,9 @@ func callbackCases() []struct {
 		{"conv alb", "conv:alb:" + hexToken, conv(convActAlbum, "", hexToken)},
 		{"conv x", "conv:x", conv(convActMenuCancel, "")},
 		{"conv session op", "conv:p:" + opRotate, conv(convActPDFOp, "", opRotate)},
+		{"conv session keep", "conv:p:" + opKeep, conv(convActPDFOp, "", opKeep)},
+		{"conv session drop", "conv:p:" + opDrop, conv(convActPDFOp, "", opDrop)},
+		{"conv session merge", "conv:p:" + opMerge, conv(convActPDFOp, "", opMerge)},
 		{"conv pdf", cbPDF, conv("pdf", "")},
 		{"conv pdfops", cbPDFActions, conv("pdfops", "")},
 		{"conv compress", cbCompress, conv("compress", "")},
@@ -159,6 +171,23 @@ func TestParseCallback_edges(t *testing.T) {
 		{"extra colons stay arguments", "d:lc:a:1:2", true, callbackData{prefix: cbPrefix, action: actListCat, args: []string{"a", "1", "2"}}},
 		{"unknown action", "d:zzz:1", true, callbackData{prefix: cbPrefix, action: "zzz", args: []string{"1"}}},
 		{"unknown conv action", "conv:zzz", true, callbackData{prefix: callbackPrefix, action: "zzz"}},
+		{"prefix is case sensitive", "D:cat:1", false, callbackData{}},
+		{"leading space", " d:lb", false, callbackData{}},
+		{"conv without colon", "conv", false, callbackData{}},
+		{"prefix only inside", "x" + "d:lb", false, callbackData{}},
+		{"category without slug", "d:cat:id", true, callbackData{prefix: cbPrefix, action: actCategory, docID: "id"}},
+		{"category with empty slug", "d:cat:id:", true, callbackData{prefix: cbPrefix, action: actCategory, docID: "id", args: []string{""}}},
+		{"doc id never swallows a list argument", "d:lc:auto:2", true, callbackData{prefix: cbPrefix, action: actListCat, args: []string{"auto", "2"}}},
+		{"retry batch keeps its id as argument", "d:rsm:sm", true, callbackData{prefix: cbPrefix, action: actRetryBatch, args: []string{"sm"}}},
+		{"open card from search with extras", "d:oc:id:s:x", true, callbackData{prefix: cbPrefix, action: actOpenCard, docID: "id", args: []string{"s", "x"}}},
+		{"conv quick without op", "conv:q:abc", true, callbackData{prefix: callbackPrefix, action: convActQuick, docID: "abc"}},
+		{"conv quick without id", "conv:q::c1", true, callbackData{prefix: callbackPrefix, action: convActQuick, args: []string{"c1"}}},
+		{"conv quick with empty op", "conv:q:abc:", true, callbackData{prefix: callbackPrefix, action: convActQuick, docID: "abc", args: []string{""}}},
+		{"conv quick with unknown op", "conv:q:abc:zzz", true, callbackData{prefix: callbackPrefix, action: convActQuick, docID: "abc", args: []string{"zzz"}}},
+		{"conv token empty", "conv:save:", true, callbackData{prefix: callbackPrefix, action: convActSave, args: []string{""}}},
+		{"conv session op empty", "conv:p:", true, callbackData{prefix: callbackPrefix, action: convActPDFOp, args: []string{""}}},
+		{"conv menu without id", "conv:doc:", true, callbackData{prefix: callbackPrefix, action: convActDoc}},
+		{"unicode argument", "d:lc:паспорт:1", true, callbackData{prefix: cbPrefix, action: actListCat, args: []string{"паспорт", "1"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -188,4 +217,259 @@ func TestNewPress(t *testing.T) {
 	require.False(t, p.hasUser, "no user from the auth middleware")
 	require.Zero(t, p.chatID)
 	require.Equal(t, actListBack, p.data.action)
+}
+
+func TestParseCallback_wellFormedDataRoundTrips(t *testing.T) {
+	// Every shape of up to four non-empty segments after either prefix, with an
+	// action that carries a document id and one that does not.
+	segments := []string{"oc", "lc", "q", "doc", "save", "zzz", "1", "a"}
+	var shapes [][]string
+	var build func(prefix []string)
+	build = func(prefix []string) {
+		shapes = append(shapes, prefix)
+		if len(prefix) == 4 {
+			return
+		}
+		for _, s := range segments {
+			build(append(append([]string(nil), prefix...), s))
+		}
+	}
+	for _, s := range segments {
+		build([]string{s})
+	}
+
+	for _, prefix := range []string{cbPrefix, callbackPrefix} {
+		for _, segs := range shapes {
+			data := prefix + strings.Join(segs, ":")
+			got, ok := parseCallback(data)
+			require.True(t, ok, data)
+			require.Equal(t, prefix, got.prefix, data)
+			require.Equal(t, segs[0], got.action, data)
+			require.Equal(t, data, got.String(), "String inverts parse")
+		}
+	}
+}
+
+func TestParseCallback_hugeInputDoesNotPanic(t *testing.T) {
+	data := cbPrefix + actListCat + strings.Repeat(":a", 50_000)
+
+	got, ok := parseCallback(data)
+
+	require.True(t, ok)
+	require.Len(t, got.args, 50_000)
+	require.Equal(t, data, got.String())
+}
+
+func TestParseCallback_positionsMatchTheSplitHandlersUsedToRead(t *testing.T) {
+	// The handlers used to index strings.Split(data, ":"): parts[1] the action,
+	// parts[2] the document id or the first argument, parts[3:] the rest.
+	var corpus []string
+	for _, tt := range callbackCases() {
+		corpus = append(corpus, tt.data)
+	}
+	corpus = append(corpus, "d:", "d:cat:", "d:cat:d1:other", "d:cat:missing:", "d:sc:1:other", "d:dy:", "d:rt", "d:inl",
+		"d:inl:x", "d:lc:a:1:2", "d:oc:x1:l:auto:2", "d:oc:missing:s", "d:zzz:1", "d:rsm:", "d:rn")
+
+	for _, data := range corpus {
+		if !strings.HasPrefix(data, cbPrefix) {
+			continue
+		}
+		t.Run(data, func(t *testing.T) {
+			parts := strings.Split(data, ":")
+			got, ok := parseCallback(data)
+			require.True(t, ok)
+			require.Equal(t, parts[1], got.action)
+
+			rest := parts[2:]
+			if carriesDocID(cbPrefix, got.action) && len(rest) > 0 {
+				require.Equal(t, docsbot.DocumentID(rest[0]), got.docID)
+				rest = rest[1:]
+			}
+			if len(rest) == 0 {
+				require.Empty(t, got.args)
+				return
+			}
+			require.Equal(t, rest, got.args)
+		})
+	}
+}
+
+func TestCallbackData_categoryReadsTheSlugAfterTheDocID(t *testing.T) {
+	tests := []struct {
+		name   string
+		data   string
+		want   docsbot.Category
+		wantOK bool
+	}{
+		{"every category is readable", "d:cat:id:" + string(docsbot.CatPassport), docsbot.CatPassport, true},
+		{"slug missing", "d:cat:id", "", false},
+		{"slug empty", "d:cat:id:", "", false},
+		{"slug unknown", "d:cat:id:zzz", "", false},
+		{"slug in the document id position", "d:cat:" + string(docsbot.CatPassport), "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cd, ok := parseCallback(tt.data)
+			require.True(t, ok)
+
+			got, gotOK := cd.category()
+
+			require.Equal(t, tt.wantOK, gotOK)
+			if gotOK {
+				require.Equal(t, tt.want, got)
+			}
+		})
+	}
+	for _, c := range docsbot.AllCategories {
+		cd, _ := parseCallback(docCB(actSetCategory, uuidDoc, string(c)))
+		got, ok := cd.category()
+		require.True(t, ok, c)
+		require.Equal(t, c, got)
+	}
+}
+
+func TestCallbackData_tokenIsEverythingAfterTheAction(t *testing.T) {
+	tests := []struct {
+		data string
+		want string
+	}{
+		{"conv:save:" + hexToken, hexToken},
+		{"conv:save:", ""},
+		{"conv:x", ""},
+		{"conv:p:rot", "rot"},
+		{"conv:save:a:b", "a:b"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.data, func(t *testing.T) {
+			cd, _ := parseCallback(tt.data)
+			require.Equal(t, tt.want, cd.token())
+		})
+	}
+}
+
+func TestCallbackData_everyCategoryAndPageFitsTheLimit(t *testing.T) {
+	for _, c := range docsbot.AllCategories {
+		for _, data := range []string{
+			docCB(actCategory, uuidDoc, string(c)),
+			docCB(actCategoryGroup, uuidDoc, string(c)),
+			docCB(actSetCategory, uuidDoc, string(c)),
+			docCB(actListCat, "", string(c), "999"),
+			docCB(actOpenCard, uuidDoc, "l", string(c), "999"),
+		} {
+			require.LessOrEqual(t, len(data), 64, data)
+			cd, ok := parseCallback(data)
+			require.True(t, ok)
+			require.Equal(t, data, cd.String())
+		}
+	}
+}
+
+func TestBackFromOrig_roundTripsThroughTheCardButtons(t *testing.T) {
+	tests := []struct {
+		orig       string
+		wantAction string
+		wantArgs   []string
+	}{
+		{"l:" + longestSlug() + ":999", actListCat, []string{longestSlug(), "999"}},
+		{"s", actSearchBack, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.orig, func(t *testing.T) {
+			cd, ok := parseCallback(backFromOrig(tt.orig))
+			require.True(t, ok)
+			require.Equal(t, tt.wantAction, cd.action)
+			require.Equal(t, tt.wantArgs, cd.args)
+		})
+	}
+	// An origin that is neither a list nor the search gets no back button, and
+	// the one an open-card button carries is what the card keeps.
+	require.Empty(t, backFromOrig("x"))
+	require.Empty(t, backFromOrig("l"))
+	open, _ := parseCallback(docCB(actOpenCard, uuidDoc, "l", longestSlug(), "999"))
+	require.Equal(t, "l:"+longestSlug()+":999", strings.Join(open.args, ":"))
+}
+
+// builtButtons is the callback data of every inline keyboard the bot renders,
+// with the worst-case values the limits care about.
+func builtButtons() []string {
+	slug := docsbot.Category(longestSlug())
+	token := newToken()
+	statusID := docsbot.StatusMessageID(uuidDoc)
+
+	var kbs []*models.InlineKeyboardMarkup
+	add := func(kb *models.InlineKeyboardMarkup) { kbs = append(kbs, kb) }
+	addRender := func(_ string, kb *models.InlineKeyboardMarkup) { add(kb) }
+
+	for _, action := range []string{actCategory, actCategoryGroup, actSetCategory} {
+		add(categoryKeyboard(action, uuidDoc))
+	}
+	for _, doc := range []docsbot.Document{
+		{ID: uuidDoc, Kind: docsbot.KindPhoto, Category: slug},
+		{ID: uuidDoc, Kind: docsbot.KindDocument, MIME: mimePDF, BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncFailed},
+		{ID: uuidDoc, Kind: docsbot.KindDocument, MIME: "image/webp", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing},
+		{ID: uuidDoc, Kind: docsbot.KindDocument, BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncFailed, SyncReason: docsbot.SyncReasonRevoked},
+	} {
+		add(pickerKeyboard(doc))
+		for _, orig := range []string{"", "s", "l:" + string(slug) + ":999"} {
+			add(cardKeyboard(doc, "folder", orig))
+			add(cardKeyboardWith(doc, "folder", orig, "https://example.com/connect"))
+		}
+		add(openDriveKeyboard(doc))
+	}
+	add(albumChoiceKeyboard(token, uuidDoc))
+	add(renameCancelKeyboard(uuidDoc))
+	add(transferOfferKeyboard())
+	add(retryKeyboard(uuidDoc))
+	add(exportFirstKeyboard())
+	add(myDocsKeyboard())
+	add(retryBatchKeyboard(statusID))
+	add(statusKeyboard(statusID, statusTally{total: 3, done: 3, failed: 1}))
+	add(&models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{inlineToggleRow(true), inlineToggleRow(false)}})
+
+	addRender(renderCatalog(docsbot.Catalog{
+		DriveConnected: true, NotInDrive: 1,
+		Counts: []docsbot.CategoryCount{{Category: slug, Count: 1}},
+	}))
+	addRender(renderSettings(docsbot.SettingsView{DriveConnected: true, Failed: 2, InlineEnabled: true}, "https://example.com/connect", true))
+	addRender(renderCategoryPage(docsbot.CategoryPage{
+		Category: slug, Page: 500, Pages: 999, Total: 1, Docs: []docsbot.Document{{ID: uuidDoc, Title: "t"}},
+	}))
+	addRender(renderFound(docsbot.Found{Query: "q", Docs: []docsbot.Document{{ID: uuidDoc, Title: "t"}}}))
+
+	for _, kb := range []*models.InlineKeyboardMarkup{
+		actionKeyboard(), pdfKeyboard(), limitKeyboard(), formatKeyboard(), cancelKeyboard(),
+		quickKeyboard(uuidDoc, true), quickKeyboard(uuidDoc, false), pdfMenuKeyboard(uuidDoc), pdfActionsKeyboard(),
+		saveKeyboard(token, true), saveKeyboard(token, false), replaceKeyboard(token),
+	} {
+		add(kb)
+	}
+
+	var data []string
+	for _, kb := range kbs {
+		for _, row := range kb.InlineKeyboard {
+			for _, b := range row {
+				if b.CallbackData != "" { // link buttons carry a URL instead
+					data = append(data, b.CallbackData)
+				}
+			}
+		}
+	}
+	return data
+}
+
+func TestBuiltButtons_everyOneParsesFitsAndIsKnown(t *testing.T) {
+	known := map[string]bool{}
+	for _, tt := range callbackCases() {
+		known[tt.want.prefix+tt.want.action] = true
+	}
+
+	data := builtButtons()
+	require.NotEmpty(t, data)
+	for _, d := range data {
+		cd, ok := parseCallback(d)
+		require.True(t, ok, d)
+		require.True(t, known[cd.prefix+cd.action], "%s: an action with no round-trip case", d)
+		require.Equal(t, d, cd.String(), "String inverts parse")
+		require.LessOrEqual(t, len(d), 64, d)
+	}
 }

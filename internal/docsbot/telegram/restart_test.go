@@ -68,3 +68,14 @@ func TestRestart_convertCallbackWithoutSession(t *testing.T) {
 		})
 	}
 }
+
+func TestRestart_deleteWordWithoutArmedConfirmationIsASearch(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := seedPassport(repo, "Паспорт", "u1")
+
+	b.ProcessUpdate(ctx, textUpdate("УДАЛИТЬ"))
+
+	require.Contains(t, repo.docs, doc.ID, "nothing is deleted on a lost confirmation")
+	require.False(t, has(sent.texts, "Данные удалены"), "texts %q", sent.texts)
+}

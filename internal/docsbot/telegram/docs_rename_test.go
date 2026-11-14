@@ -256,3 +256,19 @@ func TestRename_deletedDocumentIsGone(t *testing.T) {
 	require.True(t, has(sent.edits, "Этого документа уже нет"), "edits %q", sent.edits)
 	require.False(t, has(sent.texts, "Что-то пошло не так"))
 }
+
+func TestRename_buttonOnAnInaccessibleMessageReleasesThePrompt(t *testing.T) {
+	b, sent, repo := newBot(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	doc := seedPassport(repo, "Старое", "u1")
+	b.ProcessUpdate(ctx, dataCallbackMsg(7, "d:rn:"+string(doc.ID)))
+	sent.edits, sent.editIDs = nil, nil
+
+	b.ProcessUpdate(ctx, inaccessible(dataCallbackMsg(9, "d:lb")))
+
+	require.Equal(t, []int{7}, sent.editIDs, "the prompt message is a card again; nothing else is drawn")
+	require.Contains(t, sent.edits[0], "Старое")
+	b.ProcessUpdate(ctx, textUpdateID(66, "Не имя"))
+	require.Equal(t, "Старое", repo.docs[doc.ID].Title, "the text is no longer a rename")
+	require.Empty(t, sent.deleteIDs)
+}
