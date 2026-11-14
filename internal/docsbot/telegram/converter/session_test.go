@@ -137,6 +137,107 @@ func TestSessionStore_timeout(t *testing.T) {
 	require.False(t, store.update(7, func(*session) {}), "a timed-out session can't be updated")
 }
 
+// A session read with live is a snapshot: an update that follows (another update
+// of the same user running in parallel) must not show through it, or the reader
+// races with the writer that holds the store lock.
+func TestSessionStore_liveReturnsASnapshot(t *testing.T) {
+	store := newSessionStore(time.Now)
+	store.start(1)
+
+	snapshot, ok := store.live(1)
+	require.True(t, ok)
+	store.update(1, func(s *session) { s.step, s.sourceFileID = stepChooseLimit, "f" })
+
+	require.Equal(t, stepChooseAction, snapshot.step)
+	require.Empty(t, snapshot.sourceFileID)
+}
+
+// Run with -race: readers of live and writers in update share no memory.
+func TestSessionStore_liveAndUpdateDoNotRace(_ *testing.T) {
+	store := newSessionStore(time.Now)
+	store.start(1)
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for range 200 {
+				if sess, ok := store.live(1); ok {
+					_ = sess.step
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for range 200 {
+				store.update(1, func(s *session) { s.step = stepChooseLimit })
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestSessionStore_ttlBoundary(t *testing.T) {
+	tests := []struct {
+		name string
+		idle time.Duration
+		live bool
+	}{
+		{"just created", 0, true},
+		{"one nanosecond before the TTL", sessionTTL - time.Nanosecond, true},
+		{"exactly the TTL", sessionTTL, true},
+		{"one nanosecond past the TTL", sessionTTL + time.Nanosecond, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := time.Now()
+			store := newSessionStore(func() time.Time { return now })
+			store.start(1)
+
+			now = now.Add(tt.idle)
+
+			require.Equal(t, tt.live, store.has(1))
+		})
+	}
+}
+
+// Every touch of a session (an update refreshes it) restarts its TTL.
+func TestSessionStore_updateRefreshesTheTTL(t *testing.T) {
+	now := time.Now()
+	store := newSessionStore(func() time.Time { return now })
+	store.start(1)
+
+	now = now.Add(sessionTTL - time.Minute)
+	require.True(t, store.update(1, func(*session) {}))
+	now = now.Add(sessionTTL - time.Minute)
+
+	require.True(t, store.has(1), "the idle time counts from the last update")
+}
+
+// The cap counts users, not calls: fill to exactly max, one over is refused.
+func TestSessionStore_capBoundary(t *testing.T) {
+	tests := []struct {
+		name  string
+		users int
+		want  bool // whether one more user gets a session
+	}{
+		{"one below the cap", 2, true},
+		{"at the cap", 3, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newSessionStore(time.Now)
+			store.max = 3
+			for u := range tt.users {
+				require.True(t, store.start(int64(u+1)))
+			}
+
+			require.Equal(t, tt.want, store.start(100))
+		})
+	}
+}
+
 func TestSessionStore_orderedImages(t *testing.T) {
 	store := newSessionStore(time.Now)
 	store.start(1)

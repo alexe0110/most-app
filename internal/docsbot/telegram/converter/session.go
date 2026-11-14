@@ -95,11 +95,17 @@ func newSessionStore(now func() time.Time) *sessionStore {
 	return &sessionStore{byUser: map[int64]*session{}, ttl: sessionTTL, max: maxSessions, now: now}
 }
 
-// live returns the user's session if it exists and has not timed out.
-func (s *sessionStore) live(user int64) (*session, bool) {
+// live returns a copy of the user's session if it exists and has not timed out.
+// A copy, not the stored pointer: update writes the session under the lock, so a
+// reader holding the pointer would race with it.
+func (s *sessionStore) live(user int64) (session, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.liveLocked(user)
+	sess, ok := s.liveLocked(user)
+	if !ok {
+		return session{}, false
+	}
+	return *sess, true
 }
 
 // liveLocked is live for a caller that holds the lock. Every access also drops
