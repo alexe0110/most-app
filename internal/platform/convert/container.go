@@ -63,6 +63,38 @@ func jpegSegments(data []byte) (segs []segment, sos int, err error) {
 	}
 }
 
+// jpegScanEnd returns the offset just after the EOI that closes the image whose
+// first scan starts at sos. Progressive images have several scans, so it walks
+// the markers instead of looking for the last FFD9 (a trailing MPF frame has its
+// own).
+func jpegScanEnd(data []byte, sos int) (int, error) {
+	for i := sos; i+1 < len(data); {
+		j := bytes.IndexByte(data[i:], 0xFF)
+		if j < 0 {
+			break
+		}
+		i += j
+		if i+1 >= len(data) {
+			break
+		}
+		m := data[i+1]
+		switch {
+		case m == jpegEOI:
+			return i + 2, nil
+		case m == 0x00 || (m >= 0xD0 && m <= 0xD7):
+			i += 2 // stuffed byte or restart marker inside entropy data
+		case m == 0xFF:
+			i++
+		default:
+			if i+4 > len(data) {
+				return 0, errBadContainer
+			}
+			i += 2 + int(binary.BigEndian.Uint16(data[i+2:]))
+		}
+	}
+	return 0, errBadContainer
+}
+
 // pngChunks splits a PNG into chunks up to and including IEND. kind is the
 // 4-letter chunk type.
 func pngChunks(data []byte) ([]segment, error) {
