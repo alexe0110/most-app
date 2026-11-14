@@ -84,7 +84,7 @@ func TestRenderFound_opensCards(t *testing.T) {
 	require.True(t, strings.HasSuffix(btn.CallbackData, ":s"))
 
 	text, kb = renderFound(docsbot.Found{Query: "привет"})
-	require.Equal(t, "По запросу «привет» ничего нет. Я ищу по названиям и категориям — попробуй другое слово или открой /list.", text)
+	require.Equal(t, "По запросу «привет» ничего нет. Я ищу по названиям документов — попробуй другое слово или открой /list.", text)
 	require.Nil(t, kb)
 }
 
@@ -372,7 +372,7 @@ func TestRenderFound_queryIsShownAsTyped(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Search answers are sent as plain text, so the query goes in verbatim.
 			text, kb := renderFound(docsbot.Found{Query: tt.query})
-			require.Equal(t, "По запросу «"+tt.query+"» ничего нет. Я ищу по названиям и категориям — попробуй другое слово или открой /list.", text)
+			require.Equal(t, "По запросу «"+tt.query+"» ничего нет. Я ищу по названиям документов — попробуй другое слово или открой /list.", text)
 			require.Nil(t, kb)
 		})
 	}

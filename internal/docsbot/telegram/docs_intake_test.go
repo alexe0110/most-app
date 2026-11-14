@@ -177,7 +177,7 @@ func TestChooseCategory_firstDocHint(t *testing.T) {
 
 			require.Equal(t, tt.want, firstDocHints(sent), "texts %q", sent.texts)
 			if tt.want > 0 {
-				want := fmt.Sprintf("Сохранил. Чтобы найти его потом, просто напиши «%s» — или открой /list.", strings.ToLower(docsbot.CatPassport.Label()))
+				want := "Сохранил. Чтобы найти его потом, напиши слово из названия — или открой /list."
 				require.Contains(t, sent.texts, want)
 			}
 		})

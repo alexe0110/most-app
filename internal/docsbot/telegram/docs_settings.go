@@ -154,10 +154,16 @@ func (d *docs) onDeleteData(ctx context.Context, b *bot.Bot, p press) {
 	d.out(b).Send(ctx, chatID, fmt.Sprintf(textDeleteDataPrompt, confirmWord), tg.WithKeyboard(deleteDataKeyboard()))
 }
 
-// onDeleteDataNo drops the armed confirmation and turns its prompt into the cancel note.
+// onDeleteDataNo drops the armed confirmation and turns its prompt into the cancel
+// note. A late press (the data is already deleted, or the confirmation expired)
+// only removes the buttons: the note would promise data that may be gone.
 func (d *docs) onDeleteDataNo(ctx context.Context, b *bot.Bot, p press) {
-	d.confirms.Delete(p.tgUser)
+	_, armed := d.confirms.Take(p.tgUser)
 	if !p.hasMsg {
+		return
+	}
+	if !armed {
+		d.out(b).ClearKeyboard(ctx, p.chatID, p.msgID)
 		return
 	}
 	d.out(b).Edit(ctx, p.chatID, p.msgID, textDeleteWrongWord, tg.WithKeyboard(nil))

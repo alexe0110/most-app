@@ -219,16 +219,3 @@ func TestService_Search_keepsQueryForTheNothingFoundText(t *testing.T) {
 	require.NoError(t, err)
 	require.LessOrEqual(t, utf8.RuneCountInString(huge.Query), 100, "an echoed query must fit a Telegram message")
 }
-
-// The hint after the first document tells the user to write the category name in
-// lower case, and the empty-result text says categories are searched too.
-func TestService_Search_findsADocumentByItsCategoryName(t *testing.T) {
-	repo := docsbottest.NewFakeRepo()
-	repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatInsurance, Title: "IMG_2041"})
-	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
-
-	found, err := svc.Search(t.Context(), user, strings.ToLower(docsbot.CatInsurance.Label()))
-
-	require.NoError(t, err)
-	require.Len(t, found.Docs, 1, "a document titled by its file name is not found by its category")
-}

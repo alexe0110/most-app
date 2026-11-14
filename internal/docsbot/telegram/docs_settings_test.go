@@ -328,7 +328,8 @@ func TestDeleteData_cancelButtonWithoutArmedConfirmation(t *testing.T) {
 	b.ProcessUpdate(ctx, inaccessible(dataCallback("d:ddn")))
 
 	require.Len(t, repo.Docs, 1)
-	require.Len(t, sent.edits, 1, "a message Telegram no longer gives is not edited")
+	require.Empty(t, sent.edits, "nothing is armed: no note is shown")
+	require.Len(t, sent.markupEdits, 1, "the buttons are removed once; a message Telegram no longer gives is left alone")
 }
 
 // The prompt keeps its buttons after the data is gone; a late tap on "Отмена"

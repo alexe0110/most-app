@@ -9,7 +9,7 @@ const (
 	// textStart is a format string: %s = Drive root folder name.
 	textStart = "Привет! Я Most Files — храню документы и быстро нахожу нужный.\n\n" +
 		"Пришли фото, PDF или файл: паспорт, полис, справку. Выбери категорию — и готово. " +
-		"Потом просто напиши «паспорт», и я пришлю документ.\n\n" +
+		"Потом напиши слово из названия, и я пришлю документ.\n\n" +
 		"Документы хранятся в Telegram. Хочешь копию на своём Google Диске — подключи его в /settings: " +
 		"я создам там папку «%s» и буду видеть только то, что положу в неё сам."
 
@@ -35,8 +35,8 @@ const (
 		"Если у тебя уже есть папка с таким названием, появится вторая — это нормально."
 	textConnectLater = "Хорошо, подключить можно позже в /settings."
 
-	// textFirstDoc follows the first saved document: %s = its category in lower case.
-	textFirstDoc = "Сохранил. Чтобы найти его потом, просто напиши «%s» — или открой /list."
+	// textFirstDoc follows the first saved document.
+	textFirstDoc = "Сохранил. Чтобы найти его потом, напиши слово из названия — или открой /list."
 
 	textChooseCategory      = "В какую категорию сохранить?"
 	textChooseCategoryGroup = "Выбери категорию для %d %s:" // files in the album, plural("файл")
@@ -69,7 +69,7 @@ const (
 	toastNotRetryable = "Уже в работе или готово"
 
 	textCatalogEmpty = "Пока пусто — пришли документ, и он появится здесь."
-	textNothingFound = "По запросу «%s» ничего нет. Я ищу по названиям и категориям — попробуй другое слово или открой /list." // %s = query
+	textNothingFound = "По запросу «%s» ничего нет. Я ищу по названиям документов — попробуй другое слово или открой /list." // %s = query
 	textSearchHint   = "Напиши, что искать: часть названия документа."
 
 	textOfferDrive = "Хочешь, чтобы документы лежали на твоём Google Диске? Подключи — " +
