@@ -190,11 +190,16 @@ func TestStatusMessages_purgeClosedKeepsOpenAndRecent(t *testing.T) {
 	kept := newDoc(t, repo, u, "p2")
 	require.NoError(t, repo.Attach(ctx, user, attached, old.ID))
 	require.NoError(t, repo.Attach(ctx, user, kept, recent.ID))
+	// A failed upload keeps its message: the «Повторить» button on it still needs the row.
+	withFailed := newClosed(user, 5, "30 hours")
+	failed := newDoc(t, repo, u, "p3")
+	require.NoError(t, repo.Attach(ctx, user, failed, withFailed.ID))
+	require.NoError(t, repo.SetBackupStatus(ctx, user, failed, docsbot.BackupFailed))
 
 	n, err := repo.PurgeClosed(ctx, time.Now().Add(-24*time.Hour))
 
 	require.NoError(t, err)
-	require.Equal(t, 2, n, "closed messages of every user past the cutoff")
+	require.Equal(t, 2, n, "closed messages of every user past the cutoff, except the one with a failed upload")
 	_, err = repo.ByID(ctx, user, old.ID)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
 	_, err = repo.ByID(ctx, otherID, oldOther.ID)
@@ -203,6 +208,8 @@ func TestStatusMessages_purgeClosedKeepsOpenAndRecent(t *testing.T) {
 	require.NoError(t, err, "closed recently: kept")
 	_, err = repo.ByID(ctx, user, open.ID)
 	require.NoError(t, err, "open stays however old")
+	_, err = repo.ByID(ctx, user, withFailed.ID)
+	require.NoError(t, err, "closed long ago but a document in it failed to upload: kept")
 
 	got, err := repo.DocumentByID(ctx, user, attached)
 	require.NoError(t, err, "documents outlive their status message")

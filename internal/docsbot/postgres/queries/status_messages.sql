@@ -49,10 +49,16 @@ order by created_at;
 
 -- name: DeleteClosedStatusMessages :execrows
 -- Global TTL purge: status messages closed before @older_than. Documents keep
--- living: documents.status_message_id is on delete set null.
+-- living: documents.status_message_id is on delete set null. A message with a
+-- failed upload stays: its «Повторить» button looks the row up, and without it
+-- the user would get a generic error.
 delete
 from status_messages
-where closed_at < @older_than;
+where closed_at < @older_than
+  and not exists (select 1
+                  from documents d
+                  where d.status_message_id = status_messages.id
+                    and d.backup_status = 'failed');
 
 -- name: DeleteUserStatusMessages :exec
 delete

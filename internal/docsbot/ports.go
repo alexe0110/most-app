@@ -257,6 +257,7 @@ type StatusMessages interface {
 	// ByID returns the user's status message, or ErrNotFound (also for another user's).
 	ByID(ctx context.Context, user UserID, id StatusMessageID) (StatusMessage, error)
 	// PurgeClosed deletes every user's status messages closed before olderThan
-	// and returns how many were removed; the documents they listed stay.
+	// and returns how many were removed; the documents they listed stay. A message
+	// with a failed upload is kept: its retry button still needs it.
 	PurgeClosed(ctx context.Context, olderThan time.Time) (int, error)
 }
