@@ -1,6 +1,7 @@
 package docsbot_test
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -314,6 +315,46 @@ func TestService_Receive_duplicateAndDeleteSemantics(t *testing.T) {
 	need, ok := fresh.(docsbot.NeedCategory)
 	require.True(t, ok, "deletion is hard: the same file can be saved again")
 	require.NotEqual(t, pending.ID, need.Doc.ID)
+}
+
+// racingCreate plays a parallel send of the same file: its document lands just
+// before our insert, which then hits the unique constraint.
+type racingCreate struct {
+	*fakeRepo
+	winner docsbot.Document
+}
+
+func (r racingCreate) CreateDocument(context.Context, docsbot.IncomingFile) (docsbot.Document, error) {
+	r.seed(r.winner)
+	return docsbot.Document{}, docsbot.ErrDuplicateFile
+}
+
+func TestService_Receive_lostCreateRaceAnswersByTheWinner(t *testing.T) {
+	tests := []struct {
+		name   string
+		status docsbot.Status
+		want   func(docsbot.Document) docsbot.Reply
+	}{
+		{"winner still pending", docsbot.StatusPending, func(d docsbot.Document) docsbot.Reply { return docsbot.NeedCategory{Doc: d} }},
+		{"winner already saved", docsbot.StatusSaved, func(d docsbot.Document) docsbot.Reply { return docsbot.AlreadySaved{Doc: d} }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newFakeRepo()
+			in := intakeFile("race")
+			winner := docsbot.Document{ID: "winner", UserID: user, Status: tt.status, TgFileUniqueID: in.FileUniqueID, CreatedAt: time.Unix(1, 0)}
+			svc := newService(racingCreate{fakeRepo: repo, winner: winner}, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo,
+				newFakeStatus(repo), &fakeSyncs{repo: repo})
+
+			rep, err := svc.Receive(t.Context(), in)
+
+			require.NoError(t, err)
+			stored, err := repo.DocumentByID(t.Context(), user, "winner")
+			require.NoError(t, err)
+			require.Equal(t, tt.want(stored), rep)
+			require.Len(t, repo.docs, 1)
+		})
+	}
 }
 
 func TestService_Receive_multiPagePDFIsOneDocument(t *testing.T) {

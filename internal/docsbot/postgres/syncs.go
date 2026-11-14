@@ -6,14 +6,10 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
-
-// uniqueViolation is the SQLSTATE of a unique constraint violation.
-const uniqueViolation = "23505"
 
 var (
 	_ docsbot.Syncs   = (*Repo)(nil)
@@ -122,8 +118,7 @@ func (r *Repo) ReplaceContent(ctx context.Context, user docsbot.UserID, id docsb
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+		if isUniqueViolation(err) {
 			return docsbot.ErrDuplicateFile
 		}
 		if err != nil {

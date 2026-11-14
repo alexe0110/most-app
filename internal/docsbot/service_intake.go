@@ -13,10 +13,8 @@ func (s *Service) Receive(ctx context.Context, in IncomingFile) (Reply, error) {
 	in.Title = NormalizeTitle(in.Title)
 	existing, err := s.repo.DocumentByFileUniqueID(ctx, in.UserID, in.FileUniqueID)
 	switch {
-	case err == nil && existing.Status == StatusSaved:
-		return AlreadySaved{Doc: existing}, nil
 	case err == nil:
-		return NeedCategory{Doc: existing}, nil
+		return replyForExisting(existing), nil
 	case !errors.Is(err, ErrNotFound):
 		return nil, fmt.Errorf("lookup document: %w", err)
 	}
@@ -35,10 +33,28 @@ func (s *Service) Receive(ctx context.Context, in IncomingFile) (Reply, error) {
 	}
 
 	doc, err := s.repo.CreateDocument(ctx, in)
+	if errors.Is(err, ErrDuplicateFile) {
+		// A parallel send of the same file won the insert: answer by its row, as if
+		// ours had arrived second.
+		winner, lerr := s.repo.DocumentByFileUniqueID(ctx, in.UserID, in.FileUniqueID)
+		if lerr != nil {
+			return nil, fmt.Errorf("lookup duplicate: %w", lerr)
+		}
+		return replyForExisting(winner), nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("create document: %w", err)
 	}
 	return NeedCategory{Doc: doc}, nil
+}
+
+// replyForExisting answers a file the user already has: AlreadySaved once it is
+// categorized, otherwise the category question again.
+func replyForExisting(doc Document) Reply {
+	if doc.Status == StatusSaved {
+		return AlreadySaved{Doc: doc}
+	}
+	return NeedCategory{Doc: doc}
 }
 
 // SaveDerived stores a file made from another document (a compressed copy, a

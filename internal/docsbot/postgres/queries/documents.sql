@@ -1,8 +1,11 @@
 -- name: InsertDocument :one
 -- A received file starts as pending with no category; the category and 'saved'
--- status are set once the user picks one (SaveDocumentCategory).
+-- status are set once the user picks one (SaveDocumentCategory). A file the user
+-- already has inserts nothing and returns no row, so a parallel send of the same
+-- file is not an error.
 insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, file_size, mime_type, media_group_id, page_count, image_width, image_height)
 values (@user_id, @status, @kind, @category, @title, @tg_file_id, @tg_file_unique_id, @file_size, @mime_type, @media_group_id, nullif(@page_count::integer, 0), nullif(@image_width::integer, 0), nullif(@image_height::integer, 0))
+on conflict (user_id, tg_file_unique_id) do nothing
 returning *;
 
 -- name: TitleExistsInCategory :one

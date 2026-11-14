@@ -10,6 +10,7 @@ import (
 // by docsbot/postgres.
 type Repo interface {
 	// CreateDocument stores a received file as pending (no category yet).
+	// ErrDuplicateFile if the user already has a document with this file.
 	CreateDocument(ctx context.Context, in IncomingFile) (Document, error)
 	// DocumentByFileUniqueID returns the user's document for this Telegram
 	// file, or ErrNotFound.

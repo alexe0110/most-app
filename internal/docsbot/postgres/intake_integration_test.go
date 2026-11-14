@@ -133,7 +133,7 @@ func TestDocuments_duplicateAfterDeleteCreatesNewDocument(t *testing.T) {
 	first, err := repo.CreateDocument(ctx, in)
 	require.NoError(t, err)
 	_, err = repo.CreateDocument(ctx, in)
-	require.Error(t, err, "unique(user_id, tg_file_unique_id) rejects a live duplicate")
+	require.ErrorIs(t, err, docsbot.ErrDuplicateFile, "unique(user_id, tg_file_unique_id) rejects a live duplicate")
 
 	_, err = repo.DeleteDocument(ctx, user, first.ID, false)
 	require.NoError(t, err)

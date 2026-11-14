@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
@@ -41,6 +42,9 @@ func (r *Repo) CreateDocument(ctx context.Context, in docsbot.IncomingFile) (doc
 		ImageWidth:     int32(in.Width),
 		ImageHeight:    int32(in.Height),
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return docsbot.Document{}, docsbot.ErrDuplicateFile // on conflict do nothing returned no row
+	}
 	if err != nil {
 		return docsbot.Document{}, fmt.Errorf("insert document: %w", err)
 	}
@@ -427,6 +431,15 @@ func ids(id docsbot.DocumentID, user docsbot.UserID) (docID, uid pgtype.UUID, er
 	}
 	uid, err = parseUUID(string(user))
 	return
+}
+
+// uniqueViolation is the SQLSTATE of a unique constraint violation.
+const uniqueViolation = "23505"
+
+// isUniqueViolation reports whether err is a unique constraint violation.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == uniqueViolation
 }
 
 // notFoundOr maps pgx.ErrNoRows to the domain ErrNotFound, else wraps with ctx.

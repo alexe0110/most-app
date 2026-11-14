@@ -481,6 +481,7 @@ func (q *Queries) InlineSearchDocuments(ctx context.Context, arg InlineSearchDoc
 const insertDocument = `-- name: InsertDocument :one
 insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, file_size, mime_type, media_group_id, page_count, image_width, image_height)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, nullif($11::integer, 0), nullif($12::integer, 0), nullif($13::integer, 0))
+on conflict (user_id, tg_file_unique_id) do nothing
 returning id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height, backup_reason
 `
 
@@ -501,7 +502,9 @@ type InsertDocumentParams struct {
 }
 
 // A received file starts as pending with no category; the category and 'saved'
-// status are set once the user picks one (SaveDocumentCategory).
+// status are set once the user picks one (SaveDocumentCategory). A file the user
+// already has inserts nothing and returns no row, so a parallel send of the same
+// file is not an error.
 func (q *Queries) InsertDocument(ctx context.Context, arg InsertDocumentParams) (Document, error) {
 	row := q.db.QueryRow(ctx, insertDocument,
 		arg.UserID,
