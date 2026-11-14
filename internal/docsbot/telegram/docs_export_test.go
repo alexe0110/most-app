@@ -198,3 +198,28 @@ func TestExport_spentButtonKeyboardIsClearedWithEmptyArray(t *testing.T) {
 	require.Contains(t, edits[0], `"inline_keyboard":[]`, "an empty array clears the keyboard")
 	require.NotContains(t, edits[0], `"inline_keyboard":null`, "Telegram rejects a null inline_keyboard")
 }
+
+func TestExport_doneTextAgreesWithTheCount(t *testing.T) {
+	tests := []struct {
+		n    int
+		want string
+	}{
+		{1, "Готово — прислал 1 документ."},
+		{2, "Готово — прислал 2 документа."},
+		{5, "Готово — прислал 5 документов."},
+		{11, "Готово — прислал 11 документов."},
+		{21, "Готово — прислал 21 документ."},
+		{22, "Готово — прислал 22 документа."},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprint(tt.n), func(t *testing.T) {
+			b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{}, telegram.WithExportPace(0, 0))
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+			seedExport(repo, docsbot.KindDocument, tt.n, "d", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+
+			b.ProcessUpdate(ctx, commandUpdate("export"))
+
+			require.Contains(t, sent.texts, tt.want)
+		})
+	}
+}

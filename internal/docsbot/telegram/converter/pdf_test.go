@@ -37,7 +37,37 @@ func TestConvert_photosToPDF(t *testing.T) {
 	require.True(t, strings.HasSuffix(doc.filename, ".pdf"))
 	require.True(t, bytes.HasPrefix(doc.data, []byte("%PDF")))
 	require.Contains(t, string(doc.data), "/Count 3", "one page per photo")
+	require.Equal(t, "Готово: 3 страницы.", doc.caption)
 	require.Empty(t, h.repo.Docs, "a result is not saved unless asked")
+}
+
+func TestConvert_photosToPDF_captionAgreesWithThePageCount(t *testing.T) {
+	tests := []struct {
+		photos int
+		want   string
+	}{
+		{1, "Готово: 1 страница."},
+		{2, "Готово: 2 страницы."},
+		{5, "Готово: 5 страниц."},
+		{11, "Готово: 11 страниц."},
+		{20, "Готово: 20 страниц."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			h := newConvHarness(t)
+			ctx := t.Context()
+
+			h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
+			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:pdf"))
+			for i := 1; i <= tt.photos; i++ {
+				h.bot.ProcessUpdate(ctx, photoUpdate(i))
+			}
+			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
+
+			require.Len(t, h.docs, 1)
+			require.Equal(t, tt.want, h.docs[0].caption)
+		})
+	}
 }
 
 // The 21st photo is refused with a clear text; the session stays alive and the
@@ -159,6 +189,7 @@ func TestConvertPDF_menuAndRotate(t *testing.T) {
 	_, _, inh, err := rc.PageDict(t.Context(), 1, false)
 	require.NoError(t, err)
 	require.Equal(t, 90, inh.Rotate)
+	require.Equal(t, "Готово: 3 страницы.", h.docs[0].caption)
 
 	// 💾 saves a new document next to the original.
 	tok := saveToken.FindStringSubmatch(h.docMarkups[0])
@@ -178,19 +209,23 @@ func TestConvertPDF_menuAndRotate(t *testing.T) {
 func TestConvertPDF_keepAndDropPages(t *testing.T) {
 	tests := []struct {
 		op, sel string
+		prompt  string
 		want    int
+		caption string
 	}{
-		{"keep", "1-2", 2},
-		{"drop", "1", 2},
+		{"keep", "1-2", "Какие страницы оставить? Например: 1-3, 5", 2, "Готово: 2 страницы."},
+		{"drop", "1", "Какие страницы убрать? Например: 1-3, 5", 2, "Готово: 2 страницы."},
+		{"keep", "2", "Какие страницы оставить? Например: 1-3, 5", 1, "Готово: 1 страница."},
+		{"drop", "2-3", "Какие страницы убрать? Например: 1-3, 5", 1, "Готово: 1 страница."},
 	}
 	for _, tt := range tests {
-		t.Run(tt.op, func(t *testing.T) {
+		t.Run(tt.op+" "+tt.sel, func(t *testing.T) {
 			h := newConvHarness(t)
 			src := seedPDF(t, h)
 			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":"+tt.op))
-			require.Contains(t, h.lastShown(), "Какие страницы")
+			require.Equal(t, tt.prompt, h.lastShown(), "keep and drop ask different questions")
 			h.bot.ProcessUpdate(ctx, convText("abc"))
 			require.Empty(t, h.docs)
 			require.Contains(t, h.lastShown(), "Не понял")
@@ -200,6 +235,7 @@ func TestConvertPDF_keepAndDropPages(t *testing.T) {
 
 			require.Len(t, h.docs, 1)
 			require.Equal(t, tt.want, pdfPages(t, h.docs[0].data))
+			require.Equal(t, tt.caption, h.docs[0].caption)
 			require.Len(t, h.repo.Docs, 1, "nothing saved without 💾")
 		})
 	}
@@ -235,6 +271,7 @@ func TestConvertPDF_merge(t *testing.T) {
 
 	require.Len(t, h.docs, 1)
 	require.Equal(t, 5, pdfPages(t, h.docs[0].data))
+	require.Equal(t, "Готово: 5 страниц.", h.docs[0].caption)
 	require.Equal(t, "Договор-изменён.pdf", h.docs[0].filename)
 }
 

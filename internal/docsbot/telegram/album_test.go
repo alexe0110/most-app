@@ -1,6 +1,7 @@
 package telegram_test
 
 import (
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -298,4 +299,50 @@ func TestAlbum_pickerDoubleTapOpensOneStatus(t *testing.T) {
 	require.Len(t, repo.Status.Msgs, 1, "one status message for the album")
 	require.Len(t, sent.edits, edits, "the batch is not redrawn by the second tap")
 	require.Len(t, repo.SavedFor(docsbottest.TestUserID), 2)
+}
+
+// The pending cap (20 files) keeps an album below the plural boundary of 21.
+func TestAlbum_textsAgreeWithTheCount(t *testing.T) {
+	tests := []struct {
+		n          int
+		wantImages string // the "one PDF or file by file" offer of an all-image album
+		wantFiles  string // the category picker of an album with a document in it
+		wantSaved  string // the summary after saving the album
+	}{
+		{2, "Альбом: 2 изображения. Что сделать?", "Выбери категорию для 2 файла:", "Сохранил 2 документа в «Чеки и гарантии»."},
+		{5, "Альбом: 5 изображений. Что сделать?", "Выбери категорию для 5 файлов:", "Сохранил 5 документов в «Чеки и гарантии»."},
+		{11, "Альбом: 11 изображений. Что сделать?", "Выбери категорию для 11 файлов:", "Сохранил 11 документов в «Чеки и гарантии»."},
+		{12, "Альбом: 12 изображений. Что сделать?", "Выбери категорию для 12 файлов:", "Сохранил 12 документов в «Чеки и гарантии»."},
+		{20, "Альбом: 20 изображений. Что сделать?", "Выбери категорию для 20 файлов:", "Сохранил 20 документов в «Чеки и гарантии»."},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprint(tt.n), func(t *testing.T) {
+			// Images only.
+			ft, send, sent, _ := albumBot(t, docsbottest.FakeDrive{})
+			for i := range tt.n {
+				send(albumPhoto("alb", fmt.Sprintf("p%d", i)))
+			}
+			ft.Fire()
+			require.Len(t, sent.texts, 1)
+			require.Equal(t, tt.wantImages, sent.texts[0])
+
+			// One document among the photos: no PDF offer, a plain category picker.
+			ft, send, sent, repo := albumBot(t, docsbottest.FakeDrive{})
+			for i := range tt.n - 1 {
+				send(albumPhoto("alb", fmt.Sprintf("p%d", i)))
+			}
+			send(albumDocument("alb", "d1", "scan.pdf"))
+			ft.Fire()
+			require.Len(t, sent.texts, 1)
+			require.Equal(t, tt.wantFiles, sent.texts[0])
+
+			var anchor docsbot.DocumentID
+			for id := range repo.Docs {
+				anchor = id
+				break
+			}
+			send(dataCallback("d:ga:" + string(anchor) + ":" + string(docsbot.CatReceipts)))
+			require.Contains(t, sent.edits, tt.wantSaved)
+		})
+	}
 }

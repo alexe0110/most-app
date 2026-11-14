@@ -314,3 +314,117 @@ func TestCard_noConvertRowForHEIC(t *testing.T) {
 	require.Len(t, sent.editMarkups, 1)
 	require.NotContains(t, sent.editMarkups[0], "conv:doc:")
 }
+
+func TestChangeCategory_pickerAndBack(t *testing.T) {
+	tests := []struct {
+		name     string
+		suffix   string // origin token the card was opened with
+		wantBack string // callback of the card's own "Назад", "" for none
+	}{
+		{"opened from a list", ":l:" + string(docsbot.CatPassport) + ":2", "d:lc:" + string(docsbot.CatPassport) + ":2"},
+		{"opened from a search", ":s", "d:sb"},
+		{"no origin", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, sent, repo := newBot(t)
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+			doc := seedPassport(repo, "Паспорт <РК> & Ко", "u1")
+			id := string(doc.ID)
+
+			b.ProcessUpdate(ctx, dataCallback("d:oc:"+id+tt.suffix))
+			card := sent.edits[len(sent.edits)-1]
+			b.ProcessUpdate(ctx, dataCallback("d:chc:"+id))
+
+			picker := sent.edits[len(sent.edits)-1]
+			require.Equal(t, "Новая категория для «Паспорт <РК> & Ко»:", picker, "the picker names the document")
+			require.Empty(t, sent.editModes[len(sent.editModes)-1], "plain text: the title needs no escaping")
+			pickerKB := sent.editMarkups[len(sent.editMarkups)-1]
+			for _, cat := range docsbot.AllCategories {
+				require.Contains(t, pickerKB, "d:sc:"+id+":"+string(cat))
+			}
+			require.Contains(t, pickerKB, "d:cb:"+id, "a way back")
+			require.Contains(t, pickerKB, "⬅️ Назад")
+
+			b.ProcessUpdate(ctx, dataCallback("d:cb:"+id))
+
+			require.Equal(t, card, sent.edits[len(sent.edits)-1], "the card comes back as it was")
+			require.Equal(t, "HTML", sent.editModes[len(sent.editModes)-1])
+			cardKB := sent.editMarkups[len(sent.editMarkups)-1]
+			require.Contains(t, cardKB, "d:chc:"+id)
+			require.NotContains(t, cardKB, "d:sc:", "the category buttons are gone")
+			if tt.wantBack != "" {
+				require.Contains(t, cardKB, tt.wantBack, "the card keeps where it was opened from")
+			}
+			require.Equal(t, docsbot.CatPassport, repo.Docs[doc.ID].Category, "going back changes nothing")
+			require.Empty(t, sent.texts, "everything is edited in place")
+		})
+	}
+}
+
+func TestChangeCategory_staleButtons(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		msg  func(*models.Update) *models.Update
+		want string // text of the last edit, "" for none
+	}{
+		{"picker for a deleted document", "d:chc:missing", nil, "Этого документа уже нет."},
+		{"back to a deleted document", "d:cb:missing", nil, "Этого документа уже нет."},
+		{"back without a document id", "d:cb", nil, ""},
+		{"picker without a document id", "d:chc", nil, ""},
+		{"back on a message Telegram no longer gives", "d:cb:missing", inaccessible, ""},
+		{"picker on a message Telegram no longer gives", "d:chc:missing", inaccessible, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, sent, _ := newBot(t)
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+			u := dataCallback(tt.data)
+			if tt.msg != nil {
+				u = tt.msg(u)
+			}
+
+			b.ProcessUpdate(ctx, u)
+
+			if tt.want == "" {
+				require.Empty(t, sent.edits)
+				require.Empty(t, sent.texts)
+				return
+			}
+			require.Equal(t, tt.want, sent.edits[len(sent.edits)-1])
+			require.Contains(t, sent.editMarkups[len(sent.editMarkups)-1], "Мои документы")
+		})
+	}
+}
+
+func TestChangeCategory_backOnLiveStatusMessageKeepsStatus(t *testing.T) {
+	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{IsConnected: true, ExistsRes: true})
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	id := seedPending(repo, 1)[0]
+	pick(ctx, b, id, 11)
+	b.ProcessUpdate(ctx, dataCallbackMsg(11, "d:chc:"+string(id)))
+
+	b.ProcessUpdate(ctx, dataCallbackMsg(11, "d:cb:"+string(id)))
+
+	require.Contains(t, sent.edits[len(sent.edits)-1], "Загружаю на Google Диск", "the live upload card is restored, not a plain card")
+}
+
+func TestChangeCategory_anotherUsersDocumentIsGone(t *testing.T) {
+	for _, data := range []string{"d:chc:", "d:cb:"} {
+		t.Run(data, func(t *testing.T) {
+			b, sent, repo := newBot(t)
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+			foreign := repo.Seed(docsbot.Document{
+				UserID: "22222222-2222-2222-2222-222222222222", Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+				Category: docsbot.CatPassport, Title: "Чужой паспорт", TgFileID: "f", TgFileUniqueID: "u",
+			})
+
+			b.ProcessUpdate(ctx, dataCallback(data+string(foreign.ID)))
+
+			require.Equal(t, "Этого документа уже нет.", sent.edits[len(sent.edits)-1])
+			require.NotContains(t, strings.Join(sent.snapshot(&sent.edits), "\n"), "Чужой паспорт")
+			require.Equal(t, docsbot.CatPassport, repo.Docs[foreign.ID].Category)
+		})
+	}
+}

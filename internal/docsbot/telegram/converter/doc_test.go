@@ -100,6 +100,7 @@ func TestConvertDoc_cardCompressThenSave(t *testing.T) {
 	tok := compressFromMenu(t, h, src.ID)
 
 	require.Equal(t, "Паспорт-сжатый.jpg", h.docs[0].filename)
+	require.Regexp(t, `^Готово: .+ \(было .+\)\.$`, h.docs[0].caption, "a compressed result says how much smaller it got")
 	require.Len(t, h.repo.Docs, 1, "nothing is saved before the tap")
 
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
@@ -143,6 +144,22 @@ func TestConvertDoc_pdfFromCard(t *testing.T) {
 	require.Len(t, h.docs, 1)
 	require.Equal(t, "Паспорт-PDF.pdf", h.docs[0].filename)
 	require.True(t, strings.HasPrefix(string(h.docs[0].data), "%PDF"))
+	require.Equal(t, "Готово: 1 страница.", h.docs[0].caption)
+}
+
+func TestConvertDoc_webpToJPGHasNoCaption(t *testing.T) {
+	h := newConvHarness(t)
+	h.serve("webp-src", tinyWebP(t))
+	src := h.repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "image/webp",
+		Category: docsbot.CatOther, Title: "Скан.webp", TgFileID: "webp-src", TgFileUniqueID: "webp-uniq",
+	})
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":jpg"))
+
+	require.Len(t, h.docs, 1)
+	require.Empty(t, h.docs[0].caption, "only compressed images and PDFs get a caption")
 }
 
 func TestConvertDoc_pendingSourceSavedInOther(t *testing.T) {
