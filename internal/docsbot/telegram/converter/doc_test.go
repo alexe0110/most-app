@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -16,24 +17,24 @@ func TestConvertQA_saveAfterSourceDeleted(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := compressFromMenu(t, h, src.ID)
-	delete(h.repo.docs, src.ID)
+	delete(h.repo.Docs, src.ID)
 
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok))
 
 	require.Contains(t, h.lastText(), "уже нет")
-	require.Empty(t, h.repo.docs, "nothing was created")
+	require.Empty(t, h.repo.Docs, "nothing was created")
 }
 
 func TestConvertQA_unknownOrGarbageTokens(t *testing.T) {
 	h := newConvHarness(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	for _, data := range []string{"conv:save:", "conv:save:deadbeef", "conv:skip:nope", "conv:alb:zzz"} {
 		h.bot.ProcessUpdate(ctx, callbackUpdate(data))
 	}
 
-	require.Empty(t, h.repo.docs)
+	require.Empty(t, h.repo.Docs)
 	require.Empty(t, h.docs)
 }
 
@@ -42,37 +43,37 @@ func TestConvertQA_saveHitsPendingLimit(t *testing.T) {
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := compressFromMenu(t, h, src.ID)
 	for i := 0; i < 20; i++ {
-		h.repo.seed(docsbot.Document{
-			UserID: testUserID, Status: docsbot.StatusPending, Kind: docsbot.KindPhoto,
+		h.repo.Seed(docsbot.Document{
+			UserID: docsbottest.TestUserID, Status: docsbot.StatusPending, Kind: docsbot.KindPhoto,
 			Title: "p", TgFileID: fmt.Sprintf("p%d", i), TgFileUniqueID: fmt.Sprintf("pu%d", i),
 		})
 	}
-	before := len(h.repo.docs)
+	before := len(h.repo.Docs)
 
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok))
 
-	require.Len(t, h.repo.docs, before, "nothing added past the limit")
+	require.Len(t, h.repo.Docs, before, "nothing added past the limit")
 	require.Contains(t, h.lastText(), "категорию")
 }
 
 func TestConvertQA_quickOnMalformedData(t *testing.T) {
 	h := newConvHarness(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	for _, data := range []string{"conv:q:", "conv:q:abc", "conv:q::c1", "conv:doc:", "conv:q:abc:zzz"} {
 		h.bot.ProcessUpdate(ctx, callbackUpdate(data))
 	}
 	require.Empty(t, h.docs)
-	require.Empty(t, h.repo.docs)
+	require.Empty(t, h.repo.Docs)
 }
 
 var saveToken = regexp.MustCompile(`conv:save:([0-9a-f]+)`)
 
 // seedSource stores the photo the converter downloads in these tests.
 func seedSource(h *convHarness, status docsbot.Status) docsbot.Document {
-	return h.repo.seed(docsbot.Document{
-		UserID: testUserID, Status: status, Kind: docsbot.KindPhoto, Category: docsbot.CatPassport,
+	return h.repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: status, Kind: docsbot.KindPhoto, Category: docsbot.CatPassport,
 		Title: "Паспорт", TgFileID: "src", TgFileUniqueID: "src-uniq",
 	})
 }
@@ -80,7 +81,7 @@ func seedSource(h *convHarness, status docsbot.Status) docsbot.Document {
 // compressFromMenu taps 🛠 and 🗜 1 МБ on the document and returns the save token.
 func compressFromMenu(t *testing.T, h *convHarness, id docsbot.DocumentID) string {
 	t.Helper()
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(id)))
 	require.Contains(t, h.lastText(), "Что сделать")
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(id)+":c1"))
@@ -97,15 +98,15 @@ func TestConvertDoc_cardCompressThenSave(t *testing.T) {
 	tok := compressFromMenu(t, h, src.ID)
 
 	require.Equal(t, "Паспорт-сжатый.jpg", h.docs[0].filename)
-	require.Len(t, h.repo.docs, 1, "nothing is saved before the tap")
+	require.Len(t, h.repo.Docs, 1, "nothing is saved before the tap")
 
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok)) // double tap
 
-	require.Len(t, h.repo.docs, 2, "one new document, however many taps")
+	require.Len(t, h.repo.Docs, 2, "one new document, however many taps")
 	var got docsbot.Document
-	for id, d := range h.repo.docs {
+	for id, d := range h.repo.Docs {
 		if id != src.ID {
 			got = d
 		}
@@ -114,7 +115,7 @@ func TestConvertDoc_cardCompressThenSave(t *testing.T) {
 	require.Equal(t, docsbot.CatPassport, got.Category)
 	require.Equal(t, docsbot.StatusSaved, got.Status)
 	require.Equal(t, "res-uniq-0", got.TgFileUniqueID)
-	require.Equal(t, src, h.repo.docs[src.ID], "the original is untouched")
+	require.Equal(t, src, h.repo.Docs[src.ID], "the original is untouched")
 }
 
 func TestConvertDoc_skipSavesNothing(t *testing.T) {
@@ -122,18 +123,18 @@ func TestConvertDoc_skipSavesNothing(t *testing.T) {
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := compressFromMenu(t, h, src.ID)
 
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:skip:"+tok))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok)) // the choice is gone
 
-	require.Len(t, h.repo.docs, 1)
+	require.Len(t, h.repo.Docs, 1)
 	require.Equal(t, 1, h.edits, "buttons removed once")
 }
 
 func TestConvertDoc_pdfFromCard(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":pdf"))
 
@@ -147,11 +148,11 @@ func TestConvertDoc_pendingSourceSavedInOther(t *testing.T) {
 	src := seedSource(h, docsbot.StatusPending)
 	tok := compressFromMenu(t, h, src.ID)
 
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok))
 
-	require.Len(t, h.repo.docs, 2)
-	for id, d := range h.repo.docs {
+	require.Len(t, h.repo.Docs, 2)
+	for id, d := range h.repo.Docs {
 		if id != src.ID {
 			require.Equal(t, docsbot.StatusSaved, d.Status, "no category question")
 			require.Equal(t, docsbot.CatOther, d.Category)
@@ -162,11 +163,11 @@ func TestConvertDoc_pendingSourceSavedInOther(t *testing.T) {
 
 func TestConvertDoc_foreignDocumentRefused(t *testing.T) {
 	h := newConvHarness(t)
-	other := h.repo.seed(docsbot.Document{
+	other := h.repo.Seed(docsbot.Document{
 		UserID: "someone-else", Status: docsbot.StatusSaved, Kind: docsbot.KindPhoto,
 		Category: docsbot.CatOther, Title: "Чужое", TgFileID: "x", TgFileUniqueID: "x",
 	})
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(other.ID)+":c1"))
 
@@ -176,11 +177,11 @@ func TestConvertDoc_foreignDocumentRefused(t *testing.T) {
 
 func TestConvertDoc_nonImageRefused(t *testing.T) {
 	h := newConvHarness(t)
-	pdf := h.repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "application/msword",
+	pdf := h.repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "application/msword",
 		Category: docsbot.CatOther, Title: "a.doc", TgFileID: "x", TgFileUniqueID: "x",
 	})
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(pdf.ID)+":pdf"))
 
@@ -189,7 +190,7 @@ func TestConvertDoc_nonImageRefused(t *testing.T) {
 
 func TestConvertDoc_menuCancelDeletesMenu(t *testing.T) {
 	h := newConvHarness(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:x"))
 
@@ -198,7 +199,7 @@ func TestConvertDoc_menuCancelDeletesMenu(t *testing.T) {
 
 func TestConvert_commandResultSavedOnlyOnTap(t *testing.T) {
 	h := newConvHarness(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
@@ -206,14 +207,14 @@ func TestConvert_commandResultSavedOnlyOnTap(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:limit2"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:fmtjpeg"))
 	require.Len(t, h.docs, 1)
-	require.Empty(t, h.repo.docs)
+	require.Empty(t, h.repo.Docs)
 
 	m := saveToken.FindStringSubmatch(h.docMarkups[0])
 	require.NotNil(t, m)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+m[1]))
 
-	require.Len(t, h.repo.docs, 1, "no source document: saved at once")
-	for _, d := range h.repo.docs {
+	require.Len(t, h.repo.Docs, 1, "no source document: saved at once")
+	for _, d := range h.repo.Docs {
 		require.Equal(t, docsbot.StatusSaved, d.Status)
 		require.Equal(t, docsbot.CatOther, d.Category)
 	}
@@ -223,8 +224,8 @@ func TestConvertDoc_strangerCannotSpendTheResult(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := compressFromMenu(t, h, src.ID)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	stored := len(h.repo.docs)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	stored := len(h.repo.Docs)
 
 	for _, data := range []string{"conv:save:", "conv:skip:", "conv:rp:", "conv:rpy:", "conv:rpn:"} {
 		u := callbackUpdate(data + tok)
@@ -232,9 +233,9 @@ func TestConvertDoc_strangerCannotSpendTheResult(t *testing.T) {
 		h.bot.ProcessUpdate(ctx, u)
 	}
 
-	require.Len(t, h.repo.docs, stored, "nothing was saved or replaced")
+	require.Len(t, h.repo.Docs, stored, "nothing was saved or replaced")
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok))
-	require.Len(t, h.repo.docs, stored+1, "the owner's token survived the strangers")
+	require.Len(t, h.repo.Docs, stored+1, "the owner's token survived the strangers")
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok))
-	require.Len(t, h.repo.docs, stored+1, "and acts once")
+	require.Len(t, h.repo.Docs, stored+1, "and acts once")
 }

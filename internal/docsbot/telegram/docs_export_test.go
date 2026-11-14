@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
@@ -50,9 +51,9 @@ func TestExport_rateLimitIsRetriedOnceAndSentIsCounted(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithExportPace(0, 0))
+			b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{}, telegram.WithExportPace(0, 0))
 			sent.mediaLimit, sent.mediaDown = tt.limited, tt.down
-			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 			seedExport(repo, docsbot.KindDocument, 3, "d", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
 			b.ProcessUpdate(ctx, commandUpdate("export"))
@@ -64,8 +65,8 @@ func TestExport_rateLimitIsRetriedOnceAndSentIsCounted(t *testing.T) {
 }
 
 func TestExport_buttonIsSpentAndASecondRunIsRefused(t *testing.T) {
-	b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithExportPace(time.Hour, time.Hour))
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{}, telegram.WithExportPace(time.Hour, time.Hour))
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -96,19 +97,19 @@ func TestExport_buttonIsSpentAndASecondRunIsRefused(t *testing.T) {
 }
 
 // seedExport stores n saved documents of one kind, oldest first.
-func seedExport(repo *fakeRepo, kind docsbot.Kind, n int, prefix string, base time.Time) {
+func seedExport(repo *docsbottest.FakeRepo, kind docsbot.Kind, n int, prefix string, base time.Time) {
 	for i := range n {
 		id := fmt.Sprintf("%s%d", prefix, i)
-		repo.seed(docsbot.Document{
-			UserID: testUserID, Status: docsbot.StatusSaved, Kind: kind, Category: docsbot.CatOther,
+		repo.Seed(docsbot.Document{
+			UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: kind, Category: docsbot.CatOther,
 			Title: "Док " + id, TgFileID: "file-" + id, TgFileUniqueID: id, CreatedAt: base.Add(time.Duration(i) * time.Minute),
 		})
 	}
 }
 
 func TestExport_sendsAlbumsByKind(t *testing.T) {
-	b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithExportPace(0, 0))
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{}, telegram.WithExportPace(0, 0))
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	seedExport(repo, docsbot.KindPhoto, 12, "p", base)                  // an album of 10, then an album of 2
 	seedExport(repo, docsbot.KindDocument, 1, "d", base.Add(time.Hour)) // a lone document
@@ -126,8 +127,8 @@ func TestExport_sendsAlbumsByKind(t *testing.T) {
 }
 
 func TestExport_documentAlbum(t *testing.T) {
-	b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithExportPace(0, 0))
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{}, telegram.WithExportPace(0, 0))
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	seedExport(repo, docsbot.KindDocument, 3, "d", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
 	b.ProcessUpdate(ctx, dataCallback("d:exp"))
@@ -139,7 +140,7 @@ func TestExport_documentAlbum(t *testing.T) {
 
 func TestExport_empty(t *testing.T) {
 	b, sent, _ := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	b.ProcessUpdate(ctx, commandUpdate("export"))
 
@@ -154,8 +155,8 @@ func TestExport_commandIsNotInTheMenu(t *testing.T) {
 }
 
 func TestExport_cancelStopsBetweenBatches(t *testing.T) {
-	b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithExportPace(time.Hour, time.Hour))
-	ctx, cancel := context.WithCancel(tg.ContextWithUserID(t.Context(), testUserID))
+	b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{}, telegram.WithExportPace(time.Hour, time.Hour))
+	ctx, cancel := context.WithCancel(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID))
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	seedExport(repo, docsbot.KindPhoto, 1, "p", base)
 	seedExport(repo, docsbot.KindDocument, 1, "d", base.Add(time.Hour))
@@ -173,8 +174,8 @@ func TestExport_exactlyTenDocumentsIsOneAlbumAndElevenSplits(t *testing.T) {
 		wantGroups int
 		wantFiles  int
 	}{{10, 1, 0}, {11, 1, 1}} {
-		b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithExportPace(0, 0))
-		ctx := tg.ContextWithUserID(t.Context(), testUserID)
+		b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{}, telegram.WithExportPace(0, 0))
+		ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 		seedExport(repo, docsbot.KindDocument, tt.n, "d", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
 		b.ProcessUpdate(ctx, commandUpdate("export"))
@@ -186,9 +187,9 @@ func TestExport_exactlyTenDocumentsIsOneAlbumAndElevenSplits(t *testing.T) {
 }
 
 func TestExport_spentButtonKeyboardIsClearedWithEmptyArray(t *testing.T) {
-	b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithExportPace(0, 0))
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "a"})
+	b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{}, telegram.WithExportPace(0, 0))
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	repo.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "a"})
 
 	b.ProcessUpdate(ctx, dataCallback("d:exp"))
 

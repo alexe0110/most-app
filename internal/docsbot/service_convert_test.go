@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 )
 
 func TestDerivedTitle(t *testing.T) {
@@ -43,7 +44,7 @@ func TestService_SaveDerived(t *testing.T) {
 	tests := []struct {
 		name      string
 		source    *docsbot.Document // nil: no source id
-		seedStats func(*fakeRepo)
+		seedStats func(*docsbottest.FakeRepo)
 		wantType  docsbot.Reply
 		wantTitle string
 		wantCat   docsbot.Category
@@ -72,20 +73,20 @@ func TestService_SaveDerived(t *testing.T) {
 			name:     "limit reply passes through",
 			source:   &docsbot.Document{Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "A", TgFileUniqueID: "u-src"},
 			wantType: docsbot.TooManyPending{},
-			seedStats: func(r *fakeRepo) {
+			seedStats: func(r *docsbottest.FakeRepo) {
 				seedMany(r, 20, docsbot.StatusPending, time.Now().Add(-48*time.Hour))
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := newFakeRepo()
-			svc, _ := edgeService(repo, fakeDrive{})
+			repo := docsbottest.NewFakeRepo()
+			svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 			var srcID docsbot.DocumentID
 			if tt.source != nil {
 				d := *tt.source
 				d.UserID = user
-				srcID = repo.seed(d).ID
+				srcID = repo.Seed(d).ID
 			}
 			if tt.seedStats != nil {
 				tt.seedStats(repo)
@@ -99,9 +100,9 @@ func TestService_SaveDerived(t *testing.T) {
 			case docsbot.Saved:
 				require.Equal(t, tt.wantTitle, r.Doc.Title)
 				require.Equal(t, tt.wantCat, r.Doc.Category)
-				require.Equal(t, docsbot.StatusSaved, repo.docs[r.Doc.ID].Status)
+				require.Equal(t, docsbot.StatusSaved, repo.Docs[r.Doc.ID].Status)
 				if tt.source != nil {
-					require.Equal(t, tt.source.Title, repo.docs[srcID].Title, "source untouched")
+					require.Equal(t, tt.source.Title, repo.Docs[srcID].Title, "source untouched")
 				}
 			case docsbot.NeedCategory:
 				require.Equal(t, tt.wantTitle, r.Doc.Title)
@@ -112,15 +113,15 @@ func TestService_SaveDerived(t *testing.T) {
 }
 
 func TestService_SaveDerived_unknownSource(t *testing.T) {
-	repo := newFakeRepo()
-	svc, _ := edgeService(repo, fakeDrive{})
-	other := repo.seed(docsbot.Document{UserID: stranger, Status: docsbot.StatusSaved, Category: docsbot.CatOther, TgFileUniqueID: "x"})
+	repo := docsbottest.NewFakeRepo()
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
+	other := repo.Seed(docsbot.Document{UserID: stranger, Status: docsbot.StatusSaved, Category: docsbot.CatOther, TgFileUniqueID: "x"})
 
 	for _, id := range []docsbot.DocumentID{"missing", other.ID} {
 		_, err := svc.SaveDerived(t.Context(), user, id, docsbot.IncomingFile{FileUniqueID: "u"}, " (PDF)")
 		require.ErrorIs(t, err, docsbot.ErrNotFound)
 	}
-	require.Len(t, repo.docs, 1, "nothing created")
+	require.Len(t, repo.Docs, 1, "nothing created")
 }
 
 func TestService_DiscardAlbum(t *testing.T) {
@@ -136,56 +137,56 @@ func TestService_DiscardAlbum(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := newFakeRepo()
-			svc, _ := edgeService(repo, fakeDrive{})
-			repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "alb", TgFileUniqueID: "a1"})
-			repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "alb", TgFileUniqueID: "a2"})
-			repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, MediaGroupID: "alb", TgFileUniqueID: "a3", Category: docsbot.CatOther})
-			repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "other", TgFileUniqueID: "b1"})
-			repo.seed(docsbot.Document{UserID: stranger, Status: docsbot.StatusPending, MediaGroupID: "alb", TgFileUniqueID: "c1"})
-			repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "d1"})
+			repo := docsbottest.NewFakeRepo()
+			svc, _ := edgeService(repo, docsbottest.FakeDrive{})
+			repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "alb", TgFileUniqueID: "a1"})
+			repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "alb", TgFileUniqueID: "a2"})
+			repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, MediaGroupID: "alb", TgFileUniqueID: "a3", Category: docsbot.CatOther})
+			repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "other", TgFileUniqueID: "b1"})
+			repo.Seed(docsbot.Document{UserID: stranger, Status: docsbot.StatusPending, MediaGroupID: "alb", TgFileUniqueID: "c1"})
+			repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "d1"})
 
 			n, err := svc.DiscardAlbum(t.Context(), user, tt.group)
 
 			require.NoError(t, err)
 			require.Equal(t, tt.wantN, n)
-			require.Len(t, repo.docs, tt.wantAfter)
+			require.Len(t, repo.Docs, tt.wantAfter)
 		})
 	}
 }
 
 func TestService_SaveDerived_failedSaveDropsTheCopy(t *testing.T) {
 	boom := errors.New("drive down")
-	repo := newFakeRepo()
-	svc, _ := edgeService(repo, fakeDrive{err: boom})
-	src := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "A", TgFileUniqueID: "u-src"})
+	repo := docsbottest.NewFakeRepo()
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{Err: boom})
+	src := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "A", TgFileUniqueID: "u-src"})
 
 	_, err := svc.SaveDerived(t.Context(), user, src.ID, docsbot.IncomingFile{FileUniqueID: "u-new", Title: "x"}, " (PDF)")
 
 	require.ErrorIs(t, err, boom)
-	require.Len(t, repo.docs, 1, "only the source remains")
+	require.Len(t, repo.Docs, 1, "only the source remains")
 }
 
 func TestService_SaveDerived_alreadySavedIsNotDeleted(t *testing.T) {
-	repo := newFakeRepo()
-	svc, _ := edgeService(repo, fakeDrive{})
-	src := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "A", TgFileUniqueID: "u-src"})
-	dup := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "B", TgFileUniqueID: "u-new"})
+	repo := docsbottest.NewFakeRepo()
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
+	src := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "A", TgFileUniqueID: "u-src"})
+	dup := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "B", TgFileUniqueID: "u-new"})
 
 	rep, err := svc.SaveDerived(t.Context(), user, src.ID, docsbot.IncomingFile{FileUniqueID: "u-new"}, " (PDF)")
 
 	require.NoError(t, err)
 	require.IsType(t, docsbot.AlreadySaved{}, rep)
-	require.Contains(t, repo.docs, dup.ID)
+	require.Contains(t, repo.Docs, dup.ID)
 }
 
 func TestService_SaveDerived_noSourceFailedSaveDropsTheCopy(t *testing.T) {
 	boom := errors.New("drive down")
-	repo := newFakeRepo()
-	svc, _ := edgeService(repo, fakeDrive{err: boom})
+	repo := docsbottest.NewFakeRepo()
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{Err: boom})
 
 	_, err := svc.SaveDerived(t.Context(), user, "", docsbot.IncomingFile{FileUniqueID: "u-new", Title: "x"}, " (PDF)")
 
 	require.ErrorIs(t, err, boom)
-	require.Empty(t, repo.docs, "the copy is not left pending")
+	require.Empty(t, repo.Docs, "the copy is not left pending")
 }

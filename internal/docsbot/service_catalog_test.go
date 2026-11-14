@@ -9,11 +9,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 )
 
 func TestService_Search_hugeAndOddQueries(t *testing.T) {
-	repo := newFakeRepo()
-	svc, _ := edgeService(repo, fakeDrive{})
+	repo := docsbottest.NewFakeRepo()
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 	for _, q := range []string{"%", "_", `\`, "😀😀", "ДОГОВОР"} {
 		found, err := svc.Search(t.Context(), user, q)
 		require.NoError(t, err, q)
@@ -23,7 +24,7 @@ func TestService_Search_hugeAndOddQueries(t *testing.T) {
 
 // searchSpy records the query that reaches the repository.
 type searchSpy struct {
-	*fakeRepo
+	*docsbottest.FakeRepo
 	calls int
 	query string
 }
@@ -31,7 +32,7 @@ type searchSpy struct {
 func (s *searchSpy) Search(ctx context.Context, user docsbot.UserID, q string, limit int) ([]docsbot.Document, error) {
 	s.calls++
 	s.query = q
-	return s.fakeRepo.Search(ctx, user, q, limit)
+	return s.FakeRepo.Search(ctx, user, q, limit)
 }
 
 func TestService_Search_normalizesQuery(t *testing.T) {
@@ -51,8 +52,8 @@ func TestService_Search_normalizesQuery(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spy := &searchSpy{fakeRepo: newFakeRepo()}
-			svc := newService(spy, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: spy.fakeRepo}, spy, newFakeStatus(spy.fakeRepo), &fakeSyncs{repo: spy.fakeRepo})
+			spy := &searchSpy{FakeRepo: docsbottest.NewFakeRepo()}
+			svc := docsbottest.NewService(spy, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: spy.FakeRepo}, spy, docsbottest.NewFakeStatus(spy.FakeRepo), &docsbottest.FakeSyncs{Repo: spy.FakeRepo})
 
 			found, err := svc.Search(t.Context(), user, tt.query)
 
@@ -69,12 +70,12 @@ func TestService_Search_normalizesQuery(t *testing.T) {
 }
 
 func TestService_Card_backedUpHasNoFolderLink(t *testing.T) {
-	repo := newFakeRepo()
-	repo.folders = map[docsbot.Category]string{docsbot.CatAuto: "folder-1"}
-	backed := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatAuto,
+	repo := docsbottest.NewFakeRepo()
+	repo.Folders = map[docsbot.Category]string{docsbot.CatAuto: "folder-1"}
+	backed := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatAuto,
 		BackupStatus: docsbot.BackupBackedUp, DriveFileID: "file-1"})
-	tgOnly := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatAuto})
-	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	tgOnly := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatAuto})
+	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
 	card, err := svc.Card(t.Context(), user, backed.ID)
 	require.NoError(t, err)
@@ -86,11 +87,11 @@ func TestService_Card_backedUpHasNoFolderLink(t *testing.T) {
 }
 
 func TestService_CategoryPage_paginates(t *testing.T) {
-	repo := newFakeRepo()
+	repo := docsbottest.NewFakeRepo()
 	for i := 0; i < 25; i++ {
-		repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatReceipts})
+		repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatReceipts})
 	}
-	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
 	page, err := svc.CategoryPage(t.Context(), user, docsbot.CatReceipts, 2)
 	require.NoError(t, err)
@@ -107,10 +108,10 @@ func TestService_CategoryPage_paginates(t *testing.T) {
 }
 
 func TestService_Search(t *testing.T) {
-	repo := newFakeRepo()
-	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "Паспорт РК"})
-	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "Договор аренды"})
-	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	repo := docsbottest.NewFakeRepo()
+	repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "Паспорт РК"})
+	repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "Договор аренды"})
+	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
 	found, err := svc.Search(t.Context(), user, "паспорт")
 	require.NoError(t, err)
@@ -130,10 +131,10 @@ func TestService_folderLinks(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := newFakeRepo()
-			repo.folders = tt.folders
-			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatReceipts})
-			svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+			repo := docsbottest.NewFakeRepo()
+			repo.Folders = tt.folders
+			doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatReceipts})
+			svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
 			card, err := svc.Card(t.Context(), user, doc.ID)
 			require.NoError(t, err)
@@ -157,9 +158,9 @@ func (f failingFolders) CategoryFolderID(context.Context, docsbot.UserID, docsbo
 
 func TestService_folderLinks_error(t *testing.T) {
 	boom := errors.New("boom")
-	repo := newFakeRepo()
-	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatReceipts})
-	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, failingFolders{Folders: repo, err: boom}, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	repo := docsbottest.NewFakeRepo()
+	doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatReceipts})
+	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, failingFolders{Folders: repo, err: boom}, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
 	_, err := svc.Card(t.Context(), user, doc.ID)
 	require.ErrorIs(t, err, boom)
@@ -169,10 +170,10 @@ func TestService_folderLinks_error(t *testing.T) {
 }
 
 func TestService_Card_pendingNoFolder(t *testing.T) {
-	repo := newFakeRepo()
-	repo.folders = map[docsbot.Category]string{docsbot.CatReceipts: "folder-1"}
-	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: "x", TgFileUniqueID: "u"})
-	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	repo := docsbottest.NewFakeRepo()
+	repo.Folders = map[docsbot.Category]string{docsbot.CatReceipts: "folder-1"}
+	doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: "x", TgFileUniqueID: "u"})
+	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
 	card, err := svc.Card(t.Context(), user, doc.ID)
 	require.NoError(t, err)

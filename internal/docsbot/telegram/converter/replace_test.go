@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -45,7 +46,7 @@ func TestConvertReplace_keyboard(t *testing.T) {
 
 func TestConvertReplace_commandResultKeyboardUnchanged(t *testing.T) {
 	h := newConvHarness(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
@@ -64,20 +65,20 @@ func TestConvertReplace_askThenConfirm(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := resultFromCard(t, h, src.ID)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rp:"+tok))
 
 	require.Contains(t, lastCaption(h), "Исходный файл будет заменён")
 	require.Contains(t, lastCaption(h), "conv:rpy:"+tok)
 	require.Contains(t, lastCaption(h), "conv:rpn:"+tok)
-	require.Equal(t, src, h.repo.docs[src.ID], "asking changes nothing")
+	require.Equal(t, src, h.repo.Docs[src.ID], "asking changes nothing")
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpy:"+tok))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpy:"+tok)) // double tap
 
-	got := h.repo.docs[src.ID]
-	require.Len(t, h.repo.docs, 1, "no new document")
+	got := h.repo.Docs[src.ID]
+	require.Len(t, h.repo.Docs, 1, "no new document")
 	require.Equal(t, "res-0", got.TgFileID)
 	require.Equal(t, "res-uniq-0", got.TgFileUniqueID)
 	require.Equal(t, src.Title, got.Title)
@@ -90,18 +91,18 @@ func TestConvertReplace_cancelRestoresButtons(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := resultFromCard(t, h, src.ID)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rp:"+tok))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpn:"+tok))
 
 	require.Contains(t, lastCaption(h), "Заменить оригинал")
 	require.Contains(t, lastCaption(h), "conv:save:"+tok)
-	require.Equal(t, src, h.repo.docs[src.ID])
+	require.Equal(t, src, h.repo.Docs[src.ID])
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rp:"+tok)) // the choice is still alive
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpy:"+tok))
-	require.Equal(t, "res-uniq-0", h.repo.docs[src.ID].TgFileUniqueID)
+	require.Equal(t, "res-uniq-0", h.repo.Docs[src.ID].TgFileUniqueID)
 }
 
 func TestConvertReplace_staleToken(t *testing.T) {
@@ -110,12 +111,12 @@ func TestConvertReplace_staleToken(t *testing.T) {
 			h := newConvHarness(t)
 			src := seedSource(h, docsbot.StatusSaved)
 			resultFromCard(t, h, src.ID)
-			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 			h.bot.ProcessUpdate(ctx, callbackUpdate(data+"deadbeef"))
 
 			require.Contains(t, h.lastText(), "Эта кнопка устарела")
-			require.Equal(t, src, h.repo.docs[src.ID])
+			require.Equal(t, src, h.repo.Docs[src.ID])
 		})
 	}
 }
@@ -124,13 +125,13 @@ func TestConvertReplace_afterSkipIsStale(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := resultFromCard(t, h, src.ID)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:skip:"+tok))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpy:"+tok))
 
 	require.Contains(t, h.lastText(), "Эта кнопка устарела")
-	require.Equal(t, src, h.repo.docs[src.ID])
+	require.Equal(t, src, h.repo.Docs[src.ID])
 }
 
 func TestConvertReplace_refusals(t *testing.T) {
@@ -152,22 +153,22 @@ func TestConvertReplace_refusals(t *testing.T) {
 			h := newConvHarness(t)
 			src := seedSource(h, docsbot.StatusSaved)
 			tok := resultFromCard(t, h, src.ID)
-			d := h.repo.docs[src.ID]
+			d := h.repo.Docs[src.ID]
 			tt.mod(&d)
-			h.repo.docs[src.ID] = d
-			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			h.repo.Docs[src.ID] = d
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpy:"+tok))
 
 			require.Contains(t, h.lastText(), tt.want)
-			require.Equal(t, d, h.repo.docs[src.ID], "nothing changed")
+			require.Equal(t, d, h.repo.Docs[src.ID], "nothing changed")
 			require.Contains(t, lastCaption(h), "conv:save:"+tok, "buttons are back")
 
 			// The user can retry once the document is free again.
 			d.BackupStatus, d.SyncStatus = docsbot.BackupBackedUp, docsbot.SyncOK
-			h.repo.docs[src.ID] = d
+			h.repo.Docs[src.ID] = d
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpy:"+tok))
-			require.Equal(t, "res-uniq-0", h.repo.docs[src.ID].TgFileUniqueID)
+			require.Equal(t, "res-uniq-0", h.repo.Docs[src.ID].TgFileUniqueID)
 		})
 	}
 }
@@ -176,15 +177,15 @@ func TestConvertReplace_duplicateFileShowsExistingCard(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := resultFromCard(t, h, src.ID)
-	h.repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Category: docsbot.CatOther,
+	h.repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Category: docsbot.CatOther,
 		Title: "Уже есть", TgFileID: "x", TgFileUniqueID: "res-uniq-0",
 	})
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpy:"+tok))
 
-	require.Equal(t, src, h.repo.docs[src.ID])
+	require.Equal(t, src, h.repo.Docs[src.ID])
 	require.Contains(t, h.allTexts(), "Уже есть")
 }
 
@@ -192,8 +193,8 @@ func TestConvertReplace_goneDocument(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := resultFromCard(t, h, src.ID)
-	delete(h.repo.docs, src.ID)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	delete(h.repo.Docs, src.ID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpy:"+tok))
 

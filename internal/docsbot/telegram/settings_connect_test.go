@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
@@ -34,14 +35,14 @@ func TestNotifyConnected_settingsMessage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			msgs := telegram.NewSettingsMessages()
 			if tt.openFrom {
-				b, _, _ := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithSettingsMessages(msgs))
-				b.ProcessUpdate(tg.ContextWithUserID(t.Context(), testUserID), commandUpdate("settings"))
+				b, _, _ := newBotOpts(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{}, telegram.WithSettingsMessages(msgs))
+				b.ProcessUpdate(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID), commandUpdate("settings"))
 			}
 			e := newNotifierEnv(t)
 			notify := telegram.NotifyConnected(e.bot, chatLookup{}, e.svc, slog.New(slog.DiscardHandler),
-				telegram.WithConnectSettings(msgs, e.svc, fakeAuth{}))
+				telegram.WithConnectSettings(msgs, e.svc, docsbottest.FakeAuth{}))
 
-			require.NoError(t, notify(t.Context(), testUserID))
+			require.NoError(t, notify(t.Context(), docsbottest.TestUserID))
 
 			sends := e.api.callsOf("sendMessage")
 			require.Len(t, sends, 1)
@@ -62,8 +63,8 @@ func TestNotifyConnected_settingsMessage(t *testing.T) {
 func TestNotifyConnected_settingsFailuresDoNotFailTheCallback(t *testing.T) {
 	remember := func(t *testing.T) *telegram.SettingsMessages {
 		msgs := telegram.NewSettingsMessages()
-		b, _, _ := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithSettingsMessages(msgs))
-		b.ProcessUpdate(tg.ContextWithUserID(t.Context(), testUserID), commandUpdate("settings"))
+		b, _, _ := newBotOpts(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{}, telegram.WithSettingsMessages(msgs))
+		b.ProcessUpdate(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID), commandUpdate("settings"))
 		return msgs
 	}
 
@@ -72,9 +73,9 @@ func TestNotifyConnected_settingsFailuresDoNotFailTheCallback(t *testing.T) {
 		e := newNotifierEnv(t)
 		e.api.editErr = "Bad Request: message to edit not found"
 		notify := telegram.NotifyConnected(e.bot, chatLookup{}, e.svc, slog.New(slog.DiscardHandler),
-			telegram.WithConnectSettings(msgs, e.svc, fakeAuth{}))
+			telegram.WithConnectSettings(msgs, e.svc, docsbottest.FakeAuth{}))
 
-		require.NoError(t, notify(t.Context(), testUserID))
+		require.NoError(t, notify(t.Context(), docsbottest.TestUserID))
 		require.Len(t, e.api.callsOf("editMessageText"), 1)
 	})
 
@@ -82,9 +83,9 @@ func TestNotifyConnected_settingsFailuresDoNotFailTheCallback(t *testing.T) {
 		msgs := remember(t)
 		e := newNotifierEnv(t)
 		notify := telegram.NotifyConnected(e.bot, chatLookup{}, e.svc, slog.New(slog.DiscardHandler),
-			telegram.WithConnectSettings(msgs, failingSettings{}, fakeAuth{}))
+			telegram.WithConnectSettings(msgs, failingSettings{}, docsbottest.FakeAuth{}))
 
-		require.NoError(t, notify(t.Context(), testUserID))
+		require.NoError(t, notify(t.Context(), docsbottest.TestUserID))
 		require.Empty(t, e.api.callsOf("editMessageText"))
 	})
 }

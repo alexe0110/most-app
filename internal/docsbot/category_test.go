@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 )
 
 func TestCategory_Label(t *testing.T) {
@@ -40,12 +41,12 @@ func TestParseCategory(t *testing.T) {
 }
 
 func TestService_Catalog_foldsRetiredSlugs(t *testing.T) {
-	repo := newFakeRepo()
-	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "a", Category: "contracts"})
-	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "b", Category: docsbot.CatOther})
-	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "c", Category: docsbot.CatWork})
-	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "d", Category: docsbot.CatPassport})
-	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	repo := docsbottest.NewFakeRepo()
+	repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "a", Category: "contracts"})
+	repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "b", Category: docsbot.CatOther})
+	repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "c", Category: docsbot.CatWork})
+	repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "d", Category: docsbot.CatPassport})
+	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
 	cat, err := svc.Catalog(t.Context(), user)
 	require.NoError(t, err)

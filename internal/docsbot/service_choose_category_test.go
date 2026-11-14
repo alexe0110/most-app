@@ -10,13 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 )
 
 func TestService_parallelChooseCategory(t *testing.T) {
 	t.Parallel()
-	repo := newFakeRepo()
-	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: "Скан"})
-	svc, uploads := edgeService(repo, fakeDrive{connected: true})
+	repo := docsbottest.NewFakeRepo()
+	doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: "Скан"})
+	svc, uploads := edgeService(repo, docsbottest.FakeDrive{IsConnected: true})
 
 	errs := runParallel(20, func(int) error {
 		_, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
@@ -26,11 +27,11 @@ func TestService_parallelChooseCategory(t *testing.T) {
 	for _, err := range errs {
 		require.NoError(t, err)
 	}
-	got := repo.docs[doc.ID]
+	got := repo.Docs[doc.ID]
 	require.Equal(t, docsbot.StatusSaved, got.Status)
 	require.Equal(t, docsbot.CatPassport, got.Category)
 	require.Equal(t, docsbot.BackupPending, got.BackupStatus)
-	require.NotEmpty(t, uploads.calls)
+	require.NotEmpty(t, uploads.Calls)
 }
 
 func TestService_defaultTitle_usesLocation(t *testing.T) {
@@ -45,12 +46,12 @@ func TestService_defaultTitle_usesLocation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := newFakeRepo()
-			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "u"})
+			repo := docsbottest.NewFakeRepo()
+			doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "u"})
 			opts := append([]docsbot.Option{
 				docsbot.WithClock(func() time.Time { return now }),
 			}, tt.opts...)
-			svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, opts...)
+			svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo}, opts...)
 
 			got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatMedical)
 			require.NoError(t, err)
@@ -62,48 +63,48 @@ func TestService_defaultTitle_usesLocation(t *testing.T) {
 // racingUploads runs beforeSave right before SaveChosen, to play a concurrent
 // request (parallel tap, purge job) that wins the race.
 type racingUploads struct {
-	*fakeUploads
+	*docsbottest.FakeUploads
 	beforeSave func()
 }
 
 func (r racingUploads) SaveChosen(ctx context.Context, c docsbot.SaveChoice) (bool, error) {
 	r.beforeSave()
-	return r.fakeUploads.SaveChosen(ctx, c)
+	return r.FakeUploads.SaveChosen(ctx, c)
 }
 
 func TestService_ChooseCategory_lostRace(t *testing.T) {
 	t.Run("parallel tap saved it first: flagged Already, nothing queued", func(t *testing.T) {
-		repo := newFakeRepo()
-		doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a"})
-		uploads := &fakeUploads{repo: repo}
-		racing := racingUploads{fakeUploads: uploads, beforeSave: func() {
-			d := repo.docs[doc.ID]
+		repo := docsbottest.NewFakeRepo()
+		doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a"})
+		uploads := &docsbottest.FakeUploads{Repo: repo}
+		racing := racingUploads{FakeUploads: uploads, beforeSave: func() {
+			d := repo.Docs[doc.ID]
 			d.Status, d.Category = docsbot.StatusSaved, docsbot.CatPassport
-			repo.docs[doc.ID] = d
+			repo.Docs[doc.ID] = d
 		}}
-		svc := newService(repo, fakeDrive{connected: true}, fakeFiles{}, racing, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+		svc := docsbottest.NewService(repo, docsbottest.FakeDrive{IsConnected: true}, docsbottest.FakeFiles{}, racing, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
 		got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatOther)
 
 		require.NoError(t, err)
 		require.True(t, got.Already)
 		require.Equal(t, docsbot.CatPassport, got.Doc.Category, "the winner's category stays")
-		require.Empty(t, uploads.calls)
+		require.Empty(t, uploads.Calls)
 	})
 	t.Run("purged meanwhile: ErrNotFound", func(t *testing.T) {
-		repo := newFakeRepo()
-		doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a"})
-		racing := racingUploads{fakeUploads: &fakeUploads{repo: repo}, beforeSave: func() { delete(repo.docs, doc.ID) }}
-		svc := newService(repo, fakeDrive{}, fakeFiles{}, racing, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+		repo := docsbottest.NewFakeRepo()
+		doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a"})
+		racing := racingUploads{FakeUploads: &docsbottest.FakeUploads{Repo: repo}, beforeSave: func() { delete(repo.Docs, doc.ID) }}
+		svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, racing, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
 		_, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatOther)
 
 		require.ErrorIs(t, err, docsbot.ErrNotFound)
 	})
 	t.Run("fresh save is not flagged", func(t *testing.T) {
-		repo := newFakeRepo()
-		doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a"})
-		svc, _ := edgeService(repo, fakeDrive{})
+		repo := docsbottest.NewFakeRepo()
+		doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a"})
+		svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 
 		got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatOther)
 
@@ -133,13 +134,13 @@ func TestService_ChooseCategory(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := newFakeRepo()
+			repo := docsbottest.NewFakeRepo()
 			for i := 0; i < tt.savedBefore; i++ {
-				repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther})
+				repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther})
 			}
-			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: "Паспорт", TgFileUniqueID: "u", FileSize: tt.size})
-			uploads := &fakeUploads{repo: repo}
-			svc := newService(repo, fakeDrive{connected: tt.connected}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+			doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: "Паспорт", TgFileUniqueID: "u", FileSize: tt.size})
+			uploads := &docsbottest.FakeUploads{Repo: repo}
+			svc := docsbottest.NewService(repo, docsbottest.FakeDrive{IsConnected: tt.connected}, docsbottest.FakeFiles{}, uploads, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
 			got, err := svc.ChooseCategory(t.Context(), user, doc.ID, tt.cat)
 			if tt.wantErr != nil {
@@ -148,15 +149,15 @@ func TestService_ChooseCategory(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Equal(t, tt.wantOffer, got.OfferDrive)
-			require.Equal(t, docsbot.StatusSaved, repo.docs[doc.ID].Status)
-			require.Equal(t, tt.cat, repo.docs[doc.ID].Category)
+			require.Equal(t, docsbot.StatusSaved, repo.Docs[doc.ID].Status)
+			require.Equal(t, tt.cat, repo.Docs[doc.ID].Category)
 			wantBackup := cmp.Or(tt.wantBackup, docsbot.BackupNone)
-			require.Equal(t, wantBackup, repo.docs[doc.ID].BackupStatus)
+			require.Equal(t, wantBackup, repo.Docs[doc.ID].BackupStatus)
 			require.Equal(t, wantBackup, got.Doc.BackupStatus, "the reply carries the stored state")
 			if wantBackup == docsbot.BackupPending {
-				require.Equal(t, []docsbot.DocumentID{doc.ID}, uploads.calls, "upload enqueued once")
+				require.Equal(t, []docsbot.DocumentID{doc.ID}, uploads.Calls, "upload enqueued once")
 			} else {
-				require.Empty(t, uploads.calls)
+				require.Empty(t, uploads.Calls)
 			}
 		})
 	}
@@ -191,32 +192,32 @@ func TestService_ChooseCategory_defaultTitle(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := newFakeRepo()
+			repo := docsbottest.NewFakeRepo()
 			for _, d := range tt.existing {
-				repo.seed(d)
+				repo.Seed(d)
 			}
-			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: tt.title, TgFileUniqueID: "u"})
-			svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
+			doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: tt.title, TgFileUniqueID: "u"})
+			svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo}, docsbot.WithClock(func() time.Time { return now }))
 
 			got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatMedical)
 			require.NoError(t, err)
 			require.Equal(t, tt.wantTitle, got.Doc.Title)
-			require.Equal(t, tt.wantTitle, repo.docs[doc.ID].Title)
+			require.Equal(t, tt.wantTitle, repo.Docs[doc.ID].Title)
 		})
 	}
 }
 
 func TestService_ChooseCategory_idempotent(t *testing.T) {
-	repo := newFakeRepo()
-	doc := repo.seed(docsbot.Document{
+	repo := docsbottest.NewFakeRepo()
+	doc := repo.Seed(docsbot.Document{
 		UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatPassport, TgFileUniqueID: "u",
 	})
-	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
 	got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatReceipts)
 	require.NoError(t, err)
 	require.False(t, got.OfferDrive)
-	require.Equal(t, docsbot.CatPassport, repo.docs[doc.ID].Category, "a second tap must not change the category")
+	require.Equal(t, docsbot.CatPassport, repo.Docs[doc.ID].Category, "a second tap must not change the category")
 }
 
 // A repeated tap on a saved document changes and queues nothing, whatever its
@@ -235,38 +236,38 @@ func TestService_ChooseCategory_alreadySavedQueuesNothing(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := newFakeRepo()
-			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther,
+			repo := docsbottest.NewFakeRepo()
+			doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther,
 				BackupStatus: tt.status, Title: "Паспорт", TgFileUniqueID: "u"})
-			uploads := &fakeUploads{repo: repo}
-			svc := newService(repo, fakeDrive{connected: tt.connected}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+			uploads := &docsbottest.FakeUploads{Repo: repo}
+			svc := docsbottest.NewService(repo, docsbottest.FakeDrive{IsConnected: tt.connected}, docsbottest.FakeFiles{}, uploads, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
 			got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
 
 			require.NoError(t, err)
 			require.True(t, got.Already)
-			require.Empty(t, uploads.calls)
-			require.Equal(t, tt.status, repo.docs[doc.ID].BackupStatus)
-			require.Equal(t, docsbot.CatOther, repo.docs[doc.ID].Category)
+			require.Empty(t, uploads.Calls)
+			require.Equal(t, tt.status, repo.Docs[doc.ID].BackupStatus)
+			require.Equal(t, docsbot.CatOther, repo.Docs[doc.ID].Category)
 		})
 	}
 }
 
 func TestService_ChooseCategory_enqueueFailureLeavesPendingThenRetry(t *testing.T) {
-	repo := newFakeRepo()
-	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: "Паспорт", TgFileUniqueID: "u"})
-	uploads := &fakeUploads{repo: repo, enqueueErr: errors.New("queue down")}
-	svc := newService(repo, fakeDrive{connected: true}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	repo := docsbottest.NewFakeRepo()
+	doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: "Паспорт", TgFileUniqueID: "u"})
+	uploads := &docsbottest.FakeUploads{Repo: repo, EnqueueErr: errors.New("queue down")}
+	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{IsConnected: true}, docsbottest.FakeFiles{}, uploads, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
 	_, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
 	require.Error(t, err, "the upload cannot be queued")
-	require.Equal(t, docsbot.StatusPending, repo.docs[doc.ID].Status, "nothing was saved")
+	require.Equal(t, docsbot.StatusPending, repo.Docs[doc.ID].Status, "nothing was saved")
 
-	uploads.enqueueErr = nil
+	uploads.EnqueueErr = nil
 	got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
 
 	require.NoError(t, err)
 	require.False(t, got.Already)
 	require.Equal(t, docsbot.BackupPending, got.Doc.BackupStatus)
-	require.Equal(t, []docsbot.DocumentID{doc.ID}, uploads.calls)
+	require.Equal(t, []docsbot.DocumentID{doc.ID}, uploads.Calls)
 }

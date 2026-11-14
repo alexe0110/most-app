@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -230,10 +231,10 @@ func TestConvert_inaccessibleMessageDoesNothing(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := compressFromMenu(t, h, src.ID)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	before := append([]string(nil), h.events...)
-	edits, docs, stored := h.edits, len(h.docs), len(h.repo.docs)
+	edits, docs, stored := h.edits, len(h.docs), len(h.repo.Docs)
 
 	for _, data := range []string{
 		"conv:doc:" + string(src.ID), "conv:q:" + string(src.ID) + ":c1", "conv:x",
@@ -247,13 +248,13 @@ func TestConvert_inaccessibleMessageDoesNothing(t *testing.T) {
 			require.Equal(t, before, h.events, "nothing is sent, edited or deleted")
 			require.Equal(t, edits, h.edits)
 			require.Len(t, h.docs, docs, "no conversion ran")
-			require.Len(t, h.repo.docs, stored, "nothing was saved")
+			require.Len(t, h.repo.Docs, stored, "nothing was saved")
 		})
 	}
 
 	// None of it burned the result: the token still saves from a real message.
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok))
-	require.Len(t, h.repo.docs, stored+1)
+	require.Len(t, h.repo.Docs, stored+1)
 }
 
 func TestConvert_unknownActionsAreStale(t *testing.T) {

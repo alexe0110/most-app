@@ -22,6 +22,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot/telegram"
+
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 )
 
 // sentDocument is a document the bot uploaded.
@@ -40,7 +42,7 @@ type convHarness struct {
 	// markupBodies are the reply markups of sent messages, in order.
 	markupBodies []string
 	docs         []sentDocument
-	repo         *fakeRepo
+	repo         *docsbottest.FakeRepo
 	// docMarkups are the reply markups of the sent documents, in order.
 	docMarkups []string
 	// edits counts editMessageReplyMarkup calls (buttons removed).
@@ -202,8 +204,8 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 
 	b, err := bot.New("123:ABC", bot.WithServerURL(ts.URL), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
 	require.NoError(t, err)
-	svc, auth, repo := fakeDeps()
-	telegram.Register(b, telegram.Deps{Log: slog.New(slog.DiscardHandler), Svc: svc, Auth: auth, Files: h}, opts...)
+	svc, repo := docsbottest.NewDeps(docsbottest.FakeDrive{})
+	telegram.Register(b, telegram.Deps{Log: slog.New(slog.DiscardHandler), Svc: svc, Auth: docsbottest.FakeAuth{}, Files: h}, opts...)
 
 	h.bot = b
 	h.repo = repo

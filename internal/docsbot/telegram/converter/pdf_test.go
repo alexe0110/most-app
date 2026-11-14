@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/platform/convert"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
@@ -33,7 +34,7 @@ func TestConvert_photosToPDF(t *testing.T) {
 	require.True(t, strings.HasSuffix(doc.filename, ".pdf"))
 	require.True(t, bytes.HasPrefix(doc.data, []byte("%PDF")))
 	require.Contains(t, string(doc.data), "/Count 3", "one page per photo")
-	require.Empty(t, h.repo.docs, "a result is not saved unless asked")
+	require.Empty(t, h.repo.Docs, "a result is not saved unless asked")
 }
 
 // The 21st photo is refused with a clear text; the session stays alive and the
@@ -120,8 +121,8 @@ func pdfPages(t *testing.T, data []byte) int {
 func seedPDF(t *testing.T, h *convHarness) docsbot.Document {
 	t.Helper()
 	h.serve("pdf-src", testPDF(t, 3))
-	return h.repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "application/pdf",
+	return h.repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "application/pdf",
 		Category: docsbot.CatCertificates, Title: "Договор.pdf", TgFileID: "pdf-src", TgFileUniqueID: "pdf-uniq",
 	})
 }
@@ -138,7 +139,7 @@ func pdfUpdate(fileID string, size int64) *models.Update {
 func TestConvertPDF_menuAndRotate(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(src.ID)))
 	for _, op := range []string{"rot", "keep", "drop", "merge"} {
@@ -160,8 +161,8 @@ func TestConvertPDF_menuAndRotate(t *testing.T) {
 	tok := saveToken.FindStringSubmatch(h.docMarkups[0])
 	require.NotNil(t, tok)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok[1]))
-	require.Len(t, h.repo.docs, 2)
-	for id, d := range h.repo.docs {
+	require.Len(t, h.repo.Docs, 2)
+	for id, d := range h.repo.Docs {
 		if id != src.ID {
 			require.Equal(t, "Договор (изменён)", d.Title)
 			require.Equal(t, 3, d.PageCount, "the converter counts the pages of its PDF result")
@@ -183,7 +184,7 @@ func TestConvertPDF_keepAndDropPages(t *testing.T) {
 		t.Run(tt.op, func(t *testing.T) {
 			h := newConvHarness(t)
 			src := seedPDF(t, h)
-			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":"+tt.op))
 			require.Contains(t, h.lastShown(), "Какие страницы")
@@ -196,7 +197,7 @@ func TestConvertPDF_keepAndDropPages(t *testing.T) {
 
 			require.Len(t, h.docs, 1)
 			require.Equal(t, tt.want, pdfPages(t, h.docs[0].data))
-			require.Len(t, h.repo.docs, 1, "nothing saved without 💾")
+			require.Len(t, h.repo.Docs, 1, "nothing saved without 💾")
 		})
 	}
 }
@@ -204,7 +205,7 @@ func TestConvertPDF_keepAndDropPages(t *testing.T) {
 func TestConvertPDF_dropAllPagesRefused(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":drop"))
 	h.bot.ProcessUpdate(ctx, convText("1-3"))
@@ -217,7 +218,7 @@ func TestConvertPDF_merge(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
 	h.serve("pdf-add", testPDF(t, 2))
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":merge"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
@@ -226,7 +227,7 @@ func TestConvertPDF_merge(t *testing.T) {
 
 	h.bot.ProcessUpdate(ctx, pdfUpdate("pdf-add", 1000))
 	require.Contains(t, h.lastShown(), "Всего файлов: 2")
-	require.Len(t, h.repo.docs, 1, "added PDFs are not stored")
+	require.Len(t, h.repo.Docs, 1, "added PDFs are not stored")
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
 
 	require.Len(t, h.docs, 1)
@@ -238,7 +239,7 @@ func TestConvertPDF_mergeRefusesOversizeAndGarbage(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
 	h.serve("junk", []byte("not a pdf"))
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":merge"))
 
 	h.bot.ProcessUpdate(ctx, pdfUpdate("big", convert.MaxPDFBytes))
@@ -251,7 +252,7 @@ func TestConvertPDF_mergeRefusesOversizeAndGarbage(t *testing.T) {
 
 func TestConvert_commandRefusesPDF(t *testing.T) {
 	h := newConvHarness(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
@@ -265,7 +266,7 @@ func TestConvertPDF_doubleDoneMergesOnce(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
 	h.serve("pdf-add", testPDF(t, 1))
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":merge"))
 	h.bot.ProcessUpdate(ctx, pdfUpdate("pdf-add", 100))
 
@@ -278,7 +279,7 @@ func TestConvertPDF_doubleDoneMergesOnce(t *testing.T) {
 func TestConvertPDF_secondRangeTextRunsOnce(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":keep"))
 
 	h.bot.ProcessUpdate(ctx, convText("1"))
@@ -290,7 +291,7 @@ func TestConvertPDF_secondRangeTextRunsOnce(t *testing.T) {
 func TestConvertPDF_mergeRefusesNonPDF(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":merge"))
 
 	h.bot.ProcessUpdate(ctx, photoUpdate(1))
@@ -304,7 +305,7 @@ func TestConvertPDF_mergeRefusesNonPDF(t *testing.T) {
 func TestConvertPDF_newOperationCancelsLiveSession(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":keep"))
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":merge"))
@@ -317,7 +318,7 @@ func TestConvert_resultWithoutStoredFileLosesButtons(t *testing.T) {
 	h := newConvHarness(t)
 	h.noDocument = true
 	src := seedPDF(t, h)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":rot"))
 

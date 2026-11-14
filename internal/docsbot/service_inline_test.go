@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 )
 
 func ids(docs []docsbot.Document) []string {
@@ -120,14 +121,14 @@ func TestService_Inline(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := newFakeRepo()
+			repo := docsbottest.NewFakeRepo()
 			for _, d := range tt.seed {
-				repo.seed(d)
+				repo.Seed(d)
 			}
 			if tt.off {
 				require.NoError(t, repo.SetInlineEnabled(t.Context(), user, false))
 			}
-			svc, _ := edgeService(repo, fakeDrive{})
+			svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 
 			res, err := svc.Inline(t.Context(), tt.user, tt.query, tt.offset)
 
@@ -144,11 +145,11 @@ func TestService_Inline(t *testing.T) {
 }
 
 func TestService_Inline_pagination(t *testing.T) {
-	repo := newFakeRepo()
+	repo := docsbottest.NewFakeRepo()
 	for i := range 45 {
-		repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: fmt.Sprintf("doc %02d", i), Category: docsbot.CatOther})
+		repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: fmt.Sprintf("doc %02d", i), Category: docsbot.CatOther})
 	}
-	svc, _ := edgeService(repo, fakeDrive{})
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 
 	p1, err := svc.Inline(t.Context(), user, "", "")
 	require.NoError(t, err)
@@ -168,11 +169,11 @@ func TestService_Inline_pagination(t *testing.T) {
 	require.Empty(t, p3.NextOffset, "last page has no next offset")
 
 	// Exactly one full page: no next page.
-	repo2 := newFakeRepo()
+	repo2 := docsbottest.NewFakeRepo()
 	for range 20 {
-		repo2.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "x", Category: docsbot.CatOther})
+		repo2.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "x", Category: docsbot.CatOther})
 	}
-	svc2, _ := edgeService(repo2, fakeDrive{})
+	svc2, _ := edgeService(repo2, docsbottest.FakeDrive{})
 	full, err := svc2.Inline(t.Context(), user, "x", "")
 	require.NoError(t, err)
 	require.Len(t, full.Docs, 20)
@@ -180,8 +181,8 @@ func TestService_Inline_pagination(t *testing.T) {
 }
 
 func TestService_Inline_unknownUserReadsNothing(t *testing.T) {
-	repo := newFakeRepo()
-	svc, _ := edgeService(repo, fakeDrive{})
+	repo := docsbottest.NewFakeRepo()
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 
 	res, err := svc.Inline(t.Context(), "", "q", "")
 
@@ -190,8 +191,8 @@ func TestService_Inline_unknownUserReadsNothing(t *testing.T) {
 }
 
 func TestService_SettingsInlineSwitch(t *testing.T) {
-	repo := newFakeRepo()
-	svc, _ := edgeService(repo, fakeDrive{})
+	repo := docsbottest.NewFakeRepo()
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 
 	view, err := svc.Settings(t.Context(), user)
 	require.NoError(t, err)
@@ -221,11 +222,11 @@ func TestService_Inline_queryNormalization(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := newFakeRepo()
+			repo := docsbottest.NewFakeRepo()
 			for _, d := range tt.seed {
-				repo.seed(d)
+				repo.Seed(d)
 			}
-			svc, _ := edgeService(repo, fakeDrive{})
+			svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 
 			res, err := svc.Inline(t.Context(), user, tt.query, "")
 
@@ -239,11 +240,11 @@ func TestService_Inline_queryNormalization(t *testing.T) {
 func TestService_Inline_boundaries(t *testing.T) {
 	for _, n := range []int{19, 20, 21} {
 		t.Run(fmt.Sprintf("%d docs", n), func(t *testing.T) {
-			repo := newFakeRepo()
+			repo := docsbottest.NewFakeRepo()
 			for range n {
-				repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "x", Category: docsbot.CatOther})
+				repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "x", Category: docsbot.CatOther})
 			}
-			svc, _ := edgeService(repo, fakeDrive{})
+			svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 
 			res, err := svc.Inline(t.Context(), user, "", "")
 
@@ -260,7 +261,7 @@ func TestService_Inline_boundaries(t *testing.T) {
 
 // errInlineRepo fails the chosen inline-related call.
 type errInlineRepo struct {
-	*fakeRepo
+	*docsbottest.FakeRepo
 	failEnabled, failSearch, failRecent, failCount bool
 	err                                            error
 }
@@ -269,28 +270,28 @@ func (r errInlineRepo) InlineEnabled(ctx context.Context, u docsbot.UserID) (boo
 	if r.failEnabled {
 		return false, r.err
 	}
-	return r.fakeRepo.InlineEnabled(ctx, u)
+	return r.FakeRepo.InlineEnabled(ctx, u)
 }
 
 func (r errInlineRepo) InlineSearch(ctx context.Context, u docsbot.UserID, q string, c []docsbot.Category, l, o int) ([]docsbot.Document, error) {
 	if r.failSearch {
 		return nil, r.err
 	}
-	return r.fakeRepo.InlineSearch(ctx, u, q, c, l, o)
+	return r.FakeRepo.InlineSearch(ctx, u, q, c, l, o)
 }
 
 func (r errInlineRepo) RecentSaved(ctx context.Context, u docsbot.UserID, l, o int) ([]docsbot.Document, error) {
 	if r.failRecent {
 		return nil, r.err
 	}
-	return r.fakeRepo.RecentSaved(ctx, u, l, o)
+	return r.FakeRepo.RecentSaved(ctx, u, l, o)
 }
 
 func (r errInlineRepo) CountSaved(ctx context.Context, u docsbot.UserID) (int, error) {
 	if r.failCount {
 		return 0, r.err
 	}
-	return r.fakeRepo.CountSaved(ctx, u)
+	return r.FakeRepo.CountSaved(ctx, u)
 }
 
 func TestService_Inline_repoErrors(t *testing.T) {
@@ -307,8 +308,8 @@ func TestService_Inline_repoErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.repo.fakeRepo, tt.repo.err = newFakeRepo(), boom // no documents: CountSaved is reached
-			svc := newService(tt.repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: tt.repo.fakeRepo}, tt.repo, newFakeStatus(tt.repo.fakeRepo), &fakeSyncs{repo: tt.repo.fakeRepo})
+			tt.repo.FakeRepo, tt.repo.err = docsbottest.NewFakeRepo(), boom // no documents: CountSaved is reached
+			svc := docsbottest.NewService(tt.repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: tt.repo.FakeRepo}, tt.repo, docsbottest.NewFakeStatus(tt.repo.FakeRepo), &docsbottest.FakeSyncs{Repo: tt.repo.FakeRepo})
 
 			_, err := svc.Inline(t.Context(), user, tt.query, "")
 

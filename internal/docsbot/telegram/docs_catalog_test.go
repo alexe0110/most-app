@@ -7,13 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 func TestSearch_blankQueryShowsHint(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Title: "Паспорт", Category: docsbot.CatPassport})
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	repo.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Title: "Паспорт", Category: docsbot.CatPassport})
 
 	b.ProcessUpdate(ctx, textUpdate("   "))
 
@@ -23,10 +24,10 @@ func TestSearch_blankQueryShowsHint(t *testing.T) {
 
 func TestSearch_findsSavedDocument(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
-	repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+	repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
 		Category: docsbot.CatPassport, Title: "Паспорт РК", TgFileID: "f", TgFileUniqueID: "u",
 	})
 	update := &models.Update{Message: &models.Message{
@@ -41,9 +42,9 @@ func TestSearch_findsSavedDocument(t *testing.T) {
 
 func TestSearchBack_rerunsLastSearch(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
 		Category: docsbot.CatPassport, Title: "Паспорт РК", TgFileID: "f", TgFileUniqueID: "u",
 	})
 	b.ProcessUpdate(ctx, textUpdate("паспорт"))
@@ -58,7 +59,7 @@ func TestSearchBack_rerunsLastSearch(t *testing.T) {
 
 func TestSearchBack_withoutQueryFallsBackToCatalog(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	seedPassport(repo, "Паспорт", "u1")
 
 	b.ProcessUpdate(ctx, dataCallback("d:sb"))

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -23,16 +24,16 @@ func TestSetCategory_backedUpCard(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: tt.connected})
-			ctx := tg.ContextWithUserID(t.Context(), testUserID)
-			doc := repo.seed(docsbot.Document{
-				UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther,
+			b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{IsConnected: tt.connected, ExistsRes: true})
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+			doc := repo.Seed(docsbot.Document{
+				UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther,
 				BackupStatus: docsbot.BackupBackedUp, DriveFileID: "file-1", Title: "a",
 			})
 
 			b.ProcessUpdate(ctx, dataCallback("d:sc:"+string(doc.ID)+":auto"))
 
-			require.Equal(t, docsbot.CatAuto, repo.docs[doc.ID].Category)
+			require.Equal(t, docsbot.CatAuto, repo.Docs[doc.ID].Category)
 			require.True(t, has(sent.edits, tt.want), "edits %q", sent.edits)
 			require.False(t, has(sent.edits, "прежней папке") && tt.connected, "edits %q", sent.edits)
 		})
@@ -40,11 +41,11 @@ func TestSetCategory_backedUpCard(t *testing.T) {
 }
 
 func TestOpenCard_backedUpShowsFileButNoFolder(t *testing.T) {
-	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: true})
-	repo.folders = map[docsbot.Category]string{docsbot.CatAuto: "folder-1"}
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	doc := repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatAuto,
+	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{IsConnected: true, ExistsRes: true})
+	repo.Folders = map[docsbot.Category]string{docsbot.CatAuto: "folder-1"}
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	doc := repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Category: docsbot.CatAuto,
 		BackupStatus: docsbot.BackupBackedUp, DriveFileID: "file-1", Title: "a",
 	})
 
@@ -66,9 +67,9 @@ func TestOpenCard_editsMessageWithBack(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b, sent, repo := newBot(t)
-			ctx := tg.ContextWithUserID(t.Context(), testUserID)
-			doc := repo.seed(docsbot.Document{
-				UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+			doc := repo.Seed(docsbot.Document{
+				UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
 				Category: docsbot.CatPassport, Title: "Паспорт РК", TgFileID: "f", TgFileUniqueID: "u",
 			})
 
@@ -85,7 +86,7 @@ func TestOpenCard_editsMessageWithBack(t *testing.T) {
 
 func TestOpenCard_unknownDocumentIsGone(t *testing.T) {
 	b, sent, _ := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	b.ProcessUpdate(ctx, dataCallback("d:oc:missing:s"))
 
@@ -95,9 +96,9 @@ func TestOpenCard_unknownDocumentIsGone(t *testing.T) {
 
 func TestSetCategory_editsCardInPlace(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	doc := repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	doc := repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
 		Category: docsbot.CatPassport, Title: "Паспорт РК", TgFileID: "f", TgFileUniqueID: "u",
 	})
 	b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(doc.ID)+":l:"+string(docsbot.CatPassport)+":1"))
@@ -114,10 +115,10 @@ func TestSetCategory_editsCardInPlace(t *testing.T) {
 
 func TestDeleteYes_returnsToOrigin(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	seed := func(title, uid string) docsbot.Document {
-		return repo.seed(docsbot.Document{
-			UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+		return repo.Seed(docsbot.Document{
+			UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
 			Category: docsbot.CatPassport, Title: title, TgFileID: uid, TgFileUniqueID: uid,
 		})
 	}
@@ -140,9 +141,9 @@ func TestDeleteYes_returnsToOrigin(t *testing.T) {
 
 func TestDeleteYes_withoutOriginClearsKeyboard(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	doc := repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	doc := repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
 		Category: docsbot.CatPassport, Title: "Паспорт РК", TgFileID: "f", TgFileUniqueID: "u",
 	})
 
@@ -161,7 +162,7 @@ func TestDeleteYes_withoutOriginClearsKeyboard(t *testing.T) {
 
 func TestDeleteYes_fromSearchReturnsToSearch(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	keep := seedPassport(repo, "Паспорт один", "u1")
 	gone := seedPassport(repo, "Паспорт два", "u2")
 	b.ProcessUpdate(ctx, textUpdate("паспорт"))
@@ -170,13 +171,13 @@ func TestDeleteYes_fromSearchReturnsToSearch(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallback("d:dy:"+string(gone.ID)))
 
 	require.Equal(t, "Нашёл (1):", sent.edits[len(sent.edits)-1])
-	require.NotContains(t, repo.docs, gone.ID)
-	require.Contains(t, repo.docs, keep.ID)
+	require.NotContains(t, repo.Docs, gone.ID)
+	require.Contains(t, repo.Docs, keep.ID)
 }
 
 func TestSend_sendsFileWithCaptionAndStaleIsGone(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	doc := seedPassport(repo, "Паспорт РК", "u1")
 
 	b.ProcessUpdate(ctx, dataCallback("d:snd:"+string(doc.ID)))
@@ -188,7 +189,7 @@ func TestSend_sendsFileWithCaptionAndStaleIsGone(t *testing.T) {
 
 func TestDeleteNo_restoresCardAndStaleIsGone(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	doc := seedPassport(repo, "Паспорт РК", "u1")
 
 	b.ProcessUpdate(ctx, dataCallback("d:dn:"+string(doc.ID)))
@@ -211,10 +212,10 @@ func TestOpenCard_detectsFileDeletedInDrive(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: true, gone: tt.gone})
-			ctx := tg.ContextWithUserID(t.Context(), testUserID)
-			doc := repo.seed(docsbot.Document{
-				UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Category: docsbot.CatPassport,
+			b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{IsConnected: true, ExistsRes: !tt.gone})
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+			doc := repo.Seed(docsbot.Document{
+				UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Category: docsbot.CatPassport,
 				Title: "Паспорт РК", TgFileID: "f", TgFileUniqueID: "u",
 				BackupStatus: docsbot.BackupBackedUp, DriveFileID: "remote", SyncStatus: docsbot.SyncOK,
 			})
@@ -232,9 +233,9 @@ func TestOpenCard_detectsFileDeletedInDrive(t *testing.T) {
 // list, recategorized, and the rename prompt and hint around it.
 func TestCard_isAlwaysSentAsHTML(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	doc := repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Category: docsbot.CatPassport,
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	doc := repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Category: docsbot.CatPassport,
 		Title: "A & <b>B</b>", TgFileID: "f", TgFileUniqueID: "u",
 	})
 
@@ -258,7 +259,7 @@ func TestCard_isAlwaysSentAsHTML(t *testing.T) {
 
 func TestDeleteYes_forgetsTheOriginOfTheMessage(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	gone := seedPassport(repo, "Первый", "u1")
 	kept := seedPassport(repo, "Второй", "u2")
 	b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(gone.ID)+":l:"+string(docsbot.CatPassport)+":1"))
@@ -287,10 +288,10 @@ func TestCard_convertRowOnlyForConvertible(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b, sent, repo := newBot(t)
-			ctx := tg.ContextWithUserID(t.Context(), testUserID)
-			tt.doc.UserID, tt.doc.Status, tt.doc.Category = testUserID, docsbot.StatusSaved, docsbot.CatOther
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+			tt.doc.UserID, tt.doc.Status, tt.doc.Category = docsbottest.TestUserID, docsbot.StatusSaved, docsbot.CatOther
 			tt.doc.Title, tt.doc.TgFileID, tt.doc.TgFileUniqueID = "Файл", "f", "u"
-			doc := repo.seed(tt.doc)
+			doc := repo.Seed(tt.doc)
 
 			b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(doc.ID)+":s"))
 
@@ -302,9 +303,9 @@ func TestCard_convertRowOnlyForConvertible(t *testing.T) {
 
 func TestCard_noConvertRowForHEIC(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	doc := repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "image/heic",
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	doc := repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "image/heic",
 		Category: docsbot.CatOther, Title: "IMG.heic", TgFileID: "x", TgFileUniqueID: "heic-uniq",
 	})
 

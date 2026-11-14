@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -31,10 +32,10 @@ func TestRegister_routing(t *testing.T) {
 
 func TestCallback_inaccessibleMessageChangesNothing(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	doc := seedPassport(repo, "Паспорт", "u1")
 	id, cat := string(doc.ID), string(docsbot.CatPassport)
-	before := repo.docs[doc.ID]
+	before := repo.Docs[doc.ID]
 
 	// Telegram stops giving old messages: a press has no message to edit.
 	for _, data := range []string{
@@ -54,12 +55,12 @@ func TestCallback_inaccessibleMessageChangesNothing(t *testing.T) {
 			require.Empty(t, sent.markupEdits)
 			require.Zero(t, sent.deletes)
 			require.Len(t, sent.answers, answers+1, "the button stops spinning, once")
-			require.Equal(t, before, repo.docs[doc.ID], "the document is untouched")
+			require.Equal(t, before, repo.Docs[doc.ID], "the document is untouched")
 		})
 	}
 
 	// "d:dd" must not have armed the deletion: the confirmation word is a search.
 	b.ProcessUpdate(ctx, textUpdate("УДАЛИТЬ"))
-	require.Contains(t, repo.docs, doc.ID)
+	require.Contains(t, repo.Docs, doc.ID)
 	require.False(t, has(sent.texts, "удалены"), "texts %q", sent.texts)
 }

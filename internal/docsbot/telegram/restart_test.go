@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -14,19 +15,19 @@ import (
 
 func TestRestart_renameTextWithoutArmedRenameIsASearch(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	doc := seedPassport(repo, "Старое", "u1")
 
 	b.ProcessUpdate(ctx, textUpdateID(9, "Новое имя"))
 
-	require.Equal(t, "Старое", repo.docs[doc.ID].Title, "title untouched")
+	require.Equal(t, "Старое", repo.Docs[doc.ID].Title, "title untouched")
 	require.Zero(t, sent.deletes, "the message is not deleted")
 	require.Len(t, sent.texts, 1, "answered as a search")
 }
 
 func TestRestart_plainTextStillSearches(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	seedPassport(repo, "Паспорт", "u1")
 
 	b.ProcessUpdate(ctx, textUpdate("паспорт"))
@@ -36,7 +37,7 @@ func TestRestart_plainTextStillSearches(t *testing.T) {
 
 func TestRestart_callbacksWithoutStoreEntries(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	doc := seedPassport(repo, "Паспорт", "u1")
 	id := string(doc.ID)
 
@@ -59,11 +60,11 @@ func TestRestart_callbacksWithoutStoreEntries(t *testing.T) {
 
 func TestRestart_deleteWordWithoutArmedConfirmationIsASearch(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	doc := seedPassport(repo, "Паспорт", "u1")
 
 	b.ProcessUpdate(ctx, textUpdate("УДАЛИТЬ"))
 
-	require.Contains(t, repo.docs, doc.ID, "nothing is deleted on a lost confirmation")
+	require.Contains(t, repo.Docs, doc.ID, "nothing is deleted on a lost confirmation")
 	require.False(t, has(sent.texts, "Данные удалены"), "texts %q", sent.texts)
 }

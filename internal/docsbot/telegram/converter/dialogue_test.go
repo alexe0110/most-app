@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -202,7 +203,7 @@ func TestConvertDialogue_resultSendFailureKeepsDialogue(t *testing.T) {
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:limit1", h.lastMsg()))
 		}, true},
 		{"merge", func(h *convHarness) {
-			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 			src := seedPDF(t, h)
 			h.serve("pdf-add", testPDF(t, 1))
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":merge"))
@@ -211,7 +212,7 @@ func TestConvertDialogue_resultSendFailureKeepsDialogue(t *testing.T) {
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:done", h.lastMsg()))
 		}, true},
 		{"page range", func(h *convHarness) {
-			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 			src := seedPDF(t, h)
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":keep"))
 			h.failDocs = true
@@ -226,14 +227,14 @@ func TestConvertDialogue_resultSendFailureKeepsDialogue(t *testing.T) {
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:p:rot", h.lastMsg()))
 		}, true},
 		{"card quick compress", func(h *convHarness) {
-			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 			src := seedSource(h, docsbot.StatusSaved)
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(src.ID)))
 			h.failDocs = true
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:q:"+string(src.ID)+":c1", h.lastMsg()))
 		}, false},
 		{"card rotate", func(h *convHarness) {
-			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 			src := seedPDF(t, h)
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(src.ID)))
 			h.failDocs = true
@@ -279,7 +280,7 @@ func TestConvertDialogue_moveDownSendFailureKeepsDialogue(t *testing.T) {
 // download until the returned function is called, so the menu counts as busy.
 func holdQuick(t *testing.T, h *convHarness, id docsbot.DocumentID, msgID int) (release func()) {
 	t.Helper()
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.mu.Lock()
 	h.gate = make(chan struct{})
 	gate := h.gate
@@ -304,7 +305,7 @@ func TestConvertMenu_doubleTap(t *testing.T) {
 	t.Run("quick op: refused tap only answers stale and keeps buttons", func(t *testing.T) {
 		h := newConvHarness(t)
 		src := seedSource(h, docsbot.StatusSaved)
-		ctx := tg.ContextWithUserID(t.Context(), testUserID)
+		ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 		release := holdQuick(t, h, src.ID, 55)
 		edits := h.edits
 
@@ -318,7 +319,7 @@ func TestConvertMenu_doubleTap(t *testing.T) {
 	t.Run("card button opens no second menu while busy", func(t *testing.T) {
 		h := newConvHarness(t)
 		src := seedSource(h, docsbot.StatusSaved)
-		ctx := tg.ContextWithUserID(t.Context(), testUserID)
+		ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 		release := holdQuick(t, h, src.ID, 55)
 		sends := h.sends()
 
@@ -332,7 +333,7 @@ func TestConvertMenu_doubleTap(t *testing.T) {
 	t.Run("menu cancel is ignored while busy", func(t *testing.T) {
 		h := newConvHarness(t)
 		src := seedSource(h, docsbot.StatusSaved)
-		ctx := tg.ContextWithUserID(t.Context(), testUserID)
+		ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 		release := holdQuick(t, h, src.ID, 56)
 
 		h.bot.ProcessUpdate(ctx, callbackOn("conv:x", 56))

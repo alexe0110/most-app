@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
@@ -110,9 +111,13 @@ func (r rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 type stubUsers struct{}
 
-func (stubUsers) Ensure(context.Context, int64, string) (string, error) { return testUserID, nil }
+func (stubUsers) Ensure(context.Context, int64, string) (string, error) {
+	return docsbottest.TestUserID, nil
+}
 
-func (stubUsers) Lookup(context.Context, int64) (string, bool, error) { return testUserID, true, nil }
+func (stubUsers) Lookup(context.Context, int64) (string, bool, error) {
+	return docsbottest.TestUserID, true, nil
+}
 
 type chatLookup struct{}
 
@@ -120,8 +125,8 @@ func (chatLookup) TgUserID(context.Context, string) (int64, error) { return 100,
 
 type notifierEnv struct {
 	api    *fakeBotAPI
-	repo   *fakeRepo
-	status *fakeStatus
+	repo   *docsbottest.FakeRepo
+	status *docsbottest.FakeStatus
 	n      *telegram.Notifier
 	bot    *tg.Bot
 	svc    *docsbot.Service
@@ -145,24 +150,24 @@ func newNotifierEnv(t *testing.T) *notifierEnv {
 	b, err := tg.New(tg.Config{Token: "123:ABC", Mode: tg.ModePolling}, stubUsers{}, log)
 	require.NoError(t, err)
 
-	repo := newFakeRepo()
-	status := newFakeStatus(repo)
+	repo := docsbottest.NewFakeRepo()
+	status := docsbottest.NewFakeStatus(repo)
 	svc := docsbot.NewService(docsbot.Ports{
-		Repo: repo, Drive: fakeDrive{connected: true}, Uploads: fakeUploads{}, Jobs: fakeUploads{},
-		Folders: repo, Status: status, Syncs: fakeSyncs{repo: repo},
+		Repo: repo, Drive: docsbottest.FakeDrive{IsConnected: true, ExistsRes: true}, Uploads: &docsbottest.FakeUploads{}, Jobs: &docsbottest.FakeUploads{},
+		Folders: repo, Status: status, Syncs: &docsbottest.FakeSyncs{Repo: repo},
 	})
-	return &notifierEnv{api: api, repo: repo, status: status, bot: b, svc: svc, n: telegram.NewNotifier(b, chatLookup{}, fakeAuth{}, svc, log)}
+	return &notifierEnv{api: api, repo: repo, status: status, bot: b, svc: svc, n: telegram.NewNotifier(b, chatLookup{}, docsbottest.FakeAuth{}, svc, log)}
 }
 
 // batch seeds a status message (chat 100, message 70) with one document per status.
 func (e *notifierEnv) batch(t *testing.T, statuses ...docsbot.BackupStatus) (docsbot.StatusMessage, []docsbot.Document) {
 	t.Helper()
-	sm, err := e.status.Create(t.Context(), testUserID, 100, 70, docsbot.StatusBatch)
+	sm, err := e.status.Create(t.Context(), docsbottest.TestUserID, 100, 70, docsbot.StatusBatch)
 	require.NoError(t, err)
 	var docs []docsbot.Document
 	for _, st := range statuses {
-		docs = append(docs, e.repo.seed(docsbot.Document{
-			UserID: testUserID, Title: "Doc", Category: docsbot.CatPassport, BackupStatus: st,
+		docs = append(docs, e.repo.Seed(docsbot.Document{
+			UserID: docsbottest.TestUserID, Title: "Doc", Category: docsbot.CatPassport, BackupStatus: st,
 			DriveFileID: "F1", StatusMessageID: sm.ID,
 		}))
 	}
@@ -173,7 +178,7 @@ func TestNotifier_UploadOutcome_groupedEditsStatusMessage(t *testing.T) {
 	e := newNotifierEnv(t)
 	sm, docs := e.batch(t, docsbot.BackupBackedUp, docsbot.BackupUploading)
 
-	require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, docs[0].ID))
+	require.NoError(t, e.n.UploadOutcome(t.Context(), docsbottest.TestUserID, docs[0].ID))
 
 	edits := e.api.callsOf("editMessageText")
 	require.Len(t, edits, 1)
@@ -181,16 +186,16 @@ func TestNotifier_UploadOutcome_groupedEditsStatusMessage(t *testing.T) {
 	require.Equal(t, "HTML", edits[0].parseMode)
 	require.Contains(t, edits[0].text, "⏳ Переношу на Google Диск · 1 из 2")
 	require.Empty(t, e.api.callsOf("sendMessage"), "no separate Выгружено notice for a batch")
-	require.False(t, e.status.msgs[sm.ID].Closed, "still has a line in progress")
+	require.False(t, e.status.Msgs[sm.ID].Closed, "still has a line in progress")
 }
 
 func TestNotifier_UploadOutcome_closesWhenAllTerminal(t *testing.T) {
 	e := newNotifierEnv(t)
 	sm, docs := e.batch(t, docsbot.BackupBackedUp, docsbot.BackupFailed)
 
-	require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, docs[1].ID))
+	require.NoError(t, e.n.UploadOutcome(t.Context(), docsbottest.TestUserID, docs[1].ID))
 
-	require.True(t, e.status.msgs[sm.ID].Closed)
+	require.True(t, e.status.Msgs[sm.ID].Closed)
 	edits := e.api.callsOf("editMessageText")
 	require.Len(t, edits, 1)
 	require.Contains(t, edits[0].text, "⚠️ Не перенёс 1")
@@ -214,7 +219,7 @@ func TestNotifier_UploadOutcome_editErrors(t *testing.T) {
 			e.api.editErr = tt.editErr
 			sm, docs := e.batch(t, docsbot.BackupBackedUp, docsbot.BackupUploading)
 
-			err := e.n.UploadOutcome(t.Context(), testUserID, docs[0].ID)
+			err := e.n.UploadOutcome(t.Context(), docsbottest.TestUserID, docs[0].ID)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -224,13 +229,13 @@ func TestNotifier_UploadOutcome_editErrors(t *testing.T) {
 			sends := e.api.callsOf("sendMessage")
 			if !tt.wantResend {
 				require.Empty(t, sends)
-				require.Equal(t, 70, e.status.msgs[sm.ID].MessageID)
+				require.Equal(t, 70, e.status.Msgs[sm.ID].MessageID)
 				return
 			}
 			require.Len(t, sends, 1)
 			require.Equal(t, "HTML", sends[0].parseMode)
 			require.Contains(t, sends[0].text, "⏳ Переношу на Google Диск · 1 из 2")
-			require.Equal(t, 500, e.status.msgs[sm.ID].MessageID, "new message id is stored for later edits")
+			require.Equal(t, 500, e.status.Msgs[sm.ID].MessageID, "new message id is stored for later edits")
 		})
 	}
 }
@@ -255,12 +260,12 @@ func TestNotifier_UploadOutcome_blockedUserIsNotAnError(t *testing.T) {
 			e.api.editErr, e.api.editCode, e.api.blocked = tt.editErr, tt.editCode, tt.blocked
 			sm, docs := e.batch(t, docsbot.BackupBackedUp, docsbot.BackupUploading)
 			var buf lockedBuffer
-			n := telegram.NewNotifier(e.bot, chatLookup{}, fakeAuth{}, e.svc, slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+			n := telegram.NewNotifier(e.bot, chatLookup{}, docsbottest.FakeAuth{}, e.svc, slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
-			require.NoError(t, n.UploadOutcome(t.Context(), testUserID, docs[0].ID))
+			require.NoError(t, n.UploadOutcome(t.Context(), docsbottest.TestUserID, docs[0].ID))
 
 			require.Len(t, e.api.callsOf("sendMessage"), tt.wantSends)
-			require.Equal(t, 70, e.status.msgs[sm.ID].MessageID)
+			require.Equal(t, 70, e.status.Msgs[sm.ID].MessageID)
 			require.NotContains(t, buf.String(), `"level":"ERROR"`)
 		})
 	}
@@ -271,10 +276,10 @@ func TestNotifier_UploadOutcome_resendStillClosesWhenDone(t *testing.T) {
 	e.api.editErr = "Bad Request: message to edit not found"
 	sm, docs := e.batch(t, docsbot.BackupBackedUp)
 
-	require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, docs[0].ID))
+	require.NoError(t, e.n.UploadOutcome(t.Context(), docsbottest.TestUserID, docs[0].ID))
 
 	require.Len(t, e.api.callsOf("sendMessage"), 1)
-	require.True(t, e.status.msgs[sm.ID].Closed)
+	require.True(t, e.status.Msgs[sm.ID].Closed)
 }
 
 func TestNotifier_UploadOutcome_notGrouped(t *testing.T) {
@@ -290,9 +295,9 @@ func TestNotifier_UploadOutcome_notGrouped(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newNotifierEnv(t)
-			doc := e.repo.seed(docsbot.Document{UserID: testUserID, Title: "Doc", BackupStatus: tt.status, DriveFileID: "F1"})
+			doc := e.repo.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Title: "Doc", BackupStatus: tt.status, DriveFileID: "F1"})
 
-			require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, doc.ID))
+			require.NoError(t, e.n.UploadOutcome(t.Context(), docsbottest.TestUserID, doc.ID))
 
 			require.Empty(t, e.api.callsOf("editMessageText"))
 			sends := e.api.callsOf("sendMessage")
@@ -308,7 +313,7 @@ func TestNotifier_UploadOutcome_notGrouped(t *testing.T) {
 
 func TestNotifier_UploadOutcome_unknownDocument(t *testing.T) {
 	e := newNotifierEnv(t)
-	require.Error(t, e.n.UploadOutcome(t.Context(), testUserID, "missing"))
+	require.Error(t, e.n.UploadOutcome(t.Context(), docsbottest.TestUserID, "missing"))
 	require.Empty(t, e.api.callsOf("sendMessage"))
 	require.Empty(t, e.api.callsOf("editMessageText"))
 }
@@ -321,7 +326,7 @@ func TestNotifier_UploadOutcome_throttle(t *testing.T) {
 	_, second := e.batch(t, docsbot.BackupUploading)
 
 	ctx := t.Context()
-	require.NoError(t, e.n.UploadOutcome(ctx, testUserID, first[0].ID))
+	require.NoError(t, e.n.UploadOutcome(ctx, docsbottest.TestUserID, first[0].ID))
 
 	var wg sync.WaitGroup
 	var otherElapsed time.Duration
@@ -329,11 +334,11 @@ func TestNotifier_UploadOutcome_throttle(t *testing.T) {
 	start := time.Now()
 	go func() {
 		defer wg.Done()
-		_ = e.n.UploadOutcome(ctx, testUserID, first[1].ID) // same message: waits ~1s
+		_ = e.n.UploadOutcome(ctx, docsbottest.TestUserID, first[1].ID) // same message: waits ~1s
 	}()
 	time.Sleep(100 * time.Millisecond) // let it reach the sleep
 	otherStart := time.Now()
-	require.NoError(t, e.n.UploadOutcome(ctx, testUserID, second[0].ID))
+	require.NoError(t, e.n.UploadOutcome(ctx, docsbottest.TestUserID, second[0].ID))
 	otherElapsed = time.Since(otherStart)
 	wg.Wait()
 
@@ -345,8 +350,8 @@ func TestNotifier_UploadOutcome_throttle(t *testing.T) {
 func TestNotifier_Reconnect_debounced(t *testing.T) {
 	e := newNotifierEnv(t)
 
-	require.NoError(t, e.n.Reconnect(t.Context(), testUserID))
-	require.NoError(t, e.n.Reconnect(t.Context(), testUserID))
+	require.NoError(t, e.n.Reconnect(t.Context(), docsbottest.TestUserID))
+	require.NoError(t, e.n.Reconnect(t.Context(), docsbottest.TestUserID))
 	require.Len(t, e.api.callsOf("sendMessage"), 1, "one reconnect prompt per batch")
 
 	require.NoError(t, e.n.Reconnect(t.Context(), "another-user"))
@@ -357,35 +362,35 @@ func TestNotifier_UploadOutcome_singleAndTransferKindsSendNoNotice(t *testing.T)
 	for _, kind := range []docsbot.StatusKind{docsbot.StatusSingle, docsbot.StatusTransfer} {
 		t.Run(string(kind), func(t *testing.T) {
 			e := newNotifierEnv(t)
-			sm, err := e.status.Create(t.Context(), testUserID, 100, 70, kind)
+			sm, err := e.status.Create(t.Context(), docsbottest.TestUserID, 100, 70, kind)
 			require.NoError(t, err)
-			doc := e.repo.seed(docsbot.Document{
-				UserID: testUserID, Title: "Doc", Category: docsbot.CatPassport,
+			doc := e.repo.Seed(docsbot.Document{
+				UserID: docsbottest.TestUserID, Title: "Doc", Category: docsbot.CatPassport,
 				BackupStatus: docsbot.BackupBackedUp, DriveFileID: "F1", StatusMessageID: sm.ID,
 			})
 
-			require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, doc.ID))
+			require.NoError(t, e.n.UploadOutcome(t.Context(), docsbottest.TestUserID, doc.ID))
 
 			require.Empty(t, e.api.callsOf("sendMessage"), "a grouped doc never gets a per-document notice")
 			edits := e.api.callsOf("editMessageText")
 			require.Len(t, edits, 1)
 			require.Equal(t, "70", edits[0].messageID)
-			require.True(t, e.status.msgs[sm.ID].Closed)
+			require.True(t, e.status.Msgs[sm.ID].Closed)
 		})
 	}
 }
 
 func TestNotifier_UploadOutcome_transferDoneText(t *testing.T) {
 	e := newNotifierEnv(t)
-	sm, err := e.status.Create(t.Context(), testUserID, 100, 70, docsbot.StatusTransfer)
+	sm, err := e.status.Create(t.Context(), docsbottest.TestUserID, 100, 70, docsbot.StatusTransfer)
 	require.NoError(t, err)
 	var last docsbot.Document
 	for i := 0; i < 3; i++ {
-		last = e.repo.seed(docsbot.Document{UserID: testUserID, Title: "Doc", Category: docsbot.CatPassport,
+		last = e.repo.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Title: "Doc", Category: docsbot.CatPassport,
 			BackupStatus: docsbot.BackupBackedUp, DriveFileID: "F", StatusMessageID: sm.ID})
 	}
 
-	require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, last.ID))
+	require.NoError(t, e.n.UploadOutcome(t.Context(), docsbottest.TestUserID, last.ID))
 
 	edits := e.api.callsOf("editMessageText")
 	require.Len(t, edits, 1)
@@ -400,10 +405,10 @@ func (f failingLookup) TgUserID(context.Context, string) (int64, error) { return
 // be able to ask the user to reconnect.
 func TestNotifier_Reconnect_failedPromptDoesNotArmDebounce(t *testing.T) {
 	e := newNotifierEnv(t)
-	n := telegram.NewNotifier(e.bot, failingLookup{err: errors.New("boom")}, fakeAuth{}, e.svc, slog.New(slog.DiscardHandler))
+	n := telegram.NewNotifier(e.bot, failingLookup{err: errors.New("boom")}, docsbottest.FakeAuth{}, e.svc, slog.New(slog.DiscardHandler))
 
-	require.Error(t, n.Reconnect(t.Context(), testUserID))
-	require.Error(t, n.Reconnect(t.Context(), testUserID), "the second attempt must try again, not be swallowed by the debounce")
+	require.Error(t, n.Reconnect(t.Context(), docsbottest.TestUserID))
+	require.Error(t, n.Reconnect(t.Context(), docsbottest.TestUserID), "the second attempt must try again, not be swallowed by the debounce")
 }
 
 // A blocked bot cannot be reached: the prompt is not retried on every upload.
@@ -411,8 +416,8 @@ func TestNotifier_Reconnect_blockedArmsDebounce(t *testing.T) {
 	e := newNotifierEnv(t)
 	e.api.blocked = true
 
-	require.NoError(t, e.n.Reconnect(t.Context(), testUserID))
-	require.NoError(t, e.n.Reconnect(t.Context(), testUserID))
+	require.NoError(t, e.n.Reconnect(t.Context(), docsbottest.TestUserID))
+	require.NoError(t, e.n.Reconnect(t.Context(), docsbottest.TestUserID))
 
 	require.Len(t, e.api.callsOf("sendMessage"), 1, "the second call is debounced")
 }
@@ -423,7 +428,7 @@ func TestNotifyConnected_blockedIsNotAnError(t *testing.T) {
 	e.api.blocked = true
 	notify := telegram.NotifyConnected(e.bot, chatLookup{}, e.svc, slog.New(slog.DiscardHandler))
 
-	require.NoError(t, notify(t.Context(), testUserID))
+	require.NoError(t, notify(t.Context(), docsbottest.TestUserID))
 }
 
 const emptyKeyboard = `{"inline_keyboard":[]}`
@@ -433,7 +438,7 @@ func TestNotifier_UploadOutcome_doneWithoutFailuresOffersMyDocs(t *testing.T) {
 	e := newNotifierEnv(t)
 	sm, docs := e.batch(t, docsbot.BackupBackedUp, docsbot.BackupBackedUp)
 
-	require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, docs[0].ID))
+	require.NoError(t, e.n.UploadOutcome(t.Context(), docsbottest.TestUserID, docs[0].ID))
 
 	edits := e.api.callsOf("editMessageText")
 	require.Len(t, edits, 1, "edit must not be rejected and retried")
@@ -441,7 +446,7 @@ func TestNotifier_UploadOutcome_doneWithoutFailuresOffersMyDocs(t *testing.T) {
 	require.True(t, edits[0].hasMarkup)
 	require.Contains(t, edits[0].markup, "Мои документы")
 	require.NotContains(t, edits[0].markup, "Повторить")
-	require.True(t, e.status.msgs[sm.ID].Closed)
+	require.True(t, e.status.Msgs[sm.ID].Closed)
 }
 
 // A batch still in progress has no keyboard: the edit must clear it with an
@@ -450,7 +455,7 @@ func TestNotifier_UploadOutcome_inProgressClearsKeyboard(t *testing.T) {
 	e := newNotifierEnv(t)
 	_, docs := e.batch(t, docsbot.BackupBackedUp, docsbot.BackupUploading)
 
-	require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, docs[0].ID))
+	require.NoError(t, e.n.UploadOutcome(t.Context(), docsbottest.TestUserID, docs[0].ID))
 
 	edits := e.api.callsOf("editMessageText")
 	require.Len(t, edits, 1)
@@ -462,14 +467,14 @@ func TestNotifier_UploadOutcome_retryButtonRemovedAfterRecovery(t *testing.T) {
 	e := newNotifierEnv(t)
 	_, docs := e.batch(t, docsbot.BackupBackedUp, docsbot.BackupFailed)
 
-	require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, docs[1].ID))
+	require.NoError(t, e.n.UploadOutcome(t.Context(), docsbottest.TestUserID, docs[1].ID))
 	edits := e.api.callsOf("editMessageText")
 	require.Len(t, edits, 1)
 	require.Contains(t, edits[0].markup, "Повторить")
 	require.Contains(t, edits[0].markup, "d:rsm:")
 
-	require.NoError(t, e.repo.SetBackupStatus(t.Context(), testUserID, docs[1].ID, docsbot.BackupBackedUp))
-	require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, docs[1].ID))
+	require.NoError(t, e.repo.SetBackupStatus(t.Context(), docsbottest.TestUserID, docs[1].ID, docsbot.BackupBackedUp))
+	require.NoError(t, e.n.UploadOutcome(t.Context(), docsbottest.TestUserID, docs[1].ID))
 
 	edits = e.api.callsOf("editMessageText")
 	require.Len(t, edits, 2)
@@ -482,7 +487,7 @@ func TestNotifier_UploadOutcome_resendWithoutFailuresHasNoMarkup(t *testing.T) {
 	e.api.editErr = "Bad Request: message to edit not found"
 	_, docs := e.batch(t, docsbot.BackupBackedUp, docsbot.BackupUploading)
 
-	require.NoError(t, e.n.UploadOutcome(t.Context(), testUserID, docs[0].ID))
+	require.NoError(t, e.n.UploadOutcome(t.Context(), docsbottest.TestUserID, docs[0].ID))
 
 	edits := e.api.callsOf("editMessageText")
 	require.Len(t, edits, 1)

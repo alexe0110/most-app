@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -156,15 +157,15 @@ func TestConvertPDFActions_fromCommand(t *testing.T) {
 
 	t.Run("saved without a source document goes to Other", func(t *testing.T) {
 		h, menu := setup(t)
-		ctx := tg.ContextWithUserID(t.Context(), testUserID)
+		ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 		h.bot.ProcessUpdate(ctx, callbackOn("conv:p:rot", menu))
 		tok := saveToken.FindStringSubmatch(h.docMarkups[0])
 		require.NotNil(t, tok)
 
 		h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok[1]))
 
-		require.Len(t, h.repo.docs, 1)
-		for _, d := range h.repo.docs {
+		require.Len(t, h.repo.Docs, 1)
+		for _, d := range h.repo.Docs {
 			require.Equal(t, docsbot.StatusSaved, d.Status)
 			require.Equal(t, docsbot.CatOther, d.Category)
 		}
@@ -200,7 +201,7 @@ func TestConvertCompress_resultNameFollowsTheSentFile(t *testing.T) {
 func TestConvertMenu_progressThenResult(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(src.ID)))
 	menu := h.lastMsg()
 
@@ -215,7 +216,7 @@ func TestConvertMenu_errorBringsMenuBack(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	h.serve("src", []byte("not an image"))
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(src.ID)))
 	menu := h.lastMsg()
 

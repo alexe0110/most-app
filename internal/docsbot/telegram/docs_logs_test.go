@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -18,7 +19,7 @@ func TestLogs_traceDocumentWithoutLeaks(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	b, _, repo := newBotWithLog(t, log)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	// Receive a file, choose a category, search, then ask for the file back.
 	b.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
@@ -26,9 +27,9 @@ func TestLogs_traceDocumentWithoutLeaks(t *testing.T) {
 		Chat:     models.Chat{ID: 100, Type: models.ChatTypePrivate},
 		Document: &models.Document{FileID: "f1", FileUniqueID: "u1", FileName: "Паспорт.pdf"},
 	}})
-	require.Len(t, repo.docs, 1)
+	require.Len(t, repo.Docs, 1)
 	var id docsbot.DocumentID
-	for k := range repo.docs {
+	for k := range repo.Docs {
 		id = k
 	}
 	b.ProcessUpdate(ctx, dataCallback("d:cat:"+string(id)+":"+string(docsbot.CatOther)))
@@ -50,7 +51,7 @@ func TestLogs_editFlowWithoutLeaks(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	b, _, repo := newBotWithLog(t, log)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	recv := func() {
 		b.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
@@ -60,9 +61,9 @@ func TestLogs_editFlowWithoutLeaks(t *testing.T) {
 		}})
 	}
 	recv()
-	require.Len(t, repo.docs, 1)
+	require.Len(t, repo.Docs, 1)
 	var id docsbot.DocumentID
-	for k := range repo.docs {
+	for k := range repo.Docs {
 		id = k
 	}
 	b.ProcessUpdate(ctx, dataCallback("d:cat:"+string(id)+":"+string(docsbot.CatOther)))
@@ -85,8 +86,8 @@ func TestSettingsActions_logEventsWithoutLeaks(t *testing.T) {
 	var sink lockedBuffer
 	log := slog.New(slog.NewJSONHandler(&sink, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	b, _, repo := newBotWithLog(t, log)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "ПаспортSECRET"})
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	repo.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "ПаспортSECRET"})
 
 	b.ProcessUpdate(ctx, dataCallback("d:try"))
 	b.ProcessUpdate(ctx, dataCallback("d:exp"))
@@ -108,39 +109,39 @@ func TestSettingsActions_logEventsWithoutLeaks(t *testing.T) {
 func TestLogs_blockedUserIsNotAnErrorInHandlers(t *testing.T) {
 	tests := []struct {
 		name   string
-		run    func(ctx context.Context, b *bot.Bot, repo *fakeRepo)
+		run    func(ctx context.Context, b *bot.Bot, repo *docsbottest.FakeRepo)
 		method string // the call Telegram refused
 	}{
-		{"help", func(ctx context.Context, b *bot.Bot, _ *fakeRepo) {
+		{"help", func(ctx context.Context, b *bot.Bot, _ *docsbottest.FakeRepo) {
 			b.ProcessUpdate(ctx, commandUpdate("help"))
 		}, "sendMessage"},
-		{"start", func(ctx context.Context, b *bot.Bot, _ *fakeRepo) {
+		{"start", func(ctx context.Context, b *bot.Bot, _ *docsbottest.FakeRepo) {
 			b.ProcessUpdate(ctx, commandUpdate("start"))
 		}, "sendMessage"},
-		{"document intake keeps the document", func(ctx context.Context, b *bot.Bot, repo *fakeRepo) {
+		{"document intake keeps the document", func(ctx context.Context, b *bot.Bot, repo *docsbottest.FakeRepo) {
 			b.ProcessUpdate(ctx, &models.Update{Message: &models.Message{
 				From:     &models.User{ID: 100},
 				Chat:     models.Chat{ID: 100, Type: models.ChatTypePrivate},
 				Document: &models.Document{FileID: "f1", FileUniqueID: "u1", FileName: "СекретныйДокумент.pdf"},
 			}})
-			require.Len(t, repo.docs, 1)
+			require.Len(t, repo.Docs, 1)
 		}, "sendMessage"},
-		{"rename prompt edits the card message", func(ctx context.Context, b *bot.Bot, repo *fakeRepo) {
+		{"rename prompt edits the card message", func(ctx context.Context, b *bot.Bot, repo *docsbottest.FakeRepo) {
 			doc := seedPassport(repo, "СекретныйДокумент", "u1")
 			b.ProcessUpdate(ctx, dataCallback("d:rn:"+string(doc.ID)))
 		}, "editMessageText"},
-		{"callback answer", func(ctx context.Context, b *bot.Bot, repo *fakeRepo) {
+		{"callback answer", func(ctx context.Context, b *bot.Bot, repo *docsbottest.FakeRepo) {
 			doc := seedPassport(repo, "СекретныйДокумент", "u1")
 			b.ProcessUpdate(ctx, dataCallback("d:dy:"+string(doc.ID)))
 		}, "answerCallbackQuery"},
-		{"export clears the keyboard", func(ctx context.Context, b *bot.Bot, repo *fakeRepo) {
+		{"export clears the keyboard", func(ctx context.Context, b *bot.Bot, repo *docsbottest.FakeRepo) {
 			seedPassport(repo, "СекретныйДокумент", "u1")
 			b.ProcessUpdate(ctx, dataCallback("d:exp"))
 		}, "editMessageReplyMarkup"},
-		{"converter start", func(ctx context.Context, b *bot.Bot, _ *fakeRepo) {
+		{"converter start", func(ctx context.Context, b *bot.Bot, _ *docsbottest.FakeRepo) {
 			b.ProcessUpdate(ctx, commandUpdate("convert"))
 		}, "sendMessage"},
-		{"converter stale button", func(ctx context.Context, b *bot.Bot, _ *fakeRepo) {
+		{"converter stale button", func(ctx context.Context, b *bot.Bot, _ *docsbottest.FakeRepo) {
 			b.ProcessUpdate(ctx, dataCallback("conv:cancel"))
 		}, "editMessageReplyMarkup"},
 	}
@@ -150,7 +151,7 @@ func TestLogs_blockedUserIsNotAnErrorInHandlers(t *testing.T) {
 			log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 			b, sent, repo := newBotWithLog(t, log)
 			sent.forbidden = true
-			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 			require.NotPanics(t, func() { tt.run(ctx, b, repo) })
 

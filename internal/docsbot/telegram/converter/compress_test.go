@@ -25,7 +25,7 @@ func TestConvert_compressPreset(t *testing.T) {
 	require.LessOrEqual(t, len(h.docs[0].data), 2<<20)
 	_, _, err := image.Decode(bytes.NewReader(h.docs[0].data))
 	require.NoError(t, err)
-	require.Empty(t, h.repo.docs, "a result is not saved unless asked")
+	require.Empty(t, h.repo.Docs, "a result is not saved unless asked")
 }
 
 func TestConvert_compressCustomLimit(t *testing.T) {

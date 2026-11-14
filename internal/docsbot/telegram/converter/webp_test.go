@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -32,7 +33,7 @@ func namedDocumentUpdate(fileID, mime, name string) *models.Update {
 func TestConvertWebP_compressInCommand(t *testing.T) {
 	h := newConvHarness(t)
 	h.serve("webp-in", tinyWebP(t))
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
@@ -49,7 +50,7 @@ func TestConvertWebP_compressInCommand(t *testing.T) {
 func TestConvertWebP_pdfInCommand(t *testing.T) {
 	h := newConvHarness(t)
 	h.serve("webp-in", tinyWebP(t))
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:pdf"))
@@ -64,11 +65,11 @@ func TestConvertWebP_pdfInCommand(t *testing.T) {
 func TestConvertWebP_cardToJPG(t *testing.T) {
 	h := newConvHarness(t)
 	h.serve("webp-src", tinyWebP(t))
-	src := h.repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "image/webp",
+	src := h.repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "image/webp",
 		Category: docsbot.CatOther, Title: "Скан.webp", TgFileID: "webp-src", TgFileUniqueID: "webp-uniq",
 	})
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(src.ID)))
 	require.Contains(t, h.lastMarkup(), "conv:q:"+string(src.ID)+":jpg")
@@ -83,8 +84,8 @@ func TestConvertWebP_cardToJPG(t *testing.T) {
 	tok := saveToken.FindStringSubmatch(h.docMarkups[0])
 	require.NotNil(t, tok)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok[1]))
-	require.Len(t, h.repo.docs, 2)
-	for id, d := range h.repo.docs {
+	require.Len(t, h.repo.Docs, 2)
+	for id, d := range h.repo.Docs {
 		if id != src.ID {
 			require.Equal(t, "Скан (JPG)", d.Title)
 		}
@@ -94,7 +95,7 @@ func TestConvertWebP_cardToJPG(t *testing.T) {
 func TestConvertWebP_jpgButtonOnlyForWebP(t *testing.T) {
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved) // a photo
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(src.ID)))
 	require.NotContains(t, h.lastMarkup(), ":jpg")
@@ -113,7 +114,7 @@ func TestConvertHEIC_refusedInCommand(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newConvHarness(t)
-			ctx := tg.ContextWithUserID(t.Context(), testUserID)
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 			h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))
@@ -127,11 +128,11 @@ func TestConvertHEIC_refusedInCommand(t *testing.T) {
 
 func TestConvertHEIC_callbacksAreRefused(t *testing.T) {
 	h := newConvHarness(t)
-	heic := h.repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "image/heic",
+	heic := h.repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "image/heic",
 		Category: docsbot.CatOther, Title: "IMG.heic", TgFileID: "x", TgFileUniqueID: "heic-uniq",
 	})
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(heic.ID)))
 	require.Contains(t, h.lastText(), "не поддерживается")
