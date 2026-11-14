@@ -29,7 +29,7 @@ func TestCallbackDataFitsTelegramLimit(t *testing.T) {
 			data = append(data, b.CallbackData)
 		}
 	}
-	data = append(data, cbAlbumPrefix+token, cbDocPrefix+string(id))
+	data = append(data, convCB(convActAlbum, token), convDocCB(convActDoc, id))
 
 	for _, d := range data {
 		require.LessOrEqual(t, len(d), 64, d)

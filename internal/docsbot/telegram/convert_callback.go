@@ -4,131 +4,134 @@ import (
 	"context"
 	"log/slog"
 	"strconv"
-	"strings"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 
-	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/platform/convert"
 )
 
 // callback handles a button press.
 func (c *converter) callback(ctx context.Context, b *bot.Bot, update *models.Update) {
-	c.out(b).answer(ctx, update.CallbackQuery.ID)
-
-	chatID, ok := callbackChat(update)
-	if !ok {
+	p := newPress(ctx, update.CallbackQuery)
+	c.out(b).answer(ctx, p.queryID)
+	if !p.hasMsg {
 		return
 	}
-	data := update.CallbackQuery.Data
-	switch {
-	case strings.HasPrefix(data, cbDocPrefix):
+	switch p.data.action {
+	case convActDoc:
 		// A double tap must not open two menus: the second one is dropped silently.
-		if release, ok := c.claimMenu(chatID, callbackMessageID(update)); ok {
+		if release, ok := c.claimMenu(p.chatID, p.msgID); ok {
 			defer release()
-			c.onMenu(ctx, b, chatID, docsbot.DocumentID(strings.TrimPrefix(data, cbDocPrefix)))
+			c.onMenu(ctx, b, p.chatID, p.data.docID)
 		}
 		return
-	case strings.HasPrefix(data, cbQuickPrefix):
-		c.onQuick(ctx, b, update, chatID)
+	case convActQuick:
+		c.onQuick(ctx, b, p)
 		return
-	case strings.HasPrefix(data, cbSavePrefix):
-		c.onSave(ctx, b, update, chatID)
+	case convActSave:
+		c.onSave(ctx, b, p)
 		return
-	case strings.HasPrefix(data, cbRepAsk):
-		c.onReplaceAsk(ctx, b, update, chatID)
+	case convActRepAsk:
+		c.onReplaceAsk(ctx, b, p)
 		return
-	case strings.HasPrefix(data, cbRepYes):
-		c.onReplace(ctx, b, update, chatID)
+	case convActRepYes:
+		c.onReplace(ctx, b, p)
 		return
-	case strings.HasPrefix(data, cbRepNo):
-		c.onReplaceCancel(ctx, b, update, chatID)
+	case convActRepNo:
+		c.onReplaceCancel(ctx, b, p)
 		return
-	case strings.HasPrefix(data, cbAlbumPrefix):
-		c.onAlbum(ctx, b, update, chatID)
+	case convActAlbum:
+		c.onAlbum(ctx, b, p)
 		return
-	case strings.HasPrefix(data, cbSkipPrefix):
-		c.onSkip(ctx, b, update, chatID)
+	case convActSkip:
+		c.onSkip(ctx, b, p)
 		return
-	case data == cbMenuCancel:
-		if release, ok := c.claimMenu(chatID, callbackMessageID(update)); ok {
+	case convActMenuCancel:
+		if release, ok := c.claimMenu(p.chatID, p.msgID); ok {
 			defer release()
-			c.deleteCallbackMessage(ctx, b, update, chatID)
+			c.deleteCallbackMessage(ctx, b, p)
 		}
 		return
 	}
+	c.onSessionButton(ctx, b, p)
+}
 
-	user := update.CallbackQuery.From.ID
-	msgID := callbackMessageID(update)
-	// Every session button is valid only on the dialogue message, at its own
-	// step; anything else is a stale press with no side effects.
-	switch data {
-	case cbPDF:
+// onSessionButton handles the buttons of a /convert session. Every one is valid
+// only on the dialogue message, at its own step; anything else is a stale press
+// with no side effects.
+func (c *converter) onSessionButton(ctx context.Context, b *bot.Bot, p press) {
+	user, msgID := p.tgUser, p.msgID
+	switch p.data.action {
+	case convActPDF:
 		if _, ok := c.sessions.advance(user, msgID, []step{stepChooseAction}, func(s *session) { s.step = stepCollectPDF }); !ok {
-			c.stale(ctx, b, update, chatID)
+			c.stale(ctx, b, p)
 			return
 		}
-		c.next(ctx, b, update, chatID, user, textConvertPDFPrompt, pdfKeyboard())
-	case cbPDFActions:
+		c.next(ctx, b, p, textConvertPDFPrompt, pdfKeyboard())
+	case convActPDFOps:
 		if _, ok := c.sessions.advance(user, msgID, []step{stepChooseAction}, func(s *session) { s.step = stepAwaitPDF }); !ok {
-			c.stale(ctx, b, update, chatID)
+			c.stale(ctx, b, p)
 			return
 		}
-		c.next(ctx, b, update, chatID, user, textConvertPDFAwait, cancelKeyboard())
-	case cbSessRotate, cbSessKeep, cbSessDrop, cbSessMerge:
-		c.onSessionPDFOp(ctx, b, update, chatID, user, strings.TrimPrefix(data, callbackPrefix+"p:"))
-	case cbCompress:
+		c.next(ctx, b, p, textConvertPDFAwait, cancelKeyboard())
+	case convActPDFOp:
+		if op := p.data.token(); op == opRotate || op == opKeep || op == opDrop || op == opMerge {
+			c.onSessionPDFOp(ctx, b, p, op)
+			return
+		}
+		c.stale(ctx, b, p)
+	case convActCompress:
 		if _, ok := c.sessions.advance(user, msgID, []step{stepChooseAction}, func(s *session) { s.step = stepAwaitImage }); !ok {
-			c.stale(ctx, b, update, chatID)
+			c.stale(ctx, b, p)
 			return
 		}
-		c.next(ctx, b, update, chatID, user, textConvertCompressPrompt, cancelKeyboard())
-	case cbDone:
+		c.next(ctx, b, p, textConvertCompressPrompt, cancelKeyboard())
+	case convActDone:
 		sess, ok := c.sessions.check(user, msgID, stepCollectPDF, stepMergePDF)
 		if !ok {
-			c.stale(ctx, b, update, chatID)
+			c.stale(ctx, b, p)
 			return
 		}
 		if sess.step == stepMergePDF {
-			c.finishMerge(ctx, b, update, user, chatID)
+			c.finishMerge(ctx, b, p)
 			return
 		}
-		c.finishPDF(ctx, b, update, user, chatID)
-	case cbCancel:
+		c.finishPDF(ctx, b, p)
+	case convActCancel:
 		if _, ok := c.sessions.claim(user, msgID); !ok {
-			c.stale(ctx, b, update, chatID)
+			c.stale(ctx, b, p)
 			return
 		}
-		c.clearButtons(ctx, b, update, chatID)
-		c.out(b).send(ctx, chatID, textConvertCancelled)
-	case cbLimit1, cbLimit2, cbLimit5:
+		c.clearButtons(ctx, b, p)
+		c.out(b).send(ctx, p.chatID, textConvertCancelled)
+	case convActLimit1, convActLimit2, convActLimit5:
 		sess, ok := c.sessions.advance(user, msgID, []step{stepChooseLimit}, func(s *session) {
-			s.maxBytes = limitBytes(data)
+			s.maxBytes = limitBytes(p.data.action)
 			s.step = stepChooseFormat
 		})
 		if !ok {
-			c.stale(ctx, b, update, chatID)
+			c.stale(ctx, b, p)
 			return
 		}
 		if !sess.inputPNG {
 			// A JPEG or WEBP can only become a JPEG: nothing to ask.
-			c.finishCompress(ctx, b, update, user, chatID, convert.JPEG)
+			c.finishCompress(ctx, b, p, convert.JPEG)
 			return
 		}
-		c.next(ctx, b, update, chatID, user, textConvertChooseFormat, formatKeyboard())
-	case cbLimitCustom:
+		c.next(ctx, b, p, textConvertChooseFormat, formatKeyboard())
+	case convActLimitCustom:
 		if _, ok := c.sessions.advance(user, msgID, []step{stepChooseLimit}, func(s *session) { s.step = stepCustomLimit }); !ok {
-			c.stale(ctx, b, update, chatID)
+			c.stale(ctx, b, p)
 			return
 		}
-		c.next(ctx, b, update, chatID, user, textConvertCustomLimit, nil)
-	case cbFmtJPEG:
-		c.finishCompress(ctx, b, update, user, chatID, convert.JPEG)
-	case cbFmtPNG:
-		c.finishCompress(ctx, b, update, user, chatID, convert.PNG)
+		c.next(ctx, b, p, textConvertCustomLimit, nil)
+	case convActFmtJPEG:
+		c.finishCompress(ctx, b, p, convert.JPEG)
+	case convActFmtPNG:
+		c.finishCompress(ctx, b, p, convert.PNG)
 	default:
-		c.stale(ctx, b, update, chatID)
+		c.stale(ctx, b, p)
 	}
 }
 
@@ -138,18 +141,18 @@ func (c *converter) out(b *bot.Bot) sender { return sender{api: b, log: c.log} }
 // stale answers a press that no longer applies (an old message, a wrong step,
 // an ended session, a double tap) and strips the message's buttons. It does
 // nothing else.
-func (c *converter) stale(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
-	c.out(b).send(ctx, chatID, textStale)
-	c.clearButtons(ctx, b, update, chatID)
+func (c *converter) stale(ctx context.Context, b *bot.Bot, p press) {
+	c.out(b).send(ctx, p.chatID, textStale)
+	c.clearButtons(ctx, b, p)
 }
 
 // next moves the dialogue on after a button press: the pressed message becomes
 // the next step, and stays the session's dialogue message (or its replacement,
 // if Telegram refused the edit).
-func (c *converter) next(ctx context.Context, b *bot.Bot, update *models.Update, chatID, user int64, text string, kb *models.InlineKeyboardMarkup) {
-	unlock := c.dialogue.lock(user)
+func (c *converter) next(ctx context.Context, b *bot.Bot, p press, text string, kb *models.InlineKeyboardMarkup) {
+	unlock := c.dialogue.lock(p.tgUser)
 	defer unlock()
-	c.sessions.setMsg(user, c.show(ctx, b, chatID, callbackMessageID(update), text, kb))
+	c.sessions.setMsg(p.tgUser, c.show(ctx, b, p.chatID, p.msgID, text, kb))
 }
 
 // show puts text and the keyboard (nil for none) on message msgID by editing it.

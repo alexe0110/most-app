@@ -19,16 +19,16 @@ import (
 )
 
 // clearButtons removes the keyboard from the message a button was pressed on.
-func (c *converter) clearButtons(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
-	if m := update.CallbackQuery.Message.Message; m != nil {
-		c.out(b).clearKeyboard(ctx, chatID, m.ID)
+func (c *converter) clearButtons(ctx context.Context, b *bot.Bot, p press) {
+	if p.hasMsg {
+		c.out(b).clearKeyboard(ctx, p.chatID, p.msgID)
 	}
 }
 
 // deleteCallbackMessage removes the message a button was pressed on.
-func (c *converter) deleteCallbackMessage(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64) {
-	if m := update.CallbackQuery.Message.Message; m != nil {
-		c.out(b).delete(ctx, chatID, m.ID)
+func (c *converter) deleteCallbackMessage(ctx context.Context, b *bot.Bot, p press) {
+	if p.hasMsg {
+		c.out(b).delete(ctx, p.chatID, p.msgID)
 	}
 }
 

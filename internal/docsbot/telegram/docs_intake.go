@@ -116,15 +116,17 @@ func (d *docs) logReceived(ctx context.Context, user docsbot.UserID, rep docsbot
 
 // onCategory saves a new document under the chosen category. The picker message
 // becomes the card (Drive off) or a live upload card / batch status (Drive on).
-func (d *docs) onCategory(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
-	id, cat, ok := docCategory(parts)
+func (d *docs) onCategory(ctx context.Context, b *bot.Bot, p press) {
+	user := p.user
+	id := p.data.docID
+	cat, ok := p.data.category()
 	if !ok {
 		return
 	}
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+	if !p.hasMsg {
 		return
 	}
+	chatID, msgID := p.chatID, p.msgID
 	saved, err := d.svc.ChooseCategory(ctx, user, id, cat)
 	if errors.Is(err, docsbot.ErrNotFound) {
 		d.gone(ctx, b, chatID, msgID)
@@ -158,15 +160,17 @@ func (d *docs) renderSaved(ctx context.Context, b *bot.Bot, chatID int64, msgID 
 
 // onCategoryGroup saves a whole album under the chosen category. The picker
 // message becomes the card (one file), a batch status (Drive on) or a summary.
-func (d *docs) onCategoryGroup(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
-	id, cat, ok := docCategory(parts)
+func (d *docs) onCategoryGroup(ctx context.Context, b *bot.Bot, p press) {
+	user := p.user
+	id := p.data.docID
+	cat, ok := p.data.category()
 	if !ok {
 		return
 	}
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+	if !p.hasMsg {
 		return
 	}
+	chatID, msgID := p.chatID, p.msgID
 	group, err := d.svc.ChooseCategoryGroup(ctx, user, id, cat)
 	if errors.Is(err, docsbot.ErrNotFound) {
 		d.gone(ctx, b, chatID, msgID)

@@ -151,15 +151,15 @@ func (d *docs) offersPDF(st albumState) bool {
 
 // onGroupPick turns the album choice into the category picker for the whole
 // album: d:gpk:<docID>.
-func (d *docs) onGroupPick(ctx context.Context, b *bot.Bot, u *models.Update, parts []string) {
-	id, ok := docID(parts)
-	if !ok {
+func (d *docs) onGroupPick(ctx context.Context, b *bot.Bot, p press) {
+	id := p.data.docID
+	if id == "" {
 		return
 	}
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+	if !p.hasMsg {
 		return
 	}
+	chatID, msgID := p.chatID, p.msgID
 	d.out(b).edit(ctx, chatID, msgID, textChooseCategoryAlbum, withKeyboard(categoryKeyboard(actCategoryGroup, id)))
 }
 

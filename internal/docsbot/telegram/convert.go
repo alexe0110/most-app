@@ -23,38 +23,26 @@ import (
 // callbackPrefix tags every inline button this feature owns.
 const callbackPrefix = "conv:"
 
-// Callback data for the inline buttons.
+// Callback data for the inline buttons that carry no argument.
 const (
-	cbPDF         = callbackPrefix + "pdf"
-	cbCompress    = callbackPrefix + "compress"
-	cbDone        = callbackPrefix + "done"
-	cbCancel      = callbackPrefix + "cancel"
-	cbLimit1      = callbackPrefix + "limit1"
-	cbLimit2      = callbackPrefix + "limit2"
-	cbLimit5      = callbackPrefix + "limit5"
-	cbLimitCustom = callbackPrefix + "limitcustom"
-	cbFmtJPEG     = callbackPrefix + "fmtjpeg"
-	cbFmtPNG      = callbackPrefix + "fmtpng"
-	cbMenuCancel  = callbackPrefix + convActCancel // closes the convert menu
-	cbPDFActions  = callbackPrefix + "pdfops"
+	cbPDF         = callbackPrefix + convActPDF
+	cbCompress    = callbackPrefix + convActCompress
+	cbDone        = callbackPrefix + convActDone
+	cbCancel      = callbackPrefix + convActCancel
+	cbLimit1      = callbackPrefix + convActLimit1
+	cbLimit2      = callbackPrefix + convActLimit2
+	cbLimit5      = callbackPrefix + convActLimit5
+	cbLimitCustom = callbackPrefix + convActLimitCustom
+	cbFmtJPEG     = callbackPrefix + convActFmtJPEG
+	cbFmtPNG      = callbackPrefix + convActFmtPNG
+	cbMenuCancel  = callbackPrefix + convActMenuCancel
+	cbPDFActions  = callbackPrefix + convActPDFOps
 
 	// PDF operations on a PDF sent to /convert (bound to the session).
 	cbSessRotate = callbackPrefix + convActPDFOp + ":" + opRotate
 	cbSessKeep   = callbackPrefix + convActPDFOp + ":" + opKeep
 	cbSessDrop   = callbackPrefix + convActPDFOp + ":" + opDrop
 	cbSessMerge  = callbackPrefix + convActPDFOp + ":" + opMerge
-)
-
-// Prefixes of the buttons that work without a /convert session.
-const (
-	cbDocPrefix   = callbackPrefix + convActDoc + ":"    // conv:doc:<docID> opens the menu
-	cbQuickPrefix = callbackPrefix + convActQuick + ":"  // conv:q:<docID>:<op> converts a document
-	cbSavePrefix  = callbackPrefix + convActSave + ":"   // conv:save:<token> saves the result
-	cbSkipPrefix  = callbackPrefix + convActSkip + ":"   // conv:skip:<token> keeps only the file
-	cbRepAsk      = callbackPrefix + convActRepAsk + ":" // conv:rp:<token> asks to replace the original
-	cbRepYes      = callbackPrefix + convActRepYes + ":" // conv:rpy:<token> confirms the replacement
-	cbRepNo       = callbackPrefix + convActRepNo + ":"  // conv:rpn:<token> cancels it
-	cbAlbumPrefix = callbackPrefix + convActAlbum + ":"  // conv:alb:<token> merges an album into a PDF
 )
 
 // Limits of an album PDF.
@@ -235,13 +223,13 @@ func parseLimitKB(text string) (int, bool) {
 }
 
 // limitBytes maps a preset limit button to bytes.
-func limitBytes(data string) int {
-	switch data {
-	case cbLimit1:
+func limitBytes(action string) int {
+	switch action {
+	case convActLimit1:
 		return 1 << 20
-	case cbLimit2:
+	case convActLimit2:
 		return 2 << 20
-	case cbLimit5:
+	case convActLimit5:
 		return 5 << 20
 	default:
 		return 0
@@ -321,19 +309,4 @@ func messageUser(update *models.Update) (int64, bool) {
 		return 0, false
 	}
 	return update.Message.From.ID, true
-}
-
-// callbackMessageID is the id of the message a button was pressed on, 0 if unknown.
-func callbackMessageID(update *models.Update) int {
-	if m := update.CallbackQuery.Message.Message; m != nil {
-		return m.ID
-	}
-	return 0
-}
-
-func callbackChat(update *models.Update) (int64, bool) {
-	if update.CallbackQuery.Message.Message == nil {
-		return 0, false
-	}
-	return update.CallbackQuery.Message.Message.Chat.ID, true
 }

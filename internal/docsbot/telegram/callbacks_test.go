@@ -3,9 +3,11 @@ package telegram
 import (
 	"testing"
 
+	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 func TestBackFromOrig(t *testing.T) {
@@ -86,7 +88,7 @@ func callbackCases() []struct {
 		{"conv rpy", "conv:rpy:" + hexToken, conv(convActRepYes, "", hexToken)},
 		{"conv rpn", "conv:rpn:" + hexToken, conv(convActRepNo, "", hexToken)},
 		{"conv alb", "conv:alb:" + hexToken, conv(convActAlbum, "", hexToken)},
-		{"conv x", "conv:x", conv(convActCancel, "")},
+		{"conv x", "conv:x", conv(convActMenuCancel, "")},
 		{"conv session op", "conv:p:" + opRotate, conv(convActPDFOp, "", opRotate)},
 		{"conv pdf", cbPDF, conv("pdf", "")},
 		{"conv pdfops", cbPDFActions, conv("pdfops", "")},
@@ -122,7 +124,7 @@ func TestCallbackConstructors_matchWireFormat(t *testing.T) {
 	require.Equal(t, "d:oc:"+string(uuidDoc)+":s", docCB(actOpenCard, uuidDoc, "s"))
 	require.Equal(t, "conv:save:"+hexToken, convCB(convActSave, hexToken))
 	require.Equal(t, "conv:q:"+string(uuidDoc)+":c1", convDocCB(convActQuick, uuidDoc, opCompress1))
-	require.Equal(t, cbMenuCancel, convCB(convActCancel))
+	require.Equal(t, cbMenuCancel, convCB(convActMenuCancel))
 	require.Equal(t, cbSessRotate, convCB(convActPDFOp, opRotate))
 }
 
@@ -166,4 +168,24 @@ func TestParseCallback_edges(t *testing.T) {
 		})
 	}
 	require.NotPanics(t, func() { _ = callbackData{}.String() })
+}
+
+func TestNewPress(t *testing.T) {
+	ctx := tg.ContextWithUserID(t.Context(), "u1")
+	msg := &models.Message{ID: 7, Chat: models.Chat{ID: 100}}
+
+	p := newPress(ctx, &models.CallbackQuery{
+		ID: "q", From: models.User{ID: 42}, Data: "d:oc:doc:s",
+		Message: models.MaybeInaccessibleMessage{Message: msg},
+	})
+	require.Equal(t, press{
+		queryID: "q", tgUser: 42, user: "u1", hasUser: true, chatID: 100, msgID: 7, hasMsg: true, msg: msg,
+		data: callbackData{prefix: cbPrefix, action: actOpenCard, docID: "doc", args: []string{"s"}},
+	}, p)
+
+	p = newPress(t.Context(), &models.CallbackQuery{ID: "q", From: models.User{ID: 42}, Data: "d:lb"})
+	require.False(t, p.hasMsg, "a message Telegram no longer gives")
+	require.False(t, p.hasUser, "no user from the auth middleware")
+	require.Zero(t, p.chatID)
+	require.Equal(t, actListBack, p.data.action)
 }

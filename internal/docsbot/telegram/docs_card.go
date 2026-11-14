@@ -16,15 +16,17 @@ import (
 )
 
 // onSetCategory changes an existing document's category.
-func (d *docs) onSetCategory(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
-	id, cat, ok := docCategory(parts)
+func (d *docs) onSetCategory(ctx context.Context, b *bot.Bot, p press) {
+	user := p.user
+	id := p.data.docID
+	cat, ok := p.data.category()
 	if !ok {
 		return
 	}
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+	if !p.hasMsg {
 		return
 	}
+	chatID, msgID := p.chatID, p.msgID
 	card, err := d.svc.Recategorize(ctx, user, id, cat)
 	if errors.Is(err, docsbot.ErrNotFound) {
 		d.gone(ctx, b, chatID, msgID)
@@ -44,28 +46,29 @@ func (d *docs) onSetCategory(ctx context.Context, b *bot.Bot, u *models.Update, 
 }
 
 // onChangeCat swaps a card's buttons for the category picker.
-func (d *docs) onChangeCat(ctx context.Context, b *bot.Bot, u *models.Update, parts []string) {
-	id, ok := docID(parts)
-	if !ok {
+func (d *docs) onChangeCat(ctx context.Context, b *bot.Bot, p press) {
+	id := p.data.docID
+	if id == "" {
 		return
 	}
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+	if !p.hasMsg {
 		return
 	}
+	chatID, msgID := p.chatID, p.msgID
 	d.out(b).setKeyboard(ctx, chatID, msgID, categoryKeyboard(actSetCategory, id))
 }
 
 // onSend resends the original file from Telegram by its file_id.
-func (d *docs) onSend(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
-	id, ok := docID(parts)
-	if !ok {
+func (d *docs) onSend(ctx context.Context, b *bot.Bot, p press) {
+	user := p.user
+	id := p.data.docID
+	if id == "" {
 		return
 	}
-	chatID, ok := callbackChat(u)
-	if !ok {
+	if !p.hasMsg {
 		return
 	}
+	chatID := p.chatID
 	card, err := d.svc.Card(ctx, user, id)
 	if errors.Is(err, docsbot.ErrNotFound) {
 		d.out(b).send(ctx, chatID, textGone)
@@ -80,45 +83,46 @@ func (d *docs) onSend(ctx context.Context, b *bot.Bot, u *models.Update, user do
 
 // onRenamePrompt arms the rename and turns the card's own message into the
 // prompt, with a cancel button. Typing the name is the next text message.
-func (d *docs) onRenamePrompt(ctx context.Context, b *bot.Bot, u *models.Update, parts []string) {
-	id, ok := docID(parts)
-	if !ok {
+func (d *docs) onRenamePrompt(ctx context.Context, b *bot.Bot, p press) {
+	id := p.data.docID
+	if id == "" {
 		return
 	}
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+	if !p.hasMsg {
 		return
 	}
-	d.renames.set(u.CallbackQuery.From.ID, renameEntry{id: id, chat: chatID, msg: msgID})
+	chatID, msgID := p.chatID, p.msgID
+	d.renames.set(p.tgUser, renameEntry{id: id, chat: chatID, msg: msgID})
 	d.out(b).edit(ctx, chatID, msgID, textRenamePrompt, withHTML(), withKeyboard(renameCancelKeyboard(id)))
 }
 
 // onRenameCancel drops the rename armed on this message, if any, and puts the
 // card back. Repeating it, or pressing it on a stale prompt, only redraws the card.
-func (d *docs) onRenameCancel(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
-	id, ok := docID(parts)
-	if !ok {
+func (d *docs) onRenameCancel(ctx context.Context, b *bot.Bot, p press) {
+	user := p.user
+	id := p.data.docID
+	if id == "" {
 		return
 	}
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+	if !p.hasMsg {
 		return
 	}
-	dropRename(d.renames, u.CallbackQuery.From.ID, chatID, msgID)
+	chatID, msgID := p.chatID, p.msgID
+	dropRename(d.renames, p.tgUser, chatID, msgID)
 	d.restoreCard(ctx, b, user, chatID, msgID, id)
 }
 
 // releaseRename ends the user's armed rename when they press a button on another
 // message and returns that message to the card it was.
-func (d *docs) releaseRename(ctx context.Context, b *bot.Bot, user docsbot.UserID, u *models.Update) {
-	e, ok := d.renames.take(u.CallbackQuery.From.ID)
+func (d *docs) releaseRename(ctx context.Context, b *bot.Bot, p press) {
+	e, ok := d.renames.take(p.tgUser)
 	if !ok {
 		return
 	}
-	if chatID, msgID, ok := callbackMessage(u); ok && e.chat == chatID && e.msg == msgID {
+	if p.hasMsg && e.chat == p.chatID && e.msg == p.msgID {
 		return
 	}
-	d.restoreCard(ctx, b, user, e.chat, e.msg, e.id)
+	d.restoreCard(ctx, b, p.user, e.chat, e.msg, e.id)
 }
 
 // restoreCard redraws a message as the document's card, keeping where it was
@@ -181,15 +185,16 @@ func (d *docs) renameHint(ctx context.Context, b *bot.Bot, tgUser int64, e renam
 }
 
 // onDeleteAsk asks to confirm before deleting.
-func (d *docs) onDeleteAsk(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
-	id, ok := docID(parts)
-	if !ok {
+func (d *docs) onDeleteAsk(ctx context.Context, b *bot.Bot, p press) {
+	user := p.user
+	id := p.data.docID
+	if id == "" {
 		return
 	}
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+	if !p.hasMsg {
 		return
 	}
+	chatID, msgID := p.chatID, p.msgID
 	kb := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
 		{Text: btnDeleteYes, CallbackData: docCB(actDeleteYes, id)},
 		{Text: btnDeleteNo, CallbackData: docCB(actDeleteNo, id)},
@@ -210,15 +215,16 @@ func (d *docs) deleteConfirmText(ctx context.Context, user docsbot.UserID, id do
 	return textDeleteConfirmDrive
 }
 
-func (d *docs) onDeleteYes(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
-	id, ok := docID(parts)
-	if !ok {
+func (d *docs) onDeleteYes(ctx context.Context, b *bot.Bot, p press) {
+	user := p.user
+	id := p.data.docID
+	if id == "" {
 		return
 	}
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+	if !p.hasMsg {
 		return
 	}
+	chatID, msgID := p.chatID, p.msgID
 	deleted, err := d.svc.Delete(ctx, user, id)
 	if err != nil {
 		d.fail(ctx, b, chatID, "delete", err)
@@ -232,12 +238,13 @@ func (d *docs) onDeleteYes(ctx context.Context, b *bot.Bot, u *models.Update, us
 		d.out(b).edit(ctx, chatID, msgID, textDeletedRemoteKept, withKeyboard(myDocsKeyboard()))
 		return
 	}
-	d.returnToOrigin(ctx, b, u, user, chatID, msgID)
+	d.returnToOrigin(ctx, b, p)
 }
 
 // returnToOrigin replaces the deleted card's message with the list or search it
 // was opened from, falling back to a plain "deleted" note.
-func (d *docs) returnToOrigin(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, chatID int64, msgID int) {
+func (d *docs) returnToOrigin(ctx context.Context, b *bot.Bot, p press) {
+	user, chatID, msgID := p.user, p.chatID, p.msgID
 	orig := d.origin(chatID, msgID)
 	switch {
 	case strings.HasPrefix(orig, "l:"):
@@ -248,19 +255,19 @@ func (d *docs) returnToOrigin(ctx context.Context, b *bot.Bot, u *models.Update,
 			return
 		}
 		page, _ := strconv.Atoi(parts[2])
-		p, err := d.svc.CategoryPage(ctx, user, cat, page)
+		cp, err := d.svc.CategoryPage(ctx, user, cat, page)
 		if err != nil {
 			d.fail(ctx, b, chatID, "category page", err)
 			return
 		}
-		if p.Total > 0 {
-			text, kb := renderCategoryPage(p)
+		if cp.Total > 0 {
+			text, kb := renderCategoryPage(cp)
 			d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(kb))
 			return
 		}
 		d.editCatalog(ctx, b, user, chatID, msgID)
 	case orig == "s":
-		q, ok := d.searches.get(u.CallbackQuery.From.ID)
+		q, ok := d.searches.get(p.tgUser)
 		if !ok {
 			d.editCatalog(ctx, b, user, chatID, msgID)
 			return
@@ -283,15 +290,16 @@ func (d *docs) editDeleted(ctx context.Context, b *bot.Bot, chatID int64, msgID 
 }
 
 // onDeleteNo puts the card back in place of the confirmation.
-func (d *docs) onDeleteNo(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
-	id, ok := docID(parts)
-	if !ok {
+func (d *docs) onDeleteNo(ctx context.Context, b *bot.Bot, p press) {
+	user := p.user
+	id := p.data.docID
+	if id == "" {
 		return
 	}
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+	if !p.hasMsg {
 		return
 	}
+	chatID, msgID := p.chatID, p.msgID
 	card, err := d.svc.Card(ctx, user, id)
 	if errors.Is(err, docsbot.ErrNotFound) {
 		d.gone(ctx, b, chatID, msgID)
@@ -369,15 +377,16 @@ func (d *docs) gone(ctx context.Context, b *bot.Bot, chatID int64, msgID int) {
 
 // onOpenCard renders a document's card in place of the list/search message, with
 // a "Назад" button back to where it was opened from.
-func (d *docs) onOpenCard(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
-	id, ok := docID(parts)
-	if !ok {
+func (d *docs) onOpenCard(ctx context.Context, b *bot.Bot, p press) {
+	user := p.user
+	id := p.data.docID
+	if id == "" {
 		return
 	}
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+	if !p.hasMsg {
 		return
 	}
+	chatID, msgID := p.chatID, p.msgID
 	card, err := d.svc.OpenCard(ctx, user, id)
 	if errors.Is(err, docsbot.ErrNotFound) {
 		d.gone(ctx, b, chatID, msgID)
@@ -391,5 +400,5 @@ func (d *docs) onOpenCard(ctx context.Context, b *bot.Bot, u *models.Update, use
 		// The Drive check failed on our side; the card read so far is still right to show.
 		d.log.ErrorContext(ctx, "open card", "err", err, "user_id", user)
 	}
-	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, strings.Join(parts[3:], ":"))
+	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, strings.Join(p.data.args, ":"))
 }

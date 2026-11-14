@@ -14,16 +14,13 @@ import (
 )
 
 // onExport is the "send all documents" button.
-func (d *docs) onExport(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
-	chatID, ok := callbackChat(u)
-	if !ok {
+func (d *docs) onExport(ctx context.Context, b *bot.Bot, p press) {
+	if !p.hasMsg {
 		return
 	}
 	// The button is spent: a second tap must not start another export.
-	if _, msgID, ok := callbackMessage(u); ok {
-		d.out(b).clearKeyboard(ctx, chatID, msgID)
-	}
-	d.export(ctx, b, chatID, user)
+	d.out(b).clearKeyboard(ctx, p.chatID, p.msgID)
+	d.export(ctx, b, p.chatID, p.user)
 }
 
 // exportCmd is the /export command.

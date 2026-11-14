@@ -37,12 +37,13 @@ func (d *docs) runSearch(ctx context.Context, b *bot.Bot, chatID int64, user doc
 
 // onInlineSwitch applies the wanted inline-mode state from d:inl:<1|0> and
 // redraws the settings message in place.
-func (d *docs) onInlineSwitch(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok || len(parts) < 3 || (parts[2] != "1" && parts[2] != "0") {
+func (d *docs) onInlineSwitch(ctx context.Context, b *bot.Bot, p press) {
+	user := p.user
+	if !p.hasMsg || len(p.data.args) < 1 || (p.data.args[0] != "1" && p.data.args[0] != "0") {
 		return // the callback is already answered; a malformed payload changes nothing
 	}
-	on := parts[2] == "1"
+	chatID, msgID := p.chatID, p.msgID
+	on := p.data.args[0] == "1"
 	if err := d.svc.SetInlineEnabled(ctx, user, on); err != nil {
 		d.fail(ctx, b, chatID, "set inline enabled", err)
 		return
@@ -78,33 +79,35 @@ func (d *docs) editCatalog(ctx context.Context, b *bot.Bot, user docsbot.UserID,
 }
 
 // onListCat opens (or pages) a category, editing the list message in place.
-func (d *docs) onListCat(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, parts []string) {
-	if len(parts) < 4 {
+func (d *docs) onListCat(ctx context.Context, b *bot.Bot, p press) {
+	user := p.user
+	if len(p.data.args) < 2 {
 		return
 	}
-	cat, ok := docsbot.ParseCategory(parts[2])
+	cat, ok := docsbot.ParseCategory(p.data.args[0])
 	if !ok {
 		return
 	}
-	page, _ := strconv.Atoi(parts[3])
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+	page, _ := strconv.Atoi(p.data.args[1])
+	if !p.hasMsg {
 		return
 	}
-	p, err := d.svc.CategoryPage(ctx, user, cat, page)
+	chatID, msgID := p.chatID, p.msgID
+	cp, err := d.svc.CategoryPage(ctx, user, cat, page)
 	if err != nil {
 		d.fail(ctx, b, chatID, "category page", err)
 		return
 	}
-	text, kb := renderCategoryPage(p)
+	text, kb := renderCategoryPage(cp)
 	d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(kb))
 }
 
-func (d *docs) onListBack(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+func (d *docs) onListBack(ctx context.Context, b *bot.Bot, p press) {
+	user := p.user
+	if !p.hasMsg {
 		return
 	}
+	chatID, msgID := p.chatID, p.msgID
 	cat, err := d.svc.Catalog(ctx, user)
 	if err != nil {
 		d.fail(ctx, b, chatID, "catalog", err)
@@ -116,12 +119,13 @@ func (d *docs) onListBack(ctx context.Context, b *bot.Bot, u *models.Update, use
 
 // onSearchBack re-runs the user's last search in place of the card; without a
 // remembered query it falls back to the catalog.
-func (d *docs) onSearchBack(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+func (d *docs) onSearchBack(ctx context.Context, b *bot.Bot, p press) {
+	user := p.user
+	if !p.hasMsg {
 		return
 	}
-	q, ok := d.searches.get(u.CallbackQuery.From.ID)
+	chatID, msgID := p.chatID, p.msgID
+	q, ok := d.searches.get(p.tgUser)
 	if !ok {
 		cat, err := d.svc.Catalog(ctx, user)
 		if err != nil {
