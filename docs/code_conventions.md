@@ -18,7 +18,7 @@ flowchart LR
         PORTS["ports.go<br/>интерфейсы"]
     end
     subgraph OUT["Исходящие адаптеры"]
-        PG["docsbot/postgres<br/>Repo"]
+        PG["docsbot/postgres<br/>Documents, StatusMessages, …"]
         GD["platform/gdrive<br/>Storage"]
     end
 
@@ -58,7 +58,7 @@ internal/
     telegram/              # входящий адаптер: апдейт → service → рендер; texts.go — тексты; send.go — единственный путь отправки, правки и удаления сообщений
     jobs/                  # входящий адаптер: воркеры River (upload, sync, trash, sweep, purge_pending)
     web/                   # входящий адаптер: публичные страницы /, /privacy, /terms
-    postgres/              # исходящий адаптер: Repo через sqlc
+    postgres/              # исходящий адаптер: по типу на порт (Documents, StatusMessages, Users, …) через sqlc; inTx — единственная транзакция
   platform/                # общее ядро для всех ботов
     config/  logging/  db/  jobs/  tg/  oauth/  gdrive/  convert/
 migrations/                # goose, *.sql
@@ -166,8 +166,8 @@ func run() error { // main вызывает run и печатает ошибку
     }
     defer pool.Close()
 
-    repo := postgres.NewRepo(pool)
-    // дальше: oauth.New, gdrive.New, docsbot.NewService(repo, ...),
+    documents := postgres.NewDocuments(pool, jobQueue)
+    // дальше: oauth.New, gdrive.New, docsbot.NewService(docsbot.Ports{Repo: documents, ...}),
     // telegram.Register(...), воркеры River, HTTP-сервер — см. cmd/docsbot/main.go
 }
 ```
@@ -230,7 +230,8 @@ func Compress(img []byte, maxBytes int, format Format) ([]byte, error)
 
 - Запросы — в `.sql` файлах, код генерирует `sqlc`. Сгенерированный код живёт только в адаптере `postgres/`.
 - Миграции — `goose`, файлы `migrations/NNNN_name.sql`, только вперёд в проде.
-- Юзкейсу нужно несколько записей атомарно (БД и очередь) → один метод порта (`Uploads`, `Syncs` в `ports.go`); транзакция открывается внутри адаптера `postgres/`, SQL наружу не течёт.
+- Юзкейсу нужно несколько записей атомарно (БД и очередь) → один метод порта (`Uploads`, `Syncs` в `ports.go`); транзакция открывается внутри адаптера `postgres/` через `inTx` (`tx.go`) — другого способа открыть транзакцию нет. Задачу в той же транзакции ставит `JobInserter` (интерфейс объявлен в `postgres/jobs.go`, реализует `docsbot/jobs.Queue`): адаптер передаёт ему `tx`, замыканий `func(ctx, tx)` в сигнатурах нет. Что менять — только строку или ещё и облако — решает флаг `cloud` в параметрах метода.
+- Безусловный `UPDATE` статуса допустим, только если он корректен при одном воркере очереди (`MaxWorkers: 1`); это пишется комментарием у запроса.
 
 ## 12. Тесты
 
