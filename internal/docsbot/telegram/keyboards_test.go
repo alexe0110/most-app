@@ -56,7 +56,7 @@ func builtButtons() []string {
 	add(renameCancelKeyboard(uuidDoc))
 	add(transferOfferKeyboard())
 	add(retryKeyboard(uuidDoc))
-	add(exportFirstKeyboard())
+	add(deleteDataKeyboard())
 	add(myDocsKeyboard())
 	add(retryBatchKeyboard(statusID))
 	add(statusKeyboard(statusID, statusTally{total: 3, done: 3, failed: 1}))

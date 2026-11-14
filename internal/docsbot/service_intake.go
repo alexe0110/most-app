@@ -188,6 +188,7 @@ func (s *Service) ChooseCategoryGroup(ctx context.Context, user UserID, anyDocID
 		}
 		out.Docs = append(out.Docs, saved.Doc)
 		out.OfferDrive = out.OfferDrive || saved.OfferDrive
+		out.First = out.First || saved.First
 	}
 	out.Already = len(out.Docs) == 0
 	return out, nil
@@ -249,16 +250,16 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 	if choice.Title != "" {
 		doc.Title = choice.Title
 	}
-	if connected {
-		doc.BackupStatus = choice.Backup
-		return Saved{Doc: doc}, nil
-	}
-
 	count, err := s.repo.CountSaved(ctx, user)
 	if err != nil {
 		return Saved{}, fmt.Errorf("count saved: %w", err)
 	}
-	return Saved{Doc: doc, OfferDrive: count == 1 || count == 5}, nil
+	first := count == 1
+	if connected {
+		doc.BackupStatus = choice.Backup
+		return Saved{Doc: doc, First: first}, nil
+	}
+	return Saved{Doc: doc, OfferDrive: count == 1 || count == 5, First: first}, nil
 }
 
 // defaultTitle builds "<category> — dd.mm.yyyy", adding " (n)" until it is unique

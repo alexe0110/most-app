@@ -23,7 +23,20 @@ const (
 	textHelpTail   = "• /settings — Google Диск, отправка из чатов, удаление данных.\n\n" +
 		"Документы хранятся в Telegram, а после подключения Google Диска — ещё и на твоём Google Диске."
 
+	// textStartInline answers ?start=inline when inline mode is already on: %s = bot username.
+	textStartInline = "Набери @%s и слово из названия в любом чате — я покажу документы, выбери нужный, и он отправится в этот чат."
+	// textPrivacy closes /help and /settings: %s = URL of the privacy page.
+	textPrivacy = "Как я обращаюсь с данными: %s"
+
 	textDriveConnected = "Google Диск подключён ✅"
+	// textConnectIntro is the screen before Google's consent page: %s = Drive root folder name.
+	textConnectIntro = "Сейчас откроется Google. Я попрошу доступ только к своей папке «%s» — " +
+		"другие файлы на твоём Google Диске я не вижу. " +
+		"Если у тебя уже есть папка с таким названием, появится вторая — это нормально."
+	textConnectLater = "Хорошо, подключить можно позже в /settings."
+
+	// textFirstDoc follows the first saved document: %s = its category in lower case.
+	textFirstDoc = "Сохранил. Чтобы найти его потом, просто напиши «%s» — или открой /list."
 
 	textChooseCategory      = "В какую категорию сохранить?"
 	textChooseCategoryGroup = "Выбери категорию для %d %s:" // files in the album, plural("файл")
@@ -35,9 +48,11 @@ const (
 	textAlreadySaved        = "Этот документ у тебя уже есть:"
 	textReplacedDone        = "♻️ Оригинал заменён" // caption of the card after the converter replaced the file
 
-	textRenamePrompt  = "Сейчас: «%s». Пришли новое название — до %d символов." // title (HTML-escaped), docsbot.MaxTitleRunes
-	textRenameEmpty   = "Название пустое. Пришли новое название или нажми «Отмена»."
-	textRenameTooLong = "Название слишком длинное, максимум %d символов. Пришли покороче или нажми «Отмена»." // docsbot.MaxTitleRunes
+	textRenamePrompt = "Сейчас: «%s». Пришли новое название — до %d символов." // title (HTML-escaped), docsbot.MaxTitleRunes
+	// textChangeCategory replaces the card while the category picker is open: %s = title.
+	textChangeCategory = "Новая категория для «%s»:"
+	textRenameEmpty    = "Название пустое. Пришли новое название или нажми «Отмена»."
+	textRenameTooLong  = "Название слишком длинное, максимум %d символов. Пришли покороче или нажми «Отмена»." // docsbot.MaxTitleRunes
 
 	textDeleteConfirm = "Удалить «%s»? Вернуть его будет нельзя." // %s = title
 	// textDeleteConfirmDrive is shown for a document in a connected Drive.
@@ -148,7 +163,10 @@ const (
 		"Чтобы подтвердить, пришли слово УДАЛИТЬ. Любое другое сообщение отменит удаление."
 	textDataDeleted = "Данные удалены. Файлы на Google Диске остались у тебя; сообщения в этом чате можно удалить вручную.\n\n" +
 		"Напиши /start, чтобы начать заново."
-	textDeleteWrongWord = "Удаление отменено, твои данные на месте."
+	textDeleteWrongWord   = "Удаление отменено, твои данные на месте."
+	textDeleteExpired     = "Время на подтверждение вышло — открой /settings ещё раз."
+	textDisconnectConfirm = "Отключить Google Диск? Файлы, которые уже там, останутся. " +
+		"Новые документы будут храниться в Telegram."
 )
 
 // Inline button labels for the core flow.
@@ -163,8 +181,7 @@ const (
 	btnChangeCat          = "🗂 Категория"
 	btnDelete             = "🗑 Удалить"
 	btnDeleteYes          = "Да, удалить"
-	btnDeleteNo           = "Отмена"
-	btnRenameCancel       = "Отмена"
+	btnCancel             = "Отмена"
 	btnTransfer           = "☁️ Загрузить на Google Диск"
 	btnBack               = "⬅️ Назад"
 	btnMyDocs             = "📂 Мои документы"
@@ -175,6 +192,8 @@ const (
 	btnReupload           = "☁️ Загрузить заново"
 	btnReconnect          = "☁️ Подключить заново"
 	btnDisconnect         = "🔌 Отключить Google Диск"
+	btnDisconnectYes      = "Да, отключить"
+	btnContinue           = "☁️ Продолжить"
 	btnRetryAll           = "🔁 Повторить загрузку"
 	btnExportAll          = "📨 Прислать все документы"
 	btnDeleteData         = "🗑 Удалить мои данные"

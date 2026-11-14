@@ -47,7 +47,7 @@ func TestRenderCategoryPage_driveBadge(t *testing.T) {
 		{"backed up", true, backedUp, "☁️ 📄 Backed"},
 		{"not backed up", true, pending, "📥 📄 Pending"},
 		{"file deleted in drive", true, docsbot.Document{ID: "3", Title: "Gone", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing}, "📥 📄 Gone"},
-		{"drive not connected", false, pending, "📥 📄 Pending"},
+		{"drive not connected", false, pending, "📄 Pending"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -65,7 +65,7 @@ func TestRenderCategoryPage_driveBadge(t *testing.T) {
 func TestRenderCategoryPage_openCardData(t *testing.T) {
 	doc := docsbot.Document{ID: "x1", Title: "Doc", CreatedAt: time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC)}
 	_, kb := renderCategoryPage(docsbot.CategoryPage{
-		Category: docsbot.CatAuto, Docs: []docsbot.Document{doc}, Page: 2, Pages: 3, Total: 1,
+		Category: docsbot.CatAuto, Docs: []docsbot.Document{doc}, Page: 2, Pages: 3, Total: 1, DriveConnected: true,
 	})
 	btn := kb.InlineKeyboard[0][0]
 	require.Equal(t, "d:oc:x1:l:auto:2", btn.CallbackData)
@@ -73,7 +73,7 @@ func TestRenderCategoryPage_openCardData(t *testing.T) {
 }
 
 func TestRenderFound_opensCards(t *testing.T) {
-	text, kb := renderFound(docsbot.Found{Docs: []docsbot.Document{
+	text, kb := renderFound(docsbot.Found{DriveConnected: true, Docs: []docsbot.Document{
 		{ID: "x1", Title: "Паспорт", Category: docsbot.CatPassport},
 	}})
 	require.Equal(t, "Нашёл 1 документ:", text)
@@ -183,20 +183,23 @@ func TestPlural(t *testing.T) {
 
 func TestListLabel(t *testing.T) {
 	tests := []struct {
-		name string
-		doc  docsbot.Document
-		want string
+		name      string
+		doc       docsbot.Document
+		connected bool // Google Drive is linked
+		want      string
 	}{
-		{"pdf in drive", docsbot.Document{Title: "ВНЖ", MIME: "application/pdf", Kind: docsbot.KindDocument, BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncOK}, "☁️ 📄 ВНЖ"},
-		{"photo in telegram", docsbot.Document{Title: "Фото", Kind: docsbot.KindPhoto}, "📥 🖼 Фото"},
-		{"image document", docsbot.Document{Title: "Скан", MIME: "image/png", Kind: docsbot.KindDocument}, "📥 🖼 Скан"},
-		{"drive file deleted", docsbot.Document{Title: "Договор", MIME: "application/pdf", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing}, "📥 📄 Договор"},
-		{"drive sync pending still cloud", docsbot.Document{Title: "Х", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncPending}, "☁️ 📄 Х"},
-		{"too large", docsbot.Document{Title: "Огромный", BackupStatus: docsbot.BackupTooLarge}, "📥 📄 Огромный"},
+		{"pdf in drive", docsbot.Document{Title: "ВНЖ", MIME: "application/pdf", Kind: docsbot.KindDocument, BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncOK}, true, "☁️ 📄 ВНЖ"},
+		{"photo in telegram", docsbot.Document{Title: "Фото", Kind: docsbot.KindPhoto}, true, "📥 🖼 Фото"},
+		{"image document", docsbot.Document{Title: "Скан", MIME: "image/png", Kind: docsbot.KindDocument}, true, "📥 🖼 Скан"},
+		{"drive file deleted", docsbot.Document{Title: "Договор", MIME: "application/pdf", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing}, true, "📥 📄 Договор"},
+		{"drive sync pending still cloud", docsbot.Document{Title: "Х", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncPending}, true, "☁️ 📄 Х"},
+		{"not connected: no storage icon", docsbot.Document{Title: "Скан", MIME: "image/png", Kind: docsbot.KindDocument}, false, "🖼 Скан"},
+		{"not connected, file in drive keeps its icon", docsbot.Document{Title: "ВНЖ", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncOK}, false, "☁️ 📄 ВНЖ"},
+		{"too large", docsbot.Document{Title: "Огромный", BackupStatus: docsbot.BackupTooLarge}, true, "📥 📄 Огромный"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, listLabel(tt.doc))
+			require.Equal(t, tt.want, listLabel(tt.doc, tt.connected))
 		})
 	}
 }

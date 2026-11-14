@@ -90,7 +90,7 @@ func (c *Converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
 	}
 
 	var out []byte
-	var name, suffix string
+	var name, suffix, caption string
 	ictx, cancelImage := context.WithTimeout(ctx, imageTimeout)
 	switch op {
 	case opPDF:
@@ -104,6 +104,7 @@ func (c *Converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
 	default:
 		suffix = suffixCompressed
 		out, err = convert.Compress(ictx, src, maxBytes, convert.JPEG)
+		caption = compressedCaption(len(src), len(out))
 		name = resultFileName(doc.Title, nameFallbackPhoto, nameTagCompressed, "jpg")
 	}
 	cancelImage()
@@ -117,7 +118,7 @@ func (c *Converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
 	if known && len(out) > maxBytes {
 		c.out(b).Send(ctx, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
 	}
-	if !c.sendResult(ctx, b, chatID, p.tgUser, name, out, id, suffix) {
+	if !c.sendResult(ctx, b, chatID, p.tgUser, resultFile{name: name, data: out, sourceDoc: id, suffix: suffix, caption: caption}) {
 		c.show(ctx, b, chatID, msgID, textSendFailed, menu)
 		return
 	}

@@ -91,8 +91,8 @@ func TestChooseCategory_savesAndShowsCard(t *testing.T) {
 	}}
 	b.ProcessUpdate(ctx, update)
 
-	require.False(t, has(sent.texts, "Сохранил"), "the picker becomes the card, no extra message")
-	require.Len(t, sent.texts, 1, "only the Drive nudge for the first document: %q", sent.texts)
+	require.Len(t, sent.texts, 2, "the first-document hint and the Drive nudge: %q", sent.texts)
+	require.Contains(t, sent.texts[0], "Чтобы найти его потом", "the hint comes before the nudge")
 	require.True(t, has(sent.edits, "🗂 "), "edits %q", sent.edits)
 	require.False(t, has(sent.edits, "✅"), "edits %q", sent.edits)
 	require.Equal(t, docsbot.StatusSaved, repo.Docs[doc.ID].Status)

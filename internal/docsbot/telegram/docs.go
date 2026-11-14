@@ -40,6 +40,8 @@ type docs struct {
 	driveFolder string
 	// botUsername is the bot's @username (without @), for the inline-mode hints; may be empty.
 	botUsername string
+	// privacyURL is the privacy page linked from /help and /settings; empty leaves the line out.
+	privacyURL string
 	// albumPDFs makes the "one PDF" offer of an album; set by Register (the
 	// converter owns the PDF work). Nil: albums are always saved one by one.
 	albumPDFs albumPDFs
@@ -123,6 +125,11 @@ func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.applyRename(ctx, b, user, e, u.Message)
 		return
 	}
+	if isConfirmWord(u.Message.Text) {
+		// The confirmation lapsed (or the bot restarted): do not search for the word.
+		d.out(b).Send(ctx, chatID, textDeleteExpired)
+		return
+	}
 	d.searches.Set(u.Message.From.ID, u.Message.Text)
 	d.runSearch(ctx, b, chatID, user, u.Message.Text)
 }
@@ -154,6 +161,8 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.onSetCategory(ctx, b, p)
 	case actChangeCat:
 		d.onChangeCat(ctx, b, p)
+	case actCardBack:
+		d.onCardBack(ctx, b, p)
 	case actSend:
 		d.onSend(ctx, b, p)
 	case actRename:
@@ -182,14 +191,24 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.onRetry(ctx, b, p)
 	case actRetrySync:
 		d.onRetrySync(ctx, b, p)
+	case actDisconnectAsk:
+		d.onDisconnectAsk(ctx, b, p)
 	case actDisconnect:
 		d.onDisconnect(ctx, b, p)
+	case actDisconnectNo:
+		d.onDisconnectNo(ctx, b, p)
+	case actConnectAsk:
+		d.onConnectAsk(ctx, b, p)
+	case actConnectNo:
+		d.onConnectNo(ctx, b, p)
 	case actRetryAll:
 		d.onRetryAll(ctx, b, p)
 	case actExport:
 		d.onExport(ctx, b, p)
 	case actDeleteData:
 		d.onDeleteData(ctx, b, p)
+	case actDeleteDataNo:
+		d.onDeleteDataNo(ctx, b, p)
 	case actRetryBatch:
 		d.onRetryBatch(ctx, b, p)
 	case actInline:

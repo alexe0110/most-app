@@ -11,6 +11,12 @@ const (
 	textSendFailed = "Не удалось отправить файл. Попробуй ещё раз."
 )
 
+// Size units of the result caption. A copy of the docs adapter's, forced by layering.
+const (
+	textSizeKB       = "%d\u00A0КБ"
+	textSizeMBSuffix = "\u00A0МБ"
+)
+
 // textStale answers a press that no longer applies.
 const textStale = "Эта кнопка уже не работает. Открой документ заново."
 
@@ -77,6 +83,10 @@ const (
 	textPDFTooMany       = "В PDF слишком много страниц: поддерживаю до %d."
 	textPDFPrevCancelled = "Предыдущее преобразование отменено."
 	textPDFTimeout       = "Обработка заняла слишком много времени. Попробуй файл поменьше."
+
+	// Captions of the result file: sizes after and before compressing; pages of a PDF.
+	textResultCompressed = "Готово: %s (было %s)."
+	textResultPages      = "Готово: %d %s."
 
 	// textConvertBestEffort takes the reached size in KB (target was out of reach).
 	textConvertBestEffort = "Меньше не вышло — сжал до %d КБ."

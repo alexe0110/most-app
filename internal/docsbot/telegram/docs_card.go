@@ -47,7 +47,7 @@ func (d *docs) onSetCategory(ctx context.Context, b *bot.Bot, p press) {
 	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
 }
 
-// onChangeCat swaps a card's buttons for the category picker.
+// onChangeCat turns the card into the category picker.
 func (d *docs) onChangeCat(ctx context.Context, b *bot.Bot, p press) {
 	id := p.data.docID
 	if id == "" {
@@ -57,7 +57,25 @@ func (d *docs) onChangeCat(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 	chatID, msgID := p.chatID, p.msgID
-	d.out(b).SetKeyboard(ctx, chatID, msgID, categoryKeyboard(actSetCategory, id))
+	card, err := d.svc.Card(ctx, p.user, id)
+	if errors.Is(err, docsbot.ErrNotFound) {
+		d.gone(ctx, b, chatID, msgID)
+		return
+	}
+	if err != nil {
+		d.fail(ctx, b, chatID, "load card", err)
+		return
+	}
+	d.out(b).Edit(ctx, chatID, msgID, fmt.Sprintf(textChangeCategory, card.Doc.Title), tg.WithKeyboard(categoryPickerKeyboard(id)))
+}
+
+// onCardBack closes the category picker: the card comes back, keeping where it was opened from.
+func (d *docs) onCardBack(ctx context.Context, b *bot.Bot, p press) {
+	id := p.data.docID
+	if id == "" || !p.hasMsg {
+		return
+	}
+	d.restoreCard(ctx, b, p.user, p.chatID, p.msgID, id)
 }
 
 // onSend resends the original file from Telegram by its file_id.
@@ -219,7 +237,7 @@ func (d *docs) onDeleteAsk(ctx context.Context, b *bot.Bot, p press) {
 	}
 	kb := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
 		{Text: btnDeleteYes, CallbackData: docCB(actDeleteYes, id)},
-		{Text: btnDeleteNo, CallbackData: docCB(actDeleteNo, id)},
+		{Text: btnCancel, CallbackData: docCB(actDeleteNo, id)},
 	}}}
 	d.out(b).Edit(ctx, chatID, msgID, d.deleteConfirmText(ctx, user, card.Doc), tg.WithKeyboard(kb))
 }

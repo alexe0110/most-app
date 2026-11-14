@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -163,12 +164,23 @@ func (d *docs) RenderSaved(ctx context.Context, b *bot.Bot, chatID int64, msgID 
 	if saved.Doc.BackupStatus == docsbot.BackupPending {
 		// Drive is connected: the upload is queued and tracked in a status message.
 		d.trackUpload(ctx, b, chatID, user, saved.Doc, msgID)
+		if saved.First {
+			d.hintFirstDoc(ctx, b, chatID, saved.Doc.Category)
+		}
 		return
 	}
 	d.editCard(ctx, b, chatID, msgID, saved.Doc, "", "")
-	if saved.OfferDrive {
-		d.offerDrive(ctx, b, chatID, user)
+	if saved.First {
+		d.hintFirstDoc(ctx, b, chatID, saved.Doc.Category)
 	}
+	if saved.OfferDrive {
+		d.offerDrive(ctx, b, chatID)
+	}
+}
+
+// hintFirstDoc tells a user who just saved the first document how to find it.
+func (d *docs) hintFirstDoc(ctx context.Context, b *bot.Bot, chatID int64, cat docsbot.Category) {
+	d.out(b).Send(ctx, chatID, fmt.Sprintf(textFirstDoc, strings.ToLower(cat.Label())))
 }
 
 // onCategoryGroup saves a whole album under the chosen category. The picker
@@ -226,8 +238,11 @@ func (d *docs) onCategoryGroup(ctx context.Context, b *bot.Bot, p press) {
 		}
 		d.out(b).Edit(ctx, chatID, msgID, text, tg.WithKeyboard(nil))
 	}
+	if group.First {
+		d.hintFirstDoc(ctx, b, chatID, cat)
+	}
 	if group.OfferDrive {
-		d.offerDrive(ctx, b, chatID, user)
+		d.offerDrive(ctx, b, chatID)
 	}
 }
 

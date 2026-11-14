@@ -228,7 +228,11 @@ func (s *Service) Search(ctx context.Context, user UserID, query string) (Found,
 	if err != nil {
 		return Found{}, fmt.Errorf("search documents: %w", err)
 	}
-	return Found{Query: query, Docs: docs}, nil
+	connected, err := s.drive.Connected(ctx, user)
+	if err != nil {
+		return Found{}, fmt.Errorf("drive status: %w", err)
+	}
+	return Found{Query: query, Docs: docs, DriveConnected: connected}, nil
 }
 
 // normalizeQuery trims a search query and cuts it to maxQueryRunes.

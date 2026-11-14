@@ -43,11 +43,12 @@ func renderCatalog(c docsbot.Catalog) (string, *models.InlineKeyboardMarkup) {
 type screenInfo struct {
 	driveFolder string // Drive root folder
 	botUsername string // without @; empty leaves the inline hint out
+	privacyURL  string // empty leaves the privacy line out
 }
 
 // renderSettings draws the /settings screen: Drive state, document counts, and
-// the available actions. connectURL is the Google consent link; haveURL is false
-// when it could not be built (then no connect/reconnect button is shown).
+// the available actions. connectURL is the Google consent link of the reconnect
+// button; haveURL is false when it could not be built (then that button is left out).
 func renderSettings(v docsbot.SettingsView, connectURL string, haveURL bool, info screenInfo) (string, *models.InlineKeyboardMarkup) {
 	b := &strings.Builder{}
 	if v.DriveConnected {
@@ -66,17 +67,20 @@ func renderSettings(v docsbot.SettingsView, connectURL string, haveURL bool, inf
 	if info.botUsername != "" {
 		fmt.Fprintf(b, "\n\n"+textSettingsInline, html.EscapeString(info.botUsername))
 	}
+	if info.privacyURL != "" {
+		fmt.Fprintf(b, "\n\n"+textPrivacy, html.EscapeString(info.privacyURL))
+	}
 
 	var rows [][]models.InlineKeyboardButton
-	if haveURL {
-		label := btnConnectDrive
-		if v.DriveConnected {
-			label = btnReconnect
-		}
-		rows = append(rows, []models.InlineKeyboardButton{{Text: label, URL: connectURL}})
+	switch {
+	case !v.DriveConnected:
+		// The consent link is built when the user presses the button.
+		rows = append(rows, connectAskKeyboard().InlineKeyboard...)
+	case haveURL:
+		rows = append(rows, []models.InlineKeyboardButton{{Text: btnReconnect, URL: connectURL}})
 	}
 	if v.DriveConnected {
-		rows = append(rows, []models.InlineKeyboardButton{{Text: btnDisconnect, CallbackData: docCB(actDisconnect, "")}})
+		rows = append(rows, []models.InlineKeyboardButton{{Text: btnDisconnect, CallbackData: docCB(actDisconnectAsk, "")}})
 	}
 	// Retry only makes sense while Drive is connected; a disconnected retry would
 	// re-fail every document and spam reconnect prompts.
@@ -139,7 +143,7 @@ func renderCategoryPage(p docsbot.CategoryPage) (string, *models.InlineKeyboardM
 	var rows [][]models.InlineKeyboardButton
 	for _, doc := range p.Docs {
 		rows = append(rows, []models.InlineKeyboardButton{{
-			Text:         listLabel(doc),
+			Text:         listLabel(doc, p.DriveConnected),
 			CallbackData: docCB(actOpenCard, doc.ID, "l", string(p.Category), strconv.Itoa(p.Page)),
 		}})
 	}
@@ -186,7 +190,7 @@ func renderFound(f docsbot.Found) (string, *models.InlineKeyboardMarkup) {
 	var rows [][]models.InlineKeyboardButton
 	for _, doc := range f.Docs {
 		rows = append(rows, []models.InlineKeyboardButton{{
-			Text:         listLabel(doc),
+			Text:         listLabel(doc, f.DriveConnected),
 			CallbackData: docCB(actOpenCard, doc.ID, "s"),
 		}})
 	}
@@ -199,16 +203,25 @@ const listTitleRunes = 30
 // listLabel is a document's button text in a list or search result:
 // "<storage> <type> <title>", e.g. "☁️ 📄 ВНЖ". The storage icon says where the
 // file lives (☁️ in Drive, 📥 only in Telegram, also when its Drive file is gone),
-// the type icon what it is (🖼 image, 📄 anything else).
-func listLabel(doc docsbot.Document) string {
-	return storageIcon(doc) + " " + typeIcon(doc) + " " + truncateMiddle(doc.Title, listTitleRunes)
+// the type icon what it is (🖼 image, 📄 anything else). While Google Drive is
+// not connected every document is only in Telegram, so 📥 would tell nothing and
+// is left out.
+func listLabel(doc docsbot.Document, driveConnected bool) string {
+	label := typeIcon(doc) + " " + truncateMiddle(doc.Title, listTitleRunes)
+	if icon := storageIcon(doc, driveConnected); icon != "" {
+		return icon + " " + label
+	}
+	return label
 }
 
-func storageIcon(doc docsbot.Document) string {
-	if doc.InDrive() && doc.SyncStatus != docsbot.SyncMissing {
+func storageIcon(doc docsbot.Document, driveConnected bool) string {
+	switch {
+	case doc.InDrive() && doc.SyncStatus != docsbot.SyncMissing:
 		return "☁️"
+	case driveConnected:
+		return "📥"
 	}
-	return "📥"
+	return ""
 }
 
 func typeIcon(doc docsbot.Document) string {

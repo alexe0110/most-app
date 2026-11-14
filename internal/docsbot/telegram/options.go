@@ -35,6 +35,12 @@ func WithBotUsername(name string) Option {
 	return func(d *docs) { d.botUsername = name }
 }
 
+// WithPrivacyURL sets the link to the privacy page named in /help and /settings;
+// without it those lines are left out.
+func WithPrivacyURL(url string) Option {
+	return func(d *docs) { d.privacyURL = url }
+}
+
 // WithDriveFolder sets the Drive root folder name shown in /start and /settings;
 // an empty name keeps the default.
 func WithDriveFolder(name string) Option {

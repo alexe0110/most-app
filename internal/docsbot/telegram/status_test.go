@@ -53,7 +53,8 @@ func TestChooseCategory_driveOn_oneFileBecomesLiveCard(t *testing.T) {
 
 	pick(ctx, b, id, 11)
 
-	require.Empty(t, sent.texts, "the picker is edited, nothing new is sent")
+	require.Len(t, sent.texts, 1, "the picker is edited, only the first-document hint is new")
+	require.Contains(t, sent.texts[0], "Чтобы найти его потом")
 	require.Len(t, sent.edits, 1)
 	require.Contains(t, sent.edits[0], "🗂 ")
 	require.Contains(t, sent.edits[0], "⏳ Загружаю на Google Диск…")
@@ -73,7 +74,7 @@ func TestChooseCategory_driveOn_manyFilesShareOneBatch(t *testing.T) {
 		pick(ctx, b, id, 11+i)
 	}
 
-	require.Empty(t, sent.texts, "pickers are edited or deleted, nothing new is sent")
+	require.Len(t, sent.texts, 1, "pickers are edited or deleted, only the first-document hint is new")
 	require.Equal(t, 3, sent.deletes, "pickers of files 3..5 are retired")
 
 	first, err := repo.Status.ByID(t.Context(), docsbottest.TestUserID, repo.Docs[ids[0]].StatusMessageID)
@@ -123,7 +124,13 @@ func TestChooseCategory_driveOff_pickerBecomesCard(t *testing.T) {
 		require.Contains(t, e, "🗂 ")
 		require.NotContains(t, e, "✅")
 	}
-	require.False(t, has(sent.texts, "Сохранил"))
+	hints := 0
+	for _, text := range sent.texts {
+		if strings.Contains(text, "Чтобы найти его потом") {
+			hints++
+		}
+	}
+	require.Equal(t, 1, hints, "only the first document gets the hint")
 	require.Empty(t, statusEdits(sent))
 	for _, d := range repo.Docs {
 		require.Empty(t, d.StatusMessageID)

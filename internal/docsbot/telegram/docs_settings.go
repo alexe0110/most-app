@@ -16,7 +16,7 @@ import (
 // start greets the user. The OAuth redirect sends the user back with
 // ?start=connected, which just confirms the connection. The button over inline
 // results sends ?start=inline: with inline mode off, the user lands on the
-// settings screen to turn it on.
+// settings screen to turn it on; with it on, the user is told how to use it.
 func (d *docs) start(ctx context.Context, b *bot.Bot, u *models.Update) {
 	chatID := u.Message.Chat.ID
 	payload := startPayload(u.Message.Text)
@@ -36,6 +36,10 @@ func (d *docs) start(ctx context.Context, b *bot.Bot, u *models.Update) {
 			}
 			if !view.InlineEnabled {
 				d.sendSettings(ctx, b, chatID, user, view)
+				return
+			}
+			if d.botUsername != "" {
+				d.out(b).Send(ctx, chatID, fmt.Sprintf(textStartInline, d.botUsername))
 				return
 			}
 		}
@@ -78,12 +82,45 @@ func (d *docs) helpText() string {
 	if d.botUsername != "" {
 		text += fmt.Sprintf(textHelpInline, d.botUsername)
 	}
-	return text + textHelpTail
+	text += textHelpTail
+	if d.privacyURL != "" {
+		text += "\n\n" + fmt.Sprintf(textPrivacy, d.privacyURL)
+	}
+	return text
 }
 
 // screenInfo is the deployment-specific part of the settings texts.
 func (d *docs) screenInfo() screenInfo {
-	return screenInfo{driveFolder: d.driveFolder, botUsername: d.botUsername}
+	return screenInfo{driveFolder: d.driveFolder, botUsername: d.botUsername, privacyURL: d.privacyURL}
+}
+
+// onDisconnectAsk turns the settings message into the confirmation of a disconnect.
+func (d *docs) onDisconnectAsk(ctx context.Context, b *bot.Bot, p press) {
+	if !p.hasMsg {
+		return
+	}
+	d.out(b).Edit(ctx, p.chatID, p.msgID, textDisconnectConfirm, tg.WithKeyboard(disconnectConfirmKeyboard()))
+}
+
+// onDisconnectNo puts the settings screen back in place of the confirmation.
+func (d *docs) onDisconnectNo(ctx context.Context, b *bot.Bot, p press) {
+	if !p.hasMsg {
+		return
+	}
+	d.editSettings(ctx, b, p.user, p.chatID, p.msgID)
+}
+
+// editSettings redraws a message as the /settings screen and remembers it for the OAuth return.
+func (d *docs) editSettings(ctx context.Context, b *bot.Bot, user docsbot.UserID, chatID int64, msgID int) {
+	view, err := d.svc.Settings(ctx, user)
+	if err != nil {
+		d.fail(ctx, b, chatID, "settings", err)
+		return
+	}
+	url, haveURL := d.connectURL(ctx, user)
+	text, kb := renderSettings(view, url, haveURL, d.screenInfo())
+	d.out(b).Edit(ctx, chatID, msgID, text, tg.WithHTML(), tg.WithKeyboard(kb))
+	d.settingsMsgs.Set(chatID, msgID)
 }
 
 // onDisconnect turns Drive off and stops pending uploads, leaving stored
@@ -114,12 +151,21 @@ func (d *docs) onDeleteData(ctx context.Context, b *bot.Bot, p press) {
 		d.log.InfoContext(ctx, "delete data requested", "user_id", p.user)
 	}
 	d.confirms.Set(p.tgUser, struct{}{})
-	d.out(b).Send(ctx, chatID, textDeleteDataPrompt, tg.WithKeyboard(exportFirstKeyboard()))
+	d.out(b).Send(ctx, chatID, textDeleteDataPrompt, tg.WithKeyboard(deleteDataKeyboard()))
+}
+
+// onDeleteDataNo drops the armed confirmation and turns its prompt into the cancel note.
+func (d *docs) onDeleteDataNo(ctx context.Context, b *bot.Bot, p press) {
+	d.confirms.Delete(p.tgUser)
+	if !p.hasMsg {
+		return
+	}
+	d.out(b).Edit(ctx, p.chatID, p.msgID, textDeleteWrongWord, tg.WithKeyboard(nil))
 }
 
 // onDeleteConfirm deletes everything once the user typed the exact word.
 func (d *docs) onDeleteConfirm(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, text string) {
-	if strings.TrimSpace(text) != confirmWord {
+	if !isConfirmWord(text) {
 		d.out(b).Send(ctx, chatID, textDeleteWrongWord)
 		return
 	}
@@ -163,13 +209,29 @@ func (d *docs) onTransferNo(ctx context.Context, b *bot.Bot, p press) {
 	d.out(b).Edit(ctx, chatID, msgID, textTransferDeclined, tg.WithKeyboard(nil))
 }
 
-// offerDrive nudges the user to connect Drive, with a consent-link button.
-func (d *docs) offerDrive(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID) {
-	url, ok := d.connectURL(ctx, user)
+// offerDrive nudges the user to connect Drive; the button opens the screen that
+// explains what Google will ask.
+func (d *docs) offerDrive(ctx context.Context, b *bot.Bot, chatID int64) {
+	d.out(b).Send(ctx, chatID, textOfferDrive, tg.WithKeyboard(connectAskKeyboard()))
+}
+
+// onConnectAsk sends the screen before Google's consent page with the link to it.
+func (d *docs) onConnectAsk(ctx context.Context, b *bot.Bot, p press) {
+	url, ok := d.connectURL(ctx, p.user)
 	if !ok {
+		d.out(b).Send(ctx, p.chatID, textError)
 		return
 	}
-	d.out(b).Send(ctx, chatID, textOfferDrive, tg.WithKeyboard(connectKeyboard(url)))
+	d.out(b).Send(ctx, p.chatID, fmt.Sprintf(textConnectIntro, d.driveFolder), tg.WithKeyboard(connectIntroKeyboard(url)))
+}
+
+// onConnectNo turns the screen before Google's consent page into a note that the
+// connection can wait.
+func (d *docs) onConnectNo(ctx context.Context, b *bot.Bot, p press) {
+	if !p.hasMsg {
+		return
+	}
+	d.out(b).Edit(ctx, p.chatID, p.msgID, textConnectLater, tg.WithKeyboard(nil))
 }
 
 // connectURL builds the Google consent URL for the user, false if unavailable.
@@ -206,5 +268,8 @@ func sourcePayload(payload string) string {
 	return payload
 }
 
-// confirmWord is the exact word the user must type to delete all their data.
+// confirmWord is the word the user must type to delete all their data.
 const confirmWord = "УДАЛИТЬ"
+
+// isConfirmWord reports whether text is the confirmation word.
+func isConfirmWord(text string) bool { return strings.TrimSpace(text) == confirmWord }
