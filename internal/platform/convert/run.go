@@ -79,3 +79,8 @@ func run(ctx context.Context, fn func(ctx context.Context) error) error {
 		return ErrTimeout
 	}
 }
+
+// metaOp runs a metadata operation under the shared cap.
+func metaOp(ctx context.Context, fn func(ctx context.Context) error) error {
+	return run(ctx, fn)
+}

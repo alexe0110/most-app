@@ -3,6 +3,7 @@ module github.com/alexe0110/most-app
 go 1.27.3
 
 require (
+	github.com/bep/imagemeta v1.1.1
 	github.com/go-pdf/fpdf v0.9.0
 	github.com/go-telegram/bot v1.27.0
 	github.com/google/uuid v1.6.0
