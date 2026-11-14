@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 )
 
@@ -148,7 +149,7 @@ func TestReceive_parallelSendsOfOneFileCreateOneDocument(t *testing.T) {
 	pool := dbtest.New(t)
 	repo := newAdapters(pool, noJobs{})
 	user := docsbot.UserID(makeUser(t, repo, 930).ID.String())
-	svc := docsbot.NewService(docsbot.Ports{Repo: repo.Documents})
+	svc := docsbot.NewService(docsbot.Ports{Repo: repo.Documents, Events: docsbottest.NoEvents{}})
 	ctx := t.Context()
 
 	const senders = 8
@@ -207,7 +208,7 @@ func TestReceive_parallelSendsOfOneFileCreateOneDocument(t *testing.T) {
 // no job: a pending document has no Drive copy.
 func TestService_discardAlbumDeletesPendingOnly(t *testing.T) {
 	repo, a, b := twoUsers(t)
-	svc := docsbot.NewService(docsbot.Ports{Repo: repo.Documents, Syncs: repo.Documents})
+	svc := docsbot.NewService(docsbot.Ports{Repo: repo.Documents, Syncs: repo.Documents, Events: docsbottest.NoEvents{}})
 	ctx := t.Context()
 	p1 := albumDoc(t, repo, a, "g1", "p1")
 	p2 := albumDoc(t, repo, a, "g1", "p2")

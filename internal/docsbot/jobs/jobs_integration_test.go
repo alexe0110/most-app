@@ -97,7 +97,7 @@ func enqueueUpload(ctx context.Context, pool *pgxpool.Pool, docs *postgres.Docum
 func newService(pool *pgxpool.Pool, docs *postgres.Documents, jq *jobs.Queue, drive docsbot.Drive, files docsbot.FileSource) *docsbot.Service {
 	return docsbot.NewService(docsbot.Ports{
 		Repo: docs, Drive: drive, Files: files, Uploads: docs, Jobs: jq,
-		Folders: postgres.NewFolderCache(pool), Status: postgres.NewStatusMessages(pool), Syncs: docs,
+		Folders: postgres.NewFolderCache(pool), Status: postgres.NewStatusMessages(pool), Syncs: docs, Events: postgres.NewEvents(pool),
 	})
 }
 
