@@ -1,21 +1,26 @@
 package converter
 
 import (
+	"bytes"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/go-pdf/fpdf"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
 
+	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -399,41 +404,89 @@ func TestSessionStore_restoreRespectsTheCap(t *testing.T) {
 	require.False(t, store.has(1), "no room: the user starts over")
 }
 
-// A refused /convert says why and opens nothing; a user who already has a session
-// is never locked out of restarting it.
-func TestConverter_startWhenSessionsAreFull(t *testing.T) {
+// recordingBot is a fake Bot API: it records the texts the bot sends and edits, in
+// order, as "send:<text>" and "edit:<text>". The returned func reads them.
+func recordingBot(t *testing.T) (*bot.Bot, func() []string) {
+	t.Helper()
 	var mu sync.Mutex
-	var texts []string
+	var events []string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/sendMessage") {
-			mu.Lock()
-			texts = append(texts, r.FormValue("text"))
-			mu.Unlock()
+		mu.Lock()
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/sendMessage"):
+			events = append(events, "send:"+r.FormValue("text"))
+		case strings.HasSuffix(r.URL.Path, "/editMessageText"):
+			events = append(events, "edit:"+r.FormValue("text"))
 		}
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":5}}`)
 	}))
 	t.Cleanup(ts.Close)
 	b, err := bot.New("123:ABC", bot.WithServerURL(ts.URL), bot.WithSkipGetMe())
 	require.NoError(t, err)
-	c := New(Deps{Log: slog.New(slog.DiscardHandler)})
-	c.sessions.max = 1
-	from := func(user int64) *models.Update {
-		return &models.Update{Message: &models.Message{
+	return b, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(events)
+	}
+}
+
+// onePagePDF is the smallest PDF the converter accepts.
+func onePagePDF(t *testing.T) []byte {
+	t.Helper()
+	p := fpdf.New("P", "mm", "A4", "")
+	p.AddPage()
+	var buf bytes.Buffer
+	require.NoError(t, p.Output(&buf))
+	return buf.Bytes()
+}
+
+// A refused session says why and opens nothing; a user who already has a session
+// is never locked out of restarting it.
+func TestConverter_sessionsAreFull(t *testing.T) {
+	const owner, other = int64(1), int64(2) // owner holds the only slot
+	pdfMenu := func(c *Converter, b *bot.Bot, user int64) {
+		c.onPDFOp(t.Context(), b, press{chatID: user, tgUser: user}, docsbot.Document{ID: "d", TgFileID: "f"}, opKeep)
+	}
+	command := func(c *Converter, b *bot.Bot, user int64) {
+		c.start(t.Context(), b, &models.Update{Message: &models.Message{
 			From: &models.User{ID: user},
 			Chat: models.Chat{ID: user, Type: models.ChatTypePrivate},
-		}}
+		}})
 	}
+	tests := []struct {
+		name      string
+		run       func(c *Converter, b *bot.Bot, user int64)
+		user      int64
+		want      []string // after the owner's own /convert: "send:"+textConvertStart
+		wantStep  step     // of the user's session
+		wantAlive bool     // the user has a session at the end
+	}{
+		{"convert command refused", command, other, []string{"send:" + textConvertStart, "send:" + textConvertBusy}, 0, false},
+		{"convert command by the owner restarts", command, owner, []string{"send:" + textConvertStart, "send:" + textConvertStart}, stepChooseAction, true},
+		{"PDF operation refused", pdfMenu, other, []string{"send:" + textConvertStart, "send:" + textConvertProgress, "edit:" + textConvertBusy}, 0, false},
+		{
+			"PDF operation by the owner replaces the session", pdfMenu, owner,
+			[]string{"send:" + textConvertStart, "send:" + textConvertProgress, "send:" + textPDFPrevCancelled, "edit:" + textPDFRangePrompt},
+			stepAwaitRange, true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			b, events := recordingBot(t)
+			c := New(Deps{Log: slog.New(slog.DiscardHandler), Files: docsbottest.FakeFiles{Data: onePagePDF(t)}})
+			c.sessions.max = 1
+			command(c, b, owner)
 
-	c.start(t.Context(), b, from(1))
-	c.start(t.Context(), b, from(2))
-	c.start(t.Context(), b, from(1))
+			tc.run(c, b, tc.user)
 
-	mu.Lock()
-	defer mu.Unlock()
-	require.Equal(t, []string{textConvertStart, textConvertBusy, textConvertStart}, texts)
-	require.True(t, c.sessions.has(1))
-	require.False(t, c.sessions.has(2))
+			require.Equal(t, tc.want, events())
+			sess, alive := c.sessions.live(tc.user)
+			require.Equal(t, tc.wantAlive, alive)
+			require.Equal(t, tc.wantStep, sess.step)
+		})
+	}
 }
 
 // Timed-out sessions of other users are dropped on any access, not only when
