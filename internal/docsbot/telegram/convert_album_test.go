@@ -130,3 +130,48 @@ func TestConvertAlbum_singlePhotoKeepsPicker(t *testing.T) {
 	require.Contains(t, h.albumMarkup(), "d:cat:")
 	require.Contains(t, h.albumMarkup(), "conv:doc:")
 }
+
+func TestConvertAlbum_tokenBelongsToTheTelegramUserWhoSentIt(t *testing.T) {
+	h, ft := albumHarness(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	for n := 1; n <= 2; n++ {
+		h.bot.ProcessUpdate(ctx, albumImageUpdate(n, 1000))
+	}
+	ft.fire()
+	tok := albumToken.FindStringSubmatch(h.albumMarkup())
+	require.NotNil(t, tok)
+
+	stranger := callbackUpdate("conv:alb:" + tok[1])
+	stranger.CallbackQuery.From.ID = testUser + 1
+	h.bot.ProcessUpdate(ctx, stranger)
+
+	require.Contains(t, h.lastText(), "устарела", "a stranger's press is a stale one")
+	require.Empty(t, h.downloads, "nothing was fetched for a stranger")
+	require.Empty(t, h.docs)
+
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:alb:"+tok[1]))
+	require.Len(t, h.docs, 1, "the stranger did not burn the owner's token")
+}
+
+func TestConvertAlbum_unknownTokenAndNoUser(t *testing.T) {
+	h, ft := albumHarness(t)
+	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	for n := 1; n <= 2; n++ {
+		h.bot.ProcessUpdate(ctx, albumImageUpdate(n, 1000))
+	}
+	ft.fire()
+	tok := albumToken.FindStringSubmatch(h.albumMarkup())
+	require.NotNil(t, tok)
+	texts := h.allTexts()
+
+	h.bot.ProcessUpdate(t.Context(), callbackUpdate("conv:alb:"+tok[1])) // no authenticated user
+	require.Equal(t, texts, h.allTexts(), "no reply and no work without the user")
+	require.Empty(t, h.downloads)
+
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:alb:"))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:alb:"+tok[1]+"00"))
+	require.Empty(t, h.docs)
+	require.Empty(t, h.downloads)
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:alb:"+tok[1]))
+	require.Len(t, h.docs, 1, "the real token still works")
+}

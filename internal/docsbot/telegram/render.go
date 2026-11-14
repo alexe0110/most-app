@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/go-telegram/bot/models"
@@ -28,11 +29,11 @@ func renderCatalog(c docsbot.Catalog) (string, *models.InlineKeyboardMarkup) {
 	rows := categoryRows(cats, func(cat docsbot.Category) models.InlineKeyboardButton {
 		return models.InlineKeyboardButton{
 			Text:         fmt.Sprintf("%s (%d)", cat.Label(), counts[cat]),
-			CallbackData: fmt.Sprintf("%s%s:%s:1", cbPrefix, actListCat, cat),
+			CallbackData: docCB(actListCat, "", string(cat), "1"),
 		}
 	})
 	if c.DriveConnected && c.NotInDrive > 0 {
-		rows = append(rows, []models.InlineKeyboardButton{{Text: btnTransfer, CallbackData: cbPrefix + actTransfer}})
+		rows = append(rows, []models.InlineKeyboardButton{{Text: btnTransfer, CallbackData: docCB(actTransfer, "")}})
 	}
 	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
@@ -65,17 +66,17 @@ func renderSettings(v docsbot.SettingsView, connectURL string, haveURL bool) (st
 		rows = append(rows, []models.InlineKeyboardButton{{Text: label, URL: connectURL}})
 	}
 	if v.DriveConnected {
-		rows = append(rows, []models.InlineKeyboardButton{{Text: btnDisconnect, CallbackData: cbPrefix + actDisconnect}})
+		rows = append(rows, []models.InlineKeyboardButton{{Text: btnDisconnect, CallbackData: docCB(actDisconnect, "")}})
 	}
 	// Retry only makes sense while Drive is connected; a disconnected retry would
 	// re-fail every document and spam reconnect prompts.
 	if v.DriveConnected && v.Failed > 0 {
 		rows = append(rows, []models.InlineKeyboardButton{{
-			Text: fmt.Sprintf("%s (%d)", btnRetryAll, v.Failed), CallbackData: cbPrefix + actRetryAll,
+			Text: fmt.Sprintf("%s (%d)", btnRetryAll, v.Failed), CallbackData: docCB(actRetryAll, ""),
 		}})
 	}
 	rows = append(rows, inlineToggleRow(v.InlineEnabled))
-	rows = append(rows, []models.InlineKeyboardButton{{Text: btnDeleteData, CallbackData: cbPrefix + actDeleteData}})
+	rows = append(rows, []models.InlineKeyboardButton{{Text: btnDeleteData, CallbackData: docCB(actDeleteData, "")}})
 	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
@@ -129,7 +130,7 @@ func renderCategoryPage(p docsbot.CategoryPage) (string, *models.InlineKeyboardM
 	for _, doc := range p.Docs {
 		rows = append(rows, []models.InlineKeyboardButton{{
 			Text:         listLabel(doc),
-			CallbackData: fmt.Sprintf("%s%s:%s:l:%s:%d", cbPrefix, actOpenCard, doc.ID, p.Category, p.Page),
+			CallbackData: docCB(actOpenCard, doc.ID, "l", string(p.Category), strconv.Itoa(p.Page)),
 		}})
 	}
 	if nav := paginationRow(p); nav != nil {
@@ -138,7 +139,7 @@ func renderCategoryPage(p docsbot.CategoryPage) (string, *models.InlineKeyboardM
 	if p.FolderID != "" {
 		rows = append(rows, []models.InlineKeyboardButton{{Text: btnOpenCategoryFolder, URL: folderURL(p.FolderID)}})
 	}
-	rows = append(rows, []models.InlineKeyboardButton{{Text: btnBackToCats, CallbackData: cbPrefix + actListBack}})
+	rows = append(rows, []models.InlineKeyboardButton{{Text: btnBackToCats, CallbackData: docCB(actListBack, "")}})
 	return text, &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
@@ -150,15 +151,15 @@ func paginationRow(p docsbot.CategoryPage) []models.InlineKeyboardButton {
 	var row []models.InlineKeyboardButton
 	if p.Page > 1 {
 		row = append(row, models.InlineKeyboardButton{
-			Text: "◀", CallbackData: fmt.Sprintf("%s%s:%s:%d", cbPrefix, actListCat, p.Category, p.Page-1),
+			Text: "◀", CallbackData: docCB(actListCat, "", string(p.Category), strconv.Itoa(p.Page-1)),
 		})
 	}
 	row = append(row, models.InlineKeyboardButton{
-		Text: fmt.Sprintf("%d/%d", p.Page, p.Pages), CallbackData: cbPrefix + actNoop,
+		Text: fmt.Sprintf("%d/%d", p.Page, p.Pages), CallbackData: docCB(actNoop, ""),
 	})
 	if p.Page < p.Pages {
 		row = append(row, models.InlineKeyboardButton{
-			Text: "▶", CallbackData: fmt.Sprintf("%s%s:%s:%d", cbPrefix, actListCat, p.Category, p.Page+1),
+			Text: "▶", CallbackData: docCB(actListCat, "", string(p.Category), strconv.Itoa(p.Page+1)),
 		})
 	}
 	return row
@@ -176,7 +177,7 @@ func renderFound(f docsbot.Found) (string, *models.InlineKeyboardMarkup) {
 	for _, doc := range f.Docs {
 		rows = append(rows, []models.InlineKeyboardButton{{
 			Text:         listLabel(doc),
-			CallbackData: fmt.Sprintf("%s%s:%s:s", cbPrefix, actOpenCard, doc.ID),
+			CallbackData: docCB(actOpenCard, doc.ID, "s"),
 		}})
 	}
 	return fmt.Sprintf(textFoundTitle, len(f.Docs)), &models.InlineKeyboardMarkup{InlineKeyboard: rows}

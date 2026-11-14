@@ -22,7 +22,7 @@ func TestRenderStatusMessage_single(t *testing.T) {
 	require.Contains(t, text, "📄 <b>&lt;a&gt;.pdf</b>")
 	require.Contains(t, text, "🗂 Паспорт и ID")
 	require.Contains(t, text, "⏳ Загружаю на Google Диск…")
-	require.Equal(t, cb(actSend, "d"), kb.InlineKeyboard[0][0].CallbackData)
+	require.Equal(t, docCB(actSend, "d"), kb.InlineKeyboard[0][0].CallbackData)
 	require.Len(t, kb.InlineKeyboard, 3, "card buttons only")
 
 	text, kb = renderStatusMessage(sm, []docsbot.Document{statusDoc("a.pdf", docsbot.BackupBackedUp)},

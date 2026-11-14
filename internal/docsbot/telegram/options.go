@@ -20,7 +20,7 @@ func WithAlbumTimer(after AfterFunc) Option {
 // WithRenames shares rename state with a Notifier so a status-message redraw can
 // end a rename prompt shown on that message.
 func WithRenames(r *Renames) Option {
-	return func(d *docs) { d.renames = r.store }
+	return func(d *docs) { d.renames = r.m }
 }
 
 // WithExportPace replaces the pauses of an export: file follows a single file,

@@ -70,30 +70,31 @@ func (d *docs) help(ctx context.Context, b *bot.Bot, u *models.Update) {
 // onDisconnect turns Drive off and stops pending uploads, leaving stored
 // documents (and any Drive links) untouched. A failure is shown to the user:
 // the integration is then still connected.
-func (d *docs) onDisconnect(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+func (d *docs) onDisconnect(ctx context.Context, b *bot.Bot, p press) {
+	user := p.user
+	if !p.hasMsg {
 		return
 	}
+	chatID, msgID := p.chatID, p.msgID
 	if err := d.svc.Disconnect(ctx, user); err != nil {
 		d.fail(ctx, b, chatID, "disconnect", err)
 		return
 	}
 	d.log.InfoContext(ctx, "drive disconnected", "user_id", user)
-	d.settingsMsgs.forget(chatID, msgID) // the message is no longer the settings screen
+	forgetSettings(d.settingsMsgs, chatID, msgID) // the message is no longer the settings screen
 	d.out(b).edit(ctx, chatID, msgID, textDisconnected, withKeyboard(nil))
 }
 
 // onDeleteData arms the "type УДАЛИТЬ" confirmation and explains what is removed.
-func (d *docs) onDeleteData(ctx context.Context, b *bot.Bot, u *models.Update) {
-	chatID, ok := callbackChat(u)
-	if !ok {
+func (d *docs) onDeleteData(ctx context.Context, b *bot.Bot, p press) {
+	if !p.hasMsg {
 		return
 	}
-	if user, ok := userID(ctx); ok {
-		d.log.InfoContext(ctx, "delete data requested", "user_id", user)
+	chatID := p.chatID
+	if p.hasUser {
+		d.log.InfoContext(ctx, "delete data requested", "user_id", p.user)
 	}
-	d.confirms.arm(u.CallbackQuery.From.ID)
+	d.confirms.set(p.tgUser, struct{}{})
 	d.out(b).send(ctx, chatID, textDeleteDataPrompt, withKeyboard(exportFirstKeyboard()))
 }
 
@@ -110,17 +111,18 @@ func (d *docs) onDeleteConfirm(ctx context.Context, b *bot.Bot, chatID int64, us
 		return
 	}
 	d.log.InfoContext(ctx, "data deleted", "user_id", user)
-	d.settingsMsgs.forgetChat(chatID) // nothing left to refresh after a connect
+	d.settingsMsgs.delete(chatID) // nothing left to refresh after a connect
 	d.out(b).send(ctx, chatID, textDataDeleted)
 }
 
 // onTransfer moves every not-yet-backed-up document to Drive; the offer message
 // turns into a transfer status message.
-func (d *docs) onTransfer(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID) {
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+func (d *docs) onTransfer(ctx context.Context, b *bot.Bot, p press) {
+	user := p.user
+	if !p.hasMsg {
 		return
 	}
+	chatID, msgID := p.chatID, p.msgID
 	view, ok, err := d.svc.TransferSaved(ctx, user, chatID, msgID)
 	if err != nil {
 		d.fail(ctx, b, chatID, "transfer", err)
@@ -134,11 +136,11 @@ func (d *docs) onTransfer(ctx context.Context, b *bot.Bot, u *models.Update, use
 	d.redrawStatus(ctx, b, user, view)
 }
 
-func (d *docs) onTransferNo(ctx context.Context, b *bot.Bot, u *models.Update) {
-	chatID, msgID, ok := callbackMessage(u)
-	if !ok {
+func (d *docs) onTransferNo(ctx context.Context, b *bot.Bot, p press) {
+	if !p.hasMsg {
 		return
 	}
+	chatID, msgID := p.chatID, p.msgID
 	d.out(b).edit(ctx, chatID, msgID, textTransferDeclined, withKeyboard(nil))
 }
 

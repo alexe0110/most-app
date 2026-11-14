@@ -36,7 +36,7 @@ type Notifier struct {
 	svc   statusService
 	log   *slog.Logger
 
-	renames *renameStore // shared with the docs handlers; nil when not wired
+	renames *ttlMap[int64, renameEntry] // shared with the docs handlers; nil when not wired
 
 	mu        sync.Mutex
 	lastEdit  map[docsbot.StatusMessageID]time.Time
@@ -62,13 +62,13 @@ type NotifierOption func(*Notifier)
 
 // WithNotifierRenames shares the rename state with the docs handlers (see Renames).
 func WithNotifierRenames(r *Renames) NotifierOption {
-	return func(n *Notifier) { n.renames = r.store }
+	return func(n *Notifier) { n.renames = r.m }
 }
 
 // dropRename ends a rename prompt shown on a message the Notifier is about to redraw.
 func (n *Notifier) dropRename(chat int64, msg int) {
 	if n.renames != nil {
-		n.renames.dropMessage(chat, msg)
+		dropRenamesOn(n.renames, chat, msg)
 	}
 }
 

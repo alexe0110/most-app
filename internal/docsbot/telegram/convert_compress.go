@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/platform/convert"
 )
@@ -15,13 +14,14 @@ import (
 // first, so a double «Готово» builds it once; it goes back when the user can
 // retry. The dialogue lock covers the claim and the progress note, so a photo
 // arriving at the same time can't move the dialogue under them.
-func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, update *models.Update, user, chatID int64) {
+func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, p press) {
+	user, chatID := p.tgUser, p.chatID
 	unlock := c.dialogue.lock(user)
-	msgID := callbackMessageID(update)
+	msgID := p.msgID
 	sess, ok := c.sessions.claim(user, msgID, stepCollectPDF)
 	if !ok {
 		unlock()
-		c.stale(ctx, b, update, chatID)
+		c.stale(ctx, b, p)
 		return
 	}
 	pending := sess.orderedImages()
@@ -72,9 +72,9 @@ func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, update *models.Up
 
 // finishCompress compresses the stored image to the chosen format. The session
 // is claimed first (one run per tap); it goes back when the user can retry.
-func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, update *models.Update, user, chatID int64, format convert.Format) {
-	if !c.compress(ctx, b, chatID, user, callbackMessageID(update), format) {
-		c.stale(ctx, b, update, chatID)
+func (c *converter) finishCompress(ctx context.Context, b *bot.Bot, p press, format convert.Format) {
+	if !c.compress(ctx, b, p.chatID, p.tgUser, p.msgID, format) {
+		c.stale(ctx, b, p)
 	}
 }
 

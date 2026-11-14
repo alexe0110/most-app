@@ -1,8 +1,6 @@
 package telegram
 
 import (
-	"fmt"
-
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
@@ -40,7 +38,7 @@ func categoryKeyboard(action string, id docsbot.DocumentID) *models.InlineKeyboa
 	rows := categoryRows(docsbot.AllCategories, func(c docsbot.Category) models.InlineKeyboardButton {
 		return models.InlineKeyboardButton{
 			Text:         c.Label(),
-			CallbackData: fmt.Sprintf("%s%s:%s:%s", cbPrefix, action, id, c),
+			CallbackData: docCB(action, id, string(c)),
 		}
 	})
 	return &models.InlineKeyboardMarkup{InlineKeyboard: rows}
@@ -63,20 +61,20 @@ func pickerKeyboard(doc docsbot.Document) *models.InlineKeyboardMarkup {
 // albumChoiceKeyboard offers an album as one PDF or saved file by file.
 func albumChoiceKeyboard(token string, pickDoc docsbot.DocumentID) *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-		{{Text: btnAlbumPDF, CallbackData: cbAlbumPrefix + token}},
-		{{Text: btnAlbumEach, CallbackData: cb(actGroupPick, pickDoc)}},
+		{{Text: btnAlbumPDF, CallbackData: convCB(convActAlbum, token)}},
+		{{Text: btnAlbumEach, CallbackData: docCB(actGroupPick, pickDoc)}},
 	}}
 }
 
 // convertRow is a one-button row opening the convert menu of a document.
 func convertRow(id docsbot.DocumentID, label string) []models.InlineKeyboardButton {
-	return []models.InlineKeyboardButton{{Text: label, CallbackData: cbDocPrefix + string(id)}}
+	return []models.InlineKeyboardButton{{Text: label, CallbackData: convDocCB(convActDoc, id)}}
 }
 
 // renameCancelKeyboard is the single "Отмена" button under the rename prompt.
 func renameCancelKeyboard(id docsbot.DocumentID) *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: btnRenameCancel, CallbackData: cb(actRenameCancel, id)},
+		{Text: btnRenameCancel, CallbackData: docCB(actRenameCancel, id)},
 	}}}
 }
 
@@ -88,14 +86,14 @@ func connectKeyboard(url string) *models.InlineKeyboardMarkup {
 
 func transferOfferKeyboard() *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: btnTransferYes, CallbackData: cbPrefix + actTransferYes},
-		{Text: btnTransferNo, CallbackData: cbPrefix + actTransferNo},
+		{Text: btnTransferYes, CallbackData: docCB(actTransferYes, "")},
+		{Text: btnTransferNo, CallbackData: docCB(actTransferNo, "")},
 	}}}
 }
 
 func retryKeyboard(id docsbot.DocumentID) *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: btnRetryBackup, CallbackData: cb(actRetry, id)},
+		{Text: btnRetryBackup, CallbackData: docCB(actRetry, id)},
 	}}}
 }
 
@@ -115,7 +113,7 @@ func reconnectKeyboard(url string) *models.InlineKeyboardMarkup {
 // back first, then confirm.
 func exportFirstKeyboard() *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: btnExportAll, CallbackData: cbPrefix + actExport},
+		{Text: btnExportAll, CallbackData: docCB(actExport, "")},
 	}}}
 }
 
@@ -123,7 +121,7 @@ func exportFirstKeyboard() *models.InlineKeyboardMarkup {
 // a tap asks for the opposite one.
 func inlineToggleRow(enabled bool) []models.InlineKeyboardButton {
 	if enabled {
-		return []models.InlineKeyboardButton{{Text: btnInlineOn, CallbackData: cbPrefix + actInline + ":0"}}
+		return []models.InlineKeyboardButton{{Text: btnInlineOn, CallbackData: docCB(actInline, "", "0")}}
 	}
-	return []models.InlineKeyboardButton{{Text: btnInlineOff, CallbackData: cbPrefix + actInline + ":1"}}
+	return []models.InlineKeyboardButton{{Text: btnInlineOff, CallbackData: docCB(actInline, "", "1")}}
 }

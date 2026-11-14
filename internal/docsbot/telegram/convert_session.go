@@ -234,7 +234,6 @@ func (s *sessionStore) update(user int64, fn func(*session)) bool {
 // file" choice. The file is already in Telegram: file holds the ids Telegram
 // returned for it, so saving needs no upload.
 type convResult struct {
-	tgUser    int64
 	user      docsbot.UserID
 	file      docsbot.IncomingFile
 	sourceDoc docsbot.DocumentID // "" when the source is not a stored document
@@ -248,38 +247,21 @@ type convAlbum struct {
 	images []albumImage // ordered by message id
 }
 
-// tokenStore holds values by a short token that rides in a button's callback
-// data (a file id would not fit, and must not be logged). Each value belongs to
-// one owner and is taken at most once. Memory only: a restart or the TTL drops
-// it, and the chat message stays.
-type tokenStore[T any, O comparable] struct {
-	mu      sync.Mutex
-	byToken map[string]tokenEntry[T]
-	ttl     time.Duration
-	now     func() time.Time
-	ownerOf func(T) O
+// tokenMap holds values by a short token that rides in a button's callback data
+// (a file id would not fit, and must not be logged). Each value belongs to one
+// owner, a Telegram user id, and is taken at most once. Memory only: a restart or
+// the TTL drops it, and the chat message stays.
+type tokenMap[V any] struct {
+	m *ttlMap[string, owned[V]]
 }
 
-type tokenEntry[T any] struct {
-	v       T
-	created time.Time
+type owned[V any] struct {
+	owner int64
+	v     V
 }
 
-type (
-	resultStore = tokenStore[convResult, int64]
-	albumStore  = tokenStore[convAlbum, docsbot.UserID]
-)
-
-func newTokenStore[T any, O comparable](now func() time.Time, ownerOf func(T) O) *tokenStore[T, O] {
-	return &tokenStore[T, O]{byToken: map[string]tokenEntry[T]{}, ttl: sessionTTL, now: now, ownerOf: ownerOf}
-}
-
-func newResultStore(now func() time.Time) *resultStore {
-	return newTokenStore(now, func(r convResult) int64 { return r.tgUser })
-}
-
-func newAlbumStore(now func() time.Time) *albumStore {
-	return newTokenStore(now, func(a convAlbum) docsbot.UserID { return a.user })
+func newTokenMap[V any](now func() time.Time) *tokenMap[V] {
+	return &tokenMap[V]{m: newTTLMap[string, owned[V]](sessionTTL, maxStoreEntries, now)}
 }
 
 // newToken returns a random 16-character token.
@@ -289,43 +271,24 @@ func newToken() string {
 	return hex.EncodeToString(raw[:])
 }
 
-// put stores v under token (renewing its TTL) and drops expired entries.
-func (s *tokenStore[T, O]) put(token string, v T) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := s.now()
-	for k, e := range s.byToken {
-		if now.Sub(e.created) > s.ttl {
-			delete(s.byToken, k)
-		}
-	}
-	s.byToken[token] = tokenEntry[T]{v: v, created: now}
+// put stores v for owner under token, renewing its TTL.
+func (s *tokenMap[V]) put(token string, owner int64, v V) {
+	s.m.set(token, owned[V]{owner: owner, v: v})
 }
 
 // take removes and returns the owner's value, so a double tap acts once. A token
 // of another owner, an unknown or an expired one reports false; a foreign
 // attempt does not burn the owner's token.
-func (s *tokenStore[T, O]) take(token string, owner O) (T, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	v, ok := s.peekLocked(token, owner)
-	if ok {
-		delete(s.byToken, token)
-	}
-	return v, ok
+func (s *tokenMap[V]) take(token string, owner int64) (V, bool) {
+	e, ok := s.m.takeIf(token, func(e owned[V]) bool { return e.owner == owner })
+	return e.v, ok
 }
 
 // peek returns the owner's value without removing it.
-func (s *tokenStore[T, O]) peek(token string, owner O) (T, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.peekLocked(token, owner)
-}
-
-func (s *tokenStore[T, O]) peekLocked(token string, owner O) (T, bool) {
-	var zero T
-	e, ok := s.byToken[token]
-	if !ok || s.ownerOf(e.v) != owner || s.now().Sub(e.created) > s.ttl {
+func (s *tokenMap[V]) peek(token string, owner int64) (V, bool) {
+	e, ok := s.m.get(token)
+	if !ok || e.owner != owner {
+		var zero V
 		return zero, false
 	}
 	return e.v, true

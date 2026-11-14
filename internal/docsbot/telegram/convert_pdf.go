@@ -36,19 +36,21 @@ type pdfSource struct {
 // onPDFOp runs a PDF operation of the card menu on a stored document. The menu
 // message is the progress note and then the session's dialogue message; on an
 // error it shows the menu again.
-func (c *converter) onPDFOp(ctx context.Context, b *bot.Bot, update *models.Update, chatID int64, doc docsbot.Document, op string) {
+func (c *converter) onPDFOp(ctx context.Context, b *bot.Bot, p press, doc docsbot.Document, op string) {
+	chatID := p.chatID
 	menu := pdfMenuKeyboard(doc.ID)
-	c.runPDFOp(ctx, b, chatID, update.CallbackQuery.From.ID, callbackMessageID(update),
+	c.runPDFOp(ctx, b, chatID, p.tgUser, p.msgID,
 		pdfSource{docID: doc.ID, title: doc.Title, fileID: doc.TgFileID}, op,
 		func(msgID int, text string) { c.show(ctx, b, chatID, msgID, text, menu) })
 }
 
 // onSessionPDFOp runs an operation of the PDF menu of /convert (a PDF the user
 // sent). The session is claimed for the run and goes back if the user can retry.
-func (c *converter) onSessionPDFOp(ctx context.Context, b *bot.Bot, update *models.Update, chatID, tgUser int64, op string) {
-	sess, ok := c.sessions.claim(tgUser, callbackMessageID(update), stepPDFMenu)
+func (c *converter) onSessionPDFOp(ctx context.Context, b *bot.Bot, p press, op string) {
+	chatID, tgUser := p.chatID, p.tgUser
+	sess, ok := c.sessions.claim(tgUser, p.msgID, stepPDFMenu)
 	if !ok || len(sess.pdfs) == 0 {
-		c.stale(ctx, b, update, chatID)
+		c.stale(ctx, b, p)
 		return
 	}
 	c.runPDFOp(ctx, b, chatID, tgUser, sess.msgID,
@@ -275,13 +277,14 @@ func (c *converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 
 // finishMerge joins the collected PDFs. The session is claimed first, so a
 // double «Готово» runs the merge once.
-func (c *converter) finishMerge(ctx context.Context, b *bot.Bot, update *models.Update, tgUser, chatID int64) {
+func (c *converter) finishMerge(ctx context.Context, b *bot.Bot, p press) {
+	tgUser, chatID := p.tgUser, p.chatID
 	unlock := c.dialogue.lock(tgUser) // see finishPDF
-	msgID := callbackMessageID(update)
+	msgID := p.msgID
 	sess, ok := c.sessions.claim(tgUser, msgID, stepMergePDF)
 	if !ok {
 		unlock()
-		c.stale(ctx, b, update, chatID)
+		c.stale(ctx, b, p)
 		return
 	}
 	uid, _ := userID(ctx)
@@ -346,7 +349,7 @@ func pdfErrorText(err error) string {
 
 // pdfMenuKeyboard is the menu of a PDF document.
 func pdfMenuKeyboard(id docsbot.DocumentID) *models.InlineKeyboardMarkup {
-	q := func(op string) string { return cbQuickPrefix + string(id) + ":" + op }
+	q := func(op string) string { return convDocCB(convActQuick, id, op) }
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
 		{
 			{Text: btnPDFRotate, CallbackData: q(opRotate)},

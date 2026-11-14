@@ -19,21 +19,27 @@ import (
 // Service calls and renders the replies. State is the domain's; the only local
 // state is which document a user is renaming (force-reply).
 type docs struct {
-	svc      *docsbot.Service
-	auth     Authorizer
-	log      *slog.Logger
-	renames  *renameStore
-	confirms *confirmStore
-	searches *searchStore
-	origins  *originStore
+	svc  *docsbot.Service
+	auth Authorizer
+	log  *slog.Logger
+	// renames: the document a user is renaming and the message showing the prompt.
+	renames *ttlMap[int64, renameEntry]
+	// confirms: users asked to confirm data deletion; a stale arm just means the
+	// user taps "Удалить мои данные" again.
+	confirms *ttlMap[int64, struct{}]
+	// searches: a user's last search query, for "Назад" from a card opened from the
+	// results. get keeps the entry so repeated presses work.
+	searches *ttlMap[int64, string]
+	// origins: where each card message was opened from, see originKey.
+	origins *ttlMap[originKey, string]
 	// settingsMsgs remembers the /settings message per chat for the OAuth return.
-	settingsMsgs *settingsStore
+	settingsMsgs *ttlMap[int64, int]
 	albums       *albumBuffer
 	// driveFolder is the Drive root folder name shown in /start.
 	driveFolder string
 	// registerAlbum remembers an album's images for the "one PDF" button and
 	// returns its token; set by Register (the converter owns the PDF work).
-	registerAlbum func(user docsbot.UserID, group string, images []albumImage) string
+	registerAlbum func(user docsbot.UserID, tgUser int64, group string, images []albumImage) string
 	// pauseFile and pauseAlbum space out export sends under the Bot API rate limit.
 	pauseFile, pauseAlbum time.Duration
 	// exports holds the users with an export in flight: one at a time per user.
@@ -44,11 +50,11 @@ type docs struct {
 func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Option) *docs {
 	d := &docs{
 		svc: svc, auth: auth, log: log,
-		renames:      newRenameStore(time.Now),
-		confirms:     newConfirmStore(time.Now),
-		searches:     newSearchStore(time.Now),
-		origins:      newOriginStore(time.Now),
-		settingsMsgs: newSettingsStore(time.Now),
+		renames:      newTTLMap[int64, renameEntry](renameTTL, maxStoreEntries, time.Now),
+		confirms:     newTTLMap[int64, struct{}](confirmTTL, maxStoreEntries, time.Now),
+		searches:     newTTLMap[int64, string](searchTTL, maxStoreEntries, time.Now),
+		origins:      newTTLMap[originKey, string](originTTL, maxStoreEntries, time.Now),
+		settingsMsgs: newTTLMap[int64, int](settingsTTL, maxStoreEntries, time.Now),
 		albums:       newAlbumBuffer(),
 
 		driveFolder: gdrive.DefaultRootFolder,
@@ -100,7 +106,7 @@ func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 	if !ok {
 		return
 	}
-	if d.confirms.take(u.Message.From.ID) {
+	if _, armed := d.confirms.take(u.Message.From.ID); armed {
 		d.onDeleteConfirm(ctx, b, chatID, user, u.Message.Text)
 		return
 	}
@@ -114,91 +120,84 @@ func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 
 // callback dispatches an inline-button press by its action.
 func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
-	parts := strings.Split(u.CallbackQuery.Data, ":") // d:<action>[:docID[:arg]]
-	if !answersItself(parts) {
-		d.out(b).answer(ctx, u.CallbackQuery.ID, withToast(toastFor(parts)))
+	p := newPress(ctx, u.CallbackQuery)
+	if !answersItself(p.data) {
+		d.out(b).answer(ctx, p.queryID, withToast(toastFor(p.data)))
 	}
-	user, ok := userID(ctx)
-	if !ok {
-		if answersItself(parts) {
-			d.out(b).answer(ctx, u.CallbackQuery.ID) // never leave the button spinning
+	if !p.hasUser {
+		if answersItself(p.data) {
+			d.out(b).answer(ctx, p.queryID) // never leave the button spinning
 		}
 		return
 	}
-	if len(parts) < 2 {
-		return
-	}
-	if parts[1] != actRenameCancel {
+	if p.data.action != actRenameCancel {
 		// Any other button abandons a rename prompt that sits on another message.
-		d.releaseRename(ctx, b, user, u)
+		d.releaseRename(ctx, b, p)
 	}
-	switch parts[1] {
+	switch p.data.action {
 	case actCategory:
-		d.onCategory(ctx, b, u, user, parts)
+		d.onCategory(ctx, b, p)
 	case actCategoryGroup:
-		d.onCategoryGroup(ctx, b, u, user, parts)
+		d.onCategoryGroup(ctx, b, p)
 	case actGroupPick:
-		d.onGroupPick(ctx, b, u, parts)
+		d.onGroupPick(ctx, b, p)
 	case actSetCategory:
-		d.onSetCategory(ctx, b, u, user, parts)
+		d.onSetCategory(ctx, b, p)
 	case actChangeCat:
-		d.onChangeCat(ctx, b, u, parts)
+		d.onChangeCat(ctx, b, p)
 	case actSend:
-		d.onSend(ctx, b, u, user, parts)
+		d.onSend(ctx, b, p)
 	case actRename:
-		d.onRenamePrompt(ctx, b, u, parts)
+		d.onRenamePrompt(ctx, b, p)
 	case actRenameCancel:
-		d.onRenameCancel(ctx, b, u, user, parts)
+		d.onRenameCancel(ctx, b, p)
 	case actDeleteAsk:
-		d.onDeleteAsk(ctx, b, u, user, parts)
+		d.onDeleteAsk(ctx, b, p)
 	case actDeleteYes:
-		d.onDeleteYes(ctx, b, u, user, parts)
+		d.onDeleteYes(ctx, b, p)
 	case actDeleteNo:
-		d.onDeleteNo(ctx, b, u, user, parts)
+		d.onDeleteNo(ctx, b, p)
 	case actListCat:
-		d.onListCat(ctx, b, u, user, parts)
+		d.onListCat(ctx, b, p)
 	case actOpenCard:
-		d.onOpenCard(ctx, b, u, user, parts)
+		d.onOpenCard(ctx, b, p)
 	case actSearchBack:
-		d.onSearchBack(ctx, b, u, user)
+		d.onSearchBack(ctx, b, p)
 	case actListBack:
-		d.onListBack(ctx, b, u, user)
+		d.onListBack(ctx, b, p)
 	case actTransfer, actTransferYes:
-		d.onTransfer(ctx, b, u, user)
+		d.onTransfer(ctx, b, p)
 	case actTransferNo:
-		d.onTransferNo(ctx, b, u)
+		d.onTransferNo(ctx, b, p)
 	case actRetry:
-		d.onRetry(ctx, b, u, user, parts)
+		d.onRetry(ctx, b, p)
 	case actRetrySync:
-		d.onRetrySync(ctx, b, u, user, parts)
+		d.onRetrySync(ctx, b, p)
 	case actDisconnect:
-		d.onDisconnect(ctx, b, u, user)
+		d.onDisconnect(ctx, b, p)
 	case actRetryAll:
-		d.onRetryAll(ctx, b, u, user)
+		d.onRetryAll(ctx, b, p)
 	case actExport:
-		d.onExport(ctx, b, u, user)
+		d.onExport(ctx, b, p)
 	case actDeleteData:
-		d.onDeleteData(ctx, b, u)
+		d.onDeleteData(ctx, b, p)
 	case actRetryBatch:
-		d.onRetryBatch(ctx, b, u, user, parts)
+		d.onRetryBatch(ctx, b, p)
 	case actInline:
-		d.onInlineSwitch(ctx, b, u, user, parts)
+		d.onInlineSwitch(ctx, b, p)
 	case actNoop:
 	}
 }
 
 // answersItself reports whether the action handler answers the callback query
 // on its own (to pick the toast from the outcome).
-func answersItself(parts []string) bool {
-	return len(parts) >= 2 && (parts[1] == actRetry || parts[1] == actRetrySync)
+func answersItself(c callbackData) bool {
+	return c.action == actRetry || c.action == actRetrySync
 }
 
 // toastFor is the short pop-up shown for an action, "" for none.
-func toastFor(parts []string) string {
-	if len(parts) < 2 {
-		return ""
-	}
-	switch parts[1] {
+func toastFor(c callbackData) string {
+	switch c.action {
 	case actSend:
 		return toastSending
 	case actSetCategory, actDeleteYes:
@@ -224,33 +223,4 @@ func (d *docs) fail(ctx context.Context, b *bot.Bot, chatID int64, what string, 
 func userID(ctx context.Context) (docsbot.UserID, bool) {
 	id, ok := tg.UserIDFromContext(ctx)
 	return docsbot.UserID(id), ok
-}
-
-// docID reads the document id from callback parts "d:<action>:<docID>".
-func docID(parts []string) (docsbot.DocumentID, bool) {
-	if len(parts) < 3 || parts[2] == "" {
-		return "", false
-	}
-	return docsbot.DocumentID(parts[2]), true
-}
-
-// docCategory reads id and category from "d:<action>:<docID>:<slug>".
-func docCategory(parts []string) (docsbot.DocumentID, docsbot.Category, bool) {
-	if len(parts) < 4 {
-		return "", "", false
-	}
-	cat, ok := docsbot.ParseCategory(parts[3])
-	if !ok {
-		return "", "", false
-	}
-	return docsbot.DocumentID(parts[2]), cat, true
-}
-
-// callbackMessage returns the chat and message id behind a callback button.
-func callbackMessage(u *models.Update) (chatID int64, msgID int, ok bool) {
-	m := u.CallbackQuery.Message.Message
-	if m == nil {
-		return 0, 0, false
-	}
-	return m.Chat.ID, m.ID, true
 }
