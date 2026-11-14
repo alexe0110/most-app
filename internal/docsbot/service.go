@@ -58,7 +58,7 @@ type Service struct {
 	folders Folders
 	status  StatusMessages
 	syncs   Syncs
-	events  Events // nil: product events are not recorded
+	events  Events
 	log     *slog.Logger
 	now     func() time.Time
 	loc     *time.Location
@@ -107,7 +107,7 @@ type Ports struct {
 	Folders Folders
 	Status  StatusMessages
 	Syncs   Syncs
-	Events  Events // optional
+	Events  Events
 }
 
 // NewService wires the service around its ports.

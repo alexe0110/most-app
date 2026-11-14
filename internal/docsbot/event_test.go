@@ -83,13 +83,6 @@ func TestService_Track(t *testing.T) {
 	}
 }
 
-func TestService_Track_withoutEventsPort(t *testing.T) {
-	svc := docsbot.NewService(docsbot.Ports{})
-	require.NotPanics(t, func() {
-		svc.Track(t.Context(), user, docsbot.EventSearch, docsbot.EventProps{})
-	})
-}
-
 // eventScenarios are the use cases that record a product event, each with the
 // exact events it must leave behind.
 func eventScenarios() []struct {

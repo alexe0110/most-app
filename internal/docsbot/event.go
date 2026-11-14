@@ -79,9 +79,6 @@ func (s *Service) Track(ctx context.Context, user UserID, name EventName, p Even
 }
 
 func (s *Service) track(ctx context.Context, e Event) {
-	if s.events == nil {
-		return
-	}
 	if err := s.events.Record(ctx, e); err != nil {
 		s.warnEvent(ctx, e.Name, e.User, err)
 	}
@@ -92,9 +89,6 @@ func (s *Service) track(ctx context.Context, e Event) {
 // as the user's source only on their first start. Like Track it never fails: a
 // lost event must not change what /start answers.
 func (s *Service) Start(ctx context.Context, user UserID, payload string) {
-	if s.events == nil {
-		return
-	}
 	source, _ := ParseSource(payload)
 	if _, err := s.events.RecordStart(ctx, user, source); err != nil {
 		s.warnEvent(ctx, EventStart, user, err)
