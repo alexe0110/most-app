@@ -172,3 +172,56 @@ func keys(m map[string]string) []string {
 	}
 	return out
 }
+
+func TestMetrics_emptyTables(t *testing.T) {
+	pool := dbtest.New(t)
+	for name, query := range metricQueries(t) {
+		t.Run(name, func(t *testing.T) {
+			require.Empty(t, runMetric(t, pool, query), "no data: no rows, and no division by zero")
+		})
+	}
+}
+
+// New users are counted from their own docs start events: anonymous events, another
+// bot's start and a deleted user with no events left add nothing.
+func TestMetrics_newUsersCountOnlyTheirOwnDocsStarts(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := t.Context()
+	var active, other string
+	require.NoError(t, pool.QueryRow(ctx, `insert into users (tg_user_id) values (1) returning id::text`).Scan(&active))
+	require.NoError(t, pool.QueryRow(ctx, `insert into users (tg_user_id) values (2) returning id::text`).Scan(&other))
+	_, err := pool.Exec(ctx, `insert into users (tg_user_id, deleted_at) values (3, now())`)
+	require.NoError(t, err)
+	ev := func(user any, bot, name, ago string) {
+		_, err := pool.Exec(ctx,
+			`insert into events (user_id, bot, name, created_at) values ($1::uuid, $2, $3, now() - $4::interval)`,
+			user, bot, name, ago)
+		require.NoError(t, err)
+	}
+	ev(active, "docs", "start", "3 days")
+	ev(active, "docs", "start", "2 days") // a repeated /start is not a second new user
+	ev(active, "docs", "search", "2 days")
+	ev(active, "docs", "search", "2 days")
+	ev(nil, "docs", "data_deleted", "2 days")
+	ev(nil, "docs", "start", "2 days") // no user: not a new user
+	ev(other, "other", "start", "2 days")
+	queries := metricQueries(t)
+
+	for _, name := range []string{"sources_daily", "sources_weekly", "activation"} {
+		t.Run(name, func(t *testing.T) {
+			require.EqualValues(t, 1, sum(runMetric(t, pool, queries[name]), "new_users"))
+		})
+	}
+
+	t.Run("nobody activated", func(t *testing.T) {
+		require.Zero(t, sum(runMetric(t, pool, queries["activation"]), "activated_users"))
+		require.Empty(t, runMetric(t, pool, queries["drive_funnel"]))
+	})
+
+	t.Run("feature usage per active user", func(t *testing.T) {
+		rows := runMetric(t, pool, queries["feature_usage"])
+		require.EqualValues(t, 1, sum(rows, "search_users"))
+		require.EqualValues(t, 2, sum(rows, "search_per_active"), "two searches by the one user who searched, who is one of the two active")
+		require.Zero(t, sum(rows, "export_per_active"), "unused feature: zero, not null or an error")
+	})
+}

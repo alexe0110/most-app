@@ -68,6 +68,7 @@ with first_start as (
                         from events d
                         where d.user_id = f.user_id
                           and d.name = 'doc_saved'
+                          and d.bot = 'docs'
                           and d.created_at >= f.at
                           and d.created_at < f.at + interval '7 days') as activated
          from first_start f
@@ -88,6 +89,7 @@ with first_saved as (
     select user_id, min(created_at) as at
     from events
     where name = 'doc_saved'
+      and bot = 'docs'
       and user_id is not null
     group by user_id
 ),
@@ -97,7 +99,8 @@ with first_saved as (
                 exists (select 1
                         from events c
                         where c.user_id = s.user_id
-                          and c.name = 'drive_connected') as connected
+                          and c.name = 'drive_connected'
+                          and c.bot = 'docs') as connected
          from first_saved s
          where s.at >= now() - interval '12 weeks'
      )
@@ -118,6 +121,7 @@ with weekly as (
     select date_trunc('week', created_at at time zone 'UTC')::date as week, user_id, name
     from events
     where user_id is not null
+      and bot = 'docs'
       and created_at >= now() - interval '12 weeks'
 )
 select week,
@@ -151,6 +155,7 @@ with first_start as (
          select distinct user_id, (created_at at time zone 'UTC')::date as day
          from events
          where user_id is not null
+           and bot = 'docs'
      ),
      cohort as (
          select f.user_id,
