@@ -184,6 +184,26 @@ func TestSyncs_titleAndCategoryDecideSyncInSQL(t *testing.T) {
 			require.Equal(t, string(docsbot.CatPassport), r.Category)
 			require.Equal(t, tt.wantSync, r.Sync)
 			require.Equal(t, 1, r.Meta)
+
+			// Without Drive only the row changes: no sync state, no job.
+			plain := &marker{pool: e.pool}
+			plainTitle := e.seed(t, e.user, "pt", tt.backup, tt.sync)
+			queued, err = e.with(plain).SetTitle(ctx, e.user, plainTitle, "Новое", false)
+			require.NoError(t, err)
+			require.False(t, queued)
+			plainCat := e.seed(t, e.user, "pc", tt.backup, tt.sync)
+			queued, err = e.with(plain).SetCategory(ctx, e.user, plainCat, docsbot.CatPassport, false)
+			require.NoError(t, err)
+			require.False(t, queued)
+			require.Zero(t, plain.calls)
+			r = e.row(t, plainTitle)
+			require.Equal(t, "Новое", r.Title)
+			require.Equal(t, tt.sync, r.Sync)
+			require.Equal(t, 1, r.Meta)
+			r = e.row(t, plainCat)
+			require.Equal(t, string(docsbot.CatPassport), r.Category)
+			require.Equal(t, tt.sync, r.Sync)
+			require.Equal(t, 1, r.Meta)
 		})
 	}
 }

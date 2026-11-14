@@ -3,6 +3,7 @@
 package postgres_test
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -139,4 +140,98 @@ func TestDocuments_duplicateAfterDeleteCreatesNewDocument(t *testing.T) {
 	again, err := repo.CreateDocument(ctx, in)
 	require.NoError(t, err, "deletion is hard, so the same file can be stored again")
 	require.NotEqual(t, first.ID, again.ID)
+}
+
+// Parallel sends of one file (a double tap, a forwarded album echo) race on the
+// insert: exactly one document may result and every call must answer by it.
+func TestReceive_parallelSendsOfOneFileCreateOneDocument(t *testing.T) {
+	pool := dbtest.New(t)
+	repo := newAdapters(pool, noJobs{})
+	user := docsbot.UserID(makeUser(t, repo, 930).ID.String())
+	svc := docsbot.NewService(docsbot.Ports{Repo: repo.Documents})
+	ctx := t.Context()
+
+	const senders = 8
+	sendAll := func(unique string) []docsbot.Reply {
+		replies := make([]docsbot.Reply, senders)
+		errs := make([]error, senders)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := range senders {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				replies[i], errs[i] = svc.Receive(ctx, docsbot.IncomingFile{
+					UserID: user, Kind: docsbot.KindDocument, FileID: "f-" + unique, FileUniqueID: unique,
+				})
+			}()
+		}
+		close(start)
+		wg.Wait()
+		for _, err := range errs {
+			require.NoError(t, err)
+		}
+		return replies
+	}
+	count := func(unique string) (n int) {
+		require.NoError(t, pool.QueryRow(ctx,
+			`select count(*) from documents where user_id = $1::uuid and tg_file_unique_id = $2`, string(user), unique).Scan(&n))
+		return n
+	}
+
+	for _, unique := range []string{"par-1", "par-2", "par-3", "par-4", "par-5"} {
+		replies := sendAll(unique)
+		require.Equal(t, 1, count(unique))
+		var id docsbot.DocumentID
+		for _, rep := range replies {
+			need, ok := rep.(docsbot.NeedCategory)
+			require.True(t, ok, "every sender is asked for the category")
+			if id == "" {
+				id = need.Doc.ID
+			}
+			require.Equal(t, id, need.Doc.ID, "all replies refer to the one document")
+		}
+
+		mustSave(t, ctx, repo, user, id, docsbot.CatOther)
+		for _, rep := range sendAll(unique) {
+			already, ok := rep.(docsbot.AlreadySaved)
+			require.True(t, ok, "a saved file answers AlreadySaved")
+			require.Equal(t, id, already.Doc.ID)
+		}
+		require.Equal(t, 1, count(unique))
+	}
+}
+
+// Discarding an album after merging it must remove pending photos only and need
+// no job: a pending document has no Drive copy.
+func TestService_discardAlbumDeletesPendingOnly(t *testing.T) {
+	repo, a, b := twoUsers(t)
+	svc := docsbot.NewService(docsbot.Ports{Repo: repo.Documents, Syncs: repo.Documents})
+	ctx := t.Context()
+	p1 := albumDoc(t, repo, a, "g1", "p1")
+	p2 := albumDoc(t, repo, a, "g1", "p2")
+	saved := albumDoc(t, repo, a, "g1", "p3")
+	mustSave(t, ctx, repo, a, saved.ID, docsbot.CatOther)
+	otherAlbum := albumDoc(t, repo, a, "g2", "q1")
+	foreign := albumDoc(t, repo, b, "g1", "foreign")
+
+	n, err := svc.DiscardAlbum(ctx, a, "g1")
+
+	require.NoError(t, err, "noJobs fails the test if a job was requested")
+	require.Equal(t, 2, n)
+	for _, id := range []docsbot.DocumentID{p1.ID, p2.ID} {
+		_, err := repo.DocumentByID(ctx, a, id)
+		require.ErrorIs(t, err, docsbot.ErrNotFound)
+	}
+	backupOf(t, repo, a, saved.ID)
+	backupOf(t, repo, a, otherAlbum.ID)
+	backupOf(t, repo, b, foreign.ID)
+
+	n, err = svc.DiscardAlbum(ctx, a, "g1")
+	require.NoError(t, err)
+	require.Zero(t, n, "second call finds nothing")
+	n, err = svc.DiscardAlbum(ctx, a, "")
+	require.NoError(t, err)
+	require.Zero(t, n, "no album id deletes nothing")
 }
