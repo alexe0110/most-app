@@ -50,19 +50,21 @@ func cancelKeyboard() *models.InlineKeyboardMarkup {
 	}}}
 }
 
+// quickCB is the callback data of a quick operation on a stored document.
+func quickCB(id docsbot.DocumentID, op string) string { return convDocCB(convActQuick, id, op) }
+
 // quickKeyboard is the menu of an image; a WEBP also gets a plain conversion to JPG.
 func quickKeyboard(id docsbot.DocumentID, webp bool) *models.InlineKeyboardMarkup {
-	q := func(op string) string { return convDocCB(convActQuick, id, op) }
-	second := []models.InlineKeyboardButton{{Text: btnQuickPDF, CallbackData: q(opPDF)}}
+	second := []models.InlineKeyboardButton{{Text: btnQuickPDF, CallbackData: quickCB(id, opPDF)}}
 	if webp {
-		second = append(second, models.InlineKeyboardButton{Text: btnQuickJPG, CallbackData: q(opJPG)})
+		second = append(second, models.InlineKeyboardButton{Text: btnQuickJPG, CallbackData: quickCB(id, opJPG)})
 	}
 	second = append(second, models.InlineKeyboardButton{Text: btnQuickCancel, CallbackData: cbMenuCancel})
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
 		{
-			{Text: btnQuick1MB, CallbackData: q(opCompress1)},
-			{Text: btnQuick2MB, CallbackData: q(opCompress2)},
-			{Text: btnQuick5MB, CallbackData: q(opCompress5)},
+			{Text: btnQuick1MB, CallbackData: quickCB(id, opCompress1)},
+			{Text: btnQuick2MB, CallbackData: quickCB(id, opCompress2)},
+			{Text: btnQuick5MB, CallbackData: quickCB(id, opCompress5)},
 		},
 		second,
 	}}

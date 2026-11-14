@@ -75,7 +75,11 @@ func TestConvertCompress_formatQuestionOnlyForPNG(t *testing.T) {
 			ctx := t.Context()
 			h.bot.ProcessUpdate(ctx, commandUpdate(testChat, "convert"))
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:compress", h.lastMsg()))
-			h.bot.ProcessUpdate(ctx, photoUpdate(1))
+			if tt.png {
+				h.bot.ProcessUpdate(ctx, pngDocumentUpdate())
+			} else {
+				h.bot.ProcessUpdate(ctx, photoUpdate(1))
+			}
 			if tt.custom {
 				h.bot.ProcessUpdate(ctx, callbackOn("conv:limitcustom", h.lastMsg()))
 				h.bot.ProcessUpdate(ctx, convText("300"))

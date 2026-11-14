@@ -38,7 +38,7 @@ func TestConvert_staleButtons(t *testing.T) {
 				h.servePNG()
 				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", h.lastMsg()))
-				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
+				h.bot.ProcessUpdate(t.Context(), pngDocumentUpdate())
 				limitMsg := h.lastMsg()
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:limit2", limitMsg))
 				return func() { h.bot.ProcessUpdate(t.Context(), callbackOn("conv:limit2", limitMsg)) }, 0
@@ -54,7 +54,7 @@ func TestConvert_staleButtons(t *testing.T) {
 				h.servePNG()
 				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", h.lastMsg()))
-				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
+				h.bot.ProcessUpdate(t.Context(), pngDocumentUpdate())
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:limit2", h.lastMsg()))
 				fmtMsg := h.lastMsg()
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:fmtjpeg", fmtMsg))
@@ -68,7 +68,7 @@ func TestConvert_staleButtons(t *testing.T) {
 				h.servePNG()
 				h.bot.ProcessUpdate(t.Context(), commandUpdate(testChat, "convert"))
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", h.lastMsg()))
-				h.bot.ProcessUpdate(t.Context(), photoUpdate(1))
+				h.bot.ProcessUpdate(t.Context(), pngDocumentUpdate())
 				limitMsg := h.lastMsg()
 				return func() { h.bot.ProcessUpdate(t.Context(), callbackOn("conv:fmtjpeg", limitMsg)) }, 0
 			},
@@ -182,6 +182,11 @@ func TestConvert_staleButtons(t *testing.T) {
 			require.Len(t, h.docs, tt.wantDocs, "the session is unchanged by a stale press")
 		})
 	}
+}
+
+// pngDocumentUpdate sends the file served by servePNG as a PNG document.
+func pngDocumentUpdate() *models.Update {
+	return namedDocumentUpdate("large", "image/png", "фото.png")
 }
 
 // servePNG makes file "large" download as a small PNG.

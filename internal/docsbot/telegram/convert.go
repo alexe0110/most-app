@@ -137,7 +137,10 @@ func (c *converter) start(ctx context.Context, b *bot.Bot, update *models.Update
 	if prev, ok := c.sessions.live(user); ok && prev.msgID != 0 {
 		c.out(b).clearKeyboard(ctx, update.Message.Chat.ID, prev.msgID)
 	}
-	c.sessions.start(user)
+	if !c.sessions.start(user) {
+		c.out(b).send(ctx, update.Message.Chat.ID, textConvertBusy)
+		return
+	}
 	id := c.out(b).send(ctx, update.Message.Chat.ID, textConvertStart, withKeyboard(actionKeyboard())) // 0: no dialogue message
 	c.sessions.setMsg(user, id)
 }
@@ -241,8 +244,11 @@ func isWebP(doc docsbot.Document) bool {
 	return doc.Kind == docsbot.KindDocument && doc.MIME == "image/webp"
 }
 
-// mimePDF is the MIME type of a PDF document.
-const mimePDF = "application/pdf"
+// MIME types of the documents the converter tells apart.
+const (
+	mimePDF = "application/pdf"
+	mimePNG = "image/png"
+)
 
 // isPDF reports whether the document is a PDF file.
 func isPDF(doc docsbot.Document) bool {
@@ -252,7 +258,7 @@ func isPDF(doc docsbot.Document) bool {
 // supportedImageMIME reports whether we can decode this MIME type.
 func supportedImageMIME(mime string) bool {
 	switch mime {
-	case "image/jpeg", "image/jpg", "image/png", "image/webp":
+	case "image/jpeg", "image/jpg", mimePNG, "image/webp":
 		return true
 	default:
 		return false

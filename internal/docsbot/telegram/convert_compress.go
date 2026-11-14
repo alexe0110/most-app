@@ -90,12 +90,11 @@ func (c *converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64
 		unlock()
 		return false
 	}
-	if len(sess.source) == 0 {
+	if sess.sourceFileID == "" {
 		c.sessions.restore(user, sess)
 		unlock()
 		return false
 	}
-	src := sess.source
 	maxBytes := sess.maxBytes
 	msgID := c.show(ctx, b, chatID, sess.msgID, textConvertProgress, nil)
 	unlock()
@@ -105,6 +104,12 @@ func (c *converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64
 	if !sess.inputPNG {
 		retryKB = limitKeyboard()
 		sess.step = stepChooseLimit
+	}
+	src, err := c.download(ctx, sess.sourceFileID)
+	if err != nil {
+		c.log.ErrorContext(ctx, "convert download image", "err", err, "user_id", user)
+		c.retry(ctx, b, chatID, user, sess, msgID, textConvertDownloadFailed, retryKB)
+		return true
 	}
 	ictx, cancelImage := context.WithTimeout(ctx, imageTimeout)
 	out, err := convert.Compress(ictx, src, maxBytes, format)

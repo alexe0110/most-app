@@ -3,6 +3,7 @@ package telegram_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -76,6 +77,8 @@ type convHarness struct {
 	nextMsg int
 	// photo is what a file id without an override downloads.
 	photo []byte
+	// failDownloads makes every file download fail (after recording it).
+	failDownloads bool
 }
 
 // Download makes the harness the converter's file source: it records the file id,
@@ -85,9 +88,13 @@ func (h *convHarness) Download(_ context.Context, fileID string) ([]byte, string
 	h.downloads = append(h.downloads, fileID)
 	data, ok := h.files[fileID]
 	gate := h.gate
+	fail := h.failDownloads
 	h.mu.Unlock()
 	if gate != nil {
 		<-gate
+	}
+	if fail {
+		return nil, "", errors.New("download failed")
 	}
 	if !ok {
 		data = h.photo

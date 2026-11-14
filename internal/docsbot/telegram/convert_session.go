@@ -14,6 +14,10 @@ import (
 // sessionTTL drops a session left idle this long. A restart drops all of them.
 const sessionTTL = 15 * time.Minute
 
+// maxSessions caps the open sessions of all users: a flood of distinct users must
+// not grow the store without bound. Past it a new session is refused.
+const maxSessions = maxStoreEntries
+
 // step is the current stage of a converter dialogue.
 type step int
 
@@ -46,10 +50,14 @@ type session struct {
 	msgID    int            // the dialogue message whose buttons drive the session; 0 until known
 	images   []pendingImage // PDF from photos: the pages collected so far
 	imageSum int64          // PDF from photos: declared size of images
-	source   []byte         // compress: the one image, already checked to be a photo (at most tg.MaxFileBytes)
 	maxBytes int
 	inputPNG bool // compress: the image is a PNG, so the format is worth asking
 	updated  time.Time
+
+	// Compress: the one image. As with pendingImage only the id and the size are
+	// kept; the bytes are downloaded when the compression runs.
+	sourceFileID string
+	sourceSize   int64
 
 	// PDF operations on a stored document (card or picker).
 	sourceDoc   docsbot.DocumentID // "" when the PDF was sent to /convert
@@ -80,11 +88,12 @@ type sessionStore struct {
 	mu     sync.Mutex
 	byUser map[int64]*session
 	ttl    time.Duration
+	max    int
 	now    func() time.Time
 }
 
 func newSessionStore(now func() time.Time) *sessionStore {
-	return &sessionStore{byUser: map[int64]*session{}, ttl: sessionTTL, now: now}
+	return &sessionStore{byUser: map[int64]*session{}, ttl: sessionTTL, max: maxSessions, now: now}
 }
 
 // live returns the user's session if it exists and has not timed out.
@@ -126,12 +135,24 @@ func (s *sessionStore) has(user int64) bool {
 	return ok
 }
 
-// start replaces any session with a fresh one.
-func (s *sessionStore) start(user int64) {
+// fullLocked reports that a session of a user who has none would not fit. Callers
+// sweep first, so only live sessions count.
+func (s *sessionStore) fullLocked(user int64) bool {
+	_, has := s.byUser[user]
+	return !has && len(s.byUser) >= s.max
+}
+
+// start replaces any session with a fresh one. It reports false, and creates
+// nothing, when the store is full and the user has no session to replace.
+func (s *sessionStore) start(user int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sweepLocked()
+	if s.fullLocked(user) {
+		return false
+	}
 	s.byUser[user] = &session{step: stepChooseAction, updated: s.now()}
+	return true
 }
 
 // msgMatches reports whether a press on message msgID belongs to the session's
@@ -195,12 +216,13 @@ func (s *sessionStore) claim(user int64, msgID int, at ...step) (session, bool) 
 	return *sess, true
 }
 
-// restore puts a claimed session back, unless the user started another one.
+// restore puts a claimed session back, unless the user started another one or the
+// store filled up meanwhile (the user then starts over).
 func (s *sessionStore) restore(user int64, sess session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sweepLocked()
-	if _, taken := s.byUser[user]; taken {
+	if _, taken := s.byUser[user]; taken || s.fullLocked(user) {
 		return
 	}
 	sess.updated = s.now()
@@ -294,7 +316,12 @@ func (s *tokenMap[V]) peek(token string, owner int64) (V, bool) {
 	return e.v, true
 }
 
-// keyedMutex is a mutex per key (a user id) that forgets idle keys.
+// keyedMutex is a mutex per key (a user id) that forgets idle keys. Hold the lock
+// around a read-modify-write of one user's dialogue:
+//
+//	unlock := k.lock(user)
+//	defer unlock()
+//	// ... change the session and the dialogue message of user
 type keyedMutex struct {
 	mu      sync.Mutex
 	entries map[int64]*keyedEntry

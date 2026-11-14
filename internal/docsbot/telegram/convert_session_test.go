@@ -1,13 +1,19 @@
 package telegram
 
 import (
+	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -219,14 +225,112 @@ func TestConverter_claimMenuOnce(t *testing.T) {
 	require.True(t, afterRelease)
 }
 
-// A photo session keeps file ids and sizes, never image bytes: a few users with
-// twenty photos each must not be able to exhaust memory.
-func TestPendingImage_holdsNoBytes(t *testing.T) {
-	typ := reflect.TypeFor[pendingImage]()
-	for i := 0; i < typ.NumField(); i++ {
-		f := typ.Field(i)
-		require.NotEqual(t, reflect.Slice, f.Type.Kind(), "field %s must not hold a slice (bytes)", f.Name)
+// A session keeps file ids and sizes, never file bytes: a few users with twenty
+// photos each must not be able to exhaust memory.
+func TestSession_holdsNoBytes(t *testing.T) {
+	var walk func(path string, typ reflect.Type, seen map[reflect.Type]bool)
+	walk = func(path string, typ reflect.Type, seen map[reflect.Type]bool) {
+		switch typ.Kind() {
+		case reflect.Slice, reflect.Array, reflect.Pointer:
+			if typ.Elem().Kind() == reflect.Uint8 && typ.Kind() != reflect.Pointer {
+				require.Failf(t, "bytes in session state", "%s is %s", path, typ)
+			}
+			walk(path+"[]", typ.Elem(), seen)
+		case reflect.Map:
+			walk(path+"[key]", typ.Key(), seen)
+			walk(path+"[value]", typ.Elem(), seen)
+		case reflect.Struct:
+			if seen[typ] {
+				return
+			}
+			seen[typ] = true
+			for i := range typ.NumField() {
+				f := typ.Field(i)
+				walk(path+"."+f.Name, f.Type, seen)
+			}
+		case reflect.Interface, reflect.Func, reflect.Chan, reflect.UnsafePointer:
+			require.Failf(t, "opaque field in session state", "%s is %s: it could hide bytes", path, typ)
+		}
 	}
+
+	walk("session", reflect.TypeFor[session](), map[reflect.Type]bool{})
+}
+
+func TestSessionStore_refusesNewSessionsWhenFull(t *testing.T) {
+	store := newSessionStore(time.Now)
+	store.max = 2
+	require.True(t, store.start(1))
+	require.True(t, store.start(2))
+
+	require.False(t, store.start(3), "a third user does not fit")
+	require.False(t, store.has(3), "and gets no session")
+	require.True(t, store.start(1), "a user who has a session can restart it")
+
+	store.end(2)
+	require.True(t, store.start(3), "room again once a session ends")
+}
+
+func TestSessionStore_expiredSessionsMakeRoom(t *testing.T) {
+	now := time.Now()
+	store := newSessionStore(func() time.Time { return now })
+	store.max = 1
+	require.True(t, store.start(1))
+	require.False(t, store.start(2))
+
+	now = now.Add(sessionTTL + time.Second)
+
+	require.True(t, store.start(2), "the idle session was cleaned up")
+	require.False(t, store.has(1))
+}
+
+func TestSessionStore_restoreRespectsTheCap(t *testing.T) {
+	store := newSessionStore(time.Now)
+	store.max = 1
+	require.True(t, store.start(1))
+	sess, ok := store.claim(1, 0)
+	require.True(t, ok)
+	require.True(t, store.start(2), "the claimed session's room is taken")
+
+	store.restore(1, sess)
+
+	require.False(t, store.has(1), "no room: the user starts over")
+}
+
+// A refused /convert says why and opens nothing; a user who already has a session
+// is never locked out of restarting it.
+func TestConverter_startWhenSessionsAreFull(t *testing.T) {
+	var mu sync.Mutex
+	var texts []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/sendMessage") {
+			mu.Lock()
+			texts = append(texts, r.FormValue("text"))
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":5}}`)
+	}))
+	t.Cleanup(ts.Close)
+	b, err := bot.New("123:ABC", bot.WithServerURL(ts.URL), bot.WithSkipGetMe())
+	require.NoError(t, err)
+	c := newConverter(slog.New(slog.DiscardHandler), nil, nil, nil)
+	c.sessions.max = 1
+	from := func(user int64) *models.Update {
+		return &models.Update{Message: &models.Message{
+			From: &models.User{ID: user},
+			Chat: models.Chat{ID: user, Type: models.ChatTypePrivate},
+		}}
+	}
+
+	c.start(t.Context(), b, from(1))
+	c.start(t.Context(), b, from(2))
+	c.start(t.Context(), b, from(1))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, []string{textConvertStart, textConvertBusy, textConvertStart}, texts)
+	require.True(t, c.sessions.has(1))
+	require.False(t, c.sessions.has(2))
 }
 
 // Timed-out sessions of other users are dropped on any access, not only when

@@ -1,7 +1,6 @@
 package telegram
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"sync"
@@ -10,6 +9,7 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/platform/convert"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // onDocument accepts image documents (and PDFs while merging) and rejects the rest.
@@ -35,8 +35,10 @@ func (c *converter) onDocument(ctx context.Context, b *bot.Bot, update *models.U
 	c.onImage(ctx, b, update, doc.FileID, doc.FileSize)
 }
 
-// onImage adds an image to the current step. For a PDF only its id and size are
-// kept; compress downloads it now, since the format question depends on its bytes.
+// onImage adds an image to the current step. Only its id and size are kept; the
+// bytes are downloaded when the operation runs. A PNG is told from a JPEG by the
+// MIME type of the file (a photo is always a JPEG), so the format question needs
+// no download.
 func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Update, fileID string, size int64) {
 	user, _ := messageUser(update)
 	chatID := update.Message.Chat.ID
@@ -55,28 +57,25 @@ func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Upda
 		return
 	}
 
-	data, err := c.download(ctx, fileID)
-	if err != nil {
-		c.log.ErrorContext(ctx, "convert download image", "err", err)
-		c.out(b).send(ctx, chatID, textConvertDownloadFailed)
+	if size > tg.MaxFileBytes {
+		c.out(b).send(ctx, chatID, textConvertDownloadFailed) // the Bot API would refuse to serve it
 		return
 	}
 
 	unlock := c.dialogue.lock(user)
 	defer unlock()
-	// Two images sent in a row both pass the check above while downloading: only
-	// the first one moves the dialogue on, the other is dropped.
+	// Two images sent in a row both pass the check above: only the first one moves
+	// the dialogue on, the other is dropped.
 	advanced := false
 	c.sessions.update(user, func(s *session) {
 		if s.step != stepAwaitImage {
 			return
 		}
-		s.source = data
+		s.sourceFileID, s.sourceSize = fileID, size
 		s.step = stepChooseLimit
-		s.inputPNG = isPNG(data)
-		s.sourceTitle = ""
+		s.sourceTitle, s.inputPNG = "", false
 		if d := update.Message.Document; d != nil {
-			s.sourceTitle = d.FileName
+			s.sourceTitle, s.inputPNG = d.FileName, d.MimeType == mimePNG
 		}
 		advanced = true
 	})
@@ -132,11 +131,6 @@ func (c *converter) fileTip(user int64, update *models.Update) string {
 	c.tipShown[user] = true
 	return "\n\n" + textConvertFileTip
 }
-
-// pngMagic opens every PNG file.
-var pngMagic = []byte("\x89PNG\r\n\x1a\n")
-
-func isPNG(data []byte) bool { return bytes.HasPrefix(data, pngMagic) }
 
 // awaitsPDF reports whether the step waits for a PDF file from the user.
 func awaitsPDF(s step) bool { return s == stepMergePDF || s == stepAwaitPDF }

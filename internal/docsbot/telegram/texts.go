@@ -187,6 +187,8 @@ const (
 // Converter mode (/convert) texts.
 const (
 	textConvertStart = "Что сделать?"
+	// textConvertBusy answers a new /convert session while too many are open.
+	textConvertBusy = "Сейчас слишком много открытых сессий конвертера. Попробуй через несколько минут."
 
 	textConvertPDFPrompt      = "Пришли фото — по одному или альбомом. Когда закончишь, нажми «Готово»."
 	textConvertPDFAccepted    = "Принято, страниц: %d. Пришли ещё или нажми «Готово»." // %d = pages so far

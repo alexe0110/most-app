@@ -117,7 +117,10 @@ func (c *converter) runPDFOp(ctx context.Context, b *bot.Bot, chatID, tgUser int
 		}
 		c.out(b).send(ctx, chatID, textPDFPrevCancelled)
 	}
-	c.sessions.start(tgUser)
+	if !c.sessions.start(tgUser) {
+		fail(msgID, textConvertBusy)
+		return
+	}
 	next, prompt, kb := stepAwaitRange, textPDFRangePrompt, cancelKeyboard()
 	if op == opMerge {
 		next, prompt, kb = stepMergePDF, textPDFMergePrompt, pdfKeyboard()
@@ -353,15 +356,14 @@ func pdfErrorText(err error) string {
 
 // pdfMenuKeyboard is the menu of a PDF document.
 func pdfMenuKeyboard(id docsbot.DocumentID) *models.InlineKeyboardMarkup {
-	q := func(op string) string { return convDocCB(convActQuick, id, op) }
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
 		{
-			{Text: btnPDFRotate, CallbackData: q(opRotate)},
-			{Text: btnPDFKeep, CallbackData: q(opKeep)},
-			{Text: btnPDFDrop, CallbackData: q(opDrop)},
+			{Text: btnPDFRotate, CallbackData: quickCB(id, opRotate)},
+			{Text: btnPDFKeep, CallbackData: quickCB(id, opKeep)},
+			{Text: btnPDFDrop, CallbackData: quickCB(id, opDrop)},
 		},
 		{
-			{Text: btnPDFMerge, CallbackData: q(opMerge)},
+			{Text: btnPDFMerge, CallbackData: quickCB(id, opMerge)},
 			{Text: btnQuickCancel, CallbackData: cbMenuCancel},
 		},
 	}}
