@@ -20,23 +20,6 @@ var (
 	_ docsbot.Uploads = (*Repo)(nil)
 )
 
-// inTx runs fn in one transaction, committing when it returns nil.
-func (r *Repo) inTx(ctx context.Context, fn func(q *Queries, tx pgx.Tx) error) error {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }() // no-op once committed
-
-	if err := fn(r.WithTx(tx), tx); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit tx: %w", err)
-	}
-	return nil
-}
-
 // needsSync reports whether the update left a backed-up document sync-pending.
 func needsSync(backup, sync string) bool {
 	return backup == string(docsbot.BackupBackedUp) && sync == string(docsbot.SyncPending)
@@ -50,7 +33,7 @@ func (r *Repo) SetTitle(ctx context.Context, user docsbot.UserID, id docsbot.Doc
 	if err != nil {
 		return false, err
 	}
-	err = r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
+	err = inTx(ctx, r.pool, func(q *Queries, tx pgx.Tx) error {
 		row, err := q.UpdateDocumentTitle(ctx, UpdateDocumentTitleParams{ID: docID, UserID: uid, Title: title, Cloud: cloud})
 		if err != nil {
 			return notFoundOr(err, "update document title")
@@ -70,7 +53,7 @@ func (r *Repo) SetCategory(ctx context.Context, user docsbot.UserID, id docsbot.
 	if err != nil {
 		return false, err
 	}
-	err = r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
+	err = inTx(ctx, r.pool, func(q *Queries, tx pgx.Tx) error {
 		row, err := q.UpdateDocumentCategory(ctx, UpdateDocumentCategoryParams{ID: docID, UserID: uid, Category: string(cat), Cloud: cloud})
 		if err != nil {
 			return notFoundOr(err, "update document category")
@@ -93,7 +76,7 @@ func (r *Repo) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot
 	if err != nil {
 		return false, err
 	}
-	err = r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
+	err = inTx(ctx, r.pool, func(q *Queries, tx pgx.Tx) error {
 		version, err := q.MarkDocumentBackedUpSync(ctx, MarkDocumentBackedUpSyncParams{
 			ID:           docID,
 			UserID:       uid,
@@ -122,7 +105,7 @@ func (r *Repo) ReplaceContent(ctx context.Context, user docsbot.UserID, id docsb
 	if err != nil {
 		return false, err
 	}
-	err = r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
+	err = inTx(ctx, r.pool, func(q *Queries, tx pgx.Tx) error {
 		backup, err := q.ReplaceDocumentContent(ctx, ReplaceDocumentContentParams{
 			Cloud:          cloud,
 			Kind:           string(in.Kind),
@@ -163,7 +146,7 @@ func (r *Repo) EnqueueSync(ctx context.Context, user docsbot.UserID, id docsbot.
 	if err != nil {
 		return err
 	}
-	return r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
+	return inTx(ctx, r.pool, func(q *Queries, tx pgx.Tx) error {
 		n, err := q.MarkSyncPending(ctx, MarkSyncPendingParams{ID: docID, UserID: uid})
 		if err != nil {
 			return fmt.Errorf("mark sync pending: %w", err)
@@ -182,7 +165,7 @@ func (r *Repo) RetrySync(ctx context.Context, user docsbot.UserID, id docsbot.Do
 	if err != nil {
 		return false, err
 	}
-	err = r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
+	err = inTx(ctx, r.pool, func(q *Queries, tx pgx.Tx) error {
 		n, err := q.ClaimSyncFailed(ctx, ClaimSyncFailedParams{ID: docID, UserID: uid})
 		if err != nil {
 			return fmt.Errorf("claim failed sync: %w", err)
@@ -205,7 +188,7 @@ func (r *Repo) DeleteDocument(ctx context.Context, user docsbot.UserID, id docsb
 	if err != nil {
 		return false, err
 	}
-	err = r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
+	err = inTx(ctx, r.pool, func(q *Queries, tx pgx.Tx) error {
 		row, err := q.DeleteDocumentReturning(ctx, DeleteDocumentReturningParams{ID: docID, UserID: uid})
 		if err != nil {
 			return notFoundOr(err, "delete document")
@@ -227,7 +210,7 @@ func (r *Repo) DeleteDocument(ctx context.Context, user docsbot.UserID, id docsb
 // RequeueSync inserts the sync job only, without touching the document, so the
 // stuck clock keeps running.
 func (r *Repo) RequeueSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
-	return r.inTx(ctx, func(_ *Queries, tx pgx.Tx) error {
+	return inTx(ctx, r.pool, func(_ *Queries, tx pgx.Tx) error {
 		return r.jobs.InsertSync(ctx, tx, user, id)
 	})
 }

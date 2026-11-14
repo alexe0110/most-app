@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
@@ -51,7 +53,7 @@ func (r *Repo) DeleteUserData(ctx context.Context, user docsbot.UserID) error {
 	if err != nil {
 		return err
 	}
-	return r.Tx(ctx, func(q *Queries) error {
+	return inTx(ctx, r.pool, func(q *Queries, _ pgx.Tx) error {
 		if err := q.DeleteUserDocuments(ctx, uid); err != nil {
 			return fmt.Errorf("delete user documents: %w", err)
 		}

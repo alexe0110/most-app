@@ -4,7 +4,6 @@ package postgres_test
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 
@@ -100,39 +99,6 @@ func TestRepo_integrationsAndFolders(t *testing.T) {
 	require.NoError(t, repo.DeleteDriveFolder(ctx, postgres.DeleteDriveFolderParams{UserID: u.ID, Category: "passport"}))
 	_, err = repo.GetDriveFolder(ctx, postgres.GetDriveFolderParams{UserID: u.ID, Category: "passport"})
 	require.ErrorIs(t, err, pgx.ErrNoRows)
-}
-
-func TestRepo_Tx(t *testing.T) {
-	repo := newRepo(t)
-	ctx := t.Context()
-	u := makeUser(t, repo, 400)
-
-	// Commit: the write lands.
-	err := repo.Tx(ctx, func(q *postgres.Queries) error {
-		_, err := q.InsertDocument(ctx, postgres.InsertDocumentParams{
-			UserID: u.ID, Status: "pending", Kind: "document", Category: "",
-			Title: "ok", TgFileID: "f1", TgFileUniqueID: "tx-1",
-		})
-		return err
-	})
-	require.NoError(t, err)
-
-	// Rollback: returning an error discards the write.
-	wantErr := errors.New("boom")
-	err = repo.Tx(ctx, func(q *postgres.Queries) error {
-		_, err := q.InsertDocument(ctx, postgres.InsertDocumentParams{
-			UserID: u.ID, Status: "pending", Kind: "document", Category: "",
-			Title: "discarded", TgFileID: "f2", TgFileUniqueID: "tx-2",
-		})
-		require.NoError(t, err)
-		return wantErr
-	})
-	require.ErrorIs(t, err, wantErr)
-
-	_, err = repo.GetDocumentByUniqueID(ctx, postgres.GetDocumentByUniqueIDParams{UserID: u.ID, TgFileUniqueID: "tx-1"})
-	require.NoError(t, err, "committed row survives")
-	_, err = repo.GetDocumentByUniqueID(ctx, postgres.GetDocumentByUniqueIDParams{UserID: u.ID, TgFileUniqueID: "tx-2"})
-	require.ErrorIs(t, err, pgx.ErrNoRows, "rolled-back row is gone")
 }
 
 // mustSave saves a pending document and requires that this call did the saving.

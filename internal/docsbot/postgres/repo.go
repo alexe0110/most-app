@@ -1,14 +1,9 @@
 package postgres
 
-import (
-	"context"
-	"fmt"
-
-	"github.com/jackc/pgx/v5/pgxpool"
-)
+import "github.com/jackc/pgx/v5/pgxpool"
 
 // Repo persists docsbot entities in Postgres. It embeds the sqlc-generated
-// *Queries, so every query is available on Repo, and adds Tx for atomicity.
+// *Queries, so every query is available on Repo.
 type Repo struct {
 	pool *pgxpool.Pool
 	jobs JobInserter
@@ -19,22 +14,4 @@ type Repo struct {
 // commit together with a document change.
 func NewRepo(pool *pgxpool.Pool, jobs JobInserter) *Repo {
 	return &Repo{pool: pool, jobs: jobs, Queries: New(pool)}
-}
-
-// Tx runs fn in one transaction: fn gets a *Queries bound to it, an error rolls
-// back, nil commits.
-func (r *Repo) Tx(ctx context.Context, fn func(q *Queries) error) error {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }() // no-op once committed
-
-	if err := fn(r.WithTx(tx)); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit tx: %w", err)
-	}
-	return nil
 }

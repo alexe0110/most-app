@@ -23,7 +23,7 @@ func (r *Repo) EnqueueUpload(ctx context.Context, user docsbot.UserID, id docsbo
 	if err != nil {
 		return err
 	}
-	err = r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
+	err = inTx(ctx, r.pool, func(q *Queries, tx pgx.Tx) error {
 		err := q.UpdateDocumentBackupStatus(ctx, UpdateDocumentBackupStatusParams{
 			ID:           docID,
 			UserID:       uid,
@@ -51,7 +51,7 @@ func (r *Repo) EnqueueUpload(ctx context.Context, user docsbot.UserID, id docsbo
 // EnqueueUpload and without touching the document, so a live job dedups to a
 // no-op and the stuck-since clock (updated_at) is preserved.
 func (r *Repo) RequeueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
-	return r.inTx(ctx, func(_ *Queries, tx pgx.Tx) error {
+	return inTx(ctx, r.pool, func(_ *Queries, tx pgx.Tx) error {
 		_, err := r.jobs.InsertUpload(ctx, tx, user, id)
 		return err
 	})
