@@ -136,7 +136,7 @@ func TestAlbum_limitRefusalIsShownOnce(t *testing.T) {
 	ft.Fire()
 
 	require.Len(t, sent.texts, 1)
-	require.Contains(t, sent.texts[0], "Сначала выбери категорию")
+	require.Contains(t, sent.texts[0], "Этот файл я не сохранил: сначала выбери категорию")
 }
 
 func TestUnsupportedMedia_repliesForEveryType(t *testing.T) {
@@ -179,12 +179,12 @@ func TestReceive_limitRepliesAreRendered(t *testing.T) {
 			for i := range 20 {
 				r.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusPending, TgFileUniqueID: "o" + string(rune('a'+i)), CreatedAt: time.Now().Add(-time.Hour)})
 			}
-		}, "Сначала выбери категорию для предыдущих файлов"},
+		}, "Этот файл я не сохранил: сначала выбери категорию"},
 		{"rate limited", func(r *docsbottest.FakeRepo) {
 			for i := range 30 {
 				r.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, TgFileUniqueID: "o" + string(rune('a'+i)), CreatedAt: time.Now()})
 			}
-		}, "Слишком много файлов"},
+		}, "Часть файлов я не сохранил"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

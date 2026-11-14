@@ -120,8 +120,11 @@ func (c *Converter) pdfOperation(ctx context.Context, b *bot.Bot, chatID, tgUser
 		}
 		c.out(b).Send(ctx, chatID, textPDFPrevCancelled)
 	}
-	next, prompt, kb := stepAwaitRange, textPDFRangePrompt, cancelKeyboard()
-	if op == opMerge {
+	next, prompt, kb := stepAwaitRange, textPDFKeepPrompt, cancelKeyboard()
+	switch op {
+	case opDrop:
+		prompt = textPDFDropPrompt
+	case opMerge:
 		next, prompt, kb = stepMergePDF, textPDFMergePrompt, pdfKeyboard()
 	}
 	c.sessions.update(tgUser, func(s *session) {

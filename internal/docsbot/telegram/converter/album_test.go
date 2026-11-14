@@ -104,7 +104,7 @@ func TestConvertAlbum_tooManyPhotosKeepsOldPicker(t *testing.T) {
 
 	require.Empty(t, h.docs)
 	require.NotContains(t, h.albumMarkup(), "conv:alb:")
-	require.Contains(t, h.allTexts(), "Сначала выбери категорию", "the pending limit is reported")
+	require.Contains(t, h.allTexts(), "Этот файл я не сохранил: сначала выбери категорию", "the pending limit is reported")
 }
 
 func TestConvertAlbum_mixedAlbumKeepsOldPicker(t *testing.T) {
