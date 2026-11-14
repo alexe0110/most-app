@@ -1,6 +1,7 @@
 package telegram_test
 
 import (
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -61,7 +62,7 @@ func TestAlbum_threePhotosThreeDocsOnePicker(t *testing.T) {
 	require.Contains(t, sent.texts[0], "3 изображения")
 	require.Contains(t, sent.markups[0], "conv:alb:")
 	require.Contains(t, sent.markups[0], "d:gpk:")
-	require.NotContains(t, sent.texts[0], "Уже были сохранены")
+	require.NotContains(t, sent.texts[0], "Уже есть у тебя")
 }
 
 func TestAlbum_callbackDataFitsTelegramLimit(t *testing.T) {
@@ -92,7 +93,7 @@ func TestAlbum_withDuplicateReportsCount(t *testing.T) {
 	require.Equal(t, 2, pendingCount(repo), "the duplicate creates no document")
 	require.Len(t, sent.texts, 1)
 	require.Contains(t, sent.texts[0], "2 изображения") // the PDF choice replaces the picker
-	require.Contains(t, sent.texts[0], "Уже были сохранены: 1")
+	require.Contains(t, sent.texts[0], "Уже есть у тебя: 1")
 }
 
 func TestAlbum_pickerSavesWholeAlbum(t *testing.T) {
@@ -113,7 +114,7 @@ func TestAlbum_pickerSavesWholeAlbum(t *testing.T) {
 
 	require.Zero(t, pendingCount(repo))
 	require.Len(t, repo.SavedFor(docsbottest.TestUserID), 3)
-	require.True(t, has(sent.edits, "Сохранил 3 файла"), "edits %q", sent.edits)
+	require.True(t, has(sent.edits, "Сохранил 3 документа"), "edits %q", sent.edits)
 }
 
 func TestAlbum_twoAlbumsGetTwoPickers(t *testing.T) {
@@ -136,7 +137,7 @@ func TestAlbum_limitRefusalIsShownOnce(t *testing.T) {
 	ft.Fire()
 
 	require.Len(t, sent.texts, 1)
-	require.Contains(t, sent.texts[0], "Сначала выбери категорию")
+	require.Contains(t, sent.texts[0], "Этот файл я не сохранил: сначала выбери категорию")
 }
 
 func TestUnsupportedMedia_repliesForEveryType(t *testing.T) {
@@ -163,7 +164,7 @@ func TestUnsupportedMedia_repliesForEveryType(t *testing.T) {
 
 			b.ProcessUpdate(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID), &models.Update{Message: &msg})
 
-			require.Equal(t, []string{"Пока принимаю фото и файлы. Видео/голосовые — отправь как файл"}, sent.texts)
+			require.Equal(t, []string{"Я принимаю фото и файлы. Видео или голосовое пришли как файл: 📎 → Файл."}, sent.texts)
 			require.Empty(t, repo.Docs, "nothing is stored")
 		})
 	}
@@ -179,12 +180,12 @@ func TestReceive_limitRepliesAreRendered(t *testing.T) {
 			for i := range 20 {
 				r.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusPending, TgFileUniqueID: "o" + string(rune('a'+i)), CreatedAt: time.Now().Add(-time.Hour)})
 			}
-		}, "Сначала выбери категорию для предыдущих файлов"},
+		}, "Этот файл я не сохранил: сначала выбери категорию"},
 		{"rate limited", func(r *docsbottest.FakeRepo) {
 			for i := range 30 {
 				r.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, TgFileUniqueID: "o" + string(rune('a'+i)), CreatedAt: time.Now()})
 			}
-		}, "Слишком много файлов"},
+		}, "Часть файлов я не сохранил"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -216,7 +217,7 @@ func TestChooseCategory_tooLargeStaysInTelegram(t *testing.T) {
 		dataCallback("d:cat:"+string(doc.ID)+":"+string(docsbot.CatOther)))
 
 	require.Equal(t, docsbot.BackupTooLarge, repo.Docs[doc.ID].BackupStatus)
-	require.True(t, has(sent.edits, "Слишком большой для Google Диска"), "edits %q", sent.edits)
+	require.True(t, has(sent.edits, "Только в Telegram: больше 20\u00a0МБ"), "edits %q", sent.edits)
 }
 
 func albumDocument(group, uniqueID, name string) *models.Update {
@@ -243,7 +244,7 @@ func TestAlbum_allDuplicatesShowNoPicker(t *testing.T) {
 
 	require.Zero(t, pendingCount(repo))
 	require.Len(t, sent.texts, 1, "one summary, no picker: %q", sent.texts)
-	require.Contains(t, sent.texts[0], "Уже были сохранены: 2")
+	require.Contains(t, sent.texts[0], "Уже есть у тебя: 2")
 	require.NotContains(t, sent.markups[0], "d:ga:")
 }
 
@@ -298,4 +299,50 @@ func TestAlbum_pickerDoubleTapOpensOneStatus(t *testing.T) {
 	require.Len(t, repo.Status.Msgs, 1, "one status message for the album")
 	require.Len(t, sent.edits, edits, "the batch is not redrawn by the second tap")
 	require.Len(t, repo.SavedFor(docsbottest.TestUserID), 2)
+}
+
+// The pending cap (20 files) keeps an album below the plural boundary of 21.
+func TestAlbum_textsAgreeWithTheCount(t *testing.T) {
+	tests := []struct {
+		n          int
+		wantImages string // the "one PDF or file by file" offer of an all-image album
+		wantFiles  string // the category picker of an album with a document in it
+		wantSaved  string // the summary after saving the album
+	}{
+		{2, "Альбом: 2 изображения. Что сделать?", "Выбери категорию для 2 файла:", "Сохранил 2 документа в «Чеки и гарантии»."},
+		{5, "Альбом: 5 изображений. Что сделать?", "Выбери категорию для 5 файлов:", "Сохранил 5 документов в «Чеки и гарантии»."},
+		{11, "Альбом: 11 изображений. Что сделать?", "Выбери категорию для 11 файлов:", "Сохранил 11 документов в «Чеки и гарантии»."},
+		{12, "Альбом: 12 изображений. Что сделать?", "Выбери категорию для 12 файлов:", "Сохранил 12 документов в «Чеки и гарантии»."},
+		{20, "Альбом: 20 изображений. Что сделать?", "Выбери категорию для 20 файлов:", "Сохранил 20 документов в «Чеки и гарантии»."},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprint(tt.n), func(t *testing.T) {
+			// Images only.
+			ft, send, sent, _ := albumBot(t, docsbottest.FakeDrive{})
+			for i := range tt.n {
+				send(albumPhoto("alb", fmt.Sprintf("p%d", i)))
+			}
+			ft.Fire()
+			require.Len(t, sent.texts, 1)
+			require.Equal(t, tt.wantImages, sent.texts[0])
+
+			// One document among the photos: no PDF offer, a plain category picker.
+			ft, send, sent, repo := albumBot(t, docsbottest.FakeDrive{})
+			for i := range tt.n - 1 {
+				send(albumPhoto("alb", fmt.Sprintf("p%d", i)))
+			}
+			send(albumDocument("alb", "d1", "scan.pdf"))
+			ft.Fire()
+			require.Len(t, sent.texts, 1)
+			require.Equal(t, tt.wantFiles, sent.texts[0])
+
+			var anchor docsbot.DocumentID
+			for id := range repo.Docs {
+				anchor = id
+				break
+			}
+			send(dataCallback("d:ga:" + string(anchor) + ":" + string(docsbot.CatReceipts)))
+			require.Contains(t, sent.edits, tt.wantSaved)
+		})
+	}
 }

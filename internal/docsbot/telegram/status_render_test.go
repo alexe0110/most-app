@@ -37,7 +37,7 @@ func TestRenderStatusMessage_single(t *testing.T) {
 	require.Equal(t, "d:rsm:sm", last[0].CallbackData)
 
 	text, _ = renderStatusMessage(sm, []docsbot.Document{statusDoc("a", docsbot.BackupPending), statusDoc("b", docsbot.BackupPending)}, nil)
-	require.True(t, strings.HasPrefix(text, "⏳ Переношу на Google Диск · 0 из 2"), "more than one line falls back to a batch")
+	require.True(t, strings.HasPrefix(text, "⏳ Загружаю на Google Диск · 0 из 2"), "more than one line falls back to a batch")
 }
 
 func TestRenderStatusMessage_tooLargeOnly(t *testing.T) {
@@ -45,7 +45,7 @@ func TestRenderStatusMessage_tooLargeOnly(t *testing.T) {
 		batchDoc("a", docsbot.CatWork, docsbot.BackupTooLarge, ""),
 		batchDoc("b", docsbot.CatWork, docsbot.BackupTooLarge, ""),
 	}, nil)
-	require.Equal(t, "⚠️ Не перенёс 2: больше 20 МБ", text)
+	require.Equal(t, "⚠️ Не загрузил 2: больше 20\u00a0МБ", text)
 	require.NotNil(t, kb)
 	require.Equal(t, [][]string{{btnMyDocs}}, buttonTexts(kb.InlineKeyboard), "nothing to retry")
 }
@@ -74,7 +74,7 @@ func TestStatusDonePlural(t *testing.T) {
 				lines[i] = batchDoc("d", docsbot.CatWork, docsbot.BackupBackedUp, "")
 			}
 			text, _ := renderStatusMessage(batchMsg, lines, nil)
-			require.True(t, strings.HasPrefix(text, "✅ Перенёс на Google Диск — "+tt.want+"\n"), text)
+			require.True(t, strings.HasPrefix(text, "✅ Загрузил на Google Диск "+tt.want+"\n"), text)
 		})
 	}
 }
@@ -98,8 +98,8 @@ func TestRenderStatusMessage_worstCaseKeepsEssentials(t *testing.T) {
 	text, kb := renderStatusMessage(batchMsg, lines, folders)
 
 	require.LessOrEqual(t, utf16Len(text), statusTextLimit)
-	require.True(t, strings.HasPrefix(text, fmt.Sprintf("⏳ Переношу на Google Диск · %d из %d\n", len(lines)-1, len(lines))))
-	require.Contains(t, text, "⚠️ Не перенёс 4:")
+	require.True(t, strings.HasPrefix(text, fmt.Sprintf("⏳ Загружаю на Google Диск · %d из %d\n", len(lines)-1, len(lines))))
+	require.Contains(t, text, "⚠️ Не загрузил 4:")
 	require.NotNil(t, kb)
 	require.Equal(t, [][]string{{"🔁 Повторить (3)"}}, buttonTexts(kb.InlineKeyboard))
 }
@@ -134,7 +134,7 @@ func TestRenderStatusMessage_progressBar(t *testing.T) {
 				lines = append(lines, batchDoc("d", docsbot.CatPassport, st, ""))
 			}
 			text, kb := renderStatusMessage(batchMsg, lines, nil)
-			require.True(t, strings.HasPrefix(text, fmt.Sprintf("⏳ Переношу на Google Диск · %d из %d\n%s", tt.done, tt.all, tt.wantBar)), text)
+			require.True(t, strings.HasPrefix(text, fmt.Sprintf("⏳ Загружаю на Google Диск · %d из %d\n%s", tt.done, tt.all, tt.wantBar)), text)
 			require.Nil(t, kb, "nothing to press while uploads run")
 		})
 	}
@@ -154,14 +154,14 @@ func TestRenderStatusMessage_done(t *testing.T) {
 			kind:    docsbot.StatusBatch,
 			lines:   []docsbot.Document{batchDoc("ВНЖ", docsbot.CatPassport, docsbot.BackupBackedUp, ""), batchDoc("Паспорт", docsbot.CatPassport, docsbot.BackupBackedUp, "")},
 			folders: folders,
-			want: "✅ Перенёс на Google Диск — 2 документа\n\n" +
+			want: "✅ Загрузил на Google Диск 2 документа\n\n" +
 				`📁 <a href="https://drive.google.com/drive/folders/FOLD">Паспорт и ID</a> · 2` + "\nВНЖ, Паспорт",
 		},
 		{
 			name:  "transfer renders the same, folder unknown means no link",
 			kind:  docsbot.StatusTransfer,
 			lines: []docsbot.Document{batchDoc("Полис", docsbot.CatInsurance, docsbot.BackupBackedUp, "")},
-			want:  "✅ Перенёс на Google Диск — 1 документ\n\n📁 Страховки · 1\nПолис",
+			want:  "✅ Загрузил на Google Диск 1 документ\n\n📁 Страховки · 1\nПолис",
 		},
 		{
 			name: "categories follow the menu order, not the upload order",
@@ -172,7 +172,7 @@ func TestRenderStatusMessage_done(t *testing.T) {
 				batchDoc("a", docsbot.CatPassport, docsbot.BackupBackedUp, ""),
 			},
 			folders: map[docsbot.Category]string{docsbot.CatAuto: "AUTO"},
-			want: "✅ Перенёс на Google Диск — 3 документа\n\n" +
+			want: "✅ Загрузил на Google Диск 3 документа\n\n" +
 				"📁 Паспорт и ID · 1\na\n\n" +
 				`📁 <a href="https://drive.google.com/drive/folders/AUTO">Авто</a> · 1` + "\nb\n\n" +
 				"📁 Другое · 1\nc",
@@ -181,7 +181,7 @@ func TestRenderStatusMessage_done(t *testing.T) {
 			name:  "a retired category folds into Другое",
 			kind:  docsbot.StatusBatch,
 			lines: []docsbot.Document{batchDoc("x", "gone", docsbot.BackupBackedUp, "")},
-			want:  "✅ Перенёс на Google Диск — 1 документ\n\n📁 Другое · 1\nx",
+			want:  "✅ Загрузил на Google Диск 1 документ\n\n📁 Другое · 1\nx",
 		},
 	}
 	for _, tt := range tests {
@@ -207,7 +207,7 @@ func TestRenderStatusMessage_failures(t *testing.T) {
 		{
 			name:     "partial failure: error block on top, failed one excluded from blocks",
 			lines:    []docsbot.Document{ok, batchDoc("bad", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonQuota)},
-			want:     "✅ Перенёс на Google Диск — 1 документ\n\n⚠️ Не перенёс 1: нет места на Диске\n\n📁 Работа · 1\nok",
+			want:     "✅ Загрузил на Google Диск 1 документ\n\n⚠️ Не загрузил 1: нет места на Google Диске\nОсвободи место на Google Диске и нажми «Повторить».\n\n📁 Работа · 1\nok",
 			wantRows: [][]string{{"🔁 Повторить (1)", btnMyDocs}},
 		},
 		{
@@ -216,7 +216,7 @@ func TestRenderStatusMessage_failures(t *testing.T) {
 				batchDoc("a", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonRevoked),
 				batchDoc("b", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonRevoked),
 			},
-			want:     "⚠️ Не перенёс 2: доступ отозван",
+			want:     "⚠️ Не загрузил 2: доступ отозван",
 			wantRows: [][]string{{"🔁 Повторить (2)", btnMyDocs}},
 		},
 		{
@@ -225,7 +225,7 @@ func TestRenderStatusMessage_failures(t *testing.T) {
 				batchDoc("a", docsbot.CatWork, docsbot.BackupFailed, ""),
 				batchDoc("b", docsbot.CatWork, docsbot.BackupFailed, "weird"),
 			},
-			want:     "⚠️ Не перенёс 2: сервис недоступен",
+			want:     "⚠️ Не загрузил 2: Google Диск не отвечает",
 			wantRows: [][]string{{"🔁 Повторить (2)", btnMyDocs}},
 		},
 		{
@@ -236,19 +236,19 @@ func TestRenderStatusMessage_failures(t *testing.T) {
 				batchDoc("c", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonQuota),
 				batchDoc("d", docsbot.CatWork, docsbot.BackupTooLarge, ""),
 			},
-			want:     "⚠️ Не перенёс 4:\n• нет места на Диске — 2\n• сервис недоступен — 1\n• больше 20 МБ — 1",
+			want:     "⚠️ Не загрузил 4:\n• нет места на Google Диске — 2\n• Google Диск не отвечает — 1\n• больше 20\u00a0МБ — 1\nОсвободи место на Google Диске и нажми «Повторить».",
 			wantRows: [][]string{{"🔁 Повторить (3)", btnMyDocs}},
 		},
 		{
 			name:     "too large only: counted as not transferred, no retry",
 			lines:    []docsbot.Document{ok, batchDoc("big", docsbot.CatWork, docsbot.BackupTooLarge, "")},
-			want:     "✅ Перенёс на Google Диск — 1 документ\n\n⚠️ Не перенёс 1: больше 20 МБ\n\n📁 Работа · 1\nok",
+			want:     "✅ Загрузил на Google Диск 1 документ\n\n⚠️ Не загрузил 1: больше 20\u00a0МБ\n\n📁 Работа · 1\nok",
 			wantRows: [][]string{{btnMyDocs}},
 		},
 		{
 			name:     "failures while others still run: retry only, no my documents yet",
 			lines:    []docsbot.Document{batchDoc("bad", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonQuota), batchDoc("x", docsbot.CatWork, docsbot.BackupPending, "")},
-			want:     "⏳ Переношу на Google Диск · 1 из 2\n▰▰▰▱▱▱▱\n\n⚠️ Не перенёс 1: нет места на Диске",
+			want:     "⏳ Загружаю на Google Диск · 1 из 2\n▰▰▰▱▱▱▱\n\n⚠️ Не загрузил 1: нет места на Google Диске\nОсвободи место на Google Диске и нажми «Повторить».",
 			wantRows: [][]string{{"🔁 Повторить (1)"}},
 		},
 	}
@@ -314,8 +314,8 @@ func TestRenderStatusMessage_fitsTelegramLimit(t *testing.T) {
 	text, kb := renderStatusMessage(batchMsg, lines, folders)
 
 	require.LessOrEqual(t, utf16Len(text), statusTextLimit)
-	require.True(t, strings.HasPrefix(text, "✅ Перенёс на Google Диск — 440 документов"))
-	require.Contains(t, text, "⚠️ Не перенёс 1: нет места на Диске")
+	require.True(t, strings.HasPrefix(text, "✅ Загрузил на Google Диск 440 документов"))
+	require.Contains(t, text, "⚠️ Не загрузил 1: нет места на Google Диске")
 	require.Contains(t, text, "…и ещё")
 	require.NotNil(t, kb)
 	require.Equal(t, [][]string{{"🔁 Повторить (1)", btnMyDocs}}, buttonTexts(kb.InlineKeyboard))
@@ -323,7 +323,7 @@ func TestRenderStatusMessage_fitsTelegramLimit(t *testing.T) {
 
 func TestRenderStatusMessage_emptyDoesNotPanic(t *testing.T) {
 	text, kb := renderStatusMessage(batchMsg, nil, nil)
-	require.Equal(t, "⏳ Переношу на Google Диск · 0 из 0\n▱▱▱▱▱▱▱", text)
+	require.Equal(t, "⏳ Загружаю на Google Диск · 0 из 0\n▱▱▱▱▱▱▱", text)
 	require.Nil(t, kb)
 }
 
@@ -332,7 +332,7 @@ func TestRenderStatusMessage_singleKeepsCard(t *testing.T) {
 	text, kb := renderStatusMessage(sm, []docsbot.Document{statusDoc("a.pdf", docsbot.BackupBackedUp)}, nil)
 	require.Contains(t, text, "☁️ Google Диск · копия в Telegram")
 	require.NotNil(t, kb)
-	require.NotContains(t, text, "Переношу")
+	require.NotContains(t, text, "Загружаю")
 }
 
 func buttonTexts(rows [][]models.InlineKeyboardButton) [][]string {

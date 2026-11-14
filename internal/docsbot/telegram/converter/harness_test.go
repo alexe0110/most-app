@@ -30,6 +30,7 @@ import (
 type sentDocument struct {
 	filename string
 	data     []byte
+	caption  string
 }
 
 // convHarness is a fake Bot API wired to a docsbot client. It serves file
@@ -254,7 +255,7 @@ func (h *convHarness) captureDocument(t *testing.T, r *http.Request) int {
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.docs = append(h.docs, sentDocument{filename: header.Filename, data: data})
+	h.docs = append(h.docs, sentDocument{filename: header.Filename, data: data, caption: r.FormValue("caption")})
 	h.docMarkups = append(h.docMarkups, r.FormValue("reply_markup"))
 	return len(h.docs) - 1
 }

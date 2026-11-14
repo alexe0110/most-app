@@ -88,7 +88,7 @@ func (c *Converter) pdfOperation(ctx context.Context, b *bot.Bot, chatID, tgUser
 		}
 		c.log.InfoContext(ctx, "pdf converted", "user_id", user, "doc_id", src.docID, "op", op, "in_bytes", len(data), "out_bytes", len(out))
 		name := resultFileName(src.title, nameFallbackDocument, nameTagEdited, "pdf")
-		if !c.sendResult(ctx, b, chatID, tgUser, name, out, src.docID, suffixEdited) {
+		if !c.sendResult(ctx, b, chatID, tgUser, resultFile{name: name, data: out, sourceDoc: src.docID, suffix: suffixEdited}) {
 			fail(msgID, textSendFailed)
 			return
 		}
@@ -120,8 +120,11 @@ func (c *Converter) pdfOperation(ctx context.Context, b *bot.Bot, chatID, tgUser
 		}
 		c.out(b).Send(ctx, chatID, textPDFPrevCancelled)
 	}
-	next, prompt, kb := stepAwaitRange, textPDFRangePrompt, cancelKeyboard()
-	if op == opMerge {
+	next, prompt, kb := stepAwaitRange, textPDFKeepPrompt, cancelKeyboard()
+	switch op {
+	case opDrop:
+		prompt = textPDFDropPrompt
+	case opMerge:
 		next, prompt, kb = stepMergePDF, textPDFMergePrompt, pdfKeyboard()
 	}
 	c.sessions.update(tgUser, func(s *session) {
@@ -209,7 +212,7 @@ func (c *Converter) onRange(ctx context.Context, b *bot.Bot, update *models.Upda
 	}
 	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", sess.sourceDoc, "op", sess.pdfOp, "in_bytes", len(src), "out_bytes", len(out))
 	name := resultFileName(sess.sourceTitle, nameFallbackDocument, nameTagEdited, "pdf")
-	if !c.sendResult(ctx, b, chatID, tgUser, name, out, sess.sourceDoc, suffixEdited) {
+	if !c.sendResult(ctx, b, chatID, tgUser, resultFile{name: name, data: out, sourceDoc: sess.sourceDoc, suffix: suffixEdited}) {
 		again(textSendFailed)
 		return
 	}
@@ -279,7 +282,7 @@ func (c *Converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 	if total == 0 {
 		return
 	}
-	c.moveDown(ctx, b, chatID, tgUser, fmt.Sprintf(textPDFMergeAdded, total), pdfKeyboard())
+	c.moveDown(ctx, b, chatID, tgUser, fmt.Sprintf(textPDFMergeAdded, total, plural(total, pluralFileOne, pluralFileFew, pluralFileMany)), pdfKeyboard())
 }
 
 // finishMerge joins the collected PDFs. The session is claimed first, so a
@@ -329,7 +332,7 @@ func (c *Converter) finishMerge(ctx context.Context, b *bot.Bot, p press) {
 	}
 	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", sess.sourceDoc, "op", opMerge, "files", len(files), "out_bytes", len(out))
 	name := resultFileName(sess.sourceTitle, nameFallbackDocument, nameTagEdited, "pdf")
-	if !c.sendResult(ctx, b, chatID, tgUser, name, out, sess.sourceDoc, suffixEdited) {
+	if !c.sendResult(ctx, b, chatID, tgUser, resultFile{name: name, data: out, sourceDoc: sess.sourceDoc, suffix: suffixEdited}) {
 		c.retry(ctx, b, chatID, tgUser, sess, msgID, textSendFailed, pdfKeyboard())
 		return
 	}
@@ -360,13 +363,11 @@ func pdfMenuKeyboard(id docsbot.DocumentID) *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
 		{
 			{Text: btnPDFRotate, CallbackData: quickCB(id, opRotate)},
-			{Text: btnPDFKeep, CallbackData: quickCB(id, opKeep)},
-			{Text: btnPDFDrop, CallbackData: quickCB(id, opDrop)},
-		},
-		{
 			{Text: btnPDFMerge, CallbackData: quickCB(id, opMerge)},
-			{Text: btnQuickCancel, CallbackData: cbMenuCancel},
 		},
+		{{Text: btnPDFKeep, CallbackData: quickCB(id, opKeep)}},
+		{{Text: btnPDFDrop, CallbackData: quickCB(id, opDrop)}},
+		{{Text: btnQuickCancel, CallbackData: cbMenuCancel}},
 	}}
 }
 
@@ -376,12 +377,10 @@ func pdfActionsKeyboard() *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
 		{
 			{Text: btnPDFRotate, CallbackData: cbSessRotate},
-			{Text: btnPDFKeep, CallbackData: cbSessKeep},
-		},
-		{
-			{Text: btnPDFDrop, CallbackData: cbSessDrop},
 			{Text: btnPDFMerge, CallbackData: cbSessMerge},
 		},
+		{{Text: btnPDFKeep, CallbackData: cbSessKeep}},
+		{{Text: btnPDFDrop, CallbackData: cbSessDrop}},
 		{{Text: btnCancel, CallbackData: cbCancel}},
 	}}
 }

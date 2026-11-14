@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 
@@ -119,6 +120,16 @@ func TestService_Search(t *testing.T) {
 	require.Equal(t, "Паспорт РК", found.Docs[0].Title)
 }
 
+func TestService_Search_driveStatusFailure(t *testing.T) {
+	repo := docsbottest.NewFakeRepo()
+	boom := errors.New("drive status down")
+	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{Err: boom}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
+
+	_, err := svc.Search(t.Context(), user, "паспорт")
+
+	require.ErrorIs(t, err, boom)
+}
+
 func TestService_folderLinks(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -178,4 +189,43 @@ func TestService_Card_pendingNoFolder(t *testing.T) {
 	card, err := svc.Card(t.Context(), user, doc.ID)
 	require.NoError(t, err)
 	require.Empty(t, card.CategoryFolderID)
+}
+
+func TestService_listsReportDriveConnection(t *testing.T) {
+	for _, connected := range []bool{false, true} {
+		t.Run(map[bool]string{false: "drive off", true: "drive on"}[connected], func(t *testing.T) {
+			repo := docsbottest.NewFakeRepo()
+			repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatReceipts, Title: "Чек"})
+			svc := docsbottest.NewService(repo, docsbottest.FakeDrive{IsConnected: connected}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
+
+			page, err := svc.CategoryPage(t.Context(), user, docsbot.CatReceipts, 1)
+			require.NoError(t, err)
+			require.Equal(t, connected, page.DriveConnected)
+
+			found, err := svc.Search(t.Context(), user, "чек")
+			require.NoError(t, err)
+			require.Len(t, found.Docs, 1)
+			require.Equal(t, connected, found.DriveConnected)
+
+			cat, err := svc.Catalog(t.Context(), user)
+			require.NoError(t, err)
+			require.Equal(t, connected, cat.DriveConnected)
+		})
+	}
+}
+
+func TestService_Search_keepsQueryForTheNothingFoundText(t *testing.T) {
+	repo := docsbottest.NewFakeRepo()
+	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
+
+	found, err := svc.Search(t.Context(), user, "  Страховка  ")
+
+	require.NoError(t, err)
+	require.Empty(t, found.Docs)
+	require.NotEmpty(t, found.Query)
+	require.NotContains(t, found.Query, "  ", "the query is shown back to the user, trimmed")
+
+	huge, err := svc.Search(t.Context(), user, strings.Repeat("я", 5000))
+	require.NoError(t, err)
+	require.LessOrEqual(t, utf8.RuneCountInString(huge.Query), 100, "an echoed query must fit a Telegram message")
 }

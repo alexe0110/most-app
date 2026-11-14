@@ -3,6 +3,7 @@ package converter
 import (
 	"testing"
 
+	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
@@ -36,4 +37,41 @@ func TestCallbackDataFitsTelegramLimit(t *testing.T) {
 		require.LessOrEqual(t, len(d), 64, d)
 		require.NotEmpty(t, d)
 	}
+}
+
+func TestPDFKeyboards_layout(t *testing.T) {
+	id := docsbot.DocumentID("123e4567-e89b-12d3-a456-426614174000")
+	tests := []struct {
+		name string
+		kb   func() [][]string // button labels per row
+	}{
+		{"menu of a stored PDF", func() [][]string { return labels(pdfMenuKeyboard(id)) }},
+		{"actions in /convert", func() [][]string { return labels(pdfActionsKeyboard()) }},
+	}
+	want := [][]string{
+		{"🔄 Повернуть", "➕ Склеить"},
+		{"✂️ Оставить страницы"},
+		{"➖ Убрать страницы"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.kb()
+			require.Len(t, got, 4)
+			require.Equal(t, want, got[:3])
+			require.Len(t, got[3], 1, "cancel is alone in the last row")
+			require.Contains(t, got[3][0], "Отмена")
+		})
+	}
+}
+
+func labels(kb *models.InlineKeyboardMarkup) [][]string {
+	var rows [][]string
+	for _, row := range kb.InlineKeyboard {
+		var line []string
+		for _, b := range row {
+			line = append(line, b.Text)
+		}
+		rows = append(rows, line)
+	}
+	return rows
 }

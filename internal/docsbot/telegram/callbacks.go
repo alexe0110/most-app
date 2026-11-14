@@ -20,6 +20,7 @@ const (
 	actGroupPick     = "gpk" // album choice -> category picker: d:gpk:<docID>
 	actSetCategory   = "sc"  // change an existing document's category
 	actChangeCat     = "chc" // show the category picker for a card
+	actCardBack      = "cb"  // close the category picker, back to the card: d:cb:<docID>
 	actSend          = "snd" // resend the original file
 	actRename        = "rn"  // ask for a new title: the card message becomes the prompt
 	actRenameCancel  = "rnc" // cancel the rename prompt: d:rnc:<docID>
@@ -33,10 +34,15 @@ const (
 	actTransferNo    = "trn" // decline the transfer offer
 	actRetry         = "rt"  // retry a failed backup: d:rt:<docID>
 	actRetrySync     = "rs"  // retry a failed cloud sync: d:rs:<docID>
+	actDisconnectAsk = "dca" // ask to confirm disconnecting Google Drive
 	actDisconnect    = "dc"  // disconnect Google Drive
+	actDisconnectNo  = "dcn" // keep Google Drive, back to the settings
+	actConnectAsk    = "cna" // show the screen before Google's consent page
+	actConnectNo     = "cnc" // decline that screen
 	actRetryAll      = "rta" // retry every failed backup
 	actExport        = "exp" // resend all documents from Telegram
 	actDeleteData    = "dd"  // start the delete-all-data confirmation
+	actDeleteDataNo  = "ddn" // cancel it
 	actRetryBatch    = "rsm" // retry failed docs in a status message: d:rsm:<smID>
 	actOpenCard      = "oc"  // open a card: d:oc:<docID>:<l|s>[:<cat>:<page>]
 	actSearchBack    = "sb"  // re-run the last search
@@ -57,7 +63,7 @@ type callbackData struct {
 // document id; for every other action it is the first argument.
 func carriesDocID(action string) bool {
 	switch action {
-	case actCategory, actCategoryGroup, actGroupPick, actSetCategory, actChangeCat, actSend,
+	case actCategory, actCategoryGroup, actGroupPick, actSetCategory, actChangeCat, actCardBack, actSend,
 		actRename, actRenameCancel, actDeleteAsk, actDeleteYes, actDeleteNo, actOpenCard,
 		actRetry, actRetrySync:
 		return true

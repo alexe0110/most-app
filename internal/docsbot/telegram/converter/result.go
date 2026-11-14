@@ -3,6 +3,7 @@ package converter
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -28,22 +29,44 @@ func (c *Converter) deleteCallbackMessage(ctx context.Context, b *bot.Bot, p pre
 	}
 }
 
+// resultFile is a converted file ready to be sent.
+type resultFile struct {
+	name string
+	data []byte
+	// sourceDoc is the stored document it was made from, "" when there is none.
+	sourceDoc docsbot.DocumentID
+	suffix    string // appended to the title when the result is saved
+	// caption is shown under the file; a PDF without one gets its page count.
+	caption string
+}
+
 // sendResult uploads the converted file with the save / just-the-file buttons
 // and reports whether Telegram accepted it. The choice is remembered only if
 // Telegram echoes the stored file back; if it doesn't, the buttons are removed
 // again, since they could not work. Without the user's internal id the file goes
 // out without buttons.
-func (c *Converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser int64, filename string, data []byte,
-	sourceDoc docsbot.DocumentID, suffix string,
-) bool {
+func (c *Converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser int64, r resultFile) bool {
+	pages := 0
+	if strings.EqualFold(filepath.Ext(r.name), ".pdf") {
+		// The result is already in memory; a failed count only leaves the page count unknown.
+		pctx, cancel := context.WithTimeout(ctx, pdfTimeout)
+		defer cancel()
+		if n, err := convert.PageCount(pctx, r.data); err == nil {
+			pages = n
+			if r.caption == "" {
+				r.caption = fmt.Sprintf(textResultPages, n, plural(n, pluralPageOne, pluralPageFew, pluralPageMany))
+			}
+		}
+	}
 	params := &bot.SendDocumentParams{
 		ChatID:   chatID,
-		Document: &models.InputFileUpload{Filename: filename, Data: bytes.NewReader(data)},
+		Document: &models.InputFileUpload{Filename: r.name, Data: bytes.NewReader(r.data)},
+		Caption:  r.caption,
 	}
 	user, haveUser := userID(ctx)
 	token := tg.NewToken()
 	if haveUser {
-		params.ReplyMarkup = saveKeyboard(token, sourceDoc != "")
+		params.ReplyMarkup = saveKeyboard(token, r.sourceDoc != "")
 	}
 	msg, err := b.SendDocument(ctx, params)
 	if err != nil {
@@ -57,27 +80,24 @@ func (c *Converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 		c.removeKeyboard(ctx, b, chatID, msg)
 		return true
 	}
-	pages, width, height := 0, 0, 0
-	if w, h, ok := convert.ImageSize(data); ok { // header only; other formats stay unknown
+	width, height := 0, 0
+	if w, h, ok := convert.ImageSize(r.data); ok { // header only; other formats stay unknown
 		width, height = w, h
 	}
-	if msg.Document.MimeType == "application/pdf" || strings.EqualFold(filepath.Ext(filename), ".pdf") {
-		// The result is already in memory; a failed count only leaves the page count unknown.
-		pctx, cancel := context.WithTimeout(ctx, pdfTimeout)
-		defer cancel()
-		if n, err := convert.PageCount(pctx, data); err == nil {
-			pages = n
-		}
-	}
 	c.results.put(token, tgUser, convResult{
-		user: user, sourceDoc: sourceDoc, suffix: suffix,
+		user: user, sourceDoc: r.sourceDoc, suffix: r.suffix,
 		file: docsbot.IncomingFile{
 			Kind: docsbot.KindDocument, FileID: msg.Document.FileID, FileUniqueID: msg.Document.FileUniqueID,
-			Title: docsbot.TrimExt(filename), FileSize: msg.Document.FileSize, MIME: msg.Document.MimeType, PageCount: pages,
+			Title: docsbot.TrimExt(r.name), FileSize: msg.Document.FileSize, MIME: msg.Document.MimeType, PageCount: pages,
 			Width: width, Height: height,
 		},
 	})
 	return true
+}
+
+// compressedCaption says how much smaller the compressed image is.
+func compressedCaption(before, after int) string {
+	return fmt.Sprintf(textResultCompressed, humanSize(int64(after)), humanSize(int64(before)))
 }
 
 // done records a finished conversion. Call it once Telegram accepted the result,

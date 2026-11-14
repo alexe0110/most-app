@@ -19,7 +19,7 @@ func TestRetry_failedDocumentIsRequeued(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallback("d:rt:"+string(doc.ID)))
 
 	require.Equal(t, docsbot.BackupPending, repo.Docs[doc.ID].BackupStatus)
-	require.True(t, has(sent.edits, "Повторяю выгрузку"), "edits %q", sent.edits)
+	require.True(t, has(sent.edits, "Повторяю загрузку"), "edits %q", sent.edits)
 	require.Equal(t, []string{""}, sent.answers, "no toast for a successful retry")
 }
 

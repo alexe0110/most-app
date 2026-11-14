@@ -19,7 +19,7 @@ func TestRegister_routing(t *testing.T) {
 	}{
 		{"start", commandUpdate("start"), "«Most Docs»"},
 		{"help", commandUpdate("help"), "умею"},
-		{"unknown command", commandUpdate("foo"), "Не понимаю"},
+		{"unknown command", commandUpdate("foo"), "Такой команды нет"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

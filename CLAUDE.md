@@ -71,3 +71,4 @@ Before "done": `make lint && make test` pass. Add `make test-int` if an adapter 
 - Read only the files you need; use Grep/Glob instead of reading whole directories.
 - Keep command output short: `go test ./path/...` for the touched package first, then `make test`.
 - Code comments in English. User-facing texts in Russian, in `internal/<bot>/telegram/texts.go`.
+- Пользовательские тексты — по `docs/texts.md`.

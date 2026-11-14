@@ -188,6 +188,7 @@ func (s *Service) ChooseCategoryGroup(ctx context.Context, user UserID, anyDocID
 		}
 		out.Docs = append(out.Docs, saved.Doc)
 		out.OfferDrive = out.OfferDrive || saved.OfferDrive
+		out.First = out.First || saved.First
 	}
 	out.Already = len(out.Docs) == 0
 	return out, nil
@@ -251,14 +252,15 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 	}
 	if connected {
 		doc.BackupStatus = choice.Backup
-		return Saved{Doc: doc}, nil
 	}
-
+	// The document is committed: a failed count only drops the hint and the Drive
+	// nudge, it must not turn a saved document into an error.
 	count, err := s.repo.CountSaved(ctx, user)
 	if err != nil {
-		return Saved{}, fmt.Errorf("count saved: %w", err)
+		s.log.WarnContext(ctx, "count saved documents", "err", err, "user_id", user)
+		return Saved{Doc: doc}, nil
 	}
-	return Saved{Doc: doc, OfferDrive: count == 1 || count == 5}, nil
+	return Saved{Doc: doc, OfferDrive: !connected && (count == 1 || count == 5), First: count == 1}, nil
 }
 
 // defaultTitle builds "<category> — dd.mm.yyyy", adding " (n)" until it is unique

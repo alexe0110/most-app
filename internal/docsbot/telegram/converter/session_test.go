@@ -468,7 +468,7 @@ func TestConverter_sessionsAreFull(t *testing.T) {
 		{"PDF operation refused", pdfMenu, other, []string{"send:" + textConvertStart, "send:" + textConvertProgress, "edit:" + textConvertBusy}, 0, false},
 		{
 			"PDF operation by the owner replaces the session", pdfMenu, owner,
-			[]string{"send:" + textConvertStart, "send:" + textConvertProgress, "send:" + textPDFPrevCancelled, "edit:" + textPDFRangePrompt},
+			[]string{"send:" + textConvertStart, "send:" + textConvertProgress, "send:" + textPDFPrevCancelled, "edit:" + textPDFKeepPrompt},
 			stepAwaitRange, true,
 		},
 	}

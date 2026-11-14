@@ -124,7 +124,7 @@ func (n *Notifier) singleOutcome(ctx context.Context, user docsbot.UserID, doc d
 	case docsbot.BackupBackedUp:
 		text, kb = fmt.Sprintf(textBackedUp, doc.Title), openDriveKeyboard(doc)
 	case docsbot.BackupFailed:
-		text, kb = textBackupFailed, retryKeyboard(doc.ID)
+		text, kb = fmt.Sprintf(textBackupFailed, doc.Title), retryKeyboard(doc.ID)
 	default:
 		return nil
 	}

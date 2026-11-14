@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"fmt"
 	"html"
 	"strings"
 	"testing"
@@ -47,7 +48,7 @@ func TestRenderCategoryPage_driveBadge(t *testing.T) {
 		{"backed up", true, backedUp, "☁️ 📄 Backed"},
 		{"not backed up", true, pending, "📥 📄 Pending"},
 		{"file deleted in drive", true, docsbot.Document{ID: "3", Title: "Gone", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing}, "📥 📄 Gone"},
-		{"drive not connected", false, pending, "📥 📄 Pending"},
+		{"drive not connected", false, pending, "📄 Pending"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -65,7 +66,7 @@ func TestRenderCategoryPage_driveBadge(t *testing.T) {
 func TestRenderCategoryPage_openCardData(t *testing.T) {
 	doc := docsbot.Document{ID: "x1", Title: "Doc", CreatedAt: time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC)}
 	_, kb := renderCategoryPage(docsbot.CategoryPage{
-		Category: docsbot.CatAuto, Docs: []docsbot.Document{doc}, Page: 2, Pages: 3, Total: 1,
+		Category: docsbot.CatAuto, Docs: []docsbot.Document{doc}, Page: 2, Pages: 3, Total: 1, DriveConnected: true,
 	})
 	btn := kb.InlineKeyboard[0][0]
 	require.Equal(t, "d:oc:x1:l:auto:2", btn.CallbackData)
@@ -73,17 +74,17 @@ func TestRenderCategoryPage_openCardData(t *testing.T) {
 }
 
 func TestRenderFound_opensCards(t *testing.T) {
-	text, kb := renderFound(docsbot.Found{Docs: []docsbot.Document{
+	text, kb := renderFound(docsbot.Found{DriveConnected: true, Docs: []docsbot.Document{
 		{ID: "x1", Title: "Паспорт", Category: docsbot.CatPassport},
 	}})
-	require.Equal(t, "Нашёл (1):", text)
+	require.Equal(t, "Нашёл 1 документ:", text)
 	btn := kb.InlineKeyboard[0][0]
 	require.Equal(t, "📥 📄 Паспорт", btn.Text, "same row format as the list, no category")
 	require.True(t, strings.HasPrefix(btn.CallbackData, "d:oc:"))
 	require.True(t, strings.HasSuffix(btn.CallbackData, ":s"))
 
-	text, kb = renderFound(docsbot.Found{})
-	require.Equal(t, textNothingFound, text)
+	text, kb = renderFound(docsbot.Found{Query: "привет"})
+	require.Equal(t, "По запросу «привет» ничего нет. Я ищу по названиям документов — попробуй другое слово или открой /list.", text)
 	require.Nil(t, kb)
 }
 
@@ -183,20 +184,23 @@ func TestPlural(t *testing.T) {
 
 func TestListLabel(t *testing.T) {
 	tests := []struct {
-		name string
-		doc  docsbot.Document
-		want string
+		name      string
+		doc       docsbot.Document
+		connected bool // Google Drive is linked
+		want      string
 	}{
-		{"pdf in drive", docsbot.Document{Title: "ВНЖ", MIME: "application/pdf", Kind: docsbot.KindDocument, BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncOK}, "☁️ 📄 ВНЖ"},
-		{"photo in telegram", docsbot.Document{Title: "Фото", Kind: docsbot.KindPhoto}, "📥 🖼 Фото"},
-		{"image document", docsbot.Document{Title: "Скан", MIME: "image/png", Kind: docsbot.KindDocument}, "📥 🖼 Скан"},
-		{"drive file deleted", docsbot.Document{Title: "Договор", MIME: "application/pdf", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing}, "📥 📄 Договор"},
-		{"drive sync pending still cloud", docsbot.Document{Title: "Х", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncPending}, "☁️ 📄 Х"},
-		{"too large", docsbot.Document{Title: "Огромный", BackupStatus: docsbot.BackupTooLarge}, "📥 📄 Огромный"},
+		{"pdf in drive", docsbot.Document{Title: "ВНЖ", MIME: "application/pdf", Kind: docsbot.KindDocument, BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncOK}, true, "☁️ 📄 ВНЖ"},
+		{"photo in telegram", docsbot.Document{Title: "Фото", Kind: docsbot.KindPhoto}, true, "📥 🖼 Фото"},
+		{"image document", docsbot.Document{Title: "Скан", MIME: "image/png", Kind: docsbot.KindDocument}, true, "📥 🖼 Скан"},
+		{"drive file deleted", docsbot.Document{Title: "Договор", MIME: "application/pdf", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing}, true, "📥 📄 Договор"},
+		{"drive sync pending still cloud", docsbot.Document{Title: "Х", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncPending}, true, "☁️ 📄 Х"},
+		{"not connected: no storage icon", docsbot.Document{Title: "Скан", MIME: "image/png", Kind: docsbot.KindDocument}, false, "🖼 Скан"},
+		{"not connected, file in drive keeps its icon", docsbot.Document{Title: "ВНЖ", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncOK}, false, "☁️ 📄 ВНЖ"},
+		{"too large", docsbot.Document{Title: "Огромный", BackupStatus: docsbot.BackupTooLarge}, true, "📥 📄 Огромный"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, listLabel(tt.doc))
+			require.Equal(t, tt.want, listLabel(tt.doc, tt.connected))
 		})
 	}
 }
@@ -249,14 +253,115 @@ func TestRenderCatalog_layout(t *testing.T) {
 	require.Equal(t, "d:lc:other:1", kb.InlineKeyboard[2][0].CallbackData)
 }
 
-func TestRenderSettings_noExportButton(t *testing.T) {
-	for _, connected := range []bool{false, true} {
-		_, kb := renderSettings(docsbot.SettingsView{DriveConnected: connected, Total: 5}, "https://x", true)
-		for _, row := range kb.InlineKeyboard {
-			for _, btn := range row {
-				require.NotEqual(t, "d:exp", btn.CallbackData)
-				require.NotContains(t, btn.Text, "Прислать все")
+// pluralCases are counts around every Russian plural boundary with the noun
+// forms expected for "документ", "файл" and "изображение".
+var pluralCases = []struct {
+	n                    int
+	document, file, imag string
+}{
+	{1, "документ", "файл", "изображение"},
+	{2, "документа", "файла", "изображения"},
+	{4, "документа", "файла", "изображения"},
+	{5, "документов", "файлов", "изображений"},
+	{11, "документов", "файлов", "изображений"},
+	{12, "документов", "файлов", "изображений"},
+	{21, "документ", "файл", "изображение"},
+	{22, "документа", "файла", "изображения"},
+	{25, "документов", "файлов", "изображений"},
+	{101, "документ", "файл", "изображение"},
+	{111, "документов", "файлов", "изображений"},
+}
+
+func TestRenderCounts_plural(t *testing.T) {
+	for _, tt := range pluralCases {
+		t.Run(fmt.Sprint(tt.n), func(t *testing.T) {
+			want := fmt.Sprintf("%d %s", tt.n, tt.document)
+
+			docs := make([]docsbot.Document, tt.n)
+			for i := range docs {
+				docs[i] = docsbot.Document{ID: docsbot.DocumentID(fmt.Sprint(i)), Title: "Док"}
 			}
-		}
+			found, _ := renderFound(docsbot.Found{Docs: docs})
+			require.Equal(t, "Нашёл "+want+":", found)
+
+			page, _ := renderCategoryPage(docsbot.CategoryPage{Category: docsbot.CatPassport, Total: tt.n, Page: 1, Pages: 1})
+			require.Equal(t, docsbot.CatPassport.Label()+" · "+want, page)
+
+			catalog, _ := renderCatalog(docsbot.Catalog{
+				Counts:         []docsbot.CategoryCount{{Category: docsbot.CatPassport, Count: tt.n}},
+				NotInDrive:     tt.n,
+				DriveConnected: true,
+			})
+			require.Contains(t, catalog, fmt.Sprintf("📥 %s ещё не на Google Диске", want))
+		})
+	}
+}
+
+func TestRenderCatalog_notInDriveLine(t *testing.T) {
+	counts := []docsbot.CategoryCount{{Category: docsbot.CatPassport, Count: 3}}
+	tests := []struct {
+		name string
+		c    docsbot.Catalog
+		line bool
+	}{
+		{"drive connected, some not uploaded", docsbot.Catalog{Counts: counts, NotInDrive: 2, DriveConnected: true}, true},
+		{"drive connected, all uploaded", docsbot.Catalog{Counts: counts, DriveConnected: true}, false},
+		{"drive not connected: everything is in Telegram, nothing to say", docsbot.Catalog{Counts: counts, NotInDrive: 3}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			text, kb := renderCatalog(tt.c)
+			require.Equal(t, tt.line, strings.Contains(text, "ещё не на Google Диске"), text)
+			var transfer bool
+			for _, row := range kb.InlineKeyboard {
+				for _, btn := range row {
+					transfer = transfer || btn.CallbackData == docCB(actTransfer, "")
+				}
+			}
+			require.Equal(t, tt.line, transfer, "the transfer button goes with the line")
+		})
+	}
+}
+
+func TestRenderFound_driveIcons(t *testing.T) {
+	telegramOnly := docsbot.Document{ID: "t", Title: "Только тут"}
+	inDrive := docsbot.Document{ID: "d", Title: "В диске", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncOK}
+	tests := []struct {
+		name      string
+		connected bool
+		want      []string
+	}{
+		{"drive off: no storage icons at all", false, []string{"📄 Только тут", "☁️ 📄 В диске"}},
+		{"drive on: telegram-only is marked", true, []string{"📥 📄 Только тут", "☁️ 📄 В диске"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, kb := renderFound(docsbot.Found{DriveConnected: tt.connected, Docs: []docsbot.Document{telegramOnly, inDrive}})
+			page := docsbot.CategoryPage{DriveConnected: tt.connected, Docs: []docsbot.Document{telegramOnly, inDrive}, Total: 2, Page: 1, Pages: 1}
+			_, pageKB := renderCategoryPage(page)
+			for i, want := range tt.want {
+				require.Equal(t, want, kb.InlineKeyboard[i][0].Text)
+				require.Equal(t, want, pageKB.InlineKeyboard[i][0].Text)
+			}
+		})
+	}
+}
+
+func TestRenderFound_queryIsShownAsTyped(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"markup characters", "<b>&"},
+		{"quotes", `«ё"'`},
+		{"percent verbs", "%s %d %v"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Search answers are sent as plain text, so the query goes in verbatim.
+			text, kb := renderFound(docsbot.Found{Query: tt.query})
+			require.Equal(t, "По запросу «"+tt.query+"» ничего нет. Я ищу по названиям документов — попробуй другое слово или открой /list.", text)
+			require.Nil(t, kb)
+		})
 	}
 }

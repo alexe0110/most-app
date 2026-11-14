@@ -11,19 +11,20 @@ import (
 )
 
 type FakeRepo struct {
-	mu          sync.Mutex                  // guards every field below; fakes are used by parallel tests
-	Folders     map[docsbot.Category]string // cached Drive folder ids by category
-	Docs        map[docsbot.DocumentID]docsbot.Document
-	seq         int
-	lastCreated time.Time
-	Deleted     []docsbot.UserID                 // users passed to DeleteUserData
-	Updated     map[docsbot.DocumentID]time.Time // last update time, set by tests for the sweeper
-	InlineOff   map[docsbot.UserID]bool          // users who turned inline mode off
-	InlineErr   error                            // returned by InlineEnabled when set
-	Status      *FakeStatus                      // set by NewDeps
-	Events      []docsbot.Event                  // recorded product events, in order
-	EventsErr   error                            // returned by Record and RecordStart when set
-	Started     map[docsbot.UserID]bool          // users with a recorded start event
+	mu            sync.Mutex                  // guards every field below; fakes are used by parallel tests
+	Folders       map[docsbot.Category]string // cached Drive folder ids by category
+	Docs          map[docsbot.DocumentID]docsbot.Document
+	seq           int
+	lastCreated   time.Time
+	Deleted       []docsbot.UserID                 // users passed to DeleteUserData
+	Updated       map[docsbot.DocumentID]time.Time // last update time, set by tests for the sweeper
+	InlineOff     map[docsbot.UserID]bool          // users who turned inline mode off
+	InlineErr     error                            // returned by InlineEnabled when set
+	Status        *FakeStatus                      // set by NewDeps
+	Events        []docsbot.Event                  // recorded product events, in order
+	EventsErr     error                            // returned by Record and RecordStart when set
+	CountSavedErr error                            // returned by CountSaved when set
+	Started       map[docsbot.UserID]bool          // users with a recorded start event
 }
 
 var _ docsbot.Repo = (*FakeRepo)(nil)
@@ -288,6 +289,9 @@ func (r *FakeRepo) SavedFor(user docsbot.UserID) []docsbot.Document {
 func (r *FakeRepo) CountSaved(_ context.Context, user docsbot.UserID) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.CountSavedErr != nil {
+		return 0, r.CountSavedErr
+	}
 	return len(r.SavedFor(user)), nil
 }
 
