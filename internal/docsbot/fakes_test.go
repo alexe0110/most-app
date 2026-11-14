@@ -33,8 +33,27 @@ const stranger docsbot.UserID = "user-2"
 
 func edgeService(repo *fakeRepo, drive fakeDrive) (*docsbot.Service, *fakeUploads) {
 	uploads := &fakeUploads{repo: repo}
-	return docsbot.NewService(repo, drive, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}), uploads
+	return newService(repo, drive, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}), uploads
 }
+
+// newService is the one place tests build a Service from fakes. uploads doubles
+// as the JobCanceler when it is one (fakeUploads records the cancels).
+func newService(repo docsbot.Repo, drive docsbot.Drive, files docsbot.FileSource, uploads docsbot.Uploads, folders docsbot.Folders, status docsbot.StatusMessages, syncs docsbot.Syncs, opts ...docsbot.Option) *docsbot.Service {
+	jobs, ok := uploads.(docsbot.JobCanceler)
+	if !ok {
+		jobs = noJobs{}
+	}
+	return docsbot.NewService(docsbot.Ports{
+		Repo: repo, Drive: drive, Files: files, Uploads: uploads, Jobs: jobs,
+		Folders: folders, Status: status, Syncs: syncs,
+	}, opts...)
+}
+
+// noJobs is a JobCanceler that cancels nothing.
+type noJobs struct{}
+
+func (noJobs) CancelUploads(context.Context, docsbot.UserID) error  { return nil }
+func (noJobs) CancelUserJobs(context.Context, docsbot.UserID) error { return nil }
 
 // runParallel runs fn n times at once and returns the results in call order.
 func runParallel(n int, fn func(i int) error) []error {
@@ -232,7 +251,7 @@ type fakeSyncs struct {
 
 var _ docsbot.Syncs = (*fakeSyncs)(nil)
 
-func (s *fakeSyncs) change(user docsbot.UserID, id docsbot.DocumentID, fn func(*docsbot.Document)) (bool, error) {
+func (s *fakeSyncs) change(user docsbot.UserID, id docsbot.DocumentID, cloud bool, fn func(*docsbot.Document)) (bool, error) {
 	if s.err != nil {
 		return false, s.err
 	}
@@ -244,7 +263,7 @@ func (s *fakeSyncs) change(user docsbot.UserID, id docsbot.DocumentID, fn func(*
 	}
 	fn(&d)
 	d.MetaVersion++
-	queued := d.BackupStatus == docsbot.BackupBackedUp && d.SyncStatus != docsbot.SyncMissing
+	queued := cloud && d.BackupStatus == docsbot.BackupBackedUp && d.SyncStatus != docsbot.SyncMissing
 	if queued {
 		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
 	}
@@ -261,12 +280,12 @@ func (s *fakeSyncs) addJob(id docsbot.DocumentID) {
 	s.jobs = append(s.jobs, id)
 }
 
-func (s *fakeSyncs) SetTitle(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, title string) (bool, error) {
-	return s.change(user, id, func(d *docsbot.Document) { d.Title = title })
+func (s *fakeSyncs) SetTitle(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, title string, cloud bool) (bool, error) {
+	return s.change(user, id, cloud, func(d *docsbot.Document) { d.Title = title })
 }
 
-func (s *fakeSyncs) SetCategory(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (bool, error) {
-	return s.change(user, id, func(d *docsbot.Document) { d.Category = cat })
+func (s *fakeSyncs) SetCategory(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category, cloud bool) (bool, error) {
+	return s.change(user, id, cloud, func(d *docsbot.Document) { d.Category = cat })
 }
 
 func (s *fakeSyncs) EnqueueSync(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
@@ -361,7 +380,7 @@ func (s *fakeSyncs) RetrySync(_ context.Context, user docsbot.UserID, id docsbot
 	return true, nil
 }
 
-func (s *fakeSyncs) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, trash bool) (bool, error) {
+func (s *fakeSyncs) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cloud bool) (bool, error) {
 	if s.err != nil {
 		return false, s.err
 	}
@@ -375,7 +394,7 @@ func (s *fakeSyncs) DeleteDocument(_ context.Context, user docsbot.UserID, id do
 	if d.BackupStatus != docsbot.BackupBackedUp || d.DriveFileID == "" || d.SyncStatus == docsbot.SyncMissing {
 		return false, nil
 	}
-	if !trash {
+	if !cloud {
 		return true, nil
 	}
 	s.mu.Lock()
@@ -642,10 +661,6 @@ func (r *fakeRepo) TitleExistsInCategory(_ context.Context, user docsbot.UserID,
 		}
 	}
 	return false, nil
-}
-
-func (r *fakeRepo) SetCategory(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) error {
-	return r.mutate(user, id, func(d *docsbot.Document) { d.Category = cat; d.MetaVersion++ })
 }
 
 func (r *fakeRepo) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) error {

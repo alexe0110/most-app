@@ -192,38 +192,6 @@ func (r *Repo) ResetPendingUploads(ctx context.Context, user docsbot.UserID) err
 	return nil
 }
 
-// SetTitle renames a document.
-func (r *Repo) SetTitle(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, title string) error {
-	docID, uid, err := ids(id, user)
-	if err != nil {
-		return err
-	}
-	n, err := r.UpdateDocumentTitle(ctx, UpdateDocumentTitleParams{ID: docID, UserID: uid, Title: title})
-	if err != nil {
-		return fmt.Errorf("update document title: %w", err)
-	}
-	if n == 0 {
-		return docsbot.ErrNotFound
-	}
-	return nil
-}
-
-// SetCategory moves a document to another category.
-func (r *Repo) SetCategory(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) error {
-	docID, uid, err := ids(id, user)
-	if err != nil {
-		return err
-	}
-	n, err := r.UpdateDocumentCategory(ctx, UpdateDocumentCategoryParams{ID: docID, UserID: uid, Category: string(cat)})
-	if err != nil {
-		return fmt.Errorf("update document category: %w", err)
-	}
-	if n == 0 {
-		return docsbot.ErrNotFound
-	}
-	return nil
-}
-
 // TitleExistsInCategory reports whether the user has a saved document with this
 // title in the category.
 func (r *Repo) TitleExistsInCategory(ctx context.Context, user docsbot.UserID, cat docsbot.Category, title string) (bool, error) {
@@ -236,22 +204,6 @@ func (r *Repo) TitleExistsInCategory(ctx context.Context, user docsbot.UserID, c
 		return false, fmt.Errorf("title exists in category: %w", err)
 	}
 	return ok, nil
-}
-
-// DeleteDocument removes a document.
-func (r *Repo) DeleteDocument(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
-	docID, uid, err := ids(id, user)
-	if err != nil {
-		return err
-	}
-	n, err := r.DeleteDocumentByID(ctx, DeleteDocumentByIDParams{ID: docID, UserID: uid})
-	if err != nil {
-		return fmt.Errorf("delete document: %w", err)
-	}
-	if n == 0 {
-		return docsbot.ErrNotFound
-	}
-	return nil
 }
 
 // CountSaved counts the user's saved documents.

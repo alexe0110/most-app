@@ -139,7 +139,7 @@ func TestService_race_deleteDuringSync(t *testing.T) {
 	syncs := &fakeSyncs{repo: repo}
 	var svc *docsbot.Service
 	drive := deletedDuringSync{fakeDrive: fakeDrive{connected: true}, syncs: syncs, id: doc.ID, svc: func() *docsbot.Service { return svc }}
-	svc = docsbot.NewService(repo, drive, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
+	svc = newService(repo, drive, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
 
 	res, err := svc.SyncRemote(t.Context(), user, doc.ID)
 

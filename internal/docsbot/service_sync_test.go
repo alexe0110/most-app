@@ -13,7 +13,7 @@ import (
 // syncService builds a Service with the sync port over repo.
 func syncService(repo *fakeRepo, drive fakeDrive, files fakeFiles) (*docsbot.Service, *fakeSyncs) {
 	syncs := &fakeSyncs{repo: repo}
-	svc := docsbot.NewService(repo, drive, files, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
+	svc := newService(repo, drive, files, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
 	return svc, syncs
 }
 
@@ -263,7 +263,7 @@ func TestService_SyncRemote_changeDuringSyncQueuesFollowUp(t *testing.T) {
 	doc := backedUpDoc(repo, func(d *docsbot.Document) { d.SyncStatus = docsbot.SyncPending })
 	syncs := &fakeSyncs{repo: repo}
 	drive := movedDuringSync{repo: repo, id: doc.ID}
-	svc := docsbot.NewService(repo, drive, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
+	svc := newService(repo, drive, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
 
 	res, err := svc.SyncRemote(t.Context(), user, doc.ID)
 
@@ -346,7 +346,7 @@ func TestService_Backup_changeDuringUploadQueuesSync(t *testing.T) {
 		fakeDrive: fakeDrive{connected: true, uploadFile: docsbot.DriveFile{ID: "remote-9"}, uploadedAs: &name},
 		onUpload:  func() { _ = repo.SetTitle(t.Context(), user, doc.ID, "renamed") },
 	}
-	svc := docsbot.NewService(repo, drive, fakeFiles{data: []byte("x"), mime: "application/pdf"}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
+	svc := newService(repo, drive, fakeFiles{data: []byte("x"), mime: "application/pdf"}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
 
 	res, err := svc.Backup(t.Context(), user, doc.ID)
 
@@ -378,7 +378,7 @@ func TestService_Backup_markBackedUpFailureIsAtomic(t *testing.T) {
 			syncs.err = errors.New("db down") // the next syncs call fails
 		},
 	}
-	svc := docsbot.NewService(repo, drive, fakeFiles{data: []byte("x"), mime: "application/pdf"}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
+	svc := newService(repo, drive, fakeFiles{data: []byte("x"), mime: "application/pdf"}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
 
 	_, err := svc.Backup(t.Context(), user, doc.ID)
 
@@ -404,7 +404,7 @@ func TestService_Backup_deletedDuringUploadTrashesFile(t *testing.T) {
 		fakeDrive: fakeDrive{connected: true, uploadFile: docsbot.DriveFile{ID: "remote-9"}, calls: &calls},
 		onUpload:  func() { _ = repo.DeleteDocument(t.Context(), user, doc.ID) },
 	}
-	svc := docsbot.NewService(repo, drive, fakeFiles{data: []byte("x")}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, drive, fakeFiles{data: []byte("x")}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	res, err := svc.Backup(t.Context(), user, doc.ID)
 

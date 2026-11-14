@@ -15,8 +15,10 @@ import (
 // uniqueViolation is the SQLSTATE of a unique constraint violation.
 const uniqueViolation = "23505"
 
-// The insert callbacks below enqueue a job inside the open transaction. River
-// is not imported here; the jobs adapter supplies them.
+var (
+	_ docsbot.Syncs   = (*Repo)(nil)
+	_ docsbot.Uploads = (*Repo)(nil)
+)
 
 // inTx runs fn in one transaction, committing when it returns nil.
 func (r *Repo) inTx(ctx context.Context, fn func(q *Queries, tx pgx.Tx) error) error {
@@ -40,52 +42,53 @@ func needsSync(backup, sync string) bool {
 	return backup == string(docsbot.BackupBackedUp) && sync == string(docsbot.SyncPending)
 }
 
-// SetTitleForSync renames the document and, if its Drive file must follow, runs
-// insert in the same transaction. queued reports whether a sync is pending.
-func (r *Repo) SetTitleForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, title string, insert func(ctx context.Context, tx pgx.Tx) error) (queued bool, err error) {
+// SetTitle renames the document. With cloud set, a backed-up document whose
+// Drive file is live also goes sync-pending and a sync job is queued in the same
+// transaction; queued reports that. ErrNotFound if the user has no such document.
+func (r *Repo) SetTitle(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, title string, cloud bool) (queued bool, err error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return false, err
 	}
 	err = r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
-		row, err := q.UpdateTitleForSync(ctx, UpdateTitleForSyncParams{ID: docID, UserID: uid, Title: title})
+		row, err := q.UpdateDocumentTitle(ctx, UpdateDocumentTitleParams{ID: docID, UserID: uid, Title: title, Cloud: cloud})
 		if err != nil {
 			return notFoundOr(err, "update document title")
 		}
-		queued = needsSync(row.BackupStatus, row.SyncStatus)
+		queued = cloud && needsSync(row.BackupStatus, row.SyncStatus)
 		if !queued {
 			return nil
 		}
-		return insert(ctx, tx)
+		return r.jobs.InsertSync(ctx, tx, user, id)
 	})
-	return queued, err
+	return queued && err == nil, err
 }
 
-// SetCategoryForSync recategorizes the document, queuing a sync like SetTitleForSync.
-func (r *Repo) SetCategoryForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category, insert func(ctx context.Context, tx pgx.Tx) error) (queued bool, err error) {
+// SetCategory recategorizes the document, queuing a sync like SetTitle.
+func (r *Repo) SetCategory(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category, cloud bool) (queued bool, err error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return false, err
 	}
 	err = r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
-		row, err := q.UpdateCategoryForSync(ctx, UpdateCategoryForSyncParams{ID: docID, UserID: uid, Category: string(cat)})
+		row, err := q.UpdateDocumentCategory(ctx, UpdateDocumentCategoryParams{ID: docID, UserID: uid, Category: string(cat), Cloud: cloud})
 		if err != nil {
 			return notFoundOr(err, "update document category")
 		}
-		queued = needsSync(row.BackupStatus, row.SyncStatus)
+		queued = cloud && needsSync(row.BackupStatus, row.SyncStatus)
 		if !queued {
 			return nil
 		}
-		return insert(ctx, tx)
+		return r.jobs.InsertSync(ctx, tx, user, id)
 	})
-	return queued, err
+	return queued && err == nil, err
 }
 
-// MarkBackedUpForSync records a finished upload and, when meta_version moved
-// since startVersion, leaves the document sync-pending and runs insert in the
-// same transaction. pages > 0 records the PDF's page count. ErrNotFound if the
+// MarkBackedUp records a finished upload and, when meta_version moved since
+// startVersion, leaves the document sync-pending and queues a sync in the same
+// transaction. pages > 0 records the PDF's page count. ErrNotFound if the
 // document is gone.
-func (r *Repo) MarkBackedUpForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion, pages int, insert func(ctx context.Context, tx pgx.Tx) error) (queued bool, err error) {
+func (r *Repo) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion, pages int) (queued bool, err error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return false, err
@@ -105,15 +108,16 @@ func (r *Repo) MarkBackedUpForSync(ctx context.Context, user docsbot.UserID, id 
 		if !queued {
 			return nil
 		}
-		return insert(ctx, tx)
+		return r.jobs.InsertSync(ctx, tx, user, id)
 	})
-	return queued, err
+	return queued && err == nil, err
 }
 
-// ReplaceContentForSync swaps the document's file and, for a backed-up document,
-// runs insert in the same transaction when cloud is set (Drive connected). replaced is false when the update touched
-// no row (gone, uploading, sync in flight or file missing).
-func (r *Repo) ReplaceContentForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, cloud bool, insert func(ctx context.Context, tx pgx.Tx) error) (replaced bool, err error) {
+// ReplaceContent swaps the document's file and, for a backed-up document when
+// cloud is set (Drive connected), queues a sync in the same transaction. replaced
+// is false when the update touched no row (gone, uploading, sync in flight or
+// file missing).
+func (r *Repo) ReplaceContent(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, cloud bool) (replaced bool, err error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return false, err
@@ -146,15 +150,15 @@ func (r *Repo) ReplaceContentForSync(ctx context.Context, user docsbot.UserID, i
 		if !cloud || backup != string(docsbot.BackupBackedUp) {
 			return nil
 		}
-		return insert(ctx, tx)
+		return r.jobs.InsertSync(ctx, tx, user, id)
 	})
 	return replaced && err == nil, err
 }
 
-// EnqueueSyncJob marks a backed-up document sync-pending and runs insert in the
+// EnqueueSync marks a backed-up document sync-pending and queues a sync in the
 // same transaction. A document that is gone, not backed up or missing on Drive
 // queues nothing.
-func (r *Repo) EnqueueSyncJob(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) error) error {
+func (r *Repo) EnqueueSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return err
@@ -167,13 +171,13 @@ func (r *Repo) EnqueueSyncJob(ctx context.Context, user docsbot.UserID, id docsb
 		if n == 0 {
 			return nil
 		}
-		return insert(ctx, tx)
+		return r.jobs.InsertSync(ctx, tx, user, id)
 	})
 }
 
-// RetrySyncJob moves a failed sync back to pending and runs insert in the same
+// RetrySync moves a failed sync back to pending and queues it in the same
 // transaction. It reports false when the sync was not failed.
-func (r *Repo) RetrySyncJob(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) error) (queued bool, err error) {
+func (r *Repo) RetrySync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) (queued bool, err error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return false, err
@@ -187,17 +191,16 @@ func (r *Repo) RetrySyncJob(ctx context.Context, user docsbot.UserID, id docsbot
 			return nil
 		}
 		queued = true
-		return insert(ctx, tx)
+		return r.jobs.InsertSync(ctx, tx, user, id)
 	})
-	return queued, err
+	return queued && err == nil, err
 }
 
-// DeleteForSync deletes the document row and reports, under the row lock, what
-// its Drive copy was. When queueTrash is set and the document had a live Drive
-// file, insert runs in the same transaction with that file's id; otherwise
-// remoteKept tells that a live file stays in Drive. ErrNotFound if the user has
-// no such document.
-func (r *Repo) DeleteForSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, queueTrash bool, insert func(ctx context.Context, tx pgx.Tx, remoteID string) error) (remoteKept bool, err error) {
+// DeleteDocument deletes the document row and reports, under the row lock, what
+// its Drive copy was. With cloud set and a live Drive file, trashing it is queued
+// in the same transaction; without cloud, remoteKept tells that a live file stays
+// in Drive. ErrNotFound if the user has no such document.
+func (r *Repo) DeleteDocument(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, cloud bool) (remoteKept bool, err error) {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return false, err
@@ -212,11 +215,19 @@ func (r *Repo) DeleteForSync(ctx context.Context, user docsbot.UserID, id docsbo
 		if !live {
 			return nil
 		}
-		if !queueTrash {
+		if !cloud {
 			remoteKept = true
 			return nil
 		}
-		return insert(ctx, tx, row.DriveFileID.String)
+		return r.jobs.InsertTrash(ctx, tx, user, row.DriveFileID.String)
 	})
 	return remoteKept && err == nil, err
+}
+
+// RequeueSync inserts the sync job only, without touching the document, so the
+// stuck clock keeps running.
+func (r *Repo) RequeueSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
+	return r.inTx(ctx, func(_ *Queries, tx pgx.Tx) error {
+		return r.jobs.InsertSync(ctx, tx, user, id)
+	})
 }

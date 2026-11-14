@@ -57,7 +57,7 @@ func TestDocuments_mediaGroupListsOnlyOwnPendingOfAlbum(t *testing.T) {
 
 func TestDocuments_intakeStats(t *testing.T) {
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool)
+	repo := postgres.NewRepo(pool, noJobs{})
 	a := docsbot.UserID(makeUser(t, repo, 910).ID.String())
 	b := docsbot.UserID(makeUser(t, repo, 911).ID.String())
 	ctx := t.Context()
@@ -84,7 +84,7 @@ func TestDocuments_intakeStats(t *testing.T) {
 
 func TestDocuments_purgeStalePending(t *testing.T) {
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool)
+	repo := postgres.NewRepo(pool, noJobs{})
 	a := docsbot.UserID(makeUser(t, repo, 920).ID.String())
 	b := docsbot.UserID(makeUser(t, repo, 921).ID.String())
 	ctx := t.Context()
@@ -135,7 +135,8 @@ func TestDocuments_duplicateAfterDeleteCreatesNewDocument(t *testing.T) {
 	_, err = repo.CreateDocument(ctx, in)
 	require.Error(t, err, "unique(user_id, tg_file_unique_id) rejects a live duplicate")
 
-	require.NoError(t, repo.DeleteDocument(ctx, user, first.ID))
+	_, err = repo.DeleteDocument(ctx, user, first.ID, false)
+	require.NoError(t, err)
 	again, err := repo.CreateDocument(ctx, in)
 	require.NoError(t, err, "deletion is hard, so the same file can be stored again")
 	require.NotEqual(t, first.ID, again.ID)

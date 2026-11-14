@@ -20,7 +20,7 @@ import (
 func TestPurgePendingWorker_deletesStalePendingOnly(t *testing.T) {
 	pool := dbtest.New(t)
 	ctx := t.Context()
-	repo := postgres.NewRepo(pool)
+	repo := postgres.NewRepo(pool, nil)
 	var uid string
 	require.NoError(t, pool.QueryRow(ctx, `insert into users (tg_user_id) values (2) returning id::text`).Scan(&uid))
 	insert := func(status, unique, age string) string {
@@ -35,7 +35,7 @@ func TestPurgePendingWorker_deletesStalePendingOnly(t *testing.T) {
 	fresh := insert("pending", "fresh", "23 hours")
 	oldSaved := insert("saved", "saved", "48 hours")
 
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, nil, repo, repo, nil)
+	svc := docsbot.NewService(docsbot.Ports{Repo: repo, Drive: fakeDrive{}, Files: fakeFiles{}, Folders: repo, Status: repo})
 	workers := river.NewWorkers()
 	bind, periodic := jobs.RegisterPurgePending(workers, slog.New(slog.DiscardHandler))
 	bind(svc)

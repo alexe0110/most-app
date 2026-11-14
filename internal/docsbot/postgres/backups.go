@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -9,39 +10,49 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
-// EnqueueUpload marks the document backup_status=pending and runs insert inside
-// the same transaction, so the status change and the enqueued job commit or roll
-// back together. River is not imported here; the caller supplies the insert.
-// If insert reports skip (the job is a duplicate of one already queued), the
-// transaction is rolled back and the document status stays untouched.
-func (r *Repo) EnqueueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, insert func(ctx context.Context, tx pgx.Tx) (skip bool, err error)) error {
+// errUploadSkipped aborts the EnqueueUpload transaction when a live upload job
+// already exists; it never leaves this file.
+var errUploadSkipped = errors.New("upload job already queued")
+
+// EnqueueUpload marks the document backup_status=pending and queues its upload in
+// the same transaction, so the status change and the job commit or roll back
+// together. A live upload job is unique by args: the repeated call is skipped and
+// the transaction rolled back, so the document status stays untouched.
+func (r *Repo) EnqueueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
 	docID, uid, err := ids(id, user)
 	if err != nil {
 		return err
 	}
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }() // no-op once committed
-
-	err = r.WithTx(tx).UpdateDocumentBackupStatus(ctx, UpdateDocumentBackupStatusParams{
-		ID:           docID,
-		UserID:       uid,
-		BackupStatus: string(docsbot.BackupPending),
+	err = r.inTx(ctx, func(q *Queries, tx pgx.Tx) error {
+		err := q.UpdateDocumentBackupStatus(ctx, UpdateDocumentBackupStatusParams{
+			ID:           docID,
+			UserID:       uid,
+			BackupStatus: string(docsbot.BackupPending),
+		})
+		if err != nil {
+			return fmt.Errorf("mark backup pending: %w", err)
+		}
+		skipped, err := r.jobs.InsertUpload(ctx, tx, user, id)
+		if err != nil {
+			return err
+		}
+		if skipped {
+			return errUploadSkipped
+		}
+		return nil
 	})
-	if err != nil {
-		return fmt.Errorf("mark backup pending: %w", err)
+	if errors.Is(err, errUploadSkipped) {
+		return nil
 	}
-	skip, err := insert(ctx, tx)
-	if err != nil {
+	return err
+}
+
+// RequeueUpload inserts the upload job only, with the same uniqueness as
+// EnqueueUpload and without touching the document, so a live job dedups to a
+// no-op and the stuck-since clock (updated_at) is preserved.
+func (r *Repo) RequeueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
+	return r.inTx(ctx, func(_ *Queries, tx pgx.Tx) error {
+		_, err := r.jobs.InsertUpload(ctx, tx, user, id)
 		return err
-	}
-	if skip {
-		return nil // deferred Rollback also reverts the pending update
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit tx: %w", err)
-	}
-	return nil
+	})
 }

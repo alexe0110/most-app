@@ -240,7 +240,7 @@ func TestService_parallelRename(t *testing.T) {
 func TestService_Rename_normalizes(t *testing.T) {
 	repo := newFakeRepo()
 	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "old"})
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	_, err := svc.Rename(t.Context(), user, doc.ID, "\n\u200b \t")
 	require.ErrorIs(t, err, docsbot.ErrEmptyTitle)
@@ -266,7 +266,7 @@ func TestService_Rename_tooLongIsRefusedNotCut(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newFakeRepo()
 			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "old"})
-			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+			svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 			_, err := svc.Rename(t.Context(), user, doc.ID, tt.title)
 
@@ -298,7 +298,7 @@ func TestService_Recategorize_driveFileStays(t *testing.T) {
 			repo.folders = map[docsbot.Category]string{docsbot.CatAuto: "folder-new"}
 			tt.doc.UserID, tt.doc.Status, tt.doc.Category = user, docsbot.StatusSaved, docsbot.CatOther
 			doc := repo.seed(tt.doc)
-			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+			svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 			card, err := svc.Recategorize(t.Context(), user, doc.ID, docsbot.CatAuto)
 			require.NoError(t, err)
@@ -327,7 +327,7 @@ func TestService_Recategorize_sameCategoryHasNoOldFolderNote(t *testing.T) {
 func TestService_Rename(t *testing.T) {
 	repo := newFakeRepo()
 	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "old"})
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	_, err := svc.Rename(t.Context(), user, doc.ID, "   ")
 	require.ErrorIs(t, err, docsbot.ErrEmptyTitle)
@@ -340,7 +340,7 @@ func TestService_Rename(t *testing.T) {
 func TestService_Recategorize_rejectsUnknown(t *testing.T) {
 	repo := newFakeRepo()
 	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther})
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	_, err := svc.Recategorize(t.Context(), user, doc.ID, docsbot.Category("nope"))
 	require.ErrorIs(t, err, docsbot.ErrUnknownCategory)

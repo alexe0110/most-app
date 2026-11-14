@@ -16,7 +16,13 @@ import (
 // domainRepo exercises *postgres.Repo through the docsbot.Repo port.
 func domainRepo(t *testing.T) (*postgres.Repo, docsbot.UserID) {
 	t.Helper()
-	repo := postgres.NewRepo(dbtest.New(t))
+	return domainRepoWith(t, noJobs{})
+}
+
+// domainRepoWith is domainRepo with a chosen job inserter.
+func domainRepoWith(t *testing.T, jobs postgres.JobInserter) (*postgres.Repo, docsbot.UserID) {
+	t.Helper()
+	repo := postgres.NewRepo(dbtest.New(t), jobs)
 	u := makeUser(t, repo, 700)
 	return repo, docsbot.UserID(u.ID.String())
 }
@@ -65,8 +71,10 @@ func TestDocuments_lifecycle(t *testing.T) {
 	require.Equal(t, []docsbot.CategoryCount{{Category: docsbot.CatPassport, Count: 1}}, counts)
 
 	// Rename and recategorize.
-	require.NoError(t, repo.SetTitle(ctx, user, doc.ID, "Паспорт РК"))
-	require.NoError(t, repo.SetCategory(ctx, user, doc.ID, docsbot.CatOther))
+	_, err = repo.SetTitle(ctx, user, doc.ID, "Паспорт РК", false)
+	require.NoError(t, err)
+	_, err = repo.SetCategory(ctx, user, doc.ID, docsbot.CatOther, false)
+	require.NoError(t, err)
 	moved, err := repo.DocumentByID(ctx, user, doc.ID)
 	require.NoError(t, err)
 	require.Equal(t, "Паспорт РК", moved.Title)
@@ -78,7 +86,8 @@ func TestDocuments_lifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, notBacked)
 
-	require.NoError(t, repo.DeleteDocument(ctx, user, doc.ID))
+	_, err = repo.DeleteDocument(ctx, user, doc.ID, false)
+	require.NoError(t, err)
 	_, err = repo.DocumentByID(ctx, user, doc.ID)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
 }
@@ -248,7 +257,7 @@ func TestDocuments_resetPendingUploads(t *testing.T) {
 
 func TestDocuments_markUploadingKeepsUpdatedAt(t *testing.T) {
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool)
+	repo := postgres.NewRepo(pool, noJobs{})
 	user := docsbot.UserID(makeUser(t, repo, 700).ID.String())
 	ctx := t.Context()
 
@@ -314,12 +323,12 @@ func TestSyncs_pageCountOnBackedUpAndReplace(t *testing.T) {
 
 	// MarkBackedUp records pages when known and keeps the stored value otherwise.
 	id := e.seed(t, e.user, "pg1", "uploading", "ok")
-	_, err := e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", 0, 5, noInsert)
+	_, err := e.repo.MarkBackedUp(ctx, e.user, id, "drive-1", 0, 5)
 	require.NoError(t, err)
 	require.Equal(t, 5, e.pages(t, id))
 
 	id2 := e.seed(t, e.user, "pg2", "uploading", "ok")
-	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, id2, "drive-2", 0, 0, noInsert)
+	_, err = e.repo.MarkBackedUp(ctx, e.user, id2, "drive-2", 0, 0)
 	require.NoError(t, err)
 	require.Zero(t, e.pages(t, id2), "unknown stays unknown")
 
@@ -327,7 +336,7 @@ func TestSyncs_pageCountOnBackedUpAndReplace(t *testing.T) {
 	id3 := e.seed(t, e.user, "pg3", "uploading", "ok")
 	_, err = e.pool.Exec(ctx, `update documents set page_count = 9 where id = $1::uuid`, string(id3))
 	require.NoError(t, err)
-	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, id3, "drive-3", 0, 0, noInsert)
+	_, err = e.repo.MarkBackedUp(ctx, e.user, id3, "drive-3", 0, 0)
 	require.NoError(t, err)
 	require.Equal(t, 9, e.pages(t, id3))
 
@@ -336,14 +345,14 @@ func TestSyncs_pageCountOnBackedUpAndReplace(t *testing.T) {
 	_, err = e.pool.Exec(ctx, `update documents set page_count = 9 where id = $1::uuid`, string(id4))
 	require.NoError(t, err)
 	in := docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "n1", FileUniqueID: "n1u", MIME: "application/pdf", PageCount: 2}
-	replaced, err := e.repo.ReplaceContentForSync(ctx, e.user, id4, in, false, noInsert)
+	replaced, err := e.repo.ReplaceContent(ctx, e.user, id4, in, false)
 	require.NoError(t, err)
 	require.True(t, replaced)
 	require.Equal(t, 2, e.pages(t, id4))
 	_, err = e.pool.Exec(ctx, `update documents set image_width = 800, image_height = 600 where id = $1::uuid`, string(id4))
 	require.NoError(t, err)
 	in = docsbot.IncomingFile{Kind: docsbot.KindPhoto, FileID: "n2", FileUniqueID: "n2u"}
-	replaced, err = e.repo.ReplaceContentForSync(ctx, e.user, id4, in, false, noInsert)
+	replaced, err = e.repo.ReplaceContent(ctx, e.user, id4, in, false)
 	require.NoError(t, err)
 	require.True(t, replaced)
 	require.Zero(t, e.pages(t, id4), "a file of unknown length does not keep the old file's pages")

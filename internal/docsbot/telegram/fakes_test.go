@@ -479,33 +479,6 @@ func (r *fakeRepo) TitleExistsInCategory(_ context.Context, user docsbot.UserID,
 	return false, nil
 }
 
-func (r *fakeRepo) SetTitle(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, title string) error {
-	return r.mutate(user, id, func(d *docsbot.Document) { d.Title = title })
-}
-
-func (r *fakeRepo) SetCategory(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) error {
-	return r.mutate(user, id, func(d *docsbot.Document) { d.Category = cat })
-}
-
-// mutate applies fn to the user's document, or ErrNotFound like the :execrows queries.
-func (r *fakeRepo) mutate(user docsbot.UserID, id docsbot.DocumentID, fn func(*docsbot.Document)) error {
-	d, ok := r.docs[id]
-	if !ok || d.UserID != user {
-		return docsbot.ErrNotFound
-	}
-	fn(&d)
-	r.docs[id] = d
-	return nil
-}
-
-func (r *fakeRepo) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
-	if d, ok := r.docs[id]; !ok || d.UserID != user {
-		return docsbot.ErrNotFound
-	}
-	delete(r.docs, id)
-	return nil
-}
-
 func (r *fakeRepo) savedFor(user docsbot.UserID) []docsbot.Document {
 	var out []docsbot.Document
 	for _, d := range r.docs {
@@ -652,14 +625,14 @@ func (fakeUploads) CancelUserJobs(context.Context, docsbot.UserID) error { retur
 // backed-up document with a live file goes sync-pending; no job is run.
 type fakeSyncs struct{ repo *fakeRepo }
 
-func (s fakeSyncs) change(user docsbot.UserID, id docsbot.DocumentID, fn func(*docsbot.Document)) (bool, error) {
+func (s fakeSyncs) change(user docsbot.UserID, id docsbot.DocumentID, cloud bool, fn func(*docsbot.Document)) (bool, error) {
 	d, ok := s.repo.docs[id]
 	if !ok || d.UserID != user {
 		return false, docsbot.ErrNotFound
 	}
 	fn(&d)
 	d.MetaVersion++
-	queued := d.BackupStatus == docsbot.BackupBackedUp && d.SyncStatus != docsbot.SyncMissing
+	queued := cloud && d.BackupStatus == docsbot.BackupBackedUp && d.SyncStatus != docsbot.SyncMissing
 	if queued {
 		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
 	}
@@ -667,12 +640,12 @@ func (s fakeSyncs) change(user docsbot.UserID, id docsbot.DocumentID, fn func(*d
 	return queued, nil
 }
 
-func (s fakeSyncs) SetTitle(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, title string) (bool, error) {
-	return s.change(user, id, func(d *docsbot.Document) { d.Title = title })
+func (s fakeSyncs) SetTitle(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, title string, cloud bool) (bool, error) {
+	return s.change(user, id, cloud, func(d *docsbot.Document) { d.Title = title })
 }
 
-func (s fakeSyncs) SetCategory(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (bool, error) {
-	return s.change(user, id, func(d *docsbot.Document) { d.Category = cat })
+func (s fakeSyncs) SetCategory(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category, cloud bool) (bool, error) {
+	return s.change(user, id, cloud, func(d *docsbot.Document) { d.Category = cat })
 }
 
 func (fakeSyncs) EnqueueSync(context.Context, docsbot.UserID, docsbot.DocumentID) error { return nil }
@@ -729,14 +702,14 @@ func (s fakeSyncs) RetrySync(_ context.Context, user docsbot.UserID, id docsbot.
 	return true, nil
 }
 
-func (s fakeSyncs) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, trash bool) (bool, error) {
+func (s fakeSyncs) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cloud bool) (bool, error) {
 	d, ok := s.repo.docs[id]
 	if !ok || d.UserID != user {
 		return false, docsbot.ErrNotFound
 	}
 	delete(s.repo.docs, id)
 	live := d.BackupStatus == docsbot.BackupBackedUp && d.DriveFileID != "" && d.SyncStatus != docsbot.SyncMissing
-	return live && !trash, nil
+	return live && !cloud, nil
 }
 
 func (fakeSyncs) RequeueSync(context.Context, docsbot.UserID, docsbot.DocumentID) error { return nil }
@@ -751,7 +724,11 @@ func fakeDeps() (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
 func fakeDepsWith(drive fakeDrive) (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
 	repo := newFakeRepo()
 	repo.status = newFakeStatus(repo)
-	return docsbot.NewService(repo, drive, nil, fakeUploads{repo: repo}, repo, repo.status, fakeSyncs{repo: repo}), fakeAuth{}, repo
+	uploads := fakeUploads{repo: repo}
+	return docsbot.NewService(docsbot.Ports{
+		Repo: repo, Drive: drive, Uploads: uploads, Jobs: uploads,
+		Folders: repo, Status: repo.status, Syncs: fakeSyncs{repo: repo},
+	}), fakeAuth{}, repo
 }
 
 func (r *fakeRepo) MarkSynced(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, version int) (bool, error) {

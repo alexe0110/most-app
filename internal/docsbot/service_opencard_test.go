@@ -30,7 +30,7 @@ func TestService_OpenCard_missingToOkDoesNotOverwritePendingSync(t *testing.T) {
 	drive := &trueDrive{fakeDrive: fakeDrive{connected: true}, onCheck: func() {
 		_ = repo.SetSyncStatus(context.Background(), user, doc.ID, docsbot.SyncPending, "")
 	}}
-	svc := docsbot.NewService(repo, drive, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, drive, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	card, err := svc.OpenCard(t.Context(), user, doc.ID)
 
@@ -44,7 +44,7 @@ func TestService_OpenCard_cancelledContextLeavesCardUnchanged(t *testing.T) {
 	doc := backedUpDoc(repo, nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	drive := &racingDrive{fakeDrive: fakeDrive{connected: true}, onCheck: cancel} // reports "deleted" after cancel
-	svc := docsbot.NewService(repo, drive, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, drive, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	// The drive says "gone" but the caller is already cancelled: whatever the
 	// service decides, it must not panic and must return the card.
@@ -108,7 +108,7 @@ func TestService_OpenCard_throttle(t *testing.T) {
 	other := backedUpDoc(repo, func(d *docsbot.Document) { d.TgFileUniqueID = "other" })
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	var calls int
-	svc := docsbot.NewService(repo, fakeDrive{connected: true, existsRes: true, existsCalls: &calls}, fakeFiles{},
+	svc := newService(repo, fakeDrive{connected: true, existsRes: true, existsCalls: &calls}, fakeFiles{},
 		&fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo},
 		docsbot.WithClock(func() time.Time { return now }))
 	open := func(id docsbot.DocumentID) {
@@ -158,7 +158,7 @@ func TestService_OpenCard_doesNotOverwriteNewerSync(t *testing.T) {
 	drive := &racingDrive{fakeDrive: fakeDrive{connected: true}, onCheck: func() {
 		_ = repo.SetSyncStatus(context.Background(), user, doc.ID, docsbot.SyncPending, "")
 	}}
-	svc := docsbot.NewService(repo, drive, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, drive, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	card, err := svc.OpenCard(t.Context(), user, doc.ID)
 
@@ -199,7 +199,7 @@ func TestService_OpenCard_databaseErrorsComeBackWithTheCard(t *testing.T) {
 	t.Run("transition", func(t *testing.T) {
 		repo := newFakeRepo()
 		doc := backedUpDoc(repo, nil)
-		svc := docsbot.NewService(failingTransitionRepo{repo}, fakeDrive{connected: true}, fakeFiles{}, &fakeUploads{repo: repo},
+		svc := newService(failingTransitionRepo{repo}, fakeDrive{connected: true}, fakeFiles{}, &fakeUploads{repo: repo},
 			repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 		card, err := svc.OpenCard(t.Context(), user, doc.ID)
@@ -226,7 +226,7 @@ func TestService_OpenCard_throttleIsCheckedBeforeDriveStatus(t *testing.T) {
 	require.NoError(t, err)
 
 	// Within the window the status lookup is not even attempted, so its failure is not seen.
-	svc2 := docsbot.NewService(repo, fakeDrive{connected: true, err: errors.New("db down")}, fakeFiles{},
+	svc2 := newService(repo, fakeDrive{connected: true, err: errors.New("db down")}, fakeFiles{},
 		&fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 	_, err = svc2.OpenCard(t.Context(), user, doc.ID)
 	require.Error(t, err, "first open on svc2 does consult the status")

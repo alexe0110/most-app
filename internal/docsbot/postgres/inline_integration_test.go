@@ -20,7 +20,7 @@ import (
 func inlineEnv(t *testing.T) (*postgres.Repo, *pgxpool.Pool) {
 	t.Helper()
 	pool := dbtest.New(t)
-	return postgres.NewRepo(pool), pool
+	return postgres.NewRepo(pool, noJobs{}), pool
 }
 
 // savedAt stores a saved document and backdates it by age, so ordering is deterministic.

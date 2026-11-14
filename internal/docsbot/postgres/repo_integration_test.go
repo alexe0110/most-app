@@ -29,7 +29,7 @@ func makeUser(t *testing.T, repo *postgres.Repo, tgID int64) postgres.User {
 
 func newRepo(t *testing.T) *postgres.Repo {
 	t.Helper()
-	return postgres.NewRepo(dbtest.New(t)) // boots Postgres + applies migrations
+	return postgres.NewRepo(dbtest.New(t), noJobs{}) // boots Postgres + applies migrations
 }
 
 func TestRepo_users(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 
 func TestService_Receive_normalizesTitle(t *testing.T) {
 	repo := newFakeRepo()
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	in := incoming("norm")
 	in.Title = " a\nb\t"
@@ -105,7 +105,7 @@ func TestService_Receive(t *testing.T) {
 			if tt.seed != nil {
 				repo.seed(*tt.seed)
 			}
-			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+			svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 			rep, err := svc.Receive(t.Context(), incoming(tt.unique))
 			require.NoError(t, err)
 			tt.assert(t, rep, repo)
@@ -352,7 +352,7 @@ func TestService_Receive_limits(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newFakeRepo()
 			tt.setup(repo)
-			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
+			svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
 			before := len(repo.docs)
 
 			rep, err := svc.Receive(t.Context(), intakeFile("new"))
@@ -384,7 +384,7 @@ func TestService_PurgeStalePending(t *testing.T) {
 	stale := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a", CreatedAt: now.Add(-25 * time.Hour)})
 	fresh := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "b", CreatedAt: now.Add(-23 * time.Hour)})
 	oldSaved := repo.seed(docsbot.Document{UserID: stranger, Status: docsbot.StatusSaved, TgFileUniqueID: "c", CreatedAt: now.Add(-48 * time.Hour)})
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
+	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
 
 	n, err := svc.PurgeStalePending(t.Context())
 

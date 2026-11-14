@@ -27,7 +27,7 @@ func TestService_RetryBackup_requeueFailureLeavesPending(t *testing.T) {
 	repo := newFakeRepo()
 	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupFailed})
 	boom := errors.New("queue down")
-	svc := docsbot.NewService(repo, fakeDrive{connected: true}, fakeFiles{}, errRequeueUploads{&fakeUploads{repo: repo}, boom}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, fakeDrive{connected: true}, fakeFiles{}, errRequeueUploads{&fakeUploads{repo: repo}, boom}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	err := svc.RetryBackup(t.Context(), user, doc.ID)
 	require.ErrorIs(t, err, boom)
@@ -42,7 +42,7 @@ func TestService_TransferSaved_requeueFailureKeepsDocsPending(t *testing.T) {
 	a := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther})
 	b := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, BackupStatus: docsbot.BackupFailed})
 	boom := errors.New("queue down")
-	svc := docsbot.NewService(repo, fakeDrive{connected: true}, fakeFiles{}, errRequeueUploads{&fakeUploads{repo: repo}, boom}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, fakeDrive{connected: true}, fakeFiles{}, errRequeueUploads{&fakeUploads{repo: repo}, boom}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	_, ok, err := svc.TransferSaved(t.Context(), user, 5, 50)
 
@@ -145,7 +145,7 @@ func TestService_parallelTransferSaved_exactlyOnce(t *testing.T) {
 	}
 	status := newFakeStatus(repo)
 	uploads := &fakeUploads{repo: repo}
-	svc := docsbot.NewService(repo, fakeDrive{connected: true}, fakeFiles{}, uploads, repo, status, &fakeSyncs{repo: repo})
+	svc := newService(repo, fakeDrive{connected: true}, fakeFiles{}, uploads, repo, status, &fakeSyncs{repo: repo})
 
 	var mu sync.Mutex
 	started := 0
@@ -178,7 +178,7 @@ func TestService_parallelRetryFailed_exactlyOnce(t *testing.T) {
 	}
 	status := newFakeStatus(repo)
 	uploads := &fakeUploads{repo: repo}
-	svc := docsbot.NewService(repo, fakeDrive{connected: true}, fakeFiles{}, uploads, repo, status, &fakeSyncs{repo: repo})
+	svc := newService(repo, fakeDrive{connected: true}, fakeFiles{}, uploads, repo, status, &fakeSyncs{repo: repo})
 
 	var mu sync.Mutex
 	started := 0
@@ -204,7 +204,7 @@ func TestService_TransferSaved(t *testing.T) {
 	b := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, BackupStatus: docsbot.BackupFailed})
 	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending})
 	uploads := &fakeUploads{repo: repo}
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, fakeDrive{}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	view, ok, err := svc.TransferSaved(t.Context(), user, 5, 50)
 	require.NoError(t, err)
@@ -220,7 +220,7 @@ func TestService_TransferSaved(t *testing.T) {
 func TestService_TransferSaved_nothingToDo(t *testing.T) {
 	repo := newFakeRepo()
 	uploads := &fakeUploads{repo: repo}
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, fakeDrive{}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	_, ok, err := svc.TransferSaved(t.Context(), user, 5, 50)
 	require.NoError(t, err)
@@ -235,7 +235,7 @@ func TestService_RetryFailed(t *testing.T) {
 	b := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupFailed})
 	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupNone})
 	uploads := &fakeUploads{repo: repo}
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, fakeDrive{}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	view, ok, err := svc.RetryFailed(t.Context(), user, 5, 50)
 	require.NoError(t, err)
@@ -246,7 +246,7 @@ func TestService_RetryFailed(t *testing.T) {
 	require.Equal(t, []docsbot.DocumentID{a.ID, b.ID}, uploads.requeued)
 
 	empty := newFakeRepo()
-	_, ok, err = docsbot.NewService(empty, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: empty}, empty, newFakeStatus(empty), &fakeSyncs{repo: empty}).
+	_, ok, err = newService(empty, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: empty}, empty, newFakeStatus(empty), &fakeSyncs{repo: empty}).
 		RetryFailed(t.Context(), user, 5, 50)
 	require.NoError(t, err)
 	require.False(t, ok)

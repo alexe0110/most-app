@@ -145,15 +145,18 @@ func TestUserScoping_otherUserCannotTouchDocument(t *testing.T) {
 
 	require.NoError(t, repo.SetBackupStatus(ctx, b, doc.ID, docsbot.BackupFailed))
 	require.NoError(t, repo.MarkUploading(ctx, b, doc.ID))
-	_, err := repo.MarkBackedUpForSync(ctx, b, doc.ID, "stolen", 0, 0, noInsert)
+	_, err := repo.MarkBackedUp(ctx, b, doc.ID, "stolen", 0, 0)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
 	got := backupOf(t, repo, a, doc.ID)
 	require.Equal(t, docsbot.BackupUploading, got.BackupStatus)
 	require.Empty(t, got.DriveFileID)
 
-	require.ErrorIs(t, repo.SetTitle(ctx, b, doc.ID, "pwned"), docsbot.ErrNotFound)
-	require.ErrorIs(t, repo.SetCategory(ctx, b, doc.ID, docsbot.CatPassport), docsbot.ErrNotFound)
-	require.ErrorIs(t, repo.DeleteDocument(ctx, b, doc.ID), docsbot.ErrNotFound)
+	_, err = repo.SetTitle(ctx, b, doc.ID, "pwned", false)
+	require.ErrorIs(t, err, docsbot.ErrNotFound)
+	_, err = repo.SetCategory(ctx, b, doc.ID, docsbot.CatPassport, false)
+	require.ErrorIs(t, err, docsbot.ErrNotFound)
+	_, err = repo.DeleteDocument(ctx, b, doc.ID, false)
+	require.ErrorIs(t, err, docsbot.ErrNotFound)
 	got = backupOf(t, repo, a, doc.ID)
 	require.Equal(t, "mine", got.Title)
 	require.Equal(t, docsbot.CatOther, got.Category)
@@ -164,14 +167,19 @@ func TestSetTitleCategoryDelete_missingDocumentIsNotFound(t *testing.T) {
 	ctx := t.Context()
 	const missing docsbot.DocumentID = "00000000-0000-7000-8000-000000000000"
 
-	require.ErrorIs(t, repo.SetTitle(ctx, a, missing, "x"), docsbot.ErrNotFound)
-	require.ErrorIs(t, repo.SetCategory(ctx, a, missing, docsbot.CatOther), docsbot.ErrNotFound)
-	require.ErrorIs(t, repo.DeleteDocument(ctx, a, missing), docsbot.ErrNotFound)
+	_, err := repo.SetTitle(ctx, a, missing, "x", false)
+	require.ErrorIs(t, err, docsbot.ErrNotFound)
+	_, err = repo.SetCategory(ctx, a, missing, docsbot.CatOther, false)
+	require.ErrorIs(t, err, docsbot.ErrNotFound)
+	_, err = repo.DeleteDocument(ctx, a, missing, false)
+	require.ErrorIs(t, err, docsbot.ErrNotFound)
 
 	// Double delete: the second sees it gone.
 	doc := titled(t, repo, a, "dd", "d")
-	require.NoError(t, repo.DeleteDocument(ctx, a, doc.ID))
-	require.ErrorIs(t, repo.DeleteDocument(ctx, a, doc.ID), docsbot.ErrNotFound)
+	_, err = repo.DeleteDocument(ctx, a, doc.ID, false)
+	require.NoError(t, err)
+	_, err = repo.DeleteDocument(ctx, a, doc.ID, false)
+	require.ErrorIs(t, err, docsbot.ErrNotFound)
 }
 
 func TestClaimTransferable_onlyNoneAndFailedOwnedByUser(t *testing.T) {

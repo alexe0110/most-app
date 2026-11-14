@@ -74,8 +74,10 @@ func run() error {
 		return err
 	}
 
-	repo := postgres.NewRepo(pool)
-	enq := docjobs.NewEnqueuer(repo, queue)
+	// Passing jobQueue to NewRepo is also the compile-time check that it
+	// satisfies postgres.JobInserter (postgres cannot import the jobs adapter).
+	jobQueue := docjobs.NewQueue(queue)
+	repo := postgres.NewRepo(pool, jobQueue)
 	files := &tgFiles{} // bot is set once it is built
 
 	// oauth.Service and the bot each need the other (the bot shows the consent
@@ -104,7 +106,10 @@ func run() error {
 
 	gdriveSvc := gdrive.New(gdriveClients{oauth: oauthSvc}, repo, gdrive.WithLogger(log), gdrive.WithRootFolder(cfg.DriveRootFolder))
 	driveAdapter := driveBridge{oauth: oauthSvc, gd: gdriveSvc}
-	svc = docsbot.NewService(repo, driveAdapter, files, enq, repo, repo, enq, docsbot.WithPageCounter(pageCounter{}))
+	svc = docsbot.NewService(docsbot.Ports{
+		Repo: repo, Drive: driveAdapter, Files: files, Uploads: repo, Jobs: jobQueue,
+		Folders: repo, Status: repo, Syncs: repo,
+	}, docsbot.WithPageCounter(pageCounter{}))
 
 	tgbot, err = tg.New(tg.Config{
 		Token:         cfg.TelegramToken,

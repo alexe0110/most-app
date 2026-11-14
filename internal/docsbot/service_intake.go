@@ -79,7 +79,7 @@ func (s *Service) SaveDerived(ctx context.Context, user UserID, sourceID Documen
 	saved, err := s.ChooseCategory(ctx, user, need.Doc.ID, cat)
 	if err != nil {
 		// Don't leave the copy pending: nobody will categorize it.
-		if delErr := s.repo.DeleteDocument(ctx, user, need.Doc.ID); delErr != nil && !errors.Is(delErr, ErrNotFound) {
+		if _, delErr := s.syncs.DeleteDocument(ctx, user, need.Doc.ID, false); delErr != nil && !errors.Is(delErr, ErrNotFound) {
 			return nil, errors.Join(err, fmt.Errorf("discard derived document: %w", delErr))
 		}
 		return nil, err
@@ -100,7 +100,7 @@ func (s *Service) DiscardAlbum(ctx context.Context, user UserID, group string) (
 	}
 	n := 0
 	for _, d := range pending {
-		err := s.repo.DeleteDocument(ctx, user, d.ID)
+		_, err := s.syncs.DeleteDocument(ctx, user, d.ID, false)
 		if errors.Is(err, ErrNotFound) {
 			continue
 		}
@@ -206,7 +206,7 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 		if err != nil {
 			return Saved{}, err
 		}
-		if err := s.repo.SetTitle(ctx, user, id, title); err != nil {
+		if _, err := s.syncs.SetTitle(ctx, user, id, title, false); err != nil {
 			return Saved{}, fmt.Errorf("set default title: %w", err)
 		}
 		doc.Title = title

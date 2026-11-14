@@ -15,7 +15,7 @@ import (
 
 func TestRepo_Ensure(t *testing.T) {
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool)
+	repo := postgres.NewRepo(pool, noJobs{})
 	ctx := t.Context()
 
 	// First contact creates the user.
@@ -47,7 +47,7 @@ func TestRepo_Ensure(t *testing.T) {
 }
 
 func TestRepo_Ensure_defaultLang(t *testing.T) {
-	repo := postgres.NewRepo(dbtest.New(t))
+	repo := postgres.NewRepo(dbtest.New(t), noJobs{})
 	ctx := t.Context()
 
 	_, err := repo.Ensure(ctx, 600, "")
@@ -66,7 +66,7 @@ const purgeSQL = `delete from users where deleted_at is not null`
 // leaves alone; after the purge the same message creates a fresh user row.
 func TestUser_deletedThenMessageAroundPurge(t *testing.T) {
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool)
+	repo := postgres.NewRepo(pool, noJobs{})
 	ctx := t.Context()
 
 	first, err := repo.EnsureUser(ctx, postgres.EnsureUserParams{TgUserID: 800, Lang: "ru"})

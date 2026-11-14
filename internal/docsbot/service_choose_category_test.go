@@ -49,7 +49,7 @@ func TestService_defaultTitle_usesLocation(t *testing.T) {
 			opts := append([]docsbot.Option{
 				docsbot.WithClock(func() time.Time { return now }),
 			}, tt.opts...)
-			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, opts...)
+			svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, opts...)
 
 			got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatMedical)
 			require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestService_ChooseCategory_lostRace(t *testing.T) {
 			d.Status, d.Category = docsbot.StatusSaved, docsbot.CatPassport
 			repo.docs[doc.ID] = d
 		}}
-		svc := docsbot.NewService(rr, fakeDrive{connected: true}, fakeFiles{}, uploads, rr, newFakeStatus(repo), &fakeSyncs{repo: repo})
+		svc := newService(rr, fakeDrive{connected: true}, fakeFiles{}, uploads, rr, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 		got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatOther)
 
@@ -93,7 +93,7 @@ func TestService_ChooseCategory_lostRace(t *testing.T) {
 		repo := newFakeRepo()
 		doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a"})
 		rr := racingRepo{fakeRepo: repo, beforeSave: func() { delete(repo.docs, doc.ID) }}
-		svc := docsbot.NewService(rr, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, rr, newFakeStatus(repo), &fakeSyncs{repo: repo})
+		svc := newService(rr, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, rr, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 		_, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatOther)
 
@@ -135,7 +135,7 @@ func TestService_ChooseCategory(t *testing.T) {
 			}
 			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: "Паспорт", TgFileUniqueID: "u"})
 			uploads := &fakeUploads{repo: repo}
-			svc := docsbot.NewService(repo, fakeDrive{connected: tt.connected}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+			svc := newService(repo, fakeDrive{connected: tt.connected}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 			got, err := svc.ChooseCategory(t.Context(), user, doc.ID, tt.cat)
 			if tt.wantErr != nil {
@@ -191,7 +191,7 @@ func TestService_ChooseCategory_defaultTitle(t *testing.T) {
 				repo.seed(d)
 			}
 			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: tt.title, TgFileUniqueID: "u"})
-			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
+			svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
 
 			got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatMedical)
 			require.NoError(t, err)
@@ -206,7 +206,7 @@ func TestService_ChooseCategory_idempotent(t *testing.T) {
 	doc := repo.seed(docsbot.Document{
 		UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatPassport, TgFileUniqueID: "u",
 	})
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatReceipts)
 	require.NoError(t, err)
@@ -234,7 +234,7 @@ func TestService_ChooseCategory_retryQueuesUpload(t *testing.T) {
 			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther,
 				BackupStatus: tt.status, Title: "Паспорт", TgFileUniqueID: "u"})
 			uploads := &fakeUploads{repo: repo}
-			svc := docsbot.NewService(repo, fakeDrive{connected: tt.connected}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+			svc := newService(repo, fakeDrive{connected: tt.connected}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 			got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
 
@@ -254,7 +254,7 @@ func TestService_ChooseCategory_enqueueFailureThenRetry(t *testing.T) {
 	repo := newFakeRepo()
 	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: "Паспорт", TgFileUniqueID: "u"})
 	uploads := &fakeUploads{repo: repo, enqueueErr: errors.New("queue down")}
-	svc := docsbot.NewService(repo, fakeDrive{connected: true}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, fakeDrive{connected: true}, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	_, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
 	require.Error(t, err, "first tap saves the document but cannot queue the upload")

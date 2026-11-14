@@ -53,6 +53,7 @@ type Service struct {
 	drive   Drive
 	files   FileSource
 	uploads Uploads
+	jobs    JobCanceler
 	folders Folders
 	status  StatusMessages
 	syncs   Syncs
@@ -86,10 +87,24 @@ func WithLocation(loc *time.Location) Option {
 	return func(s *Service) { s.loc = loc }
 }
 
+// Ports are the external dependencies of a Service, named so that wiring cannot
+// swap two of the same shape.
+type Ports struct {
+	Repo    Repo
+	Drive   Drive
+	Files   FileSource
+	Uploads Uploads
+	Jobs    JobCanceler
+	Folders Folders
+	Status  StatusMessages
+	Syncs   Syncs
+}
+
 // NewService wires the service around its ports.
-func NewService(repo Repo, drive Drive, files FileSource, uploads Uploads, folders Folders, status StatusMessages, syncs Syncs, opts ...Option) *Service {
+func NewService(p Ports, opts ...Option) *Service {
 	s := &Service{
-		repo: repo, drive: drive, files: files, uploads: uploads, folders: folders, status: status, syncs: syncs,
+		repo: p.Repo, drive: p.Drive, files: p.Files, uploads: p.Uploads, jobs: p.Jobs,
+		folders: p.Folders, status: p.Status, syncs: p.Syncs,
 		now: time.Now,
 		loc: defaultLocation(),
 

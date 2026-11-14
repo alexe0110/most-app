@@ -214,13 +214,12 @@ func TestUploadDocument_batchCreatesFoldersOnce(t *testing.T) {
 	const total = 10
 	ctx := t.Context()
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool)
 	log := slog.New(slog.DiscardHandler)
 
 	fd := &statefulDrive{t: t, folders: map[string]folderRec{}, created: map[string]int{}}
 	srv := httptest.NewServer(fd)
 	t.Cleanup(srv.Close)
-	gd := gdrive.New(plainClients{}, repo, gdrive.WithBaseURL(srv.URL))
+	gd := gdrive.New(plainClients{}, postgres.NewRepo(pool, nil), gdrive.WithBaseURL(srv.URL))
 
 	var uid string
 	require.NoError(t, pool.QueryRow(ctx, `insert into users (tg_user_id) values (1) returning id::text`).Scan(&uid))
@@ -243,8 +242,9 @@ func TestUploadDocument_batchCreatesFoldersOnce(t *testing.T) {
 	bind := jobs.RegisterUploadDocument(workers, log)
 	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
 	require.NoError(t, err)
-	enq := jobs.NewEnqueuer(repo, queue)
-	svc := docsbot.NewService(repo, raceDrive{gd: gd}, fakeFiles{}, enq, repo, repo, enq)
+	jq := jobs.NewQueue(queue)
+	enq := postgres.NewRepo(pool, jq)
+	svc := newService(enq, jq, raceDrive{gd: gd}, fakeFiles{})
 	bind(svc, &spyNotifier{})
 
 	require.NoError(t, queue.Start(ctx))

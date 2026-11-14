@@ -189,7 +189,7 @@ func TestService_ReplaceContent_raceBecomesAlreadySaved(t *testing.T) {
 	repo := newFakeRepo()
 	doc := backedUpDoc(repo, func(d *docsbot.Document) { d.TgFileID, d.TgFileUniqueID = "tg-cur", "uniq-cur" })
 	syncs := racingSyncs{fakeSyncs: &fakeSyncs{repo: repo}, repo: repo}
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
+	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs)
 
 	rep, err := svc.ReplaceContent(t.Context(), user, doc.ID, docsbot.IncomingFile{FileID: "n", FileUniqueID: "uniq-new"})
 
@@ -242,7 +242,7 @@ func TestService_SweepStuckSyncs(t *testing.T) {
 			doc := backedUpDoc(repo, func(d *docsbot.Document) { d.SyncStatus = docsbot.SyncPending })
 			repo.updated = map[docsbot.DocumentID]time.Time{doc.ID: now.Add(-tt.age)}
 			syncs := &fakeSyncs{repo: repo}
-			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs, docsbot.WithClock(func() time.Time { return now }))
+			svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), syncs, docsbot.WithClock(func() time.Time { return now }))
 
 			res, err := svc.SweepStuckUploads(t.Context())
 
@@ -266,7 +266,7 @@ func TestService_Backup_orphanTrashFailureIsReported(t *testing.T) {
 		fakeDrive: fakeDrive{connected: true, uploadFile: docsbot.DriveFile{ID: "remote-9"}, trashErr: boom},
 		onUpload:  func() { _ = repo.DeleteDocument(t.Context(), user, doc.ID) },
 	}
-	svc := docsbot.NewService(repo, drive, fakeFiles{data: []byte("x")}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, drive, fakeFiles{data: []byte("x")}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	res, err := svc.Backup(t.Context(), user, doc.ID)
 

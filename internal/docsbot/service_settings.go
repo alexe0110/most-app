@@ -61,7 +61,7 @@ func (s *Service) Disconnect(ctx context.Context, user UserID) error {
 	if err := s.drive.Disconnect(ctx, user); err != nil {
 		return fmt.Errorf("disconnect drive: %w", err)
 	}
-	if err := s.uploads.CancelUploads(ctx, user); err != nil {
+	if err := s.jobs.CancelUploads(ctx, user); err != nil {
 		return fmt.Errorf("cancel uploads: %w", err)
 	}
 	if err := s.repo.ResetPendingUploads(ctx, user); err != nil {
@@ -76,7 +76,7 @@ func (s *Service) Disconnect(ctx context.Context, user UserID) error {
 // treat as success.
 func (s *Service) DeleteAllData(ctx context.Context, user UserID) error {
 	revokeErr := s.drive.Revoke(ctx, user)
-	if err := s.uploads.CancelUserJobs(ctx, user); err != nil {
+	if err := s.jobs.CancelUserJobs(ctx, user); err != nil {
 		return fmt.Errorf("cancel jobs: %w", err)
 	}
 	if err := s.repo.DeleteUserData(ctx, user); err != nil {

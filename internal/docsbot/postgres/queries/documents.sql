@@ -78,27 +78,31 @@ where id = @id
   and user_id = @user_id
   and (backup_status = 'failed' or (backup_status = 'backed_up' and sync_status = 'missing'));
 
--- name: UpdateDocumentTitle :execrows
+-- name: UpdateDocumentTitle :one
+-- Renames and, in the same statement, decides whether the Drive file must follow:
+-- with @cloud (Drive connected) a backed-up document with a live file goes to
+-- sync_status pending. The caller enqueues the sync job in the same transaction.
 update documents
 set title        = @title,
     meta_version = meta_version + 1,
+    sync_status  = case when @cloud::bool and backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
+    sync_reason  = case when @cloud::bool and backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
     updated_at   = now()
 where id = @id
-  and user_id = @user_id;
+  and user_id = @user_id
+returning backup_status, sync_status;
 
--- name: UpdateDocumentCategory :execrows
+-- name: UpdateDocumentCategory :one
+-- Same as UpdateDocumentTitle, for the category.
 update documents
 set category     = @category,
     meta_version = meta_version + 1,
+    sync_status  = case when @cloud::bool and backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
+    sync_reason  = case when @cloud::bool and backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
     updated_at   = now()
 where id = @id
-  and user_id = @user_id;
-
--- name: DeleteDocumentByID :execrows
-delete
-from documents
-where id = @id
-  and user_id = @user_id;
+  and user_id = @user_id
+returning backup_status, sync_status;
 
 -- name: DeleteDocumentReturning :one
 -- Deletes and reports what the Drive copy was, decided under the row lock.
@@ -210,32 +214,6 @@ where id = @id
   and backup_status not in ('pending', 'uploading')
   and sync_status not in ('pending', 'missing')
 returning backup_status;
-
--- name: UpdateTitleForSync :one
--- Renames and, in the same statement, decides whether the Drive file must follow:
--- a backed-up document with a live file goes to sync_status pending. The caller
--- enqueues the sync job in the same transaction.
-update documents
-set title        = @title,
-    meta_version = meta_version + 1,
-    sync_status  = case when backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
-    sync_reason  = case when backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
-    updated_at   = now()
-where id = @id
-  and user_id = @user_id
-returning backup_status, sync_status;
-
--- name: UpdateCategoryForSync :one
--- Same as UpdateTitleForSync, for the category.
-update documents
-set category     = @category,
-    meta_version = meta_version + 1,
-    sync_status  = case when backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
-    sync_reason  = case when backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
-    updated_at   = now()
-where id = @id
-  and user_id = @user_id
-returning backup_status, sync_status;
 
 -- name: MarkSyncPending :execrows
 -- 0 rows: the document is gone, not backed up, or its Drive file is missing.
