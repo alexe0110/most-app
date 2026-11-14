@@ -22,8 +22,6 @@ const (
 	MaxPDFBytes = 20 << 20
 	// MaxPDFPages caps the pages of an input (and of a merge result).
 	MaxPDFPages = 500
-	// maxConcurrentPDF is how many PDF operations run at once.
-	maxConcurrentPDF = 2
 )
 
 // PDF errors; callers map them to user messages with errors.Is.
@@ -32,23 +30,13 @@ var (
 	ErrPDFTooLarge     = errors.New("convert: pdf exceeds size limit")
 	ErrPDFTooManyPages = errors.New("convert: pdf exceeds page limit")
 	ErrBadPageRange    = errors.New("convert: bad page range")
-	ErrPDFTimeout      = errors.New("convert: pdf operation timed out")
 	ErrBadRotation     = errors.New("convert: rotation must be 90, 180 or 270")
 )
-
-// pdfSlots is the semaphore of running PDF operations: they hold whole documents
-// in memory.
-var pdfSlots = make(chan struct{}, maxConcurrentPDF)
-
-func init() {
-	// Without this pdfcpu creates its config directory under $HOME on first use.
-	// The API is marked deprecated, but the stateless mode alone does not stop it.
-	api.DisableConfigDir() //nolint:staticcheck // see above
-}
 
 // pdfConf is pdfcpu's built-in configuration: it never touches the config
 // directory in $HOME, and validates in relaxed mode (real-world PDFs are sloppy).
 func pdfConf() *model.Configuration {
+	disableConfigDir()
 	conf := model.NewStatelessConfiguration()
 	conf.ValidationMode = model.ValidationRelaxed
 	return conf
@@ -65,25 +53,26 @@ func MergePDF(ctx context.Context, pdfs [][]byte) ([]byte, error) {
 			return nil, ErrPDFTooLarge
 		}
 	}
-	return runPDF(ctx, func(ctx context.Context) ([]byte, error) {
+	var out bytes.Buffer
+	err := pdfOp(ctx, func(ctx context.Context) error {
 		pages := 0
 		readers := make([]io.ReadSeeker, len(pdfs))
 		for i, p := range pdfs {
 			n, err := pageCount(ctx, p)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			if pages += n; pages > MaxPDFPages {
-				return nil, ErrPDFTooManyPages
+				return ErrPDFTooManyPages
 			}
 			readers[i] = bytes.NewReader(p)
 		}
-		var out bytes.Buffer
-		if err := api.MergeRaw(ctx, readers, &out, false, pdfConf()); err != nil {
-			return nil, err
-		}
-		return out.Bytes(), nil
+		return api.MergeRaw(ctx, readers, &out, false, pdfConf())
 	})
+	if err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
 }
 
 // SelectPages keeps (keep) or removes the pages of sel ("1-3,5") and returns the
@@ -92,31 +81,32 @@ func SelectPages(ctx context.Context, pdf []byte, sel string, keep bool) ([]byte
 	if err := checkPDFSize(pdf); err != nil {
 		return nil, err
 	}
-	return runPDF(ctx, func(ctx context.Context) ([]byte, error) {
+	var out bytes.Buffer
+	err := pdfOp(ctx, func(ctx context.Context) error {
 		n, err := pageCount(ctx, pdf)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		picked, err := ParsePageRange(sel, n)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if !keep {
 			picked = complement(picked, n)
 		}
 		if len(picked) == 0 {
-			return nil, fmt.Errorf("%w: no pages would be left", ErrBadPageRange)
+			return fmt.Errorf("%w: no pages would be left", ErrBadPageRange)
 		}
 		names := make([]string, len(picked))
 		for i, p := range picked {
 			names[i] = strconv.Itoa(p)
 		}
-		var out bytes.Buffer
-		if err := api.Collect(ctx, bytes.NewReader(pdf), &out, names, pdfConf()); err != nil {
-			return nil, err
-		}
-		return out.Bytes(), nil
+		return api.Collect(ctx, bytes.NewReader(pdf), &out, names, pdfConf())
 	})
+	if err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
 }
 
 // RotatePDF turns every page clockwise by degrees (90, 180 or 270).
@@ -127,16 +117,17 @@ func RotatePDF(ctx context.Context, pdf []byte, degrees int) ([]byte, error) {
 	if err := checkPDFSize(pdf); err != nil {
 		return nil, err
 	}
-	return runPDF(ctx, func(ctx context.Context) ([]byte, error) {
+	var out bytes.Buffer
+	err := pdfOp(ctx, func(ctx context.Context) error {
 		if _, err := pageCount(ctx, pdf); err != nil {
-			return nil, err
+			return err
 		}
-		var out bytes.Buffer
-		if err := api.Rotate(ctx, bytes.NewReader(pdf), &out, degrees, nil, pdfConf()); err != nil {
-			return nil, err
-		}
-		return out.Bytes(), nil
+		return api.Rotate(ctx, bytes.NewReader(pdf), &out, degrees, nil, pdfConf())
 	})
+	if err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
 }
 
 // PageCount returns the number of pages of a PDF within the limits.
@@ -144,7 +135,15 @@ func PageCount(ctx context.Context, pdf []byte) (int, error) {
 	if err := checkPDFSize(pdf); err != nil {
 		return 0, err
 	}
-	return runPDF(ctx, func(ctx context.Context) (int, error) { return pageCount(ctx, pdf) })
+	var n int
+	err := pdfOp(ctx, func(ctx context.Context) (err error) {
+		n, err = pageCount(ctx, pdf)
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // ParsePageRange reads a selection like "1-3, 5" into sorted, distinct page
@@ -244,49 +243,10 @@ func pageCount(ctx context.Context, pdf []byte) (int, error) {
 	return n, nil
 }
 
-// runPDF runs fn under the concurrency cap and ctx's deadline. pdfcpu stops on
-// the cancelled ctx by itself, but only at its own checkpoints: after a timeout
-// the caller gets ErrPDFTimeout at once while fn may keep running for a while,
-// and its slot stays taken until fn really returns. That is deliberate: it caps
-// the memory of the work still alive, so timed-out calls can't pile up. Errors
-// are mapped to this package's sentinels.
-func runPDF[T any](ctx context.Context, fn func(context.Context) (T, error)) (T, error) {
-	var zero T
-	select {
-	case pdfSlots <- struct{}{}:
-	case <-ctx.Done():
-		return zero, ErrPDFTimeout
-	}
-	if ctx.Err() != nil {
-		<-pdfSlots
-		return zero, ErrPDFTimeout
-	}
-
-	type result struct {
-		v   T
-		err error
-	}
-	done := make(chan result, 1)
-	go func() {
-		var r result
-		func() {
-			defer func() {
-				if p := recover(); p != nil { // pdfcpu panics on some malformed input
-					r = result{err: fmt.Errorf("%w: %v", ErrPDFInvalid, p)}
-				}
-			}()
-			r.v, r.err = fn(ctx)
-		}()
-		<-pdfSlots // free the slot before reporting
-		done <- r
-	}()
-
-	select {
-	case r := <-done:
-		return r.v, mapPDFError(ctx, r.err)
-	case <-ctx.Done():
-		return zero, ErrPDFTimeout
-	}
+// pdfOp runs a PDF operation under the shared cap and maps its errors to this
+// package's sentinels.
+func pdfOp(ctx context.Context, fn func(ctx context.Context) error) error {
+	return mapPDFError(ctx, run(ctx, fn))
 }
 
 // mapPDFError turns a pdfcpu error into one of the package sentinels.
@@ -294,8 +254,8 @@ func mapPDFError(ctx context.Context, err error) error {
 	switch {
 	case err == nil:
 		return nil
-	case ctx.Err() != nil, errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		return ErrPDFTimeout
+	case ctx.Err() != nil, errors.Is(err, ErrTimeout):
+		return ErrTimeout
 	case errors.Is(err, ErrPDFTooManyPages), errors.Is(err, ErrBadPageRange), errors.Is(err, ErrPDFInvalid):
 		return err
 	default:

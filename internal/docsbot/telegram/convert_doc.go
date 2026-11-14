@@ -90,20 +90,22 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
 
 	var out []byte
 	var name, suffix string
+	ictx, cancelImage := context.WithTimeout(ctx, imageTimeout)
 	switch op {
 	case opPDF:
 		suffix = suffixPDF
-		out, err = convert.ImagesToPDF([][]byte{src})
+		out, err = convert.ImagesToPDF(ictx, [][]byte{src})
 		name = resultFileName(doc.Title, nameFallbackPhoto, nameTagPDF, "pdf")
 	case opJPG:
 		suffix = suffixJPG
-		out, err = convert.ToJPEG(src)
+		out, err = convert.ToJPEG(ictx, src)
 		name = resultFileName(doc.Title, nameFallbackPhoto, nameTagJPG, "jpg")
 	default:
 		suffix = suffixCompressed
-		out, err = convert.Compress(src, maxBytes, convert.JPEG)
+		out, err = convert.Compress(ictx, src, maxBytes, convert.JPEG)
 		name = resultFileName(doc.Title, nameFallbackPhoto, nameTagCompressed, "jpg")
 	}
+	cancelImage()
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert document", "err", err, "user_id", user, "doc_id", id, "op", op)
 		c.show(ctx, b, chatID, msgID, convertErrorText(err), menu)

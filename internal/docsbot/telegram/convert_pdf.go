@@ -24,6 +24,10 @@ const (
 // pdfTimeout bounds one PDF operation; a pathological file must not hold a worker.
 const pdfTimeout = 20 * time.Second
 
+// imageTimeout bounds one image operation (decode, compress, build a PDF); like
+// pdfTimeout it keeps a pathological file from holding a worker.
+const imageTimeout = 20 * time.Second
+
 // pdfSource is the PDF an operation works on: a stored document (docID set) or
 // a file sent to /convert. Only the Telegram file id is kept; the bytes are
 // downloaded when the operation runs.
@@ -338,7 +342,7 @@ func pdfErrorText(err error) string {
 		return pdfTooLargeText()
 	case errors.Is(err, convert.ErrPDFTooManyPages):
 		return fmt.Sprintf(textPDFTooMany, convert.MaxPDFPages)
-	case errors.Is(err, convert.ErrPDFTimeout):
+	case errors.Is(err, convert.ErrTimeout):
 		return textPDFTimeout
 	case errors.Is(err, convert.ErrBadPageRange):
 		return textPDFBadRange

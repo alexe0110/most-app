@@ -75,7 +75,9 @@ func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, p press) {
 		}
 		pages = append(pages, data)
 	}
-	pdf, err := convert.ImagesToPDF(pages)
+	ictx, cancelImage := context.WithTimeout(ctx, imageTimeout)
+	pdf, err := convert.ImagesToPDF(ictx, pages)
+	cancelImage()
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert album to pdf", "err", err, "user_id", user, "pages", len(pages))
 		c.albums.put(token, tgUser, album)

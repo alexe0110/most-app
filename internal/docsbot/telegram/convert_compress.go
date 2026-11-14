@@ -55,7 +55,9 @@ func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, p press) {
 		images = append(images, data)
 	}
 
-	pdf, err := convert.ImagesToPDF(images)
+	ictx, cancelImage := context.WithTimeout(ctx, imageTimeout)
+	pdf, err := convert.ImagesToPDF(ictx, images)
+	cancelImage()
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert images to pdf", "err", err, "user_id", user, "pages", len(images))
 		c.retry(ctx, b, chatID, user, sess, msgID, convertErrorText(err), pdfKeyboard())
@@ -104,7 +106,9 @@ func (c *converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64
 		retryKB = limitKeyboard()
 		sess.step = stepChooseLimit
 	}
-	out, err := convert.Compress(src, maxBytes, format)
+	ictx, cancelImage := context.WithTimeout(ctx, imageTimeout)
+	out, err := convert.Compress(ictx, src, maxBytes, format)
+	cancelImage()
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert compress", "err", err)
 		c.retry(ctx, b, chatID, user, sess, msgID, convertErrorText(err), retryKB)

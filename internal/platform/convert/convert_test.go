@@ -68,7 +68,7 @@ func TestImagesToPDF(t *testing.T) {
 		mustJPEG(t, noiseImage(100, 100), 80),
 	}
 
-	out, err := ImagesToPDF(pages)
+	out, err := ImagesToPDF(t.Context(), pages)
 	require.NoError(t, err)
 	require.True(t, bytes.HasPrefix(out, []byte("%PDF")), "output must be a PDF")
 	require.Contains(t, string(out), "/Count 3", "one page per image")
@@ -86,7 +86,7 @@ func TestImagesToPDF_errors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := ImagesToPDF(tt.images)
+			_, err := ImagesToPDF(t.Context(), tt.images)
 			require.ErrorIs(t, err, tt.want)
 		})
 	}
@@ -106,7 +106,7 @@ func TestCompress_meetsLimit(t *testing.T) {
 			src := mustJPEG(t, noiseImage(600, 600), 95)
 			require.Greater(t, len(src), tt.maxBytes, "source must start above the limit")
 
-			out, err := Compress(src, tt.maxBytes, tt.format)
+			out, err := Compress(t.Context(), src, tt.maxBytes, tt.format)
 			require.NoError(t, err)
 			require.LessOrEqual(t, len(out), tt.maxBytes)
 
@@ -121,7 +121,7 @@ func TestCompress_unreachableLimitIsHonest(t *testing.T) {
 
 	// 200 bytes is smaller than any usable image; Compress returns the smallest
 	// it could make rather than an error, so the caller can report how far it got.
-	out, err := Compress(src, 200, JPEG)
+	out, err := Compress(t.Context(), src, 200, JPEG)
 	require.NoError(t, err)
 	require.Greater(t, len(out), 200)
 	require.Less(t, len(out), len(src), "it still shrank the image as far as it could")
@@ -146,7 +146,7 @@ func TestCompress_errors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Compress(tt.img, tt.maxBytes, tt.format)
+			_, err := Compress(t.Context(), tt.img, tt.maxBytes, tt.format)
 			require.ErrorIs(t, err, tt.want)
 		})
 	}
@@ -174,10 +174,29 @@ func TestPixelBomb_rejectedBeforeDecode(t *testing.T) {
 	for name, data := range bombs {
 		t.Run(name, func(t *testing.T) {
 			require.Less(t, len(data), 100)
-			_, err := ImagesToPDF([][]byte{data})
+			_, err := ImagesToPDF(t.Context(), [][]byte{data})
 			require.ErrorIs(t, err, ErrImageTooLarge)
-			_, err = Compress(data, 10_000, JPEG)
+			_, err = Compress(t.Context(), data, 10_000, JPEG)
 			require.ErrorIs(t, err, ErrImageTooLarge)
+		})
+	}
+}
+
+// The pixel limit is inclusive: exactly 25 Mpx passes the guard (the header-only
+// data then fails the real decode), one pixel row more is a bomb.
+func TestPixelLimit_boundary(t *testing.T) {
+	tests := []struct {
+		name string
+		w, h int
+		want error
+	}{
+		{"at the limit", 5_000, 5_000, ErrUnsupportedFormat},
+		{"above the limit", 5_001, 5_000, ErrImageTooLarge},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ToJPEG(t.Context(), pngHeader(tt.w, tt.h))
+			require.ErrorIs(t, err, tt.want)
 		})
 	}
 }
@@ -191,7 +210,7 @@ func tinyWebP(t *testing.T) []byte {
 }
 
 func TestToJPEG_fromWebP(t *testing.T) {
-	out, err := ToJPEG(tinyWebP(t))
+	out, err := ToJPEG(t.Context(), tinyWebP(t))
 
 	require.NoError(t, err)
 	img, format, err := image.Decode(bytes.NewReader(out))
@@ -203,19 +222,19 @@ func TestToJPEG_fromWebP(t *testing.T) {
 func TestWebP_isAnInputEverywhere(t *testing.T) {
 	webp := tinyWebP(t)
 
-	compressed, err := Compress(webp, 1<<20, JPEG)
+	compressed, err := Compress(t.Context(), webp, 1<<20, JPEG)
 	require.NoError(t, err)
 	_, format, err := image.Decode(bytes.NewReader(compressed))
 	require.NoError(t, err)
 	require.Equal(t, "jpeg", format)
 
-	pdf, err := ImagesToPDF([][]byte{webp, webp})
+	pdf, err := ImagesToPDF(t.Context(), [][]byte{webp, webp})
 	require.NoError(t, err)
 	require.Contains(t, string(pdf), "/Count 2")
 }
 
 func TestToJPEG_rejectsUnknownFormat(t *testing.T) {
-	_, err := ToJPEG([]byte("ftypheic not an image"))
+	_, err := ToJPEG(t.Context(), []byte("ftypheic not an image"))
 	require.ErrorIs(t, err, ErrUnsupportedFormat)
 }
 
@@ -245,4 +264,48 @@ func TestImageSize(t *testing.T) {
 			require.Equal(t, tt.h, h)
 		})
 	}
+}
+
+// transparentPNG is a fully transparent image with RGB zero (black under alpha 0).
+func transparentPNG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, 40, 40))
+	for y := 0; y < 40; y++ {
+		for x := 0; x < 40; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{0, 0, 0, 0})
+		}
+	}
+	return mustPNG(t, img)
+}
+
+func requireWhitish(t *testing.T, jpg []byte) {
+	t.Helper()
+	img, err := jpeg.Decode(bytes.NewReader(jpg))
+	require.NoError(t, err)
+	r, g, b, _ := img.At(20, 20).RGBA()
+	for _, c := range []uint32{r >> 8, g >> 8, b >> 8} {
+		require.Greater(t, c, uint32(240), "transparent pixel must be flattened onto white, not black")
+	}
+}
+
+func TestTransparencyFlattenedOnWhite(t *testing.T) {
+	src := transparentPNG(t)
+
+	t.Run("ToJPEG", func(t *testing.T) {
+		out, err := ToJPEG(t.Context(), src)
+		require.NoError(t, err)
+		requireWhitish(t, out)
+	})
+	t.Run("Compress JPEG", func(t *testing.T) {
+		out, err := Compress(t.Context(), src, 1<<20, JPEG)
+		require.NoError(t, err)
+		requireWhitish(t, out)
+	})
+	t.Run("ImagesToPDF", func(t *testing.T) {
+		pdf, err := ImagesToPDF(t.Context(), [][]byte{src})
+		require.NoError(t, err)
+		start := bytes.Index(pdf, []byte{0xff, 0xd8, 0xff})
+		require.GreaterOrEqual(t, start, 0, "embedded JPEG stream")
+		requireWhitish(t, pdf[start:])
+	})
 }

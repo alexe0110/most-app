@@ -2,6 +2,7 @@ package convert
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/color"
@@ -61,7 +62,7 @@ func decodeUpright(data []byte) (image.Image, error) {
 
 // compressJPEG picks the best quality that fits; if the lowest still overflows,
 // it scales down step by step and returns the smallest it managed.
-func compressJPEG(img image.Image, maxBytes int) ([]byte, error) {
+func compressJPEG(ctx context.Context, img image.Image, maxBytes int) ([]byte, error) {
 	best, err := fitJPEGQuality(img, maxBytes)
 	if err != nil {
 		return nil, err
@@ -72,6 +73,9 @@ func compressJPEG(img image.Image, maxBytes int) ([]byte, error) {
 
 	cur := img
 	for step := 0; step < maxScaleSteps && !tooSmall(cur); step++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		cur = scaleDown(cur, scaleFactor)
 		candidate, err := fitJPEGQuality(cur, maxBytes)
 		if err != nil {
@@ -116,7 +120,7 @@ func fitJPEGQuality(img image.Image, maxBytes int) ([]byte, error) {
 
 // compressPNG scales the image down until it fits maxBytes. PNG is lossless, so
 // size is the only lever.
-func compressPNG(img image.Image, maxBytes int) ([]byte, error) {
+func compressPNG(ctx context.Context, img image.Image, maxBytes int) ([]byte, error) {
 	best, err := encodePNG(img)
 	if err != nil {
 		return nil, err
@@ -127,6 +131,9 @@ func compressPNG(img image.Image, maxBytes int) ([]byte, error) {
 
 	cur := img
 	for step := 0; step < maxScaleSteps && !tooSmall(cur); step++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		cur = scaleDown(cur, scaleFactor)
 		candidate, err := encodePNG(cur)
 		if err != nil {
