@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
@@ -104,54 +103,4 @@ func RegisterStorageSync(workers *river.Workers, log *slog.Logger) func(Syncer, 
 // costs a few no-op jobs, not extra cloud calls.
 func syncInsertOpts() *river.InsertOpts {
 	return &river.InsertOpts{Queue: UploadQueue}
-}
-
-// insertSync enqueues a sync job inside tx. Duplicates are fine: see syncInsertOpts.
-func (e *Enqueuer) insertSync(user docsbot.UserID, id docsbot.DocumentID) func(ctx context.Context, tx pgx.Tx) error {
-	return func(ctx context.Context, tx pgx.Tx) error {
-		_, err := e.queue.InsertTx(ctx, tx, StorageSyncArgs{UserID: string(user), DocumentID: string(id)}, syncInsertOpts())
-		if err != nil {
-			return fmt.Errorf("insert sync job: %w", err)
-		}
-		return nil
-	}
-}
-
-// SetTitle implements docsbot.Syncs.
-func (e *Enqueuer) SetTitle(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, title string) (bool, error) {
-	return e.store.SetTitleForSync(ctx, user, id, title, e.insertSync(user, id))
-}
-
-// SetCategory implements docsbot.Syncs.
-func (e *Enqueuer) SetCategory(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (bool, error) {
-	return e.store.SetCategoryForSync(ctx, user, id, cat, e.insertSync(user, id))
-}
-
-// EnqueueSync implements docsbot.Syncs.
-func (e *Enqueuer) EnqueueSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
-	return e.store.EnqueueSyncJob(ctx, user, id, e.insertSync(user, id))
-}
-
-// MarkBackedUp implements docsbot.Syncs.
-func (e *Enqueuer) MarkBackedUp(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, driveFileID string, startVersion, pages int) (bool, error) {
-	return e.store.MarkBackedUpForSync(ctx, user, id, driveFileID, startVersion, pages, e.insertSync(user, id))
-}
-
-// ReplaceContent implements docsbot.Syncs.
-func (e *Enqueuer) ReplaceContent(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, in docsbot.IncomingFile, cloud bool) (bool, error) {
-	return e.store.ReplaceContentForSync(ctx, user, id, in, cloud, e.insertSync(user, id))
-}
-
-// RequeueSync implements docsbot.Syncs.
-func (e *Enqueuer) RequeueSync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
-	_, err := e.queue.Insert(ctx, StorageSyncArgs{UserID: string(user), DocumentID: string(id)}, syncInsertOpts())
-	if err != nil {
-		return fmt.Errorf("requeue sync: %w", err)
-	}
-	return nil
-}
-
-// RetrySync implements docsbot.Syncs.
-func (e *Enqueuer) RetrySync(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) (bool, error) {
-	return e.store.RetrySyncJob(ctx, user, id, e.insertSync(user, id))
 }

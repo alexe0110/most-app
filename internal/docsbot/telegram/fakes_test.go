@@ -405,16 +405,6 @@ func (r *fakeRepo) PurgeStalePending(_ context.Context, olderThan time.Time) (in
 	return n, nil
 }
 
-func (r *fakeRepo) SaveDocument(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (bool, error) {
-	d, ok := r.docs[id]
-	if !ok || d.Status != docsbot.StatusPending {
-		return false, nil
-	}
-	d.Category, d.Status = cat, docsbot.StatusSaved
-	r.docs[id] = d
-	return true, nil
-}
-
 func (*fakeRepo) StuckSyncs(context.Context, time.Time, int) ([]docsbot.StuckUpload, error) {
 	return nil, nil
 }
@@ -477,33 +467,6 @@ func (r *fakeRepo) TitleExistsInCategory(_ context.Context, user docsbot.UserID,
 		}
 	}
 	return false, nil
-}
-
-func (r *fakeRepo) SetTitle(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, title string) error {
-	return r.mutate(user, id, func(d *docsbot.Document) { d.Title = title })
-}
-
-func (r *fakeRepo) SetCategory(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) error {
-	return r.mutate(user, id, func(d *docsbot.Document) { d.Category = cat })
-}
-
-// mutate applies fn to the user's document, or ErrNotFound like the :execrows queries.
-func (r *fakeRepo) mutate(user docsbot.UserID, id docsbot.DocumentID, fn func(*docsbot.Document)) error {
-	d, ok := r.docs[id]
-	if !ok || d.UserID != user {
-		return docsbot.ErrNotFound
-	}
-	fn(&d)
-	r.docs[id] = d
-	return nil
-}
-
-func (r *fakeRepo) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
-	if d, ok := r.docs[id]; !ok || d.UserID != user {
-		return docsbot.ErrNotFound
-	}
-	delete(r.docs, id)
-	return nil
 }
 
 func (r *fakeRepo) savedFor(user docsbot.UserID) []docsbot.Document {
@@ -628,16 +591,27 @@ func (r *fakeRepo) SetInlineEnabled(_ context.Context, user docsbot.UserID, on b
 
 // fakeUploads is a no-op Uploads port: handler tests assert on the repo and the
 // sent messages, not on the queue.
-// With repo set it also marks the document pending, like the real enqueue.
+// With repo set, SaveChosen applies the choice to it like the real transaction.
 type fakeUploads struct{ repo *fakeRepo }
 
-func (u fakeUploads) EnqueueUpload(_ context.Context, _ docsbot.UserID, id docsbot.DocumentID) error {
-	if u.repo != nil {
-		d := u.repo.docs[id]
-		d.BackupStatus = docsbot.BackupPending
-		u.repo.docs[id] = d
+func (u fakeUploads) SaveChosen(_ context.Context, c docsbot.SaveChoice) (bool, error) {
+	if u.repo == nil {
+		return true, nil
 	}
-	return nil
+	d, ok := u.repo.docs[c.ID]
+	if !ok || d.UserID != c.User || d.Status != docsbot.StatusPending {
+		return false, nil
+	}
+	d.Category, d.Status = c.Category, docsbot.StatusSaved
+	if c.Title != "" {
+		d.Title = c.Title
+		d.MetaVersion++
+	}
+	if c.Backup != docsbot.BackupNone {
+		d.BackupStatus = c.Backup
+	}
+	u.repo.docs[c.ID] = d
+	return true, nil
 }
 
 func (fakeUploads) RequeueUpload(context.Context, docsbot.UserID, docsbot.DocumentID) error {
@@ -652,14 +626,14 @@ func (fakeUploads) CancelUserJobs(context.Context, docsbot.UserID) error { retur
 // backed-up document with a live file goes sync-pending; no job is run.
 type fakeSyncs struct{ repo *fakeRepo }
 
-func (s fakeSyncs) change(user docsbot.UserID, id docsbot.DocumentID, fn func(*docsbot.Document)) (bool, error) {
+func (s fakeSyncs) change(user docsbot.UserID, id docsbot.DocumentID, cloud bool, fn func(*docsbot.Document)) (bool, error) {
 	d, ok := s.repo.docs[id]
 	if !ok || d.UserID != user {
 		return false, docsbot.ErrNotFound
 	}
 	fn(&d)
 	d.MetaVersion++
-	queued := d.BackupStatus == docsbot.BackupBackedUp && d.SyncStatus != docsbot.SyncMissing
+	queued := cloud && d.BackupStatus == docsbot.BackupBackedUp && d.SyncStatus != docsbot.SyncMissing
 	if queued {
 		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
 	}
@@ -667,12 +641,12 @@ func (s fakeSyncs) change(user docsbot.UserID, id docsbot.DocumentID, fn func(*d
 	return queued, nil
 }
 
-func (s fakeSyncs) SetTitle(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, title string) (bool, error) {
-	return s.change(user, id, func(d *docsbot.Document) { d.Title = title })
+func (s fakeSyncs) SetTitle(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, title string, cloud bool) (bool, error) {
+	return s.change(user, id, cloud, func(d *docsbot.Document) { d.Title = title })
 }
 
-func (s fakeSyncs) SetCategory(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (bool, error) {
-	return s.change(user, id, func(d *docsbot.Document) { d.Category = cat })
+func (s fakeSyncs) SetCategory(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category, cloud bool) (bool, error) {
+	return s.change(user, id, cloud, func(d *docsbot.Document) { d.Category = cat })
 }
 
 func (fakeSyncs) EnqueueSync(context.Context, docsbot.UserID, docsbot.DocumentID) error { return nil }
@@ -729,14 +703,14 @@ func (s fakeSyncs) RetrySync(_ context.Context, user docsbot.UserID, id docsbot.
 	return true, nil
 }
 
-func (s fakeSyncs) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, trash bool) (bool, error) {
+func (s fakeSyncs) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cloud bool) (bool, error) {
 	d, ok := s.repo.docs[id]
 	if !ok || d.UserID != user {
 		return false, docsbot.ErrNotFound
 	}
 	delete(s.repo.docs, id)
 	live := d.BackupStatus == docsbot.BackupBackedUp && d.DriveFileID != "" && d.SyncStatus != docsbot.SyncMissing
-	return live && !trash, nil
+	return live && !cloud, nil
 }
 
 func (fakeSyncs) RequeueSync(context.Context, docsbot.UserID, docsbot.DocumentID) error { return nil }
@@ -751,7 +725,11 @@ func fakeDeps() (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
 func fakeDepsWith(drive fakeDrive) (*docsbot.Service, telegram.Authorizer, *fakeRepo) {
 	repo := newFakeRepo()
 	repo.status = newFakeStatus(repo)
-	return docsbot.NewService(repo, drive, nil, fakeUploads{repo: repo}, repo, repo.status, fakeSyncs{repo: repo}), fakeAuth{}, repo
+	uploads := fakeUploads{repo: repo}
+	return docsbot.NewService(docsbot.Ports{
+		Repo: repo, Drive: drive, Uploads: uploads, Jobs: uploads,
+		Folders: repo, Status: repo.status, Syncs: fakeSyncs{repo: repo},
+	}), fakeAuth{}, repo
 }
 
 func (r *fakeRepo) MarkSynced(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, version int) (bool, error) {
@@ -884,6 +862,8 @@ func (s *fakeStatus) Create(_ context.Context, user docsbot.UserID, chatID int64
 	s.msgs[m.ID] = m
 	return m, nil
 }
+
+func (s *fakeStatus) PurgeClosed(context.Context, time.Time) (int, error) { return 0, nil }
 
 func (s *fakeStatus) Close(_ context.Context, user docsbot.UserID, id docsbot.StatusMessageID) error {
 	if m, ok := s.msgs[id]; ok && m.UserID == user {

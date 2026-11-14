@@ -117,7 +117,6 @@ func setupSync(t *testing.T, drive docsbot.Drive) syncEnv {
 	t.Helper()
 	ctx := t.Context()
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool)
 	log := slog.New(slog.DiscardHandler)
 
 	var uid, did string
@@ -131,8 +130,8 @@ func setupSync(t *testing.T, drive docsbot.Drive) syncEnv {
 	bindTrash := jobs.RegisterStorageTrash(workers, log)
 	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
 	require.NoError(t, err)
-	enq := jobs.NewEnqueuer(repo, queue)
-	svc := docsbot.NewService(repo, drive, fakeFiles{}, enq, repo, repo, enq)
+	jq := jobs.NewQueue(queue)
+	svc := newService(pool, postgres.NewDocuments(pool, jq), jq, drive, fakeFiles{})
 	spy := &syncSpy{}
 	bindSync(svc, spy)
 	bindTrash(svc, spy)

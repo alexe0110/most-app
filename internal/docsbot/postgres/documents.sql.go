@@ -172,26 +172,6 @@ func (q *Queries) CountSavedDocuments(ctx context.Context, userID pgtype.UUID) (
 	return count, err
 }
 
-const deleteDocumentByID = `-- name: DeleteDocumentByID :execrows
-delete
-from documents
-where id = $1
-  and user_id = $2
-`
-
-type DeleteDocumentByIDParams struct {
-	ID     pgtype.UUID
-	UserID pgtype.UUID
-}
-
-func (q *Queries) DeleteDocumentByID(ctx context.Context, arg DeleteDocumentByIDParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteDocumentByID, arg.ID, arg.UserID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const deleteDocumentReturning = `-- name: DeleteDocumentReturning :one
 delete
 from documents
@@ -328,6 +308,9 @@ type FailDocumentBackupParams struct {
 	UserID       pgtype.UUID
 }
 
+// Unconditional on purpose: correct only while the upload queue runs one worker
+// (MaxWorkers: 1). Not guarded by the current status: the worker also fails a
+// document that was reset to none or already failed by the sweeper meanwhile.
 func (q *Queries) FailDocumentBackup(ctx context.Context, arg FailDocumentBackupParams) error {
 	_, err := q.db.Exec(ctx, failDocumentBackup, arg.BackupReason, arg.ID, arg.UserID)
 	return err
@@ -501,6 +484,7 @@ func (q *Queries) InlineSearchDocuments(ctx context.Context, arg InlineSearchDoc
 const insertDocument = `-- name: InsertDocument :one
 insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, file_size, mime_type, media_group_id, page_count, image_width, image_height)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, nullif($11::integer, 0), nullif($12::integer, 0), nullif($13::integer, 0))
+on conflict (user_id, tg_file_unique_id) do nothing
 returning id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height, backup_reason
 `
 
@@ -521,7 +505,9 @@ type InsertDocumentParams struct {
 }
 
 // A received file starts as pending with no category; the category and 'saved'
-// status are set once the user picks one (SaveDocumentCategory).
+// status are set once the user picks one (SaveDocumentCategory). A file the user
+// already has inserts nothing and returns no row, so a parallel send of the same
+// file is not an error.
 func (q *Queries) InsertDocument(ctx context.Context, arg InsertDocumentParams) (Document, error) {
 	row := q.db.QueryRow(ctx, insertDocument,
 		arg.UserID,
@@ -780,6 +766,8 @@ type MarkDocumentBackedUpSyncParams struct {
 
 // Marks the document backed up and, in the same statement, queues a sync when the
 // title or category changed since the upload started (meta_version differs).
+// Unconditional on purpose: correct only while the upload queue runs one worker
+// (MaxWorkers: 1), so no second upload of the same document races this one.
 func (q *Queries) MarkDocumentBackedUpSync(ctx context.Context, arg MarkDocumentBackedUpSyncParams) (int32, error) {
 	row := q.db.QueryRow(ctx, markDocumentBackedUpSync,
 		arg.DriveFileID,
@@ -806,6 +794,9 @@ type MarkDocumentUploadingParams struct {
 	UserID pgtype.UUID
 }
 
+// Unconditional on purpose: correct only while the upload queue runs one worker
+// (MaxWorkers: 1). Not guarded by the current status: a worker that outlived the
+// sweeper's failing of its document still claims it (see Service.Backup).
 func (q *Queries) MarkDocumentUploading(ctx context.Context, arg MarkDocumentUploadingParams) error {
 	_, err := q.db.Exec(ctx, markDocumentUploading, arg.ID, arg.UserID)
 	return err
@@ -1106,6 +1097,9 @@ type SetSyncStatusParams struct {
 	UserID     pgtype.UUID
 }
 
+// Unconditional on purpose: correct only while the upload queue, which also runs
+// the sync workers, has one worker (MaxWorkers: 1). A check that must not overwrite
+// a newer state uses TransitionSyncStatus instead.
 func (q *Queries) SetSyncStatus(ctx context.Context, arg SetSyncStatusParams) error {
 	_, err := q.db.Exec(ctx, setSyncStatus,
 		arg.SyncStatus,
@@ -1271,37 +1265,6 @@ func (q *Queries) TransitionSyncStatus(ctx context.Context, arg TransitionSyncSt
 	return result.RowsAffected(), nil
 }
 
-const updateCategoryForSync = `-- name: UpdateCategoryForSync :one
-update documents
-set category     = $1,
-    meta_version = meta_version + 1,
-    sync_status  = case when backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
-    sync_reason  = case when backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
-    updated_at   = now()
-where id = $2
-  and user_id = $3
-returning backup_status, sync_status
-`
-
-type UpdateCategoryForSyncParams struct {
-	Category string
-	ID       pgtype.UUID
-	UserID   pgtype.UUID
-}
-
-type UpdateCategoryForSyncRow struct {
-	BackupStatus string
-	SyncStatus   string
-}
-
-// Same as UpdateTitleForSync, for the category.
-func (q *Queries) UpdateCategoryForSync(ctx context.Context, arg UpdateCategoryForSyncParams) (UpdateCategoryForSyncRow, error) {
-	row := q.db.QueryRow(ctx, updateCategoryForSync, arg.Category, arg.ID, arg.UserID)
-	var i UpdateCategoryForSyncRow
-	err := row.Scan(&i.BackupStatus, &i.SyncStatus)
-	return i, err
-}
-
 const updateDocumentBackupStatus = `-- name: UpdateDocumentBackupStatus :exec
 update documents
 set backup_status = $1,
@@ -1317,86 +1280,86 @@ type UpdateDocumentBackupStatusParams struct {
 	UserID       pgtype.UUID
 }
 
+// Unconditional on purpose: correct only while the upload queue runs one worker
+// (MaxWorkers: 1), so no other writer races this status. Callers set it from any
+// state (a retry, a reset after a disconnect, too_large).
 func (q *Queries) UpdateDocumentBackupStatus(ctx context.Context, arg UpdateDocumentBackupStatusParams) error {
 	_, err := q.db.Exec(ctx, updateDocumentBackupStatus, arg.BackupStatus, arg.ID, arg.UserID)
 	return err
 }
 
-const updateDocumentCategory = `-- name: UpdateDocumentCategory :execrows
+const updateDocumentCategory = `-- name: UpdateDocumentCategory :one
 update documents
 set category     = $1,
     meta_version = meta_version + 1,
+    sync_status  = case when $2::bool and backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
+    sync_reason  = case when $2::bool and backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
     updated_at   = now()
-where id = $2
-  and user_id = $3
+where id = $3
+  and user_id = $4
+returning backup_status, sync_status
 `
 
 type UpdateDocumentCategoryParams struct {
 	Category string
+	Cloud    bool
 	ID       pgtype.UUID
 	UserID   pgtype.UUID
 }
 
-func (q *Queries) UpdateDocumentCategory(ctx context.Context, arg UpdateDocumentCategoryParams) (int64, error) {
-	result, err := q.db.Exec(ctx, updateDocumentCategory, arg.Category, arg.ID, arg.UserID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+type UpdateDocumentCategoryRow struct {
+	BackupStatus string
+	SyncStatus   string
 }
 
-const updateDocumentTitle = `-- name: UpdateDocumentTitle :execrows
+// Same as UpdateDocumentTitle, for the category.
+func (q *Queries) UpdateDocumentCategory(ctx context.Context, arg UpdateDocumentCategoryParams) (UpdateDocumentCategoryRow, error) {
+	row := q.db.QueryRow(ctx, updateDocumentCategory,
+		arg.Category,
+		arg.Cloud,
+		arg.ID,
+		arg.UserID,
+	)
+	var i UpdateDocumentCategoryRow
+	err := row.Scan(&i.BackupStatus, &i.SyncStatus)
+	return i, err
+}
+
+const updateDocumentTitle = `-- name: UpdateDocumentTitle :one
 update documents
 set title        = $1,
     meta_version = meta_version + 1,
+    sync_status  = case when $2::bool and backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
+    sync_reason  = case when $2::bool and backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
     updated_at   = now()
-where id = $2
-  and user_id = $3
+where id = $3
+  and user_id = $4
+returning backup_status, sync_status
 `
 
 type UpdateDocumentTitleParams struct {
 	Title  string
+	Cloud  bool
 	ID     pgtype.UUID
 	UserID pgtype.UUID
 }
 
-func (q *Queries) UpdateDocumentTitle(ctx context.Context, arg UpdateDocumentTitleParams) (int64, error) {
-	result, err := q.db.Exec(ctx, updateDocumentTitle, arg.Title, arg.ID, arg.UserID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const updateTitleForSync = `-- name: UpdateTitleForSync :one
-update documents
-set title        = $1,
-    meta_version = meta_version + 1,
-    sync_status  = case when backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
-    sync_reason  = case when backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
-    updated_at   = now()
-where id = $2
-  and user_id = $3
-returning backup_status, sync_status
-`
-
-type UpdateTitleForSyncParams struct {
-	Title  string
-	ID     pgtype.UUID
-	UserID pgtype.UUID
-}
-
-type UpdateTitleForSyncRow struct {
+type UpdateDocumentTitleRow struct {
 	BackupStatus string
 	SyncStatus   string
 }
 
 // Renames and, in the same statement, decides whether the Drive file must follow:
-// a backed-up document with a live file goes to sync_status pending. The caller
-// enqueues the sync job in the same transaction.
-func (q *Queries) UpdateTitleForSync(ctx context.Context, arg UpdateTitleForSyncParams) (UpdateTitleForSyncRow, error) {
-	row := q.db.QueryRow(ctx, updateTitleForSync, arg.Title, arg.ID, arg.UserID)
-	var i UpdateTitleForSyncRow
+// with @cloud (Drive connected) a backed-up document with a live file goes to
+// sync_status pending. The caller enqueues the sync job in the same transaction.
+func (q *Queries) UpdateDocumentTitle(ctx context.Context, arg UpdateDocumentTitleParams) (UpdateDocumentTitleRow, error) {
+	row := q.db.QueryRow(ctx, updateDocumentTitle,
+		arg.Title,
+		arg.Cloud,
+		arg.ID,
+		arg.UserID,
+	)
+	var i UpdateDocumentTitleRow
 	err := row.Scan(&i.BackupStatus, &i.SyncStatus)
 	return i, err
 }

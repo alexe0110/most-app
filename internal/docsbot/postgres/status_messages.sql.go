@@ -51,6 +51,28 @@ func (q *Queries) CloseStatusMessage(ctx context.Context, arg CloseStatusMessage
 	return err
 }
 
+const deleteClosedStatusMessages = `-- name: DeleteClosedStatusMessages :execrows
+delete
+from status_messages
+where closed_at < $1
+  and not exists (select 1
+                  from documents d
+                  where d.status_message_id = status_messages.id
+                    and d.backup_status = 'failed')
+`
+
+// Global TTL purge: status messages closed before @older_than. Documents keep
+// living: documents.status_message_id is on delete set null. A message with a
+// failed upload stays: its «Повторить» button looks the row up, and without it
+// the user would get a generic error.
+func (q *Queries) DeleteClosedStatusMessages(ctx context.Context, olderThan pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteClosedStatusMessages, olderThan)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteUserStatusMessages = `-- name: DeleteUserStatusMessages :exec
 delete
 from status_messages

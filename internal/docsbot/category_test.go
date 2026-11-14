@@ -45,7 +45,7 @@ func TestService_Catalog_foldsRetiredSlugs(t *testing.T) {
 	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "b", Category: docsbot.CatOther})
 	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "c", Category: docsbot.CatWork})
 	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "d", Category: docsbot.CatPassport})
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 	cat, err := svc.Catalog(t.Context(), user)
 	require.NoError(t, err)

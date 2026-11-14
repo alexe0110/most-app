@@ -13,15 +13,15 @@ import (
 )
 
 // saveDoc inserts a saved document for u with the given backup_status.
-func saveDoc(t *testing.T, repo *postgres.Repo, u postgres.User, uniq, backup string) {
+func saveDoc(t *testing.T, repo *adapters, u postgres.User, uniq, backup string) {
 	t.Helper()
 	ctx := t.Context()
-	d, err := repo.InsertDocument(ctx, postgres.InsertDocumentParams{
+	d, err := repo.q.InsertDocument(ctx, postgres.InsertDocumentParams{
 		UserID: u.ID, Status: "saved", Kind: "document", Category: "passport",
 		Title: "t", TgFileID: "f-" + uniq, TgFileUniqueID: uniq,
 	})
 	require.NoError(t, err)
-	require.NoError(t, repo.UpdateDocumentBackupStatus(ctx, postgres.UpdateDocumentBackupStatusParams{
+	require.NoError(t, repo.q.UpdateDocumentBackupStatus(ctx, postgres.UpdateDocumentBackupStatusParams{
 		ID: d.ID, UserID: u.ID, BackupStatus: backup,
 	}))
 }
@@ -34,11 +34,11 @@ func TestRepo_DeleteUserData(t *testing.T) {
 	other := makeUser(t, repo, 401)
 	saveDoc(t, repo, u, "u-doc", "backed_up")
 	saveDoc(t, repo, other, "o-doc", "none")
-	_, err := repo.UpsertIntegration(ctx, postgres.UpsertIntegrationParams{
+	_, err := repo.q.UpsertIntegration(ctx, postgres.UpsertIntegrationParams{
 		UserID: u.ID, Bot: "docs", Provider: "google", RefreshTokenEnc: []byte{0x01}, Status: "active",
 	})
 	require.NoError(t, err)
-	_, err = repo.UpsertDriveFolder(ctx, postgres.UpsertDriveFolderParams{
+	_, err = repo.q.UpsertDriveFolder(ctx, postgres.UpsertDriveFolderParams{
 		UserID: u.ID, Category: "passport", DriveFolderID: "folder-1",
 	})
 	require.NoError(t, err)
@@ -49,11 +49,11 @@ func TestRepo_DeleteUserData(t *testing.T) {
 	n, err := repo.CountSaved(ctx, docsbot.UserID(u.ID.String()))
 	require.NoError(t, err)
 	require.Equal(t, 0, n, "documents deleted")
-	_, err = repo.GetIntegration(ctx, postgres.GetIntegrationParams{UserID: u.ID, Bot: "docs", Provider: "google"})
+	_, err = repo.q.GetIntegration(ctx, postgres.GetIntegrationParams{UserID: u.ID, Bot: "docs", Provider: "google"})
 	require.ErrorIs(t, err, pgx.ErrNoRows, "integration deleted")
-	_, err = repo.GetDriveFolder(ctx, postgres.GetDriveFolderParams{UserID: u.ID, Category: "passport"})
+	_, err = repo.q.GetDriveFolder(ctx, postgres.GetDriveFolderParams{UserID: u.ID, Category: "passport"})
 	require.ErrorIs(t, err, pgx.ErrNoRows, "drive folder deleted")
-	_, err = repo.GetUserByTgID(ctx, 400)
+	_, err = repo.q.GetUserByTgID(ctx, 400)
 	require.ErrorIs(t, err, pgx.ErrNoRows, "user is soft-deleted (hidden)")
 
 	// A second user's data is untouched.
@@ -68,13 +68,13 @@ func TestRepo_EnsureUserRevivesAfterDelete(t *testing.T) {
 	repo := newRepo(t)
 	ctx := t.Context()
 
-	first, err := repo.EnsureUser(ctx, postgres.EnsureUserParams{TgUserID: 500, Lang: "ru"})
+	first, err := repo.q.EnsureUser(ctx, postgres.EnsureUserParams{TgUserID: 500, Lang: "ru"})
 	require.NoError(t, err)
 	saveDoc(t, repo, first, "doc", "none")
 
 	require.NoError(t, repo.DeleteUserData(ctx, docsbot.UserID(first.ID.String())))
 
-	again, err := repo.EnsureUser(ctx, postgres.EnsureUserParams{TgUserID: 500, Lang: "ru"})
+	again, err := repo.q.EnsureUser(ctx, postgres.EnsureUserParams{TgUserID: 500, Lang: "ru"})
 	require.NoError(t, err)
 	require.Equal(t, first.ID, again.ID, "same account is revived")
 	require.False(t, again.DeletedAt.Valid, "deleted_at is cleared")

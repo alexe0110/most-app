@@ -12,29 +12,27 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
-	"github.com/alexe0110/most-app/internal/docsbot/postgres"
 	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 )
 
 // inlineEnv is a repo over a fresh database with a pool for direct fixtures.
-func inlineEnv(t *testing.T) (*postgres.Repo, *pgxpool.Pool) {
+func inlineEnv(t *testing.T) (*adapters, *pgxpool.Pool) {
 	t.Helper()
 	pool := dbtest.New(t)
-	return postgres.NewRepo(pool), pool
+	return newAdapters(pool, noJobs{}), pool
 }
 
 // savedAt stores a saved document and backdates it by age, so ordering is deterministic.
-func savedAt(t *testing.T, repo *postgres.Repo, pool *pgxpool.Pool, user docsbot.UserID, title string, cat docsbot.Category, age time.Duration) docsbot.Document {
+func savedAt(t *testing.T, repo *adapters, pool *pgxpool.Pool, user docsbot.UserID, title string, cat docsbot.Category, age time.Duration) {
 	t.Helper()
 	ctx := t.Context()
 	d, err := repo.CreateDocument(ctx, docsbot.IncomingFile{
 		UserID: user, Kind: docsbot.KindDocument, Title: title, FileID: "f-" + title + string(user), FileUniqueID: "u-" + title + string(user),
 	})
 	require.NoError(t, err)
-	mustSave(t, ctx, repo, user, d.ID, cat)
+	mustSave(t, repo, user, d.ID, cat)
 	_, err = pool.Exec(ctx, "update documents set created_at = now() - $2::interval where id = $1", string(d.ID), fmt.Sprintf("%d seconds", int(age.Seconds())))
 	require.NoError(t, err)
-	return d
 }
 
 func titles(docs []docsbot.Document) []string {
@@ -141,7 +139,7 @@ func TestInline_lookup(t *testing.T) {
 	_, found, err = repo.Lookup(ctx, 999)
 	require.NoError(t, err)
 	require.False(t, found, "unknown user is not created")
-	_, err = repo.GetUserByTgID(ctx, 999)
+	_, err = repo.q.GetUserByTgID(ctx, 999)
 	require.ErrorIs(t, err, pgx.ErrNoRows)
 
 	require.NoError(t, repo.DeleteUserData(ctx, docsbot.UserID(u.ID.String())))

@@ -8,7 +8,7 @@ import (
 // ResetDriveFolders clears the user's cached Drive folder ids, so folders are
 // found or created afresh (the Drive may now belong to another Google account).
 func (s *Service) ResetDriveFolders(ctx context.Context, user UserID) error {
-	if err := s.repo.DeleteAllFolders(ctx, user); err != nil {
+	if err := s.folders.DeleteAllFolders(ctx, user); err != nil {
 		return fmt.Errorf("delete all folders: %w", err)
 	}
 	return nil
@@ -61,7 +61,7 @@ func (s *Service) Disconnect(ctx context.Context, user UserID) error {
 	if err := s.drive.Disconnect(ctx, user); err != nil {
 		return fmt.Errorf("disconnect drive: %w", err)
 	}
-	if err := s.uploads.CancelUploads(ctx, user); err != nil {
+	if err := s.jobs.CancelUploads(ctx, user); err != nil {
 		return fmt.Errorf("cancel uploads: %w", err)
 	}
 	if err := s.repo.ResetPendingUploads(ctx, user); err != nil {
@@ -76,7 +76,7 @@ func (s *Service) Disconnect(ctx context.Context, user UserID) error {
 // treat as success.
 func (s *Service) DeleteAllData(ctx context.Context, user UserID) error {
 	revokeErr := s.drive.Revoke(ctx, user)
-	if err := s.uploads.CancelUserJobs(ctx, user); err != nil {
+	if err := s.jobs.CancelUserJobs(ctx, user); err != nil {
 		return fmt.Errorf("cancel jobs: %w", err)
 	}
 	if err := s.repo.DeleteUserData(ctx, user); err != nil {

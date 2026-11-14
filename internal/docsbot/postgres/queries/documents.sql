@@ -1,8 +1,11 @@
 -- name: InsertDocument :one
 -- A received file starts as pending with no category; the category and 'saved'
--- status are set once the user picks one (SaveDocumentCategory).
+-- status are set once the user picks one (SaveDocumentCategory). A file the user
+-- already has inserts nothing and returns no row, so a parallel send of the same
+-- file is not an error.
 insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, file_size, mime_type, media_group_id, page_count, image_width, image_height)
 values (@user_id, @status, @kind, @category, @title, @tg_file_id, @tg_file_unique_id, @file_size, @mime_type, @media_group_id, nullif(@page_count::integer, 0), nullif(@image_width::integer, 0), nullif(@image_height::integer, 0))
+on conflict (user_id, tg_file_unique_id) do nothing
 returning *;
 
 -- name: TitleExistsInCategory :one
@@ -38,6 +41,9 @@ where id = @id
   and status = 'pending';
 
 -- name: UpdateDocumentBackupStatus :exec
+-- Unconditional on purpose: correct only while the upload queue runs one worker
+-- (MaxWorkers: 1), so no other writer races this status. Callers set it from any
+-- state (a retry, a reset after a disconnect, too_large).
 update documents
 set backup_status = @backup_status,
     backup_reason = null,
@@ -46,6 +52,9 @@ where id = @id
   and user_id = @user_id;
 
 -- name: FailDocumentBackup :exec
+-- Unconditional on purpose: correct only while the upload queue runs one worker
+-- (MaxWorkers: 1). Not guarded by the current status: the worker also fails a
+-- document that was reset to none or already failed by the sweeper meanwhile.
 update documents
 set backup_status = 'failed',
     backup_reason = @backup_reason,
@@ -54,6 +63,9 @@ where id = @id
   and user_id = @user_id;
 
 -- name: MarkDocumentUploading :exec
+-- Unconditional on purpose: correct only while the upload queue runs one worker
+-- (MaxWorkers: 1). Not guarded by the current status: a worker that outlived the
+-- sweeper's failing of its document still claims it (see Service.Backup).
 update documents
 set backup_status = 'uploading',
     backup_reason = null
@@ -78,27 +90,31 @@ where id = @id
   and user_id = @user_id
   and (backup_status = 'failed' or (backup_status = 'backed_up' and sync_status = 'missing'));
 
--- name: UpdateDocumentTitle :execrows
+-- name: UpdateDocumentTitle :one
+-- Renames and, in the same statement, decides whether the Drive file must follow:
+-- with @cloud (Drive connected) a backed-up document with a live file goes to
+-- sync_status pending. The caller enqueues the sync job in the same transaction.
 update documents
 set title        = @title,
     meta_version = meta_version + 1,
+    sync_status  = case when @cloud::bool and backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
+    sync_reason  = case when @cloud::bool and backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
     updated_at   = now()
 where id = @id
-  and user_id = @user_id;
+  and user_id = @user_id
+returning backup_status, sync_status;
 
--- name: UpdateDocumentCategory :execrows
+-- name: UpdateDocumentCategory :one
+-- Same as UpdateDocumentTitle, for the category.
 update documents
 set category     = @category,
     meta_version = meta_version + 1,
+    sync_status  = case when @cloud::bool and backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
+    sync_reason  = case when @cloud::bool and backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
     updated_at   = now()
 where id = @id
-  and user_id = @user_id;
-
--- name: DeleteDocumentByID :execrows
-delete
-from documents
-where id = @id
-  and user_id = @user_id;
+  and user_id = @user_id
+returning backup_status, sync_status;
 
 -- name: DeleteDocumentReturning :one
 -- Deletes and reports what the Drive copy was, decided under the row lock.
@@ -174,6 +190,8 @@ limit @lim offset @off;
 -- name: MarkDocumentBackedUpSync :one
 -- Marks the document backed up and, in the same statement, queues a sync when the
 -- title or category changed since the upload started (meta_version differs).
+-- Unconditional on purpose: correct only while the upload queue runs one worker
+-- (MaxWorkers: 1), so no second upload of the same document races this one.
 update documents
 set backup_status = 'backed_up',
     backup_reason = null,
@@ -210,32 +228,6 @@ where id = @id
   and backup_status not in ('pending', 'uploading')
   and sync_status not in ('pending', 'missing')
 returning backup_status;
-
--- name: UpdateTitleForSync :one
--- Renames and, in the same statement, decides whether the Drive file must follow:
--- a backed-up document with a live file goes to sync_status pending. The caller
--- enqueues the sync job in the same transaction.
-update documents
-set title        = @title,
-    meta_version = meta_version + 1,
-    sync_status  = case when backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
-    sync_reason  = case when backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
-    updated_at   = now()
-where id = @id
-  and user_id = @user_id
-returning backup_status, sync_status;
-
--- name: UpdateCategoryForSync :one
--- Same as UpdateTitleForSync, for the category.
-update documents
-set category     = @category,
-    meta_version = meta_version + 1,
-    sync_status  = case when backup_status = 'backed_up' and sync_status <> 'missing' then 'pending' else sync_status end,
-    sync_reason  = case when backup_status = 'backed_up' and sync_status <> 'missing' then null else sync_reason end,
-    updated_at   = now()
-where id = @id
-  and user_id = @user_id
-returning backup_status, sync_status;
 
 -- name: MarkSyncPending :execrows
 -- 0 rows: the document is gone, not backed up, or its Drive file is missing.
@@ -274,6 +266,9 @@ where id = @id
   and sync_status = 'pending';
 
 -- name: SetSyncStatus :exec
+-- Unconditional on purpose: correct only while the upload queue, which also runs
+-- the sync workers, has one worker (MaxWorkers: 1). A check that must not overwrite
+-- a newer state uses TransitionSyncStatus instead.
 update documents
 set sync_status = @sync_status,
     sync_reason = @sync_reason

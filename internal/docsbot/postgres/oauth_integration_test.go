@@ -16,13 +16,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 
-	"github.com/alexe0110/most-app/internal/docsbot/postgres"
 	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 	"github.com/alexe0110/most-app/internal/platform/oauth"
 )
 
 func TestRepo_OAuthState_oneShot(t *testing.T) {
-	repo := postgres.NewRepo(dbtest.New(t))
+	repo := newAdapters(dbtest.New(t), noJobs{})
 	ctx := t.Context()
 	u := makeUser(t, repo, 700)
 
@@ -47,7 +46,7 @@ func TestRepo_OAuthState_oneShot(t *testing.T) {
 }
 
 func TestRepo_Integration_statusRoundTrip(t *testing.T) {
-	repo := postgres.NewRepo(dbtest.New(t))
+	repo := newAdapters(dbtest.New(t), noJobs{})
 	ctx := t.Context()
 	u := makeUser(t, repo, 701)
 
@@ -74,7 +73,7 @@ func TestOAuthFlow_tokenEncryptedAtRest(t *testing.T) {
 	const refreshPlaintext = "refresh-super-secret"
 
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool)
+	repo := newAdapters(pool, noJobs{})
 	ctx := t.Context()
 	u := makeUser(t, repo, 702)
 

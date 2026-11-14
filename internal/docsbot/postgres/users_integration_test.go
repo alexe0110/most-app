@@ -15,7 +15,7 @@ import (
 
 func TestRepo_Ensure(t *testing.T) {
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool)
+	repo := newAdapters(pool, noJobs{})
 	ctx := t.Context()
 
 	// First contact creates the user.
@@ -33,27 +33,27 @@ func TestRepo_Ensure(t *testing.T) {
 	require.Equal(t, 1, count)
 
 	// A returning (soft-deleted) user is revived by Ensure, keeping the same id.
-	u, err := repo.GetUserByTgID(ctx, 500)
+	u, err := repo.q.GetUserByTgID(ctx, 500)
 	require.NoError(t, err)
-	require.NoError(t, repo.SoftDeleteUser(ctx, u.ID))
-	_, err = repo.GetUserByTgID(ctx, 500)
+	require.NoError(t, repo.q.SoftDeleteUser(ctx, u.ID))
+	_, err = repo.q.GetUserByTgID(ctx, 500)
 	require.ErrorIs(t, err, pgx.ErrNoRows, "soft-deleted user is hidden")
 
 	id3, err := repo.Ensure(ctx, 500, "ru")
 	require.NoError(t, err)
 	require.Equal(t, id1, id3)
-	_, err = repo.GetUserByTgID(ctx, 500)
+	_, err = repo.q.GetUserByTgID(ctx, 500)
 	require.NoError(t, err, "Ensure revived the user")
 }
 
 func TestRepo_Ensure_defaultLang(t *testing.T) {
-	repo := postgres.NewRepo(dbtest.New(t))
+	repo := newAdapters(dbtest.New(t), noJobs{})
 	ctx := t.Context()
 
 	_, err := repo.Ensure(ctx, 600, "")
 	require.NoError(t, err)
 
-	u, err := repo.GetUserByTgID(ctx, 600)
+	u, err := repo.q.GetUserByTgID(ctx, 600)
 	require.NoError(t, err)
 	require.Equal(t, "ru", u.Lang, "empty Telegram lang falls back to ru")
 }
@@ -66,16 +66,16 @@ const purgeSQL = `delete from users where deleted_at is not null`
 // leaves alone; after the purge the same message creates a fresh user row.
 func TestUser_deletedThenMessageAroundPurge(t *testing.T) {
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool)
+	repo := newAdapters(pool, noJobs{})
 	ctx := t.Context()
 
-	first, err := repo.EnsureUser(ctx, postgres.EnsureUserParams{TgUserID: 800, Lang: "ru"})
+	first, err := repo.q.EnsureUser(ctx, postgres.EnsureUserParams{TgUserID: 800, Lang: "ru"})
 	require.NoError(t, err)
 	saveDoc(t, repo, first, "old", "none")
 	require.NoError(t, repo.DeleteUserData(ctx, docsbot.UserID(first.ID.String())))
 
 	// Before the purge: revived, same id, no old documents.
-	revived, err := repo.EnsureUser(ctx, postgres.EnsureUserParams{TgUserID: 800, Lang: "ru"})
+	revived, err := repo.q.EnsureUser(ctx, postgres.EnsureUserParams{TgUserID: 800, Lang: "ru"})
 	require.NoError(t, err)
 	require.Equal(t, first.ID, revived.ID)
 	n, err := repo.CountSaved(ctx, docsbot.UserID(revived.ID.String()))
@@ -85,7 +85,7 @@ func TestUser_deletedThenMessageAroundPurge(t *testing.T) {
 	// The purge does not touch the revived user.
 	_, err = pool.Exec(ctx, purgeSQL)
 	require.NoError(t, err)
-	_, err = repo.GetUserByTgID(ctx, 800)
+	_, err = repo.q.GetUserByTgID(ctx, 800)
 	require.NoError(t, err, "revived user survives the purge")
 
 	// Delete again, purge, then message: a brand-new row with no data.
@@ -93,7 +93,7 @@ func TestUser_deletedThenMessageAroundPurge(t *testing.T) {
 	_, err = pool.Exec(ctx, purgeSQL)
 	require.NoError(t, err)
 
-	fresh, err := repo.EnsureUser(ctx, postgres.EnsureUserParams{TgUserID: 800, Lang: "ru"})
+	fresh, err := repo.q.EnsureUser(ctx, postgres.EnsureUserParams{TgUserID: 800, Lang: "ru"})
 	require.NoError(t, err)
 	require.NotEqual(t, first.ID, fresh.ID, "purged user comes back as a new row")
 	n, err = repo.CountSaved(ctx, docsbot.UserID(fresh.ID.String()))

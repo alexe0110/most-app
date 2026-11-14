@@ -10,11 +10,12 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
+	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 )
 
-func newDoc(t *testing.T, repo *postgres.Repo, u postgres.User, uniq string) docsbot.DocumentID {
+func newDoc(t *testing.T, repo *adapters, u postgres.User, uniq string) docsbot.DocumentID {
 	t.Helper()
-	d, err := repo.InsertDocument(t.Context(), postgres.InsertDocumentParams{
+	d, err := repo.q.InsertDocument(t.Context(), postgres.InsertDocumentParams{
 		UserID: u.ID, Status: "saved", Kind: "document", Category: "passport",
 		Title: "t-" + uniq, TgFileID: "f-" + uniq, TgFileUniqueID: uniq,
 	})
@@ -155,4 +156,69 @@ func TestStatusMessages_deleteUserData(t *testing.T) {
 	docs, err := repo.DocumentsIn(ctx, otherID, keep.ID)
 	require.NoError(t, err)
 	require.Len(t, docs, 1)
+}
+
+func TestStatusMessages_purgeClosedKeepsOpenAndRecent(t *testing.T) {
+	pool := dbtest.New(t)
+	repo := newAdapters(pool, noJobs{})
+	ctx := t.Context()
+	u := makeUser(t, repo, 830)
+	other := makeUser(t, repo, 831)
+	user, otherID := docsbot.UserID(u.ID.String()), docsbot.UserID(other.ID.String())
+
+	closedAt := func(sm docsbot.StatusMessage, age string) {
+		t.Helper()
+		_, err := pool.Exec(ctx, `update status_messages set closed_at = now() - $2::interval where id = $1::uuid`, string(sm.ID), age)
+		require.NoError(t, err)
+	}
+	newClosed := func(owner docsbot.UserID, msgID int, age string) docsbot.StatusMessage {
+		t.Helper()
+		sm, err := repo.Create(ctx, owner, 830, msgID, docsbot.StatusBatch)
+		require.NoError(t, err)
+		require.NoError(t, repo.Close(ctx, owner, sm.ID))
+		closedAt(sm, age)
+		return sm
+	}
+	old := newClosed(user, 1, "30 hours")
+	oldOther := newClosed(otherID, 2, "48 hours")
+	recent := newClosed(user, 3, "1 hour")
+	open, err := repo.Create(ctx, user, 830, 4, docsbot.StatusBatch)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `update status_messages set created_at = now() - interval '72 hours' where id = $1::uuid`, string(open.ID))
+	require.NoError(t, err)
+	attached := newDoc(t, repo, u, "p1")
+	kept := newDoc(t, repo, u, "p2")
+	require.NoError(t, repo.Attach(ctx, user, attached, old.ID))
+	require.NoError(t, repo.Attach(ctx, user, kept, recent.ID))
+	// A failed upload keeps its message: the «Повторить» button on it still needs the row.
+	withFailed := newClosed(user, 5, "30 hours")
+	failed := newDoc(t, repo, u, "p3")
+	require.NoError(t, repo.Attach(ctx, user, failed, withFailed.ID))
+	require.NoError(t, repo.SetBackupStatus(ctx, user, failed, docsbot.BackupFailed))
+
+	n, err := repo.PurgeClosed(ctx, time.Now().Add(-24*time.Hour))
+
+	require.NoError(t, err)
+	require.Equal(t, 2, n, "closed messages of every user past the cutoff, except the one with a failed upload")
+	_, err = repo.ByID(ctx, user, old.ID)
+	require.ErrorIs(t, err, docsbot.ErrNotFound)
+	_, err = repo.ByID(ctx, otherID, oldOther.ID)
+	require.ErrorIs(t, err, docsbot.ErrNotFound)
+	_, err = repo.ByID(ctx, user, recent.ID)
+	require.NoError(t, err, "closed recently: kept")
+	_, err = repo.ByID(ctx, user, open.ID)
+	require.NoError(t, err, "open stays however old")
+	_, err = repo.ByID(ctx, user, withFailed.ID)
+	require.NoError(t, err, "closed long ago but a document in it failed to upload: kept")
+
+	got, err := repo.DocumentByID(ctx, user, attached)
+	require.NoError(t, err, "documents outlive their status message")
+	require.Empty(t, got.StatusMessageID, "and are detached from it")
+	got, err = repo.DocumentByID(ctx, user, kept)
+	require.NoError(t, err)
+	require.Equal(t, recent.ID, got.StatusMessageID)
+
+	n, err = repo.PurgeClosed(ctx, time.Now().Add(-24*time.Hour))
+	require.NoError(t, err)
+	require.Zero(t, n, "nothing left to purge")
 }

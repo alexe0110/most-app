@@ -6,14 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
-
-// providerGoogle names the cloud provider a trash job targets.
-const providerGoogle = "google"
 
 // StorageTrashArgs is the River job that moves a deleted document's cloud file
 // to the provider's trash. The document row is already gone, so the job carries
@@ -75,17 +71,4 @@ func RegisterStorageTrash(workers *river.Workers, log *slog.Logger) func(Trasher
 	w := &trashWorker{log: log}
 	river.AddWorker(workers, w)
 	return func(svc Trasher, n TrashNotifier) { w.svc, w.notify = svc, n }
-}
-
-// DeleteDocument implements docsbot.Syncs: the row is deleted and, when the
-// document had a live Drive file and trash is wanted, the trash job queued in
-// one transaction.
-func (e *Enqueuer) DeleteDocument(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID, trash bool) (bool, error) {
-	return e.store.DeleteForSync(ctx, user, id, trash, func(ctx context.Context, tx pgx.Tx, remoteID string) error {
-		args := StorageTrashArgs{UserID: string(user), RemoteID: remoteID, Provider: providerGoogle}
-		if _, err := e.queue.InsertTx(ctx, tx, args, &river.InsertOpts{Queue: UploadQueue}); err != nil {
-			return fmt.Errorf("insert trash job: %w", err)
-		}
-		return nil
-	})
 }

@@ -11,17 +11,17 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/postgres"
 )
 
 // savedDoc creates a saved document for user.
-func savedDoc(t *testing.T, repo docsbot.Repo, user docsbot.UserID, unique string) docsbot.Document {
+func savedDoc(t *testing.T, repo *adapters, user docsbot.UserID, unique string) docsbot.Document {
 	t.Helper()
-	ctx := t.Context()
-	doc, err := repo.CreateDocument(ctx, docsbot.IncomingFile{
+	doc, err := repo.CreateDocument(t.Context(), docsbot.IncomingFile{
 		UserID: user, Kind: docsbot.KindDocument, Title: "t", FileID: "f-" + unique, FileUniqueID: unique,
 	})
 	require.NoError(t, err)
-	mustSave(t, ctx, repo, user, doc.ID, docsbot.CatOther)
+	mustSave(t, repo, user, doc.ID, docsbot.CatOther)
 	return doc
 }
 
@@ -32,7 +32,7 @@ func TestBackups_markAndList(t *testing.T) {
 	a := savedDoc(t, repo, user, "a")
 	b := savedDoc(t, repo, user, "b")
 
-	_, err := repo.MarkBackedUpForSync(ctx, user, a.ID, "drive-a", 0, 0, noInsert)
+	_, err := repo.MarkBackedUp(ctx, user, a.ID, "drive-a", 0, 0)
 	require.NoError(t, err)
 	got, err := repo.DocumentByID(ctx, user, a.ID)
 	require.NoError(t, err)
@@ -111,22 +111,34 @@ func TestBackups_deleteAllFolders(t *testing.T) {
 	require.Equal(t, "other-f", id)
 }
 
-func TestBackups_enqueueUploadTx(t *testing.T) {
-	repo, user := domainRepo(t)
-	ctx := t.Context()
-	doc := savedDoc(t, repo, user, "tx")
+func TestBackups_saveChosenTx(t *testing.T) {
+	tests := []struct {
+		name       string
+		jobs       postgres.JobInserter
+		wantErr    error
+		wantStatus docsbot.Status
+		wantBackup docsbot.BackupStatus
+	}{
+		{"insert fails: nothing is saved", uploadJobs{err: errBoom}, errBoom, docsbot.StatusPending, docsbot.BackupNone},
+		{"live job skipped: the choice still commits", uploadJobs{skipped: true}, nil, docsbot.StatusSaved, docsbot.BackupPending},
+		{"job queued", uploadJobs{}, nil, docsbot.StatusSaved, docsbot.BackupPending},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, user := domainRepoWith(t, tt.jobs)
+			ctx := t.Context()
+			doc, err := repo.CreateDocument(ctx, docsbot.IncomingFile{UserID: user, Kind: docsbot.KindDocument, Title: "t", FileID: "f", FileUniqueID: "u"})
+			require.NoError(t, err)
 
-	boom := errors.New("insert failed")
-	err := repo.EnqueueUpload(ctx, user, doc.ID, func(context.Context, pgx.Tx) (bool, error) { return false, boom })
-	require.ErrorIs(t, err, boom)
-	got, err := repo.DocumentByID(ctx, user, doc.ID)
-	require.NoError(t, err)
-	require.Equal(t, docsbot.BackupNone, got.BackupStatus, "rolled back")
+			_, err = repo.SaveChosen(ctx, docsbot.SaveChoice{User: user, ID: doc.ID, Category: docsbot.CatOther, Backup: docsbot.BackupPending})
 
-	require.NoError(t, repo.EnqueueUpload(ctx, user, doc.ID, func(context.Context, pgx.Tx) (bool, error) { return false, nil }))
-	got, err = repo.DocumentByID(ctx, user, doc.ID)
-	require.NoError(t, err)
-	require.Equal(t, docsbot.BackupPending, got.BackupStatus)
+			require.ErrorIs(t, err, tt.wantErr)
+			got, err := repo.DocumentByID(ctx, user, doc.ID)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantStatus, got.Status)
+			require.Equal(t, tt.wantBackup, got.BackupStatus)
+		})
+	}
 }
 
 func TestFolders_categoryFolderID(t *testing.T) {
@@ -146,8 +158,38 @@ func TestFolders_categoryFolderID(t *testing.T) {
 	require.Empty(t, id)
 }
 
-// noInsert is a job insert that must not be needed: the version did not move.
-func noInsert(context.Context, pgx.Tx) error { return errors.New("unexpected job insert") }
+// noJobs is a JobInserter for tests where no job may be needed.
+type noJobs struct{}
+
+var (
+	errUnexpectedJob = errors.New("unexpected job insert")
+	errBoom          = errors.New("insert failed")
+)
+
+var _ postgres.JobInserter = noJobs{}
+
+func (noJobs) InsertUpload(context.Context, pgx.Tx, docsbot.UserID, docsbot.DocumentID) (bool, error) {
+	return false, errUnexpectedJob
+}
+
+func (noJobs) InsertSync(context.Context, pgx.Tx, docsbot.UserID, docsbot.DocumentID) error {
+	return errUnexpectedJob
+}
+
+func (noJobs) InsertTrash(context.Context, pgx.Tx, docsbot.UserID, string) error {
+	return errUnexpectedJob
+}
+
+// uploadJobs is a JobInserter whose upload insert returns a fixed result.
+type uploadJobs struct {
+	noJobs
+	skipped bool
+	err     error
+}
+
+func (u uploadJobs) InsertUpload(context.Context, pgx.Tx, docsbot.UserID, docsbot.DocumentID) (bool, error) {
+	return u.skipped, u.err
+}
 
 // The reason of a failed backup is stored with the status and cleared whenever
 // the document leaves the failed state (any other status, retry claims).
@@ -191,7 +233,7 @@ func TestBackups_failReason(t *testing.T) {
 	require.NoError(t, repo.MarkUploading(ctx, user, late.ID))
 	require.Empty(t, reason(late.ID), "uploading clears the reason")
 	require.NoError(t, repo.FailBackup(ctx, user, late.ID, docsbot.BackupReasonUnavailable))
-	_, err = repo.MarkBackedUpForSync(ctx, user, late.ID, "drive-late", 0, 0, noInsert)
+	_, err = repo.MarkBackedUp(ctx, user, late.ID, "drive-late", 0, 0)
 	require.NoError(t, err)
 	require.Empty(t, reason(late.ID), "a successful upload clears the reason")
 

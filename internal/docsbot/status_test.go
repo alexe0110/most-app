@@ -31,7 +31,7 @@ func TestService_StatusTarget(t *testing.T) {
 			if tt.msg != nil {
 				status.msgs[tt.msg.ID] = *tt.msg
 			}
-			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, status, &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
+			svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, status, &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
 
 			sm, ok, err := svc.StatusTarget(context.Background(), user)
 			require.NoError(t, err)
@@ -45,7 +45,7 @@ func TestService_StatusView(t *testing.T) {
 	t.Run("not grouped", func(t *testing.T) {
 		repo := newFakeRepo()
 		doc := repo.seed(docsbot.Document{UserID: user})
-		svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+		svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 		v, err := svc.StatusView(context.Background(), user, doc.ID)
 		require.NoError(t, err)
@@ -70,7 +70,7 @@ func TestService_StatusView(t *testing.T) {
 			require.NoError(t, err)
 			a := repo.seed(docsbot.Document{UserID: user, Category: docsbot.CatPassport, BackupStatus: docsbot.BackupBackedUp, StatusMessageID: sm.ID})
 			b := repo.seed(docsbot.Document{UserID: user, Category: docsbot.CatAuto, BackupStatus: tt.second, StatusMessageID: sm.ID})
-			svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, status, &fakeSyncs{repo: repo})
+			svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, status, &fakeSyncs{repo: repo})
 
 			v, err := svc.StatusView(context.Background(), user, a.ID)
 			require.NoError(t, err)
@@ -99,7 +99,7 @@ func TestService_RetryStatusFailed(t *testing.T) {
 			ids[name] = repo.seed(docsbot.Document{UserID: user, BackupStatus: st, StatusMessageID: sm.ID}).ID
 		}
 		up := &fakeUploads{repo: repo}
-		return docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, up, repo, status, &fakeSyncs{repo: repo}), up, repo, sm.ID, ids
+		return newService(repo, fakeDrive{}, fakeFiles{}, up, repo, status, &fakeSyncs{repo: repo}), up, repo, sm.ID, ids
 	}
 
 	t.Run("requeues only failed and flips them back to pending", func(t *testing.T) {
@@ -142,7 +142,7 @@ func TestService_OpenAndAttachStatus(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeRepo()
 	status := newFakeStatus(repo)
-	svc := docsbot.NewService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, status, &fakeSyncs{repo: repo})
+	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, status, &fakeSyncs{repo: repo})
 	a := repo.seed(docsbot.Document{UserID: user})
 	b := repo.seed(docsbot.Document{UserID: user})
 

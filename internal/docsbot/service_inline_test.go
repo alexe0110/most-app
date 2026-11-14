@@ -308,7 +308,7 @@ func TestService_Inline_repoErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.repo.fakeRepo, tt.repo.err = newFakeRepo(), boom // no documents: CountSaved is reached
-			svc := docsbot.NewService(tt.repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: tt.repo.fakeRepo}, tt.repo, newFakeStatus(tt.repo.fakeRepo), &fakeSyncs{repo: tt.repo.fakeRepo})
+			svc := newService(tt.repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: tt.repo.fakeRepo}, tt.repo, newFakeStatus(tt.repo.fakeRepo), &fakeSyncs{repo: tt.repo.fakeRepo})
 
 			_, err := svc.Inline(t.Context(), user, tt.query, "")
 

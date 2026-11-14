@@ -21,14 +21,19 @@ import (
 // syncEnv is a repo over a fresh database with two users.
 type syncEnv struct {
 	pool            *pgxpool.Pool
-	repo            *postgres.Repo
+	repo            *adapters
 	user, otherUser docsbot.UserID
 }
 
 func newSyncEnv(t *testing.T) syncEnv {
 	t.Helper()
 	pool := dbtest.New(t)
-	return syncEnv{pool: pool, repo: postgres.NewRepo(pool)}.fresh(t)
+	return syncEnv{pool: pool, repo: newAdapters(pool, noJobs{})}.fresh(t)
+}
+
+// with is a repo over the same database whose jobs go to ji.
+func (e syncEnv) with(ji postgres.JobInserter) *adapters {
+	return newAdapters(e.pool, ji)
 }
 
 // userSeq gives every fresh pair of users distinct Telegram ids.
@@ -94,10 +99,13 @@ func (e syncEnv) exists(t *testing.T, id docsbot.DocumentID) bool {
 var markerSeq atomic.Int64
 
 type marker struct {
-	pool  *pgxpool.Pool
-	calls int
-	fail  error
+	pool   *pgxpool.Pool
+	calls  int
+	fail   error
+	remote string // the file id of the last trash job
 }
+
+var _ postgres.JobInserter = (*marker)(nil)
 
 func (m *marker) insert(ctx context.Context, tx pgx.Tx) error {
 	m.calls++
@@ -107,9 +115,22 @@ func (m *marker) insert(ctx context.Context, tx pgx.Tx) error {
 	return m.fail
 }
 
-// deleteDoc runs DeleteForSync with trash wanted, the marker as the trash insert.
-func (m *marker) deleteDoc(ctx context.Context, repo *postgres.Repo, user docsbot.UserID, id docsbot.DocumentID) error {
-	_, err := repo.DeleteForSync(ctx, user, id, true, func(ctx context.Context, tx pgx.Tx, _ string) error { return m.insert(ctx, tx) })
+func (m *marker) InsertUpload(ctx context.Context, tx pgx.Tx, _ docsbot.UserID, _ docsbot.DocumentID) (bool, error) {
+	return false, m.insert(ctx, tx)
+}
+
+func (m *marker) InsertSync(ctx context.Context, tx pgx.Tx, _ docsbot.UserID, _ docsbot.DocumentID) error {
+	return m.insert(ctx, tx)
+}
+
+func (m *marker) InsertTrash(ctx context.Context, tx pgx.Tx, _ docsbot.UserID, remoteID string) error {
+	m.remote = remoteID
+	return m.insert(ctx, tx)
+}
+
+// deleteDoc deletes the document with trash wanted, the marker as the trash insert.
+func (m *marker) deleteDoc(ctx context.Context, e syncEnv, user docsbot.UserID, id docsbot.DocumentID) error {
+	_, err := e.with(m).DeleteDocument(ctx, user, id, true)
 	return err
 }
 
@@ -145,7 +166,7 @@ func TestSyncs_titleAndCategoryDecideSyncInSQL(t *testing.T) {
 
 			titleDoc := e.seed(t, e.user, "t", tt.backup, tt.sync)
 			m := &marker{pool: e.pool}
-			queued, err := e.repo.SetTitleForSync(ctx, e.user, titleDoc, "Новое", m.insert)
+			queued, err := e.with(m).SetTitle(ctx, e.user, titleDoc, "Новое", true)
 			require.NoError(t, err)
 			require.Equal(t, tt.wantQueued, queued)
 			r := e.row(t, titleDoc)
@@ -156,12 +177,32 @@ func TestSyncs_titleAndCategoryDecideSyncInSQL(t *testing.T) {
 
 			catDoc := e.seed(t, e.user, "c", tt.backup, tt.sync)
 			m2 := &marker{pool: e.pool}
-			queued, err = e.repo.SetCategoryForSync(ctx, e.user, catDoc, docsbot.CatPassport, m2.insert)
+			queued, err = e.with(m2).SetCategory(ctx, e.user, catDoc, docsbot.CatPassport, true)
 			require.NoError(t, err)
 			require.Equal(t, tt.wantQueued, queued)
 			r = e.row(t, catDoc)
 			require.Equal(t, string(docsbot.CatPassport), r.Category)
 			require.Equal(t, tt.wantSync, r.Sync)
+			require.Equal(t, 1, r.Meta)
+
+			// Without Drive only the row changes: no sync state, no job.
+			plain := &marker{pool: e.pool}
+			plainTitle := e.seed(t, e.user, "pt", tt.backup, tt.sync)
+			queued, err = e.with(plain).SetTitle(ctx, e.user, plainTitle, "Новое", false)
+			require.NoError(t, err)
+			require.False(t, queued)
+			plainCat := e.seed(t, e.user, "pc", tt.backup, tt.sync)
+			queued, err = e.with(plain).SetCategory(ctx, e.user, plainCat, docsbot.CatPassport, false)
+			require.NoError(t, err)
+			require.False(t, queued)
+			require.Zero(t, plain.calls)
+			r = e.row(t, plainTitle)
+			require.Equal(t, "Новое", r.Title)
+			require.Equal(t, tt.sync, r.Sync)
+			require.Equal(t, 1, r.Meta)
+			r = e.row(t, plainCat)
+			require.Equal(t, string(docsbot.CatPassport), r.Category)
+			require.Equal(t, tt.sync, r.Sync)
 			require.Equal(t, 1, r.Meta)
 		})
 	}
@@ -181,33 +222,33 @@ func TestSyncs_failedInsertRollsBackTheChange(t *testing.T) {
 
 	id := e.seed(t, e.user, "a", "backed_up", "ok")
 	m := &marker{pool: e.pool, fail: boom}
-	_, err := e.repo.SetTitleForSync(ctx, e.user, id, "Новое", m.insert)
+	_, err := e.with(m).SetTitle(ctx, e.user, id, "Новое", true)
 	require.ErrorIs(t, err, boom)
 	require.Equal(t, row{Title: "Старое", Category: "other", Backup: "backed_up", Sync: "ok", TgFile: "file-a", DriveFile: "remote-a"}, e.row(t, id))
 	require.Zero(t, m.committed(t))
 
-	_, err = e.repo.SetCategoryForSync(ctx, e.user, id, docsbot.CatPassport, m.insert)
+	_, err = e.with(m).SetCategory(ctx, e.user, id, docsbot.CatPassport, true)
 	require.ErrorIs(t, err, boom)
 	require.Equal(t, "other", e.row(t, id).Category)
 
-	require.ErrorIs(t, m.deleteDoc(ctx, e.repo, e.user, id), boom)
+	require.ErrorIs(t, m.deleteDoc(ctx, e, e.user, id), boom)
 	require.True(t, e.exists(t, id), "delete rolled back with the failed job insert")
 
-	require.ErrorIs(t, e.repo.EnqueueSyncJob(ctx, e.user, id, m.insert), boom)
+	require.ErrorIs(t, e.with(m).EnqueueSync(ctx, e.user, id), boom)
 	require.Equal(t, "ok", e.row(t, id).Sync)
 
 	failed := e.seed(t, e.user, "f", "backed_up", "failed")
-	_, err = e.repo.RetrySyncJob(ctx, e.user, failed, m.insert)
+	_, err = e.with(m).RetrySync(ctx, e.user, failed)
 	require.ErrorIs(t, err, boom)
 	require.Equal(t, "failed", e.row(t, failed).Sync)
 
 	in := docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "new", FileUniqueID: "new-u", FileSize: 5, MIME: "application/pdf"}
-	replaced, err := e.repo.ReplaceContentForSync(ctx, e.user, id, in, true, m.insert)
+	replaced, err := e.with(m).ReplaceContent(ctx, e.user, id, in, true)
 	require.ErrorIs(t, err, boom)
 	require.False(t, replaced)
 	require.Equal(t, "file-a", e.row(t, id).TgFile)
 
-	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, e.seed(t, e.user, "u", "uploading", "ok"), "drive-x", -1, 0, m.insert)
+	_, err = e.with(m).MarkBackedUp(ctx, e.user, e.seed(t, e.user, "u", "uploading", "ok"), "drive-x", -1, 0)
 	require.ErrorIs(t, err, boom)
 }
 
@@ -230,12 +271,12 @@ func TestSyncs_markBackedUpComparesVersion(t *testing.T) {
 			id := e.seed(t, e.user, "a", "uploading", "ok")
 			start := e.row(t, id).Meta
 			for range tt.bump {
-				_, err := e.repo.SetTitleForSync(ctx, e.user, id, "Имя", (&marker{pool: e.pool}).insert)
+				_, err := e.with(&marker{pool: e.pool}).SetTitle(ctx, e.user, id, "Имя", true)
 				require.NoError(t, err)
 			}
 
 			m := &marker{pool: e.pool}
-			queued, err := e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", start, 0, m.insert)
+			queued, err := e.with(m).MarkBackedUp(ctx, e.user, id, "drive-1", start, 0)
 
 			require.NoError(t, err)
 			require.Equal(t, tt.wantQueued, queued)
@@ -254,15 +295,16 @@ func TestSyncs_markBackedUpGoneAndForeign(t *testing.T) {
 	id := e.seed(t, e.user, "a", "uploading", "ok")
 	m := &marker{pool: e.pool}
 
-	_, err := e.repo.MarkBackedUpForSync(ctx, e.otherUser, id, "drive-1", 0, 0, m.insert)
+	_, err := e.with(m).MarkBackedUp(ctx, e.otherUser, id, "drive-1", 0, 0)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
 	require.Equal(t, "uploading", e.row(t, id).Backup)
 	require.Empty(t, e.row(t, id).DriveFile)
 
-	require.NoError(t, e.repo.DeleteDocument(ctx, e.user, id))
-	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", 0, 0, m.insert)
+	_, err = e.repo.DeleteDocument(ctx, e.user, id, false)
+	require.NoError(t, err)
+	_, err = e.with(m).MarkBackedUp(ctx, e.user, id, "drive-1", 0, 0)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
-	_, err = e.repo.MarkBackedUpForSync(ctx, e.user, id, "drive-1", 0, 0, noInsert)
+	_, err = e.repo.MarkBackedUp(ctx, e.user, id, "drive-1", 0, 0)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
 	require.Zero(t, m.calls)
 }
@@ -274,18 +316,18 @@ func TestSyncs_scopedByUser(t *testing.T) {
 	before := e.row(t, id)
 	m := &marker{pool: e.pool}
 
-	_, err := e.repo.SetTitleForSync(ctx, e.otherUser, id, "Чужое", m.insert)
+	_, err := e.with(m).SetTitle(ctx, e.otherUser, id, "Чужое", true)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
-	_, err = e.repo.SetCategoryForSync(ctx, e.otherUser, id, docsbot.CatPassport, m.insert)
+	_, err = e.with(m).SetCategory(ctx, e.otherUser, id, docsbot.CatPassport, true)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
-	require.NoError(t, e.repo.EnqueueSyncJob(ctx, e.otherUser, id, m.insert))
-	queued, err := e.repo.RetrySyncJob(ctx, e.otherUser, id, m.insert)
+	require.NoError(t, e.with(m).EnqueueSync(ctx, e.otherUser, id))
+	queued, err := e.with(m).RetrySync(ctx, e.otherUser, id)
 	require.NoError(t, err)
 	require.False(t, queued)
-	replaced, err := e.repo.ReplaceContentForSync(ctx, e.otherUser, id, docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "x", FileUniqueID: "xu"}, true, m.insert)
+	replaced, err := e.with(m).ReplaceContent(ctx, e.otherUser, id, docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "x", FileUniqueID: "xu"}, true)
 	require.NoError(t, err)
 	require.False(t, replaced)
-	require.ErrorIs(t, m.deleteDoc(ctx, e.repo, e.otherUser, id), docsbot.ErrNotFound)
+	require.ErrorIs(t, m.deleteDoc(ctx, e, e.otherUser, id), docsbot.ErrNotFound)
 	ok, err := e.repo.MarkSynced(ctx, e.otherUser, id, before.Meta)
 	require.NoError(t, err)
 	require.False(t, ok)
@@ -316,7 +358,7 @@ func TestSyncs_enqueueSyncGuards(t *testing.T) {
 			id := e.seed(t, e.user, "a", tt.backup, tt.sync)
 			m := &marker{pool: e.pool}
 
-			require.NoError(t, e.repo.EnqueueSyncJob(t.Context(), e.user, id, m.insert))
+			require.NoError(t, e.with(m).EnqueueSync(t.Context(), e.user, id))
 
 			require.Equal(t, tt.wantCalls, m.calls)
 			require.Equal(t, tt.wantSync, e.row(t, id).Sync)
@@ -325,7 +367,7 @@ func TestSyncs_enqueueSyncGuards(t *testing.T) {
 	t.Run("gone document", func(t *testing.T) {
 		e := shared.fresh(t)
 		m := &marker{pool: e.pool}
-		require.NoError(t, e.repo.EnqueueSyncJob(t.Context(), e.user, "00000000-0000-0000-0000-000000000001", m.insert))
+		require.NoError(t, e.with(m).EnqueueSync(t.Context(), e.user, "00000000-0000-0000-0000-000000000001"))
 		require.Zero(t, m.calls)
 	})
 }
@@ -335,10 +377,10 @@ func TestSyncs_retrySyncClaimsOnce(t *testing.T) {
 	id := e.seed(t, e.user, "a", "backed_up", "failed")
 	m := &marker{pool: e.pool}
 
-	queued, err := e.repo.RetrySyncJob(t.Context(), e.user, id, m.insert)
+	queued, err := e.with(m).RetrySync(t.Context(), e.user, id)
 	require.NoError(t, err)
 	require.True(t, queued)
-	queued, err = e.repo.RetrySyncJob(t.Context(), e.user, id, m.insert)
+	queued, err = e.with(m).RetrySync(t.Context(), e.user, id)
 	require.NoError(t, err)
 	require.False(t, queued, "second tap")
 	require.Equal(t, 1, m.calls)
@@ -350,11 +392,11 @@ func TestSyncs_deleteAndInsert(t *testing.T) {
 	id := e.seed(t, e.user, "a", "backed_up", "ok")
 	m := &marker{pool: e.pool}
 
-	require.NoError(t, m.deleteDoc(t.Context(), e.repo, e.user, id))
+	require.NoError(t, m.deleteDoc(t.Context(), e, e.user, id))
 	require.False(t, e.exists(t, id))
 	require.Equal(t, 1, m.committed(t), "delete and job commit together")
 
-	require.ErrorIs(t, m.deleteDoc(t.Context(), e.repo, e.user, id), docsbot.ErrNotFound)
+	require.ErrorIs(t, m.deleteDoc(t.Context(), e, e.user, id), docsbot.ErrNotFound)
 	require.Equal(t, 1, m.calls, "second delete queues nothing")
 }
 
@@ -384,7 +426,7 @@ func TestSyncs_replaceContentGuards(t *testing.T) {
 			id := e.seed(t, e.user, "a", tt.backup, tt.sync)
 			m := &marker{pool: e.pool}
 
-			replaced, err := e.repo.ReplaceContentForSync(t.Context(), e.user, id, in, true, m.insert)
+			replaced, err := e.with(m).ReplaceContent(t.Context(), e.user, id, in, true)
 
 			require.NoError(t, err)
 			require.Equal(t, tt.wantReplaced, replaced)
@@ -411,8 +453,8 @@ func TestSyncs_replaceContentDuplicateFile(t *testing.T) {
 	e.seed(t, e.user, "taken", "none", "ok")
 	m := &marker{pool: e.pool}
 
-	replaced, err := e.repo.ReplaceContentForSync(t.Context(), e.user, id,
-		docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "x", FileUniqueID: "taken"}, true, m.insert)
+	replaced, err := e.with(m).ReplaceContent(t.Context(), e.user, id,
+		docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "x", FileUniqueID: "taken"}, true)
 
 	require.ErrorIs(t, err, docsbot.ErrDuplicateFile)
 	require.False(t, replaced)
@@ -421,8 +463,8 @@ func TestSyncs_replaceContentDuplicateFile(t *testing.T) {
 
 	// The same file id under another user is not a duplicate.
 	e.seed(t, e.otherUser, "other-user-file", "none", "ok")
-	replaced, err = e.repo.ReplaceContentForSync(t.Context(), e.user, id,
-		docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "y", FileUniqueID: "other-user-file"}, true, m.insert)
+	replaced, err = e.with(m).ReplaceContent(t.Context(), e.user, id,
+		docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "y", FileUniqueID: "other-user-file"}, true)
 	require.NoError(t, err)
 	require.True(t, replaced)
 }
@@ -431,7 +473,7 @@ func TestSyncs_markSyncedChecksVersionAndState(t *testing.T) {
 	e := newSyncEnv(t)
 	ctx := t.Context()
 	id := e.seed(t, e.user, "a", "backed_up", "ok")
-	_, err := e.repo.SetTitleForSync(ctx, e.user, id, "Новое", (&marker{pool: e.pool}).insert)
+	_, err := e.with(&marker{pool: e.pool}).SetTitle(ctx, e.user, id, "Новое", true)
 	require.NoError(t, err)
 	_, err = e.pool.Exec(ctx, `update documents set content_dirty = true where id = $1::uuid`, string(id))
 	require.NoError(t, err)
@@ -508,8 +550,8 @@ func TestSyncs_replaceContentChangesKind(t *testing.T) {
 	require.NoError(t, err)
 	m := &marker{pool: e.pool}
 
-	replaced, err := e.repo.ReplaceContentForSync(t.Context(), e.user, id,
-		docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "pdf", FileUniqueID: "pdf-u", MIME: "application/pdf"}, true, m.insert)
+	replaced, err := e.with(m).ReplaceContent(t.Context(), e.user, id,
+		docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "pdf", FileUniqueID: "pdf-u", MIME: "application/pdf"}, true)
 
 	require.NoError(t, err)
 	require.True(t, replaced)
@@ -523,8 +565,8 @@ func TestSyncs_replaceContentWithoutCloudChangesOnlyTheRow(t *testing.T) {
 	id := e.seed(t, e.user, "a", "backed_up", "ok")
 	m := &marker{pool: e.pool}
 
-	replaced, err := e.repo.ReplaceContentForSync(t.Context(), e.user, id,
-		docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "n", FileUniqueID: "n-u"}, false, m.insert)
+	replaced, err := e.with(m).ReplaceContent(t.Context(), e.user, id,
+		docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "n", FileUniqueID: "n-u"}, false)
 
 	require.NoError(t, err)
 	require.True(t, replaced)
@@ -535,7 +577,7 @@ func TestSyncs_replaceContentWithoutCloudChangesOnlyTheRow(t *testing.T) {
 	require.Zero(t, m.calls)
 }
 
-func TestSyncs_deleteForSyncDecidesOnTheDeletedRow(t *testing.T) {
+func TestSyncs_deleteDecidesOnTheDeletedRow(t *testing.T) {
 	tests := []struct {
 		name       string
 		backup     string
@@ -553,18 +595,17 @@ func TestSyncs_deleteForSyncDecidesOnTheDeletedRow(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newSyncEnv(t)
 			id := e.seed(t, e.user, "a", tt.backup, tt.sync)
-			var remote string
-			insert := func(_ context.Context, _ pgx.Tx, remoteID string) error { remote = remoteID; return nil }
+			m := &marker{pool: e.pool}
 
-			kept, err := e.repo.DeleteForSync(t.Context(), e.user, id, tt.trash, insert)
+			kept, err := e.with(m).DeleteDocument(t.Context(), e.user, id, tt.trash)
 
 			require.NoError(t, err)
 			require.Equal(t, tt.wantKept, kept)
 			require.False(t, e.exists(t, id))
 			if tt.wantInsert == 1 {
-				require.Equal(t, "remote-a", remote)
+				require.Equal(t, "remote-a", m.remote)
 			} else {
-				require.Empty(t, remote)
+				require.Empty(t, m.remote)
 			}
 		})
 	}
@@ -577,7 +618,7 @@ func TestSyncs_enqueueSyncBumpsVersionAndClock(t *testing.T) {
 	require.NoError(t, err)
 	before := e.row(t, id)
 
-	require.NoError(t, e.repo.EnqueueSyncJob(t.Context(), e.user, id, (&marker{pool: e.pool}).insert))
+	require.NoError(t, e.with(&marker{pool: e.pool}).EnqueueSync(t.Context(), e.user, id))
 
 	after := e.row(t, id)
 	require.Equal(t, before.Meta+1, after.Meta, "a stale parallel MarkSynced must lose")
@@ -613,7 +654,7 @@ func TestSyncs_claimFailedRetryKeepsClockFresh(t *testing.T) {
 	_, err := e.pool.Exec(t.Context(), `update documents set updated_at = now() - interval '2 days' where id = $1::uuid`, string(id))
 	require.NoError(t, err)
 
-	queued, err := e.repo.RetrySyncJob(t.Context(), e.user, id, (&marker{pool: e.pool}).insert)
+	queued, err := e.with(&marker{pool: e.pool}).RetrySync(t.Context(), e.user, id)
 
 	require.NoError(t, err)
 	require.True(t, queued)

@@ -109,12 +109,7 @@ func (s *Service) Rename(ctx context.Context, user UserID, id DocumentID, title 
 	if err != nil {
 		return Card{}, fmt.Errorf("drive status: %w", err)
 	}
-	if connected {
-		_, err = s.syncs.SetTitle(ctx, user, id, title)
-	} else {
-		err = s.repo.SetTitle(ctx, user, id, title)
-	}
-	if err != nil {
+	if _, err = s.syncs.SetTitle(ctx, user, id, title, connected); err != nil {
 		return Card{}, fmt.Errorf("rename document: %w", err)
 	}
 	return s.Card(ctx, user, id)
@@ -135,12 +130,7 @@ func (s *Service) Recategorize(ctx context.Context, user UserID, id DocumentID, 
 	if err != nil {
 		return Card{}, fmt.Errorf("drive status: %w", err)
 	}
-	if connected {
-		_, err = s.syncs.SetCategory(ctx, user, id, cat)
-	} else {
-		err = s.repo.SetCategory(ctx, user, id, cat)
-	}
-	if err != nil {
+	if _, err = s.syncs.SetCategory(ctx, user, id, cat, connected); err != nil {
 		return Card{}, fmt.Errorf("recategorize document: %w", err)
 	}
 	card, err := s.Card(ctx, user, id)

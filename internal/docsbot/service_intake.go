@@ -13,10 +13,8 @@ func (s *Service) Receive(ctx context.Context, in IncomingFile) (Reply, error) {
 	in.Title = NormalizeTitle(in.Title)
 	existing, err := s.repo.DocumentByFileUniqueID(ctx, in.UserID, in.FileUniqueID)
 	switch {
-	case err == nil && existing.Status == StatusSaved:
-		return AlreadySaved{Doc: existing}, nil
 	case err == nil:
-		return NeedCategory{Doc: existing}, nil
+		return replyForExisting(existing), nil
 	case !errors.Is(err, ErrNotFound):
 		return nil, fmt.Errorf("lookup document: %w", err)
 	}
@@ -35,10 +33,28 @@ func (s *Service) Receive(ctx context.Context, in IncomingFile) (Reply, error) {
 	}
 
 	doc, err := s.repo.CreateDocument(ctx, in)
+	if errors.Is(err, ErrDuplicateFile) {
+		// A parallel send of the same file won the insert: answer by its row, as if
+		// ours had arrived second.
+		winner, lerr := s.repo.DocumentByFileUniqueID(ctx, in.UserID, in.FileUniqueID)
+		if lerr != nil {
+			return nil, fmt.Errorf("lookup duplicate: %w", lerr)
+		}
+		return replyForExisting(winner), nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("create document: %w", err)
 	}
 	return NeedCategory{Doc: doc}, nil
+}
+
+// replyForExisting answers a file the user already has: AlreadySaved once it is
+// categorized, otherwise the category question again.
+func replyForExisting(doc Document) Reply {
+	if doc.Status == StatusSaved {
+		return AlreadySaved{Doc: doc}
+	}
+	return NeedCategory{Doc: doc}
 }
 
 // SaveDerived stores a file made from another document (a compressed copy, a
@@ -79,7 +95,7 @@ func (s *Service) SaveDerived(ctx context.Context, user UserID, sourceID Documen
 	saved, err := s.ChooseCategory(ctx, user, need.Doc.ID, cat)
 	if err != nil {
 		// Don't leave the copy pending: nobody will categorize it.
-		if delErr := s.repo.DeleteDocument(ctx, user, need.Doc.ID); delErr != nil && !errors.Is(delErr, ErrNotFound) {
+		if _, delErr := s.syncs.DeleteDocument(ctx, user, need.Doc.ID, false); delErr != nil && !errors.Is(delErr, ErrNotFound) {
 			return nil, errors.Join(err, fmt.Errorf("discard derived document: %w", delErr))
 		}
 		return nil, err
@@ -100,7 +116,7 @@ func (s *Service) DiscardAlbum(ctx context.Context, user UserID, group string) (
 	}
 	n := 0
 	for _, d := range pending {
-		err := s.repo.DeleteDocument(ctx, user, d.ID)
+		_, err := s.syncs.DeleteDocument(ctx, user, d.ID, false)
 		if errors.Is(err, ErrNotFound) {
 			continue
 		}
@@ -112,14 +128,28 @@ func (s *Service) DiscardAlbum(ctx context.Context, user UserID, group string) (
 	return n, nil
 }
 
+// PurgeResult counts what one purge removed.
+type PurgeResult struct {
+	// Pending is the documents nobody categorized in time.
+	Pending int
+	// StatusMessages is the closed status messages past the same TTL.
+	StatusMessages int
+}
+
 // PurgeStalePending deletes pending documents nobody categorized within the TTL
-// and returns how many were removed. It is the purge_pending job's use case.
-func (s *Service) PurgeStalePending(ctx context.Context) (int, error) {
-	n, err := s.repo.PurgeStalePending(ctx, s.now().Add(-pendingTTL))
-	if err != nil {
-		return 0, fmt.Errorf("purge stale pending: %w", err)
+// and the status messages closed longer ago than that, and counts both. It is
+// the purge_pending job's use case; on error the result keeps what was done.
+func (s *Service) PurgeStalePending(ctx context.Context) (PurgeResult, error) {
+	cutoff := s.now().Add(-pendingTTL)
+	var res PurgeResult
+	var err error
+	if res.Pending, err = s.repo.PurgeStalePending(ctx, cutoff); err != nil {
+		return res, fmt.Errorf("purge stale pending: %w", err)
 	}
-	return n, nil
+	if res.StatusMessages, err = s.status.PurgeClosed(ctx, cutoff); err != nil {
+		return res, fmt.Errorf("purge closed status messages: %w", err)
+	}
+	return res, nil
 }
 
 // ChooseCategoryGroup saves every pending document of the album that anyDocID
@@ -164,9 +194,11 @@ func (s *Service) ChooseCategoryGroup(ctx context.Context, user UserID, anyDocID
 }
 
 // ChooseCategory saves a pending document under cat. It is idempotent: a second
-// tap on an already-saved document returns it flagged Already. When Drive is connected the
-// document is queued for upload (the upload_document worker performs it); otherwise it stays in
-// Telegram and we may offer to connect Drive.
+// tap on an already-saved document returns it flagged Already and changes
+// nothing. The category, the default title and, when Drive is connected, the
+// upload job are written in one transaction (Uploads.SaveChosen), so a failure
+// leaves the document pending for the next tap. Without Drive the document stays
+// in Telegram and we may offer to connect it.
 func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID, cat Category) (Saved, error) {
 	if !cat.Valid() {
 		return Saved{}, ErrUnknownCategory
@@ -176,17 +208,28 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 		return Saved{}, fmt.Errorf("load document: %w", err)
 	}
 	if doc.Status == StatusSaved {
-		// A first tap that saved the document but failed to queue the upload leaves
-		// it saved with no backup; a repeated tap is the user's only way to retry.
-		if doc.BackupStatus == BackupNone {
-			if _, err := s.queueIfConnected(ctx, user, &doc); err != nil {
-				return Saved{}, err
-			}
-		}
 		return Saved{Doc: doc, Already: true}, nil
 	}
 
-	won, err := s.repo.SaveDocument(ctx, user, id, cat)
+	choice := SaveChoice{User: user, ID: id, Category: cat, Backup: BackupNone}
+	if strings.TrimSpace(doc.Title) == "" {
+		if choice.Title, err = s.defaultTitle(ctx, user, cat); err != nil {
+			return Saved{}, err
+		}
+	}
+	connected, err := s.drive.Connected(ctx, user)
+	if err != nil {
+		return Saved{}, fmt.Errorf("drive status: %w", err)
+	}
+	if connected {
+		choice.Backup = BackupPending
+		if doc.FileSize > MaxDriveBytes {
+			// Known to be above the limit: skip the doomed download, keep it in Telegram.
+			choice.Backup = BackupTooLarge
+		}
+	}
+
+	won, err := s.uploads.SaveChosen(ctx, choice)
 	if err != nil {
 		return Saved{}, fmt.Errorf("save document: %w", err)
 	}
@@ -200,23 +243,11 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 	}
 	doc.Category = cat
 	doc.Status = StatusSaved
-
-	if strings.TrimSpace(doc.Title) == "" {
-		title, err := s.defaultTitle(ctx, user, cat)
-		if err != nil {
-			return Saved{}, err
-		}
-		if err := s.repo.SetTitle(ctx, user, id, title); err != nil {
-			return Saved{}, fmt.Errorf("set default title: %w", err)
-		}
-		doc.Title = title
+	if choice.Title != "" {
+		doc.Title = choice.Title
 	}
-
-	queued, err := s.queueIfConnected(ctx, user, &doc)
-	if err != nil {
-		return Saved{}, err
-	}
-	if queued {
+	if connected {
+		doc.BackupStatus = choice.Backup
 		return Saved{Doc: doc}, nil
 	}
 
@@ -225,38 +256,6 @@ func (s *Service) ChooseCategory(ctx context.Context, user UserID, id DocumentID
 		return Saved{}, fmt.Errorf("count saved: %w", err)
 	}
 	return Saved{Doc: doc, OfferDrive: count == 1 || count == 5}, nil
-}
-
-// queueIfConnected backs the saved document up when Drive is connected and
-// reports whether it did (or marked it too large); false means Drive is off and
-// the document stays in Telegram.
-func (s *Service) queueIfConnected(ctx context.Context, user UserID, doc *Document) (bool, error) {
-	connected, err := s.drive.Connected(ctx, user)
-	if err != nil {
-		return false, fmt.Errorf("drive status: %w", err)
-	}
-	if !connected {
-		return false, nil
-	}
-	return true, s.queueBackup(ctx, user, doc)
-}
-
-// queueBackup sets the upload job for a saved document, or marks it too large
-// when it is known to exceed the Drive limit, and updates doc to match.
-func (s *Service) queueBackup(ctx context.Context, user UserID, doc *Document) error {
-	if doc.FileSize > MaxDriveBytes {
-		// Known to be above the limit: skip the doomed download, keep it in Telegram.
-		if err := s.repo.SetBackupStatus(ctx, user, doc.ID, BackupTooLarge); err != nil {
-			return fmt.Errorf("mark too large: %w", err)
-		}
-		doc.BackupStatus = BackupTooLarge
-		return nil
-	}
-	if err := s.uploads.EnqueueUpload(ctx, user, doc.ID); err != nil {
-		return fmt.Errorf("enqueue upload: %w", err)
-	}
-	doc.BackupStatus = BackupPending
-	return nil
 }
 
 // defaultTitle builds "<category> — dd.mm.yyyy", adding " (n)" until it is unique

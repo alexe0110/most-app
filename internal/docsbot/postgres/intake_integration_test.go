@@ -3,17 +3,17 @@
 package postgres_test
 
 import (
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
-	"github.com/alexe0110/most-app/internal/docsbot/postgres"
 	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 )
 
-func albumDoc(t *testing.T, repo *postgres.Repo, user docsbot.UserID, group, unique string) docsbot.Document {
+func albumDoc(t *testing.T, repo *adapters, user docsbot.UserID, group, unique string) docsbot.Document {
 	t.Helper()
 	doc, err := repo.CreateDocument(t.Context(), docsbot.IncomingFile{
 		UserID: user, Kind: docsbot.KindPhoto, FileID: "f-" + unique, FileUniqueID: unique, MediaGroupID: group,
@@ -28,7 +28,7 @@ func TestDocuments_mediaGroupListsOnlyOwnPendingOfAlbum(t *testing.T) {
 	p1 := albumDoc(t, repo, a, "g1", "p1")
 	p2 := albumDoc(t, repo, a, "g1", "p2")
 	saved := albumDoc(t, repo, a, "g1", "p3")
-	mustSave(t, ctx, repo, a, saved.ID, docsbot.CatOther)
+	mustSave(t, repo, a, saved.ID, docsbot.CatOther)
 	albumDoc(t, repo, a, "g2", "q1")
 	albumDoc(t, repo, b, "g1", "foreign")
 	single, err := repo.CreateDocument(ctx, docsbot.IncomingFile{UserID: a, Kind: docsbot.KindPhoto, FileID: "s", FileUniqueID: "s"})
@@ -42,7 +42,7 @@ func TestDocuments_mediaGroupListsOnlyOwnPendingOfAlbum(t *testing.T) {
 	require.Len(t, got, 2)
 
 	for _, d := range got {
-		mustSave(t, ctx, repo, a, d.ID, docsbot.CatReceipts)
+		mustSave(t, repo, a, d.ID, docsbot.CatReceipts)
 	}
 	rest, err := repo.PendingByMediaGroup(ctx, a, "g1")
 	require.NoError(t, err)
@@ -57,7 +57,7 @@ func TestDocuments_mediaGroupListsOnlyOwnPendingOfAlbum(t *testing.T) {
 
 func TestDocuments_intakeStats(t *testing.T) {
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool)
+	repo := newAdapters(pool, noJobs{})
 	a := docsbot.UserID(makeUser(t, repo, 910).ID.String())
 	b := docsbot.UserID(makeUser(t, repo, 911).ID.String())
 	ctx := t.Context()
@@ -66,8 +66,8 @@ func TestDocuments_intakeStats(t *testing.T) {
 	albumDoc(t, repo, a, "", "p2")
 	s1 := albumDoc(t, repo, a, "", "s1")
 	s2 := albumDoc(t, repo, a, "", "s2")
-	mustSave(t, ctx, repo, a, s1.ID, docsbot.CatOther)
-	mustSave(t, ctx, repo, a, s2.ID, docsbot.CatOther)
+	mustSave(t, repo, a, s1.ID, docsbot.CatOther)
+	mustSave(t, repo, a, s2.ID, docsbot.CatOther)
 	albumDoc(t, repo, b, "", "foreign")
 	_, err := pool.Exec(ctx, `update documents set created_at = now() - interval '5 minutes' where id in ($1::uuid, $2::uuid)`,
 		string(p1.ID), string(s2.ID))
@@ -84,7 +84,7 @@ func TestDocuments_intakeStats(t *testing.T) {
 
 func TestDocuments_purgeStalePending(t *testing.T) {
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool)
+	repo := newAdapters(pool, noJobs{})
 	a := docsbot.UserID(makeUser(t, repo, 920).ID.String())
 	b := docsbot.UserID(makeUser(t, repo, 921).ID.String())
 	ctx := t.Context()
@@ -93,7 +93,7 @@ func TestDocuments_purgeStalePending(t *testing.T) {
 	staleOther := albumDoc(t, repo, b, "", "stale-b")
 	fresh := albumDoc(t, repo, a, "", "fresh")
 	oldSaved := albumDoc(t, repo, a, "", "old-saved")
-	mustSave(t, ctx, repo, a, oldSaved.ID, docsbot.CatOther)
+	mustSave(t, repo, a, oldSaved.ID, docsbot.CatOther)
 	_, err := pool.Exec(ctx, `update documents set created_at = now() - interval '25 hours' where id in ($1::uuid, $2::uuid, $3::uuid)`,
 		string(stale.ID), string(staleOther.ID), string(oldSaved.ID))
 	require.NoError(t, err)
@@ -133,10 +133,105 @@ func TestDocuments_duplicateAfterDeleteCreatesNewDocument(t *testing.T) {
 	first, err := repo.CreateDocument(ctx, in)
 	require.NoError(t, err)
 	_, err = repo.CreateDocument(ctx, in)
-	require.Error(t, err, "unique(user_id, tg_file_unique_id) rejects a live duplicate")
+	require.ErrorIs(t, err, docsbot.ErrDuplicateFile, "unique(user_id, tg_file_unique_id) rejects a live duplicate")
 
-	require.NoError(t, repo.DeleteDocument(ctx, user, first.ID))
+	_, err = repo.DeleteDocument(ctx, user, first.ID, false)
+	require.NoError(t, err)
 	again, err := repo.CreateDocument(ctx, in)
 	require.NoError(t, err, "deletion is hard, so the same file can be stored again")
 	require.NotEqual(t, first.ID, again.ID)
+}
+
+// Parallel sends of one file (a double tap, a forwarded album echo) race on the
+// insert: exactly one document may result and every call must answer by it.
+func TestReceive_parallelSendsOfOneFileCreateOneDocument(t *testing.T) {
+	pool := dbtest.New(t)
+	repo := newAdapters(pool, noJobs{})
+	user := docsbot.UserID(makeUser(t, repo, 930).ID.String())
+	svc := docsbot.NewService(docsbot.Ports{Repo: repo.Documents})
+	ctx := t.Context()
+
+	const senders = 8
+	sendAll := func(unique string) []docsbot.Reply {
+		replies := make([]docsbot.Reply, senders)
+		errs := make([]error, senders)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := range senders {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				replies[i], errs[i] = svc.Receive(ctx, docsbot.IncomingFile{
+					UserID: user, Kind: docsbot.KindDocument, FileID: "f-" + unique, FileUniqueID: unique,
+				})
+			}()
+		}
+		close(start)
+		wg.Wait()
+		for _, err := range errs {
+			require.NoError(t, err)
+		}
+		return replies
+	}
+	count := func(unique string) (n int) {
+		require.NoError(t, pool.QueryRow(ctx,
+			`select count(*) from documents where user_id = $1::uuid and tg_file_unique_id = $2`, string(user), unique).Scan(&n))
+		return n
+	}
+
+	for _, unique := range []string{"par-1", "par-2", "par-3", "par-4", "par-5"} {
+		replies := sendAll(unique)
+		require.Equal(t, 1, count(unique))
+		var id docsbot.DocumentID
+		for _, rep := range replies {
+			need, ok := rep.(docsbot.NeedCategory)
+			require.True(t, ok, "every sender is asked for the category")
+			if id == "" {
+				id = need.Doc.ID
+			}
+			require.Equal(t, id, need.Doc.ID, "all replies refer to the one document")
+		}
+
+		mustSave(t, repo, user, id, docsbot.CatOther)
+		for _, rep := range sendAll(unique) {
+			already, ok := rep.(docsbot.AlreadySaved)
+			require.True(t, ok, "a saved file answers AlreadySaved")
+			require.Equal(t, id, already.Doc.ID)
+		}
+		require.Equal(t, 1, count(unique))
+	}
+}
+
+// Discarding an album after merging it must remove pending photos only and need
+// no job: a pending document has no Drive copy.
+func TestService_discardAlbumDeletesPendingOnly(t *testing.T) {
+	repo, a, b := twoUsers(t)
+	svc := docsbot.NewService(docsbot.Ports{Repo: repo.Documents, Syncs: repo.Documents})
+	ctx := t.Context()
+	p1 := albumDoc(t, repo, a, "g1", "p1")
+	p2 := albumDoc(t, repo, a, "g1", "p2")
+	saved := albumDoc(t, repo, a, "g1", "p3")
+	mustSave(t, repo, a, saved.ID, docsbot.CatOther)
+	otherAlbum := albumDoc(t, repo, a, "g2", "q1")
+	foreign := albumDoc(t, repo, b, "g1", "foreign")
+
+	n, err := svc.DiscardAlbum(ctx, a, "g1")
+
+	require.NoError(t, err, "noJobs fails the test if a job was requested")
+	require.Equal(t, 2, n)
+	for _, id := range []docsbot.DocumentID{p1.ID, p2.ID} {
+		_, err := repo.DocumentByID(ctx, a, id)
+		require.ErrorIs(t, err, docsbot.ErrNotFound)
+	}
+	backupOf(t, repo, a, saved.ID)
+	backupOf(t, repo, a, otherAlbum.ID)
+	backupOf(t, repo, b, foreign.ID)
+
+	n, err = svc.DiscardAlbum(ctx, a, "g1")
+	require.NoError(t, err)
+	require.Zero(t, n, "second call finds nothing")
+	n, err = svc.DiscardAlbum(ctx, a, "")
+	require.NoError(t, err)
+	require.Zero(t, n, "no album id deletes nothing")
 }

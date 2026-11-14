@@ -4,20 +4,22 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
 // This file implements the docsbot.Repo methods behind /settings: the backup
-// breakdown, the failed-upload and export listings, and the one-transaction
+// breakdown, the export listing, the inline switch and the one-transaction
 // deletion of all of a user's data.
 
 // BackupStatusCounts returns the user's saved-document counts grouped by backup_status.
-func (r *Repo) BackupStatusCounts(ctx context.Context, user docsbot.UserID) ([]docsbot.BackupStatusCount, error) {
+func (r *Documents) BackupStatusCounts(ctx context.Context, user docsbot.UserID) ([]docsbot.BackupStatusCount, error) {
 	uid, err := parseUUID(string(user))
 	if err != nil {
 		return nil, err
 	}
-	rows, err := r.DocumentBackupStatusCounts(ctx, uid)
+	rows, err := r.q.DocumentBackupStatusCounts(ctx, uid)
 	if err != nil {
 		return nil, fmt.Errorf("backup status counts: %w", err)
 	}
@@ -32,12 +34,12 @@ func (r *Repo) BackupStatusCounts(ctx context.Context, user docsbot.UserID) ([]d
 }
 
 // SavedForExport lists up to limit of the user's saved documents, oldest first.
-func (r *Repo) SavedForExport(ctx context.Context, user docsbot.UserID, limit int) ([]docsbot.Document, error) {
+func (r *Documents) SavedForExport(ctx context.Context, user docsbot.UserID, limit int) ([]docsbot.Document, error) {
 	uid, err := parseUUID(string(user))
 	if err != nil {
 		return nil, err
 	}
-	rows, err := r.ListSavedDocumentsForExport(ctx, ListSavedDocumentsForExportParams{UserID: uid, Lim: int32(limit)})
+	rows, err := r.q.ListSavedDocumentsForExport(ctx, ListSavedDocumentsForExportParams{UserID: uid, Lim: int32(limit)})
 	if err != nil {
 		return nil, fmt.Errorf("list saved for export: %w", err)
 	}
@@ -46,12 +48,12 @@ func (r *Repo) SavedForExport(ctx context.Context, user docsbot.UserID, limit in
 
 // DeleteUserData deletes the user's documents, drive_folders, integrations and
 // settings and soft-deletes the user, all in one transaction.
-func (r *Repo) DeleteUserData(ctx context.Context, user docsbot.UserID) error {
+func (r *Documents) DeleteUserData(ctx context.Context, user docsbot.UserID) error {
 	uid, err := parseUUID(string(user))
 	if err != nil {
 		return err
 	}
-	return r.Tx(ctx, func(q *Queries) error {
+	return inTx(ctx, r.pool, func(q *Queries, _ pgx.Tx) error {
 		if err := q.DeleteUserDocuments(ctx, uid); err != nil {
 			return fmt.Errorf("delete user documents: %w", err)
 		}
@@ -76,12 +78,12 @@ func (r *Repo) DeleteUserData(ctx context.Context, user docsbot.UserID) error {
 
 // InlineEnabled reports whether the user allows sending documents from any chat;
 // a user without a settings row has it on.
-func (r *Repo) InlineEnabled(ctx context.Context, user docsbot.UserID) (bool, error) {
+func (r *Documents) InlineEnabled(ctx context.Context, user docsbot.UserID) (bool, error) {
 	uid, err := parseUUID(string(user))
 	if err != nil {
 		return false, err
 	}
-	on, err := r.GetInlineEnabled(ctx, uid)
+	on, err := r.q.GetInlineEnabled(ctx, uid)
 	if err != nil {
 		return false, fmt.Errorf("get inline enabled: %w", err)
 	}
@@ -89,12 +91,12 @@ func (r *Repo) InlineEnabled(ctx context.Context, user docsbot.UserID) (bool, er
 }
 
 // SetInlineEnabled stores the user's inline-mode switch.
-func (r *Repo) SetInlineEnabled(ctx context.Context, user docsbot.UserID, on bool) error {
+func (r *Documents) SetInlineEnabled(ctx context.Context, user docsbot.UserID, on bool) error {
 	uid, err := parseUUID(string(user))
 	if err != nil {
 		return err
 	}
-	if err := r.Queries.SetInlineEnabled(ctx, SetInlineEnabledParams{UserID: uid, InlineEnabled: on}); err != nil {
+	if err := r.q.SetInlineEnabled(ctx, SetInlineEnabledParams{UserID: uid, InlineEnabled: on}); err != nil {
 		return fmt.Errorf("set inline enabled: %w", err)
 	}
 	return nil

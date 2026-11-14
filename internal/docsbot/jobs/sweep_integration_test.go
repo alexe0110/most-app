@@ -23,7 +23,7 @@ func TestDisconnect_resetsQueuedAndUploading(t *testing.T) {
 	drive := &countingDrive{}
 	pool, user, id, svc, spy, enq, start := setupSweep(t, drive, "none", "0 seconds", "active")
 
-	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
+	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 	var uploadingID string
 	require.NoError(t, pool.QueryRow(t.Context(),
 		`insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, backup_status)
@@ -45,11 +45,10 @@ func TestDisconnect_resetsQueuedAndUploading(t *testing.T) {
 // document into the given backup_status and age, and creates the user's Drive
 // integration with integrationStatus ("" means no integration row). start runs
 // the upload queue.
-func setupSweep(t *testing.T, drive docsbot.Drive, backup, age, integrationStatus string) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, svc *docsbot.Service, spy *spyNotifier, enq *jobs.Enqueuer, start func()) {
+func setupSweep(t *testing.T, drive docsbot.Drive, backup, age, integrationStatus string) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, svc *docsbot.Service, spy *spyNotifier, enq *postgres.Documents, start func()) {
 	t.Helper()
 	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, slog.New(slog.DiscardHandler))
-	repo := postgres.NewRepo(pool)
-	svc = docsbot.NewService(repo, drive, fakeFiles{}, enq, repo, repo, enq)
+	svc = newService(pool, enq, jobs.NewQueue(queue), drive, fakeFiles{})
 
 	ctx := t.Context()
 	_, err := pool.Exec(ctx, `update documents set backup_status = $2, updated_at = now() - $3::interval where id = $1::uuid`,
@@ -84,7 +83,7 @@ func TestSweepStuckUploads_liveJobDedups(t *testing.T) {
 	pool, user, id, svc, _, enq, start := setupSweep(t, drive, "none", "0 seconds", "active")
 
 	// The queue is not started, so the enqueued job stays live.
-	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
+	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 	_, err := pool.Exec(t.Context(), `update documents set updated_at = now() - interval '31 minutes' where id = $1::uuid`, string(id))
 	require.NoError(t, err)
 

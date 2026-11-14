@@ -80,17 +80,33 @@ func runUploadWithLog(t *testing.T, files docsbot.FileSource, drive docsbot.Driv
 	t.Helper()
 	pool, user, id, spy, enq, queue := setupUpload(t, files, drive, log)
 	startQueue(t, queue)
-	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
+	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 	return pool, user, id, spy
+}
+
+// enqueueUpload puts the saved document in the state the claim paths leave it in
+// (backup pending) and queues its upload, unique among live jobs.
+func enqueueUpload(ctx context.Context, pool *pgxpool.Pool, docs *postgres.Documents, user docsbot.UserID, id docsbot.DocumentID) error {
+	if _, err := pool.Exec(ctx, `update documents set backup_status = 'pending' where id = $1::uuid`, string(id)); err != nil {
+		return err
+	}
+	return docs.RequeueUpload(ctx, user, id)
+}
+
+// newService wires a Service over docs and the queue that docs inserts its jobs into.
+func newService(pool *pgxpool.Pool, docs *postgres.Documents, jq *jobs.Queue, drive docsbot.Drive, files docsbot.FileSource) *docsbot.Service {
+	return docsbot.NewService(docsbot.Ports{
+		Repo: docs, Drive: drive, Files: files, Uploads: docs, Jobs: jq,
+		Folders: postgres.NewFolderCache(pool), Status: postgres.NewStatusMessages(pool), Syncs: docs,
+	})
 }
 
 // setupUpload seeds a saved document and wires the queue, enqueuer and spy
 // without starting the queue.
-func setupUpload(t *testing.T, files docsbot.FileSource, drive docsbot.Drive, log *slog.Logger) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, spy *spyNotifier, enq *jobs.Enqueuer, queue *pjobs.Client) {
+func setupUpload(t *testing.T, files docsbot.FileSource, drive docsbot.Drive, log *slog.Logger) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, spy *spyNotifier, enq *postgres.Documents, queue *pjobs.Client) {
 	t.Helper()
 	ctx := t.Context()
 	pool = dbtest.New(t)
-	repo := postgres.NewRepo(pool)
 
 	var uid string
 	require.NoError(t, pool.QueryRow(ctx, `insert into users (tg_user_id) values (1) returning id::text`).Scan(&uid))
@@ -104,8 +120,9 @@ func setupUpload(t *testing.T, files docsbot.FileSource, drive docsbot.Drive, lo
 	bind := jobs.RegisterUploadDocument(workers, log)
 	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
 	require.NoError(t, err)
-	enq = jobs.NewEnqueuer(repo, queue)
-	svc := docsbot.NewService(repo, drive, files, enq, repo, repo, enq)
+	jq := jobs.NewQueue(queue)
+	enq = postgres.NewDocuments(pool, jq)
+	svc := newService(pool, enq, jq, drive, files)
 	spy = &spyNotifier{}
 	bind(svc, spy)
 	return pool, user, id, spy, enq, queue
@@ -177,13 +194,13 @@ func (d *countingDrive) count() int {
 	return d.calls
 }
 
-func TestEnqueueUpload_dedupsWhileQueued(t *testing.T) {
+func TestUploadJob_dedupsWhileQueued(t *testing.T) {
 	drive := &countingDrive{}
 	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, slog.New(slog.DiscardHandler))
 
 	// Queue is not started, so the first job stays available and the second is a duplicate.
-	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
-	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
+	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
+	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 	startQueue(t, queue)
 
 	require.Eventually(t, func() bool {
@@ -203,7 +220,7 @@ func TestUploadDocument_deletedWhileQueuedFinishesSilently(t *testing.T) {
 	log := debugLogger(&logs)
 	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, log)
 
-	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
+	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 	_, err := pool.Exec(t.Context(), `delete from documents where id = $1::uuid`, string(id))
 	require.NoError(t, err)
 	startQueue(t, queue)

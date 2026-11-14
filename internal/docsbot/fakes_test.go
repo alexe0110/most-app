@@ -33,8 +33,27 @@ const stranger docsbot.UserID = "user-2"
 
 func edgeService(repo *fakeRepo, drive fakeDrive) (*docsbot.Service, *fakeUploads) {
 	uploads := &fakeUploads{repo: repo}
-	return docsbot.NewService(repo, drive, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}), uploads
+	return newService(repo, drive, fakeFiles{}, uploads, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}), uploads
 }
+
+// newService is the one place tests build a Service from fakes. uploads doubles
+// as the JobCanceler when it is one (fakeUploads records the cancels).
+func newService(repo docsbot.Repo, drive docsbot.Drive, files docsbot.FileSource, uploads docsbot.Uploads, folders docsbot.Folders, status docsbot.StatusMessages, syncs docsbot.Syncs, opts ...docsbot.Option) *docsbot.Service {
+	jobs, ok := uploads.(docsbot.JobCanceler)
+	if !ok {
+		jobs = noJobs{}
+	}
+	return docsbot.NewService(docsbot.Ports{
+		Repo: repo, Drive: drive, Files: files, Uploads: uploads, Jobs: jobs,
+		Folders: folders, Status: status, Syncs: syncs,
+	}, opts...)
+}
+
+// noJobs is a JobCanceler that cancels nothing.
+type noJobs struct{}
+
+func (noJobs) CancelUploads(context.Context, docsbot.UserID) error  { return nil }
+func (noJobs) CancelUserJobs(context.Context, docsbot.UserID) error { return nil }
 
 // runParallel runs fn n times at once and returns the results in call order.
 func runParallel(n int, fn func(i int) error) []error {
@@ -170,8 +189,8 @@ func (f fakeFiles) Download(context.Context, string) ([]byte, string, error) {
 	return f.data, f.mime, f.err
 }
 
-// fakeUploads records enqueued uploads and, like the real atomic enqueue, marks
-// the document pending.
+// fakeUploads records enqueued uploads and, like the real transaction, saves the
+// chosen category together with the backup status.
 type fakeUploads struct {
 	mu         sync.Mutex
 	repo       *fakeRepo
@@ -179,23 +198,36 @@ type fakeUploads struct {
 	cancels    []docsbot.UserID // CancelUploads calls
 	allJobs    []docsbot.UserID // CancelUserJobs calls
 	requeued   []docsbot.DocumentID
-	enqueueErr error // returned by EnqueueUpload before anything changes, like a failed tx
+	enqueueErr error // returned by SaveChosen for a queued upload before anything changes, like a failed tx
 }
 
-func (u *fakeUploads) EnqueueUpload(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
+// SaveChosen mirrors the transaction: it either applies the whole choice or, on
+// enqueueErr for a queued upload, changes nothing.
+func (u *fakeUploads) SaveChosen(_ context.Context, c docsbot.SaveChoice) (bool, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if u.enqueueErr != nil {
-		return u.enqueueErr
+	if u.enqueueErr != nil && c.Backup == docsbot.BackupPending {
+		return false, u.enqueueErr
 	}
-	u.calls = append(u.calls, id)
 	u.repo.mu.Lock()
 	defer u.repo.mu.Unlock()
-	if d, ok := u.repo.docs[id]; ok && d.UserID == user {
-		d.BackupStatus = docsbot.BackupPending
-		u.repo.docs[id] = d
+	d, ok := u.repo.docs[c.ID]
+	if !ok || d.UserID != c.User || d.Status != docsbot.StatusPending {
+		return false, nil
 	}
-	return nil
+	d.Category, d.Status = c.Category, docsbot.StatusSaved
+	if c.Title != "" {
+		d.Title = c.Title
+		d.MetaVersion++
+	}
+	if c.Backup != docsbot.BackupNone {
+		d.BackupStatus = c.Backup
+	}
+	if c.Backup == docsbot.BackupPending {
+		u.calls = append(u.calls, c.ID)
+	}
+	u.repo.docs[c.ID] = d
+	return true, nil
 }
 
 // RequeueUpload records the call; like the real one it leaves backup_status alone.
@@ -232,7 +264,7 @@ type fakeSyncs struct {
 
 var _ docsbot.Syncs = (*fakeSyncs)(nil)
 
-func (s *fakeSyncs) change(user docsbot.UserID, id docsbot.DocumentID, fn func(*docsbot.Document)) (bool, error) {
+func (s *fakeSyncs) change(user docsbot.UserID, id docsbot.DocumentID, cloud bool, fn func(*docsbot.Document)) (bool, error) {
 	if s.err != nil {
 		return false, s.err
 	}
@@ -244,7 +276,7 @@ func (s *fakeSyncs) change(user docsbot.UserID, id docsbot.DocumentID, fn func(*
 	}
 	fn(&d)
 	d.MetaVersion++
-	queued := d.BackupStatus == docsbot.BackupBackedUp && d.SyncStatus != docsbot.SyncMissing
+	queued := cloud && d.BackupStatus == docsbot.BackupBackedUp && d.SyncStatus != docsbot.SyncMissing
 	if queued {
 		d.SyncStatus, d.SyncReason = docsbot.SyncPending, ""
 	}
@@ -261,12 +293,12 @@ func (s *fakeSyncs) addJob(id docsbot.DocumentID) {
 	s.jobs = append(s.jobs, id)
 }
 
-func (s *fakeSyncs) SetTitle(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, title string) (bool, error) {
-	return s.change(user, id, func(d *docsbot.Document) { d.Title = title })
+func (s *fakeSyncs) SetTitle(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, title string, cloud bool) (bool, error) {
+	return s.change(user, id, cloud, func(d *docsbot.Document) { d.Title = title })
 }
 
-func (s *fakeSyncs) SetCategory(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (bool, error) {
-	return s.change(user, id, func(d *docsbot.Document) { d.Category = cat })
+func (s *fakeSyncs) SetCategory(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category, cloud bool) (bool, error) {
+	return s.change(user, id, cloud, func(d *docsbot.Document) { d.Category = cat })
 }
 
 func (s *fakeSyncs) EnqueueSync(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
@@ -361,7 +393,7 @@ func (s *fakeSyncs) RetrySync(_ context.Context, user docsbot.UserID, id docsbot
 	return true, nil
 }
 
-func (s *fakeSyncs) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, trash bool) (bool, error) {
+func (s *fakeSyncs) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cloud bool) (bool, error) {
 	if s.err != nil {
 		return false, s.err
 	}
@@ -375,7 +407,7 @@ func (s *fakeSyncs) DeleteDocument(_ context.Context, user docsbot.UserID, id do
 	if d.BackupStatus != docsbot.BackupBackedUp || d.DriveFileID == "" || d.SyncStatus == docsbot.SyncMissing {
 		return false, nil
 	}
-	if !trash {
+	if !cloud {
 		return true, nil
 	}
 	s.mu.Lock()
@@ -507,18 +539,6 @@ func (r *fakeRepo) PurgeStalePending(_ context.Context, olderThan time.Time) (in
 	return n, nil
 }
 
-func (r *fakeRepo) SaveDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) (bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	d, ok := r.docs[id]
-	if !ok || d.UserID != user || d.Status != docsbot.StatusPending {
-		return false, nil
-	}
-	d.Category, d.Status = cat, docsbot.StatusSaved
-	r.docs[id] = d
-	return true, nil
-}
-
 func (r *fakeRepo) ResetPendingUploads(_ context.Context, user docsbot.UserID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -642,10 +662,6 @@ func (r *fakeRepo) TitleExistsInCategory(_ context.Context, user docsbot.UserID,
 		}
 	}
 	return false, nil
-}
-
-func (r *fakeRepo) SetCategory(_ context.Context, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) error {
-	return r.mutate(user, id, func(d *docsbot.Document) { d.Category = cat; d.MetaVersion++ })
 }
 
 func (r *fakeRepo) DeleteDocument(_ context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
@@ -949,6 +965,20 @@ func (s *fakeStatus) Create(_ context.Context, user docsbot.UserID, chatID int64
 	}
 	s.msgs[m.ID] = m
 	return m, nil
+}
+
+// PurgeClosed drops closed messages created before olderThan (the fake keeps no close time).
+func (s *fakeStatus) PurgeClosed(_ context.Context, olderThan time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for id, m := range s.msgs {
+		if m.Closed && m.CreatedAt.Before(olderThan) {
+			delete(s.msgs, id)
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (s *fakeStatus) Close(_ context.Context, user docsbot.UserID, id docsbot.StatusMessageID) error {

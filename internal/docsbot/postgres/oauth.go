@@ -7,20 +7,31 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/alexe0110/most-app/internal/platform/oauth"
 )
+
+// OAuthStore persists OAuth states and integrations; it implements oauth.Store.
+type OAuthStore struct{ q *Queries }
+
+var _ oauth.Store = (*OAuthStore)(nil)
+
+// NewOAuthStore wires OAuthStore around an existing pool.
+func NewOAuthStore(pool *pgxpool.Pool) *OAuthStore {
+	return &OAuthStore{q: New(pool)}
+}
 
 // This file implements the platform/oauth Store port over the oauth_states and
 // integrations tables. The interface is declared by the consumer (platform/oauth).
 
 // SaveState persists a one-time OAuth state.
-func (r *Repo) SaveState(ctx context.Context, s oauth.State) error {
+func (r *OAuthStore) SaveState(ctx context.Context, s oauth.State) error {
 	uid, err := parseUUID(s.UserID)
 	if err != nil {
 		return err
 	}
-	if err := r.CreateOAuthState(ctx, CreateOAuthStateParams{
+	if err := r.q.CreateOAuthState(ctx, CreateOAuthStateParams{
 		State:     s.Value,
 		UserID:    uid,
 		Bot:       s.Bot,
@@ -34,8 +45,8 @@ func (r *Repo) SaveState(ctx context.Context, s oauth.State) error {
 
 // TakeState fetches and deletes a state, translating "no rows" into the domain
 // error the service expects.
-func (r *Repo) TakeState(ctx context.Context, state string) (oauth.State, error) {
-	row, err := r.TakeOAuthState(ctx, state)
+func (r *OAuthStore) TakeState(ctx context.Context, state string) (oauth.State, error) {
+	row, err := r.q.TakeOAuthState(ctx, state)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return oauth.State{}, oauth.ErrStateNotFound
@@ -52,12 +63,12 @@ func (r *Repo) TakeState(ctx context.Context, state string) (oauth.State, error)
 }
 
 // SaveIntegration upserts the encrypted token and status for (user, bot, provider).
-func (r *Repo) SaveIntegration(ctx context.Context, userID, bot, provider, status string, refreshTokenEnc []byte) error {
+func (r *OAuthStore) SaveIntegration(ctx context.Context, userID, bot, provider, status string, refreshTokenEnc []byte) error {
 	uid, err := parseUUID(userID)
 	if err != nil {
 		return err
 	}
-	if _, err := r.UpsertIntegration(ctx, UpsertIntegrationParams{
+	if _, err := r.q.UpsertIntegration(ctx, UpsertIntegrationParams{
 		UserID:          uid,
 		Bot:             bot,
 		Provider:        provider,
@@ -70,12 +81,12 @@ func (r *Repo) SaveIntegration(ctx context.Context, userID, bot, provider, statu
 }
 
 // Integration returns the stored connection or oauth.ErrNoIntegration.
-func (r *Repo) Integration(ctx context.Context, userID, bot, provider string) (oauth.Integration, error) {
+func (r *OAuthStore) Integration(ctx context.Context, userID, bot, provider string) (oauth.Integration, error) {
 	uid, err := parseUUID(userID)
 	if err != nil {
 		return oauth.Integration{}, err
 	}
-	ig, err := r.GetIntegration(ctx, GetIntegrationParams{UserID: uid, Bot: bot, Provider: provider})
+	ig, err := r.q.GetIntegration(ctx, GetIntegrationParams{UserID: uid, Bot: bot, Provider: provider})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return oauth.Integration{}, oauth.ErrNoIntegration
@@ -86,12 +97,12 @@ func (r *Repo) Integration(ctx context.Context, userID, bot, provider string) (o
 }
 
 // UpdateIntegrationStatus sets the status for (user, bot, provider).
-func (r *Repo) UpdateIntegrationStatus(ctx context.Context, userID, bot, provider, status string) error {
+func (r *OAuthStore) UpdateIntegrationStatus(ctx context.Context, userID, bot, provider, status string) error {
 	uid, err := parseUUID(userID)
 	if err != nil {
 		return err
 	}
-	if err := r.SetIntegrationStatus(ctx, SetIntegrationStatusParams{
+	if err := r.q.SetIntegrationStatus(ctx, SetIntegrationStatusParams{
 		UserID:   uid,
 		Bot:      bot,
 		Provider: provider,

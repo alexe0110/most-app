@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
-	"github.com/alexe0110/most-app/internal/docsbot/postgres"
+	"github.com/alexe0110/most-app/internal/docsbot/jobs"
 )
 
 // Several simultaneous taps on "Повторить" for a failed document must claim it
@@ -19,8 +19,7 @@ import (
 func TestRetryBackup_simultaneousTapsUploadOnce(t *testing.T) {
 	drive := &countingDrive{}
 	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, slog.New(slog.DiscardHandler))
-	repo := postgres.NewRepo(pool)
-	svc := docsbot.NewService(repo, drive, fakeFiles{}, enq, repo, repo, enq)
+	svc := newService(pool, enq, jobs.NewQueue(queue), drive, fakeFiles{})
 	_, err := pool.Exec(t.Context(), `update documents set backup_status = 'failed' where id = $1::uuid`, string(id))
 	require.NoError(t, err)
 

@@ -54,7 +54,7 @@ func TestService_Backup_countsPdfPages(t *testing.T) {
 				fp.calls = &calls
 				opts = append(opts, docsbot.WithPageCounter(fp))
 			}
-			svc := docsbot.NewService(repo, fakeDrive{uploadFile: docsbot.DriveFile{ID: "drv"}}, fakeFiles{data: []byte("x"), mime: tt.dlMIME},
+			svc := newService(repo, fakeDrive{uploadFile: docsbot.DriveFile{ID: "drv"}}, fakeFiles{data: []byte("x"), mime: tt.dlMIME},
 				&fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, opts...)
 
 			res, err := svc.Backup(t.Context(), user, doc.ID)

@@ -29,7 +29,7 @@ import (
 func discardLog() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
 // Many simultaneous taps / duplicate updates for one document give one upload.
-func TestEnqueueUpload_concurrentSameDocumentUploadsOnce(t *testing.T) {
+func TestUploadJob_concurrentSameDocumentUploadsOnce(t *testing.T) {
 	drive := &countingDrive{}
 	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, discardLog())
 
@@ -37,7 +37,7 @@ func TestEnqueueUpload_concurrentSameDocumentUploadsOnce(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, taps)
 	for range taps {
-		wg.Go(func() { errs <- enq.EnqueueUpload(t.Context(), user, id) })
+		wg.Go(func() { errs <- enqueueUpload(t.Context(), pool, enq, user, id) })
 	}
 	wg.Wait()
 	close(errs)
@@ -56,12 +56,12 @@ func TestEnqueueUpload_concurrentSameDocumentUploadsOnce(t *testing.T) {
 }
 
 // "Retry" after a failed upload: the earlier job is finished, so a new one is created.
-func TestEnqueueUpload_retryAfterFailedRuns(t *testing.T) {
+func TestUploadJob_retryAfterFailedRuns(t *testing.T) {
 	drive := &countingDrive{}
 	pool, user, id, _, enq, queue := setupUpload(t, fakeFiles{}, drive, discardLog())
 	startQueue(t, queue)
 
-	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
+	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 	require.Eventually(t, func() bool {
 		status, _ := backupState(t, pool, id)
 		return status == "backed_up"
@@ -73,7 +73,7 @@ func TestEnqueueUpload_retryAfterFailedRuns(t *testing.T) {
 
 	_, err := pool.Exec(t.Context(), `update documents set backup_status = 'failed', drive_file_id = null where id = $1::uuid`, string(id))
 	require.NoError(t, err)
-	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
+	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 
 	require.Eventually(t, func() bool { return drive.count() == 2 }, 30*time.Second, 100*time.Millisecond)
 	require.Eventually(t, func() bool {
@@ -82,15 +82,15 @@ func TestEnqueueUpload_retryAfterFailedRuns(t *testing.T) {
 	}, 30*time.Second, 100*time.Millisecond)
 }
 
-// A skipped duplicate must leave the document status as it was.
-func TestEnqueueUpload_duplicateKeepsStatus(t *testing.T) {
+// Requeueing while a job is live inserts nothing and leaves the document status as it was.
+func TestRequeueUpload_duplicateKeepsStatus(t *testing.T) {
 	pool, user, id, _, enq, _ := setupUpload(t, fakeFiles{}, &countingDrive{}, discardLog())
 
-	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
+	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 	_, err := pool.Exec(t.Context(), `update documents set backup_status = 'uploading' where id = $1::uuid`, string(id))
 	require.NoError(t, err)
 
-	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
+	require.NoError(t, enq.RequeueUpload(t.Context(), user, id))
 
 	status, _ := backupState(t, pool, id)
 	require.Equal(t, "uploading", status)
@@ -214,13 +214,12 @@ func TestUploadDocument_batchCreatesFoldersOnce(t *testing.T) {
 	const total = 10
 	ctx := t.Context()
 	pool := dbtest.New(t)
-	repo := postgres.NewRepo(pool)
 	log := slog.New(slog.DiscardHandler)
 
 	fd := &statefulDrive{t: t, folders: map[string]folderRec{}, created: map[string]int{}}
 	srv := httptest.NewServer(fd)
 	t.Cleanup(srv.Close)
-	gd := gdrive.New(plainClients{}, repo, gdrive.WithBaseURL(srv.URL))
+	gd := gdrive.New(plainClients{}, postgres.NewFolderCache(pool), gdrive.WithBaseURL(srv.URL))
 
 	var uid string
 	require.NoError(t, pool.QueryRow(ctx, `insert into users (tg_user_id) values (1) returning id::text`).Scan(&uid))
@@ -243,8 +242,9 @@ func TestUploadDocument_batchCreatesFoldersOnce(t *testing.T) {
 	bind := jobs.RegisterUploadDocument(workers, log)
 	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
 	require.NoError(t, err)
-	enq := jobs.NewEnqueuer(repo, queue)
-	svc := docsbot.NewService(repo, raceDrive{gd: gd}, fakeFiles{}, enq, repo, repo, enq)
+	jq := jobs.NewQueue(queue)
+	enq := postgres.NewDocuments(pool, jq)
+	svc := newService(pool, enq, jq, raceDrive{gd: gd}, fakeFiles{})
 	bind(svc, &spyNotifier{})
 
 	require.NoError(t, queue.Start(ctx))
@@ -255,7 +255,7 @@ func TestUploadDocument_batchCreatesFoldersOnce(t *testing.T) {
 	})
 
 	for _, id := range ids {
-		require.NoError(t, enq.EnqueueUpload(ctx, user, id))
+		require.NoError(t, enqueueUpload(ctx, pool, enq, user, id))
 	}
 
 	require.Eventually(t, func() bool {

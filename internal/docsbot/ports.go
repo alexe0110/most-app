@@ -10,6 +10,7 @@ import (
 // by docsbot/postgres.
 type Repo interface {
 	// CreateDocument stores a received file as pending (no category yet).
+	// ErrDuplicateFile if the user already has a document with this file.
 	CreateDocument(ctx context.Context, in IncomingFile) (Document, error)
 	// DocumentByFileUniqueID returns the user's document for this Telegram
 	// file, or ErrNotFound.
@@ -23,9 +24,6 @@ type Repo interface {
 	// PurgeStalePending deletes every user's pending documents created before
 	// olderThan and returns how many were removed.
 	PurgeStalePending(ctx context.Context, olderThan time.Time) (int, error)
-	// SaveDocument sets the category and marks a pending document saved. saved is
-	// false when the document was not pending (already saved, or gone).
-	SaveDocument(ctx context.Context, user UserID, id DocumentID, cat Category) (saved bool, err error)
 	SetBackupStatus(ctx context.Context, user UserID, id DocumentID, s BackupStatus) error
 	// FailBackup marks the upload failed and stores the reason (BackupReason*).
 	// Any other status change clears the reason.
@@ -39,15 +37,9 @@ type Repo interface {
 	MarkUploading(ctx context.Context, user UserID, id DocumentID) error
 	// ResetPendingUploads resets the user's pending/uploading saved documents back to none.
 	ResetPendingUploads(ctx context.Context, user UserID) error
-	// SetTitle renames the document; ErrNotFound if the user has no such document.
-	SetTitle(ctx context.Context, user UserID, id DocumentID, title string) error
 	// TitleExistsInCategory reports whether the user already has a saved document
 	// with this exact title in the category (used to de-duplicate default names).
 	TitleExistsInCategory(ctx context.Context, user UserID, cat Category, title string) (bool, error)
-	// SetCategory recategorizes the document; ErrNotFound if the user has no such document.
-	SetCategory(ctx context.Context, user UserID, id DocumentID, cat Category) error
-	// DeleteDocument removes the document; ErrNotFound if the user has no such document.
-	DeleteDocument(ctx context.Context, user UserID, id DocumentID) error
 	// CountSaved counts the user's saved documents.
 	CountSaved(ctx context.Context, user UserID) (int, error)
 	// CountNotBackedUp counts saved documents not yet on Drive.
@@ -95,8 +87,6 @@ type Repo interface {
 	// DeleteUserData deletes the user's documents, drive_folders and integrations and
 	// soft-deletes the user (users.deleted_at), all in one transaction.
 	DeleteUserData(ctx context.Context, user UserID) error
-	// DeleteAllFolders clears the user's cached Drive folder ids.
-	DeleteAllFolders(ctx context.Context, user UserID) error
 }
 
 // StuckUpload is a saved document stuck mid-upload (pending/uploading) for a
@@ -176,15 +166,38 @@ type FileSource interface {
 // Folders reports the cached Drive folder id for a user's category, if known.
 type Folders interface {
 	CategoryFolderID(ctx context.Context, user UserID, cat Category) (id string, ok bool, err error)
+	// DeleteAllFolders clears the user's cached Drive folder ids.
+	DeleteAllFolders(ctx context.Context, user UserID) error
 }
 
-// Uploads enqueues a document's Drive upload, marking backup_status=pending and
-// inserting the job in one transaction.
+// Uploads writes a document's upload state together with its Drive upload job.
 type Uploads interface {
-	EnqueueUpload(ctx context.Context, user UserID, id DocumentID) error
+	// SaveChosen sets the category of a pending document, marks it saved and, in
+	// the same transaction, applies the title and the backup outcome of the choice
+	// (queuing the upload job for BackupPending). saved is false, changing nothing,
+	// when the document was not pending (already saved, or gone).
+	SaveChosen(ctx context.Context, c SaveChoice) (saved bool, err error)
 	// RequeueUpload inserts the upload job only, unique, without touching
 	// backup_status or updated_at; a live job dedups to a no-op.
 	RequeueUpload(ctx context.Context, user UserID, id DocumentID) error
+}
+
+// SaveChoice is the user's category choice for a pending document, with
+// everything that is written along with it.
+type SaveChoice struct {
+	User     UserID
+	ID       DocumentID
+	Category Category
+	// Title replaces the stored title; empty keeps it.
+	Title string
+	// Backup is BackupNone (Drive not connected), BackupPending (queue the upload)
+	// or BackupTooLarge (connected, but the file exceeds MaxDriveBytes).
+	Backup BackupStatus
+}
+
+// JobCanceler removes a user's queued jobs. Unlike Uploads and Syncs it touches
+// the queue only, not document rows.
+type JobCanceler interface {
 	// CancelUploads removes the user's pending (not yet running) upload_document jobs.
 	CancelUploads(ctx context.Context, user UserID) error
 	// CancelUserJobs removes all of the user's pending jobs: uploads, syncs and
@@ -194,13 +207,14 @@ type Uploads interface {
 
 // Syncs applies changes that the cloud copy must follow. Every method commits
 // the database change together with its job in one transaction; whether a job is
-// needed is decided in SQL under the row lock.
+// needed is decided in SQL under the row lock. Methods with cloud set act on the
+// cloud copy too (Drive is connected); without it only the row changes.
 type Syncs interface {
-	// SetTitle renames the document; for a backed-up document with a live file it
-	// also queues a sync. ErrNotFound if the user has no such document.
-	SetTitle(ctx context.Context, user UserID, id DocumentID, title string) (queued bool, err error)
+	// SetTitle renames the document; with cloud set, a backed-up document with a
+	// live file also queues a sync. ErrNotFound if the user has no such document.
+	SetTitle(ctx context.Context, user UserID, id DocumentID, title string, cloud bool) (queued bool, err error)
 	// SetCategory recategorizes the document, queuing a sync like SetTitle.
-	SetCategory(ctx context.Context, user UserID, id DocumentID, cat Category) (queued bool, err error)
+	SetCategory(ctx context.Context, user UserID, id DocumentID, cat Category, cloud bool) (queued bool, err error)
 	// EnqueueSync marks a backed-up document sync-pending and queues a sync.
 	EnqueueSync(ctx context.Context, user UserID, id DocumentID) error
 	// RetrySync moves a failed sync back to pending and queues it; false when it was not failed.
@@ -219,12 +233,12 @@ type Syncs interface {
 	// flight or a missing Drive file. ErrDuplicateFile if the user already has
 	// another document with this file.
 	ReplaceContent(ctx context.Context, user UserID, id DocumentID, in IncomingFile, cloud bool) (replaced bool, err error)
-	// DeleteDocument deletes the document row. When trash is set and the deleted
+	// DeleteDocument deletes the document row. When cloud is set and the deleted
 	// row had a live Drive file, trashing it is queued in the same transaction;
-	// without trash, remoteKept reports that a live Drive file stays. A document
+	// without cloud, remoteKept reports that a live Drive file stays. A document
 	// whose file is missing in Drive counts as having none. ErrNotFound if the
 	// user has no such document.
-	DeleteDocument(ctx context.Context, user UserID, id DocumentID, trash bool) (remoteKept bool, err error)
+	DeleteDocument(ctx context.Context, user UserID, id DocumentID, cloud bool) (remoteKept bool, err error)
 	// RequeueSync inserts the sync job only, unique, without touching the
 	// document, so a live job dedups to a no-op and the stuck clock keeps running.
 	RequeueSync(ctx context.Context, user UserID, id DocumentID) error
@@ -242,4 +256,8 @@ type StatusMessages interface {
 	DocumentsIn(ctx context.Context, user UserID, id StatusMessageID) ([]Document, error)
 	// ByID returns the user's status message, or ErrNotFound (also for another user's).
 	ByID(ctx context.Context, user UserID, id StatusMessageID) (StatusMessage, error)
+	// PurgeClosed deletes every user's status messages closed before olderThan
+	// and returns how many were removed; the documents they listed stay. A message
+	// with a failed upload is kept: its retry button still needs it.
+	PurgeClosed(ctx context.Context, olderThan time.Time) (int, error)
 }
