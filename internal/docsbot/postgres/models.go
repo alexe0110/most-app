@@ -48,6 +48,15 @@ type DriveFolder struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type Event struct {
+	ID        pgtype.UUID
+	UserID    pgtype.UUID
+	Bot       string
+	Name      string
+	Props     []byte
+	CreatedAt pgtype.Timestamptz
+}
+
 type Integration struct {
 	ID              pgtype.UUID
 	UserID          pgtype.UUID
@@ -84,4 +93,5 @@ type User struct {
 	Lang      string
 	CreatedAt pgtype.Timestamptz
 	DeletedAt pgtype.Timestamptz
+	Source    pgtype.Text
 }

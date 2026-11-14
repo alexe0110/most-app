@@ -16,7 +16,7 @@ insert into users (tg_user_id, lang)
 values ($1, $2)
 on conflict (tg_user_id) do update
     set deleted_at = null
-returning id, tg_user_id, lang, created_at, deleted_at
+returning id, tg_user_id, lang, created_at, deleted_at, source
 `
 
 type EnsureUserParams struct {
@@ -35,12 +35,13 @@ func (q *Queries) EnsureUser(ctx context.Context, arg EnsureUserParams) (User, e
 		&i.Lang,
 		&i.CreatedAt,
 		&i.DeletedAt,
+		&i.Source,
 	)
 	return i, err
 }
 
 const getUserByTgID = `-- name: GetUserByTgID :one
-select id, tg_user_id, lang, created_at, deleted_at
+select id, tg_user_id, lang, created_at, deleted_at, source
 from users
 where tg_user_id = $1
   and deleted_at is null
@@ -55,6 +56,7 @@ func (q *Queries) GetUserByTgID(ctx context.Context, tgUserID int64) (User, erro
 		&i.Lang,
 		&i.CreatedAt,
 		&i.DeletedAt,
+		&i.Source,
 	)
 	return i, err
 }
