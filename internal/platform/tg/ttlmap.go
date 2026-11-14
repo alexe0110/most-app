@@ -131,16 +131,17 @@ func (t *TTLMap[K, V]) evictOldest() {
 }
 
 // Len is the number of stored entries, expired ones not yet dropped included.
+// For tests and diagnostics.
 func (t *TTLMap[K, V]) Len() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return len(t.m)
 }
 
-// TTL is how long an entry lives after it was set.
+// TTL is how long an entry lives after it was set. For tests and diagnostics.
 func (t *TTLMap[K, V]) TTL() time.Duration { return t.ttl }
 
-// Limit is the largest number of entries the map holds.
+// Limit is the largest number of entries the map holds. For tests and diagnostics.
 func (t *TTLMap[K, V]) Limit() int { return t.limit }
 
 // NewToken returns a random 16-character token for the data of an inline button

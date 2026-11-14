@@ -95,9 +95,17 @@ func newSessionStore(now func() time.Time) *sessionStore {
 	return &sessionStore{byUser: map[int64]*session{}, ttl: sessionTTL, max: maxSessions, now: now}
 }
 
-// live returns a copy of the user's session if it exists and has not timed out.
-// A copy, not the stored pointer: update writes the session under the lock, so a
-// reader holding the pointer would race with it.
+// snapshot returns a copy of the session that shares no memory with the stored
+// one: update writes the session under the lock, and a copy that aliased the
+// slices would race with it (or with append) once the lock is released.
+func (s *session) snapshot() session {
+	cp := *s
+	cp.images = slices.Clone(s.images)
+	cp.pdfs = slices.Clone(s.pdfs)
+	return cp
+}
+
+// live returns a snapshot of the user's session if it exists and has not timed out.
 func (s *sessionStore) live(user int64) (session, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -105,7 +113,7 @@ func (s *sessionStore) live(user int64) (session, bool) {
 	if !ok {
 		return session{}, false
 	}
-	return *sess, true
+	return sess.snapshot(), true
 }
 
 // liveLocked is live for a caller that holds the lock. Every access also drops
@@ -174,7 +182,7 @@ func (s *session) atStep(steps []step) bool {
 	return len(steps) == 0 || slices.Contains(steps, s.step)
 }
 
-// check returns a copy of the user's live session if a press on message msgID
+// check returns a snapshot of the user's live session if a press on message msgID
 // is valid for one of the steps (none means any step).
 func (s *sessionStore) check(user int64, msgID int, steps ...step) (session, bool) {
 	s.mu.Lock()
@@ -183,7 +191,7 @@ func (s *sessionStore) check(user int64, msgID int, steps ...step) (session, boo
 	if !ok || !sess.msgMatches(msgID) || !sess.atStep(steps) {
 		return session{}, false
 	}
-	return *sess, true
+	return sess.snapshot(), true
 }
 
 // advance validates a button press like check and, if valid, applies fn under
@@ -198,7 +206,7 @@ func (s *sessionStore) advance(user int64, msgID int, from []step, fn func(*sess
 	}
 	fn(sess)
 	sess.updated = s.now()
-	return *sess, true
+	return sess.snapshot(), true
 }
 
 // setMsg records the session's dialogue message.
@@ -218,7 +226,7 @@ func (s *sessionStore) claim(user int64, msgID int, at ...step) (session, bool) 
 		return session{}, false
 	}
 	delete(s.byUser, user)
-	return *sess, true
+	return sess.snapshot(), true
 }
 
 // restore puts a claimed session back, unless the user started another one or the

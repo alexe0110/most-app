@@ -63,7 +63,9 @@ func (c *Converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 	}
 	if msg.Document.MimeType == "application/pdf" || strings.EqualFold(filepath.Ext(filename), ".pdf") {
 		// The result is already in memory; a failed count only leaves the page count unknown.
-		if n, err := convert.PageCount(ctx, data); err == nil {
+		pctx, cancel := context.WithTimeout(ctx, pdfTimeout)
+		defer cancel()
+		if n, err := convert.PageCount(pctx, data); err == nil {
 			pages = n
 		}
 	}

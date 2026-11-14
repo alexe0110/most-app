@@ -41,6 +41,9 @@ const (
 	maxLimitKB = 20 * 1_024 // largest custom target, in KB
 	// photosDownloadBudget caps all downloads of one PDF from photos together.
 	photosDownloadBudget = 80 * time.Second
+	// imageTimeout bounds one image operation (decode, compress, build a PDF); like
+	// pdfTimeout it keeps a pathological file from holding a worker.
+	imageTimeout = 20 * time.Second
 )
 
 // FileDownloader fetches a Telegram file's bytes and content type by file_id.
