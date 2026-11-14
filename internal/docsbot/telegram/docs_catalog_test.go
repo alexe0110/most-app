@@ -76,7 +76,7 @@ func TestSearchBack_rerunsLastSearch(t *testing.T) {
 	}
 
 	require.Len(t, sent.edits, 2)
-	require.True(t, has(sent.edits, "Нашёл (1):"), "edits %q", sent.edits)
+	require.True(t, has(sent.edits, "Нашёл 1 документ:"), "edits %q", sent.edits)
 	require.Equal(t, []docsbot.EventName{docsbot.EventSearch}, repo.EventNames(), "redrawing the results is not a new search")
 }
 

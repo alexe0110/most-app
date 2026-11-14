@@ -146,7 +146,7 @@ func TestConvertAlbum_tokenBelongsToTheTelegramUserWhoSentIt(t *testing.T) {
 	stranger.CallbackQuery.From.ID = testUser + 1
 	h.bot.ProcessUpdate(ctx, stranger)
 
-	require.Contains(t, h.lastText(), "устарела", "a stranger's press is a stale one")
+	require.Contains(t, h.lastText(), "уже не работает", "a stranger's press is a stale one")
 	require.Empty(t, h.downloads, "nothing was fetched for a stranger")
 	require.Empty(t, h.docs)
 

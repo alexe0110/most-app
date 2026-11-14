@@ -22,7 +22,7 @@ func TestConvertPDF_photosShowOneAcceptedMessage(t *testing.T) {
 	var live []int // dialogue messages that were not deleted
 	for i := 1; i <= 3; i++ {
 		h.bot.ProcessUpdate(ctx, photoUpdate(i))
-		require.Contains(t, h.lastText(), fmt.Sprintf("страниц: %d", i))
+		require.Contains(t, h.lastText(), fmt.Sprintf("В PDF уже %d %s", i, []string{"страница", "страницы", "страницы"}[i-1]))
 		require.Contains(t, h.lastMarkup(), "conv:done", "Готово is on the same message")
 		require.Contains(t, h.lastMarkup(), "conv:cancel")
 	}
@@ -41,17 +41,17 @@ func TestConvertPDF_fileTipOncePerUser(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:pdf", h.lastMsg()))
 
 	h.bot.ProcessUpdate(ctx, photoUpdate(1))
-	require.Contains(t, h.lastText(), "как файл", "the first compressed photo gets the tip")
+	require.Contains(t, h.lastText(), "присылай снимки файлом", "the first compressed photo gets the tip")
 	h.bot.ProcessUpdate(ctx, photoUpdate(2))
-	require.NotContains(t, h.lastText(), "как файл", "the tip is shown once")
+	require.NotContains(t, h.lastText(), "присылай снимки файлом", "the tip is shown once")
 
 	// A file (not a compressed photo) never gets it.
 	h2 := newConvHarness(t)
 	h2.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h2.bot.ProcessUpdate(ctx, callbackOn("conv:pdf", h2.lastMsg()))
 	h2.bot.ProcessUpdate(ctx, namedDocumentUpdate("doc", "image/jpeg", "a.jpg"))
-	require.NotContains(t, h2.lastText(), "как файл")
-	require.Contains(t, h2.lastText(), "страниц: 1")
+	require.NotContains(t, h2.lastText(), "присылай снимки файлом")
+	require.Contains(t, h2.lastText(), "В PDF уже 1 страница")
 }
 
 func TestConvertCompress_formatQuestionOnlyForPNG(t *testing.T) {
@@ -107,7 +107,7 @@ func TestConvertPDFActions_fromCommand(t *testing.T) {
 		h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 		require.Contains(t, h.lastMarkup(), "conv:pdfops")
 		h.bot.ProcessUpdate(ctx, callbackOn("conv:pdfops", h.lastMsg()))
-		require.Contains(t, h.lastShown(), "PDF файлом")
+		require.Contains(t, h.lastShown(), "PDF-файл")
 
 		// Anything but a PDF is refused and the step stays.
 		h.bot.ProcessUpdate(ctx, photoUpdate(1))
@@ -139,7 +139,7 @@ func TestConvertPDFActions_fromCommand(t *testing.T) {
 		h.bot.ProcessUpdate(ctx, callbackOn("conv:p:keep", menu))
 		require.Contains(t, h.lastShown(), "Какие страницы")
 		h.bot.ProcessUpdate(ctx, callbackOn("conv:p:rot", menu))
-		require.Equal(t, "Кнопка устарела, открой заново.", h.lastText(), "the menu step is over")
+		require.Equal(t, "Эта кнопка уже не работает. Открой документ заново.", h.lastText(), "the menu step is over")
 
 		h.bot.ProcessUpdate(ctx, convText("1-2"))
 
@@ -151,7 +151,7 @@ func TestConvertPDFActions_fromCommand(t *testing.T) {
 		h, menu := setup(t)
 		ctx := t.Context()
 		h.bot.ProcessUpdate(ctx, callbackOn("conv:p:rot", menu+50))
-		require.Equal(t, "Кнопка устарела, открой заново.", h.lastText())
+		require.Equal(t, "Эта кнопка уже не работает. Открой документ заново.", h.lastText())
 		require.Empty(t, h.docs)
 	})
 
@@ -223,6 +223,6 @@ func TestConvertMenu_errorBringsMenuBack(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:q:"+string(src.ID)+":c1", menu))
 
 	require.Empty(t, h.docs)
-	require.Contains(t, h.lastShown(), "Так я пока не умею")
+	require.Contains(t, h.lastShown(), "С таким файлом не справлюсь")
 	require.Empty(t, h.deleted, "the menu stays so the user can pick another action")
 }

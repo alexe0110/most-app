@@ -45,7 +45,7 @@ func TestRenderStatusMessage_tooLargeOnly(t *testing.T) {
 		batchDoc("a", docsbot.CatWork, docsbot.BackupTooLarge, ""),
 		batchDoc("b", docsbot.CatWork, docsbot.BackupTooLarge, ""),
 	}, nil)
-	require.Equal(t, "⚠️ Не загрузил 2: больше 20 МБ", text)
+	require.Equal(t, "⚠️ Не загрузил 2: больше 20\u00a0МБ", text)
 	require.NotNil(t, kb)
 	require.Equal(t, [][]string{{btnMyDocs}}, buttonTexts(kb.InlineKeyboard), "nothing to retry")
 }
@@ -236,13 +236,13 @@ func TestRenderStatusMessage_failures(t *testing.T) {
 				batchDoc("c", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonQuota),
 				batchDoc("d", docsbot.CatWork, docsbot.BackupTooLarge, ""),
 			},
-			want:     "⚠️ Не загрузил 4:\n• нет места на Google Диске — 2\n• Google Диск не отвечает — 1\n• больше 20 МБ — 1\nОсвободи место на Google Диске и нажми «Повторить».",
+			want:     "⚠️ Не загрузил 4:\n• нет места на Google Диске — 2\n• Google Диск не отвечает — 1\n• больше 20\u00a0МБ — 1\nОсвободи место на Google Диске и нажми «Повторить».",
 			wantRows: [][]string{{"🔁 Повторить (3)", btnMyDocs}},
 		},
 		{
 			name:     "too large only: counted as not transferred, no retry",
 			lines:    []docsbot.Document{ok, batchDoc("big", docsbot.CatWork, docsbot.BackupTooLarge, "")},
-			want:     "✅ Загрузил на Google Диск 1 документ\n\n⚠️ Не загрузил 1: больше 20 МБ\n\n📁 Работа · 1\nok",
+			want:     "✅ Загрузил на Google Диск 1 документ\n\n⚠️ Не загрузил 1: больше 20\u00a0МБ\n\n📁 Работа · 1\nok",
 			wantRows: [][]string{{btnMyDocs}},
 		},
 		{

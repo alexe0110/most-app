@@ -112,7 +112,7 @@ func (c *Converter) addPage(ctx context.Context, b *bot.Bot, update *models.Upda
 	case pages > 0 && !c.dialogue.busy(user):
 		// Photos of an album arrive in parallel: only the last one waiting shows
 		// the total, so the chat gets one message, not one per photo.
-		text := fmt.Sprintf(textConvertPDFAccepted, pages) + c.fileTip(user, update)
+		text := fmt.Sprintf(textConvertPDFAccepted, pages, plural(pages, pluralPageOne, pluralPageFew, pluralPageMany)) + c.fileTip(user, update)
 		c.moveDown(ctx, b, chatID, user, text, pdfKeyboard())
 	}
 }

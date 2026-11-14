@@ -23,7 +23,7 @@ func (h *convHarness) lastMsg() int {
 }
 
 func TestConvert_staleButtons(t *testing.T) {
-	const staleText = "Кнопка устарела, открой заново."
+	const staleText = "Эта кнопка уже не работает. Открой документ заново."
 
 	tests := []struct {
 		name string
@@ -258,7 +258,7 @@ func TestConvert_inaccessibleMessageDoesNothing(t *testing.T) {
 }
 
 func TestConvert_unknownActionsAreStale(t *testing.T) {
-	const staleText = "Кнопка устарела, открой заново."
+	const staleText = "Эта кнопка уже не работает. Открой документ заново."
 
 	for _, data := range []string{"conv:zzz", "conv:", "conv:p:", "conv:p:rot:x", "conv:p:zzz", "conv:fmt", "conv:limit3"} {
 		t.Run(data, func(t *testing.T) {

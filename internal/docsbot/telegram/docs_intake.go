@@ -222,7 +222,7 @@ func (d *docs) onCategoryGroup(ctx context.Context, b *bot.Bot, p press) {
 	default:
 		text := fmt.Sprintf(textGroupSaved, len(group.Docs), plural(len(group.Docs), pluralDocumentOne, pluralDocumentFew, pluralDocumentMany), cat.Label())
 		if tooLarge > 0 {
-			text += "\n" + fmt.Sprintf(textGroupTooLarge, tooLarge)
+			text += "\n" + fmt.Sprintf(textGroupTooLarge, docsbot.MaxDriveBytes>>20, tooLarge)
 		}
 		d.out(b).Edit(ctx, chatID, msgID, text, tg.WithKeyboard(nil))
 	}

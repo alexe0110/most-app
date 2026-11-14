@@ -84,7 +84,7 @@ func TestConvertReplace_askThenConfirm(t *testing.T) {
 	require.Equal(t, src.Title, got.Title)
 	require.Equal(t, src.Category, got.Category)
 	require.Equal(t, src.MetaVersion+1, got.MetaVersion, "replaced once, however many taps")
-	require.Contains(t, h.lastText(), "Эта кнопка устарела", "the second tap is stale")
+	require.Contains(t, h.lastText(), "Эта кнопка уже не работает", "the second tap is stale")
 }
 
 func TestConvertReplace_cancelRestoresButtons(t *testing.T) {
@@ -115,7 +115,7 @@ func TestConvertReplace_staleToken(t *testing.T) {
 
 			h.bot.ProcessUpdate(ctx, callbackUpdate(data+"deadbeef"))
 
-			require.Contains(t, h.lastText(), "Эта кнопка устарела")
+			require.Contains(t, h.lastText(), "Эта кнопка уже не работает")
 			require.Equal(t, src, h.repo.Docs[src.ID])
 		})
 	}
@@ -130,7 +130,7 @@ func TestConvertReplace_afterSkipIsStale(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:skip:"+tok))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpy:"+tok))
 
-	require.Contains(t, h.lastText(), "Эта кнопка устарела")
+	require.Contains(t, h.lastText(), "Эта кнопка уже не работает")
 	require.Equal(t, src, h.repo.Docs[src.ID])
 }
 

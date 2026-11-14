@@ -76,7 +76,7 @@ func TestRenderFound_opensCards(t *testing.T) {
 	text, kb := renderFound(docsbot.Found{Docs: []docsbot.Document{
 		{ID: "x1", Title: "Паспорт", Category: docsbot.CatPassport},
 	}})
-	require.Equal(t, "Нашёл (1):", text)
+	require.Equal(t, "Нашёл 1 документ:", text)
 	btn := kb.InlineKeyboard[0][0]
 	require.Equal(t, "📥 📄 Паспорт", btn.Text, "same row format as the list, no category")
 	require.True(t, strings.HasPrefix(btn.CallbackData, "d:oc:"))

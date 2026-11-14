@@ -131,7 +131,7 @@ func TestDeleteYes_returnsToOrigin(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallback("d:del:"+string(first.ID)))
 	require.True(t, has(sent.edits, "Удалить «Первый»?"), "edits %q", sent.edits)
 	b.ProcessUpdate(ctx, dataCallback("d:dy:"+string(first.ID)))
-	require.True(t, has(sent.edits, docsbot.CatPassport.Label()+" — 1"), "category page: %q", sent.edits)
+	require.True(t, has(sent.edits, docsbot.CatPassport.Label()+" · 1 документ"), "category page: %q", sent.edits)
 
 	open(second.ID)
 	b.ProcessUpdate(ctx, dataCallback("d:dy:"+string(second.ID)))
@@ -170,7 +170,7 @@ func TestDeleteYes_fromSearchReturnsToSearch(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(gone.ID)+":s"))
 	b.ProcessUpdate(ctx, dataCallback("d:dy:"+string(gone.ID)))
 
-	require.Equal(t, "Нашёл (1):", sent.edits[len(sent.edits)-1])
+	require.Equal(t, "Нашёл 1 документ:", sent.edits[len(sent.edits)-1])
 	require.NotContains(t, repo.Docs, gone.ID)
 	require.Contains(t, repo.Docs, keep.ID)
 }

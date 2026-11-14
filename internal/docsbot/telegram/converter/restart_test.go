@@ -16,7 +16,7 @@ func TestRestart_convertCallbackWithoutSession(t *testing.T) {
 
 			h.bot.ProcessUpdate(t.Context(), callbackUpdate(data))
 
-			require.Equal(t, "Кнопка устарела, открой заново.", h.lastText())
+			require.Equal(t, "Эта кнопка уже не работает. Открой документ заново.", h.lastText())
 		})
 	}
 }

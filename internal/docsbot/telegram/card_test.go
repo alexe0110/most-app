@@ -22,28 +22,28 @@ func TestCardText(t *testing.T) {
 			"drive with size and type",
 			docsbot.Document{Title: "a", MIME: "application/pdf", FileSize: 204 * 1024, CreatedAt: created,
 				BackupStatus: docsbot.BackupBackedUp, DriveFileID: "f"},
-			[]string{"📄 <b>a</b>\n", "🗂 Другое · PDF · 204 КБ\n", "📅 05.03.2026\n", "☁️ Google Диск · копия в Telegram"}, []string{"📥"},
+			[]string{"📄 <b>a</b>\n", "🗂 Другое · PDF · 204\u00a0КБ\n", "📅 Сохранён 05.03.2026\n", "☁️ Google Диск · копия в Telegram"}, []string{"📥"},
 		},
 		{
 			"telegram only, no size and type",
 			docsbot.Document{Title: "a", CreatedAt: created},
-			[]string{"🗂 Другое\n", "📅 05.03.2026\n", "📥 Только в Telegram"}, []string{" · ", "стр."},
+			[]string{"🗂 Другое\n", "📅 Сохранён 05.03.2026\n", "📥 Только в Telegram"}, []string{" · ", "стр."},
 		},
 		{
 			"pdf with pages",
 			docsbot.Document{Title: "ВНЖ", Category: docsbot.CatPassport, MIME: "application/pdf", FileSize: 194 * 1024, PageCount: 3,
 				CreatedAt: time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC), BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncOK},
-			[]string{"📄 <b>ВНЖ</b>\n🗂 Паспорт и ID · PDF · 3 стр. · 194 КБ\n📅 10.11.2026\n☁️ Google Диск · копия в Telegram"}, nil,
+			[]string{"📄 <b>ВНЖ</b>\n🗂 Паспорт и ID · PDF · 3\u00a0стр. · 194\u00a0КБ\n📅 Сохранён 10.11.2026\n☁️ Google Диск · копия в Telegram"}, nil,
 		},
 		{
 			"photo has the image icon",
 			docsbot.Document{Title: "Фото", Kind: docsbot.KindPhoto, FileSize: 2 * 1024 * 1024, CreatedAt: created},
-			[]string{"🖼 <b>Фото</b>\n", "🗂 Другое · Фото · 2,0 МБ\n"}, []string{"стр."},
+			[]string{"🖼 <b>Фото</b>\n", "🗂 Другое · Фото · 2,0\u00a0МБ\n"}, []string{"стр."},
 		},
 		{
 			"image with pixel size",
 			docsbot.Document{Title: "Скан", MIME: "image/jpeg", Kind: docsbot.KindDocument, Width: 1280, Height: 960, FileSize: 194 * 1024, CreatedAt: created},
-			[]string{"🗂 Другое · JPG · 1280×960 · 194 КБ\n"}, []string{"стр."},
+			[]string{"🗂 Другое · JPG · 1280×960 · 194\u00a0КБ\n"}, []string{"стр."},
 		},
 		{
 			"half-known size is left out",
@@ -121,7 +121,7 @@ func TestHumanSize(t *testing.T) {
 		n    int64
 		want string
 	}{
-		{0, ""}, {-5, ""}, {1, "1 КБ"}, {204 * 1024, "204 КБ"}, {1363149, "1,3 МБ"},
+		{0, ""}, {-5, ""}, {1, "1\u00a0КБ"}, {204 * 1024, "204\u00a0КБ"}, {1363149, "1,3\u00a0МБ"},
 	}
 	for _, tt := range tests {
 		require.Equal(t, tt.want, humanSize(tt.n), "n=%d", tt.n)
@@ -188,7 +188,7 @@ func TestStorageLine(t *testing.T) {
 		{docsbot.BackupUploading, "⏳ Загружаю на Google Диск…"},
 		{docsbot.BackupBackedUp, "☁️ Google Диск · копия в Telegram"},
 		{docsbot.BackupFailed, "⚠️ Не удалось загрузить на Google Диск"},
-		{docsbot.BackupTooLarge, "📥 Слишком большой для Google Диска"},
+		{docsbot.BackupTooLarge, "📥 Только в Telegram: больше 20\u00a0МБ"},
 		{docsbot.BackupNone, "📥 Только в Telegram"},
 	}
 	for _, tt := range tests {
@@ -206,13 +206,13 @@ func TestHumanSize_boundaries(t *testing.T) {
 		n    int64
 		want string
 	}{
-		{1024, "1 КБ"}, {1025, "2 КБ"}, {1<<20 - 1024, "1023 КБ"}, {1 << 20, "1,0 МБ"}, {5 << 20, "5,0 МБ"},
+		{1024, "1\u00a0КБ"}, {1025, "2\u00a0КБ"}, {1<<20 - 1024, "1023\u00a0КБ"}, {1 << 20, "1,0\u00a0МБ"}, {5 << 20, "5,0\u00a0МБ"},
 	}
 	for _, tt := range tests {
 		require.Equal(t, tt.want, humanSize(tt.n), "n=%d", tt.n)
 	}
-	// Just below 1 MiB must not render as the impossible "1024 КБ".
-	require.NotEqual(t, "1024 КБ", humanSize(1<<20-1))
+	// Just below 1 MiB must not render as the impossible "1024\u00a0КБ".
+	require.NotEqual(t, "1024\u00a0КБ", humanSize(1<<20-1))
 }
 
 // A default title "Категория — 08.11.2026" has a dotted date; it must not be read as
@@ -237,7 +237,7 @@ func TestFileType_defaultAndDottedTitles(t *testing.T) {
 func TestCardKeyboard_noBackWithoutOrigin(t *testing.T) {
 	kb := cardKeyboard(docsbot.Document{ID: "1"}, "", "")
 	require.Len(t, kb.InlineKeyboard, 3)
-	require.Contains(t, kb.InlineKeyboard[1][0].Text, "Имя")
+	require.Contains(t, kb.InlineKeyboard[1][0].Text, "Название")
 }
 
 func TestCardKeyboard_backedUpWithoutFolder(t *testing.T) {

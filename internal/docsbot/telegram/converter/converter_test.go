@@ -21,7 +21,7 @@ func TestConvert_unsupportedDocument(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, documentUpdate("application/zip"))
 
 	require.Empty(t, h.docs)
-	require.Contains(t, h.lastText(), "пока не умею")
+	require.Contains(t, h.lastText(), "С таким файлом не справлюсь")
 }
 
 func TestConvert_cancelReturnsToMainScenario(t *testing.T) {

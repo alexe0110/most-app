@@ -71,7 +71,7 @@ func TestInline_ownDocuments(t *testing.T) {
 	require.Equal(t, "photo", byID[string(photo.ID)].Type)
 	require.Equal(t, "photo-file", byID[string(photo.ID)].PhotoFileID)
 	require.Equal(t, "Паспорт", byID[string(photo.ID)].Title)
-	require.Equal(t, "Паспорт и ID · Фото · 2 КБ", byID[string(photo.ID)].Description)
+	require.Equal(t, "Паспорт и ID · Фото · 2\u00a0КБ", byID[string(photo.ID)].Description)
 	require.Equal(t, "document", byID[string(pdf.ID)].Type)
 	require.Equal(t, "doc-file", byID[string(pdf.ID)].DocumentFileID)
 	require.Equal(t, "Справки · PDF", byID[string(pdf.ID)].Description)

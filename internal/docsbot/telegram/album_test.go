@@ -61,7 +61,7 @@ func TestAlbum_threePhotosThreeDocsOnePicker(t *testing.T) {
 	require.Contains(t, sent.texts[0], "3 изображения")
 	require.Contains(t, sent.markups[0], "conv:alb:")
 	require.Contains(t, sent.markups[0], "d:gpk:")
-	require.NotContains(t, sent.texts[0], "Уже были сохранены")
+	require.NotContains(t, sent.texts[0], "Уже есть у тебя")
 }
 
 func TestAlbum_callbackDataFitsTelegramLimit(t *testing.T) {
@@ -92,7 +92,7 @@ func TestAlbum_withDuplicateReportsCount(t *testing.T) {
 	require.Equal(t, 2, pendingCount(repo), "the duplicate creates no document")
 	require.Len(t, sent.texts, 1)
 	require.Contains(t, sent.texts[0], "2 изображения") // the PDF choice replaces the picker
-	require.Contains(t, sent.texts[0], "Уже были сохранены: 1")
+	require.Contains(t, sent.texts[0], "Уже есть у тебя: 1")
 }
 
 func TestAlbum_pickerSavesWholeAlbum(t *testing.T) {
@@ -163,7 +163,7 @@ func TestUnsupportedMedia_repliesForEveryType(t *testing.T) {
 
 			b.ProcessUpdate(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID), &models.Update{Message: &msg})
 
-			require.Equal(t, []string{"Пока принимаю фото и файлы. Видео/голосовые — отправь как файл"}, sent.texts)
+			require.Equal(t, []string{"Я принимаю фото и файлы. Видео или голосовое пришли как файл: 📎 → Файл."}, sent.texts)
 			require.Empty(t, repo.Docs, "nothing is stored")
 		})
 	}
@@ -216,7 +216,7 @@ func TestChooseCategory_tooLargeStaysInTelegram(t *testing.T) {
 		dataCallback("d:cat:"+string(doc.ID)+":"+string(docsbot.CatOther)))
 
 	require.Equal(t, docsbot.BackupTooLarge, repo.Docs[doc.ID].BackupStatus)
-	require.True(t, has(sent.edits, "Слишком большой для Google Диска"), "edits %q", sent.edits)
+	require.True(t, has(sent.edits, "Только в Telegram: больше 20\u00a0МБ"), "edits %q", sent.edits)
 }
 
 func albumDocument(group, uniqueID, name string) *models.Update {
@@ -243,7 +243,7 @@ func TestAlbum_allDuplicatesShowNoPicker(t *testing.T) {
 
 	require.Zero(t, pendingCount(repo))
 	require.Len(t, sent.texts, 1, "one summary, no picker: %q", sent.texts)
-	require.Contains(t, sent.texts[0], "Уже были сохранены: 2")
+	require.Contains(t, sent.texts[0], "Уже есть у тебя: 2")
 	require.NotContains(t, sent.markups[0], "d:ga:")
 }
 

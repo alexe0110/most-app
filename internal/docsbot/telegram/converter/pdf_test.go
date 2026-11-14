@@ -97,7 +97,7 @@ func TestConvert_photosToPDF_realSizeOverLimitEndsSession(t *testing.T) {
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
 	require.Empty(t, h.docs, "the session is gone")
-	require.Equal(t, "Кнопка устарела, открой заново.", h.lastText())
+	require.Equal(t, "Эта кнопка уже не работает. Открой документ заново.", h.lastText())
 }
 
 func testPDF(t *testing.T, pages int) []byte {
@@ -229,7 +229,7 @@ func TestConvertPDF_merge(t *testing.T) {
 	require.Contains(t, h.lastShown(), "ещё хотя бы один")
 
 	h.bot.ProcessUpdate(ctx, pdfUpdate("pdf-add", 1000))
-	require.Contains(t, h.lastShown(), "Всего файлов: 2")
+	require.Contains(t, h.lastShown(), "Уже 2 файла")
 	require.Len(t, h.repo.Docs, 1, "added PDFs are not stored")
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
 
@@ -250,7 +250,7 @@ func TestConvertPDF_mergeRefusesOversizeAndGarbage(t *testing.T) {
 	require.Empty(t, h.downloads[1:], "the declared size is checked before downloading")
 
 	h.bot.ProcessUpdate(ctx, pdfUpdate("junk", 9))
-	require.Contains(t, h.lastShown(), "Не получилось прочитать PDF")
+	require.Contains(t, h.lastShown(), "Не получилось открыть PDF")
 }
 
 func TestConvert_commandRefusesPDF(t *testing.T) {
@@ -262,7 +262,7 @@ func TestConvert_commandRefusesPDF(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, pdfUpdate("pdf-x", 100))
 
 	require.Empty(t, h.docs)
-	require.Contains(t, h.lastShown(), "пока не умею")
+	require.Contains(t, h.lastShown(), "С таким файлом не справлюсь")
 }
 
 func TestConvertPDF_doubleDoneMergesOnce(t *testing.T) {

@@ -25,13 +25,13 @@ const (
 
 	textDriveConnected = "Google Диск подключён ✅"
 
-	textChooseCategory      = "Выбери категорию:"
+	textChooseCategory      = "В какую категорию сохранить?"
 	textChooseCategoryGroup = "Выбери категорию для %d %s:" // files in the album, plural("файл")
 	textChooseCategoryAlbum = "Выбери категорию для альбома:"
-	textAlbumChoice         = "Альбом: %d %s. Что сделать?"                               // count, plural("изображение")
-	textAlbumDuplicates     = "Уже были сохранены: %d"                                    // %d = duplicate files
-	textGroupSaved          = "Сохранил %d %s в «%s»."                                    // count, plural("документ"), category
-	textGroupTooLarge       = "Слишком большие для Google Диска, остались в Telegram: %d" // %d = files
+	textAlbumChoice         = "Альбом: %d %s. Что сделать?"                       // count, plural("изображение")
+	textAlbumDuplicates     = "Уже есть у тебя: %d"                               // %d = duplicate files
+	textGroupSaved          = "Сохранил %d %s в «%s»."                            // count, plural("документ"), category
+	textGroupTooLarge       = "Больше %d\u00A0МБ, остались только в Telegram: %d" // docsbot.MaxDriveBytes in MB, files
 	textAlreadySaved        = "Этот документ у тебя уже есть:"
 	textReplacedDone        = "♻️ Оригинал заменён" // caption of the card after the converter replaced the file
 
@@ -73,23 +73,23 @@ const (
 	textStoragePending      = "⏳ Загружаю на Google Диск…"
 	textStorageInDrive      = "☁️ Google Диск · копия в Telegram"
 	textStorageFailed       = "⚠️ Не удалось загрузить на Google Диск"
-	textStorageTooLarge     = "📥 Слишком большой для Google Диска"
+	textStorageTooLarge     = "📥 Только в Telegram: больше %d\u00A0МБ" // docsbot.MaxDriveBytes in MB
 	textStorageSyncing      = "⏳ Обновляю на Google Диске…"
 	textStorageSyncFailed   = "⚠️ Не удалось обновить на Google Диске"
 	textStorageSyncRevoked  = "⚠️ Не удалось обновить на Google Диске: нет доступа"
 	textStorageMissing      = "📥 На Google Диске файла нет, копия осталась в Telegram"
-	textDriveFileStayed     = "На Google Диске файл остался в прежней папке"
+	textDriveFileStayed     = "На Google Диске файл остался в прежней папке — перенеси его вручную, если нужно."
 	textStorageTelegramOnly = "📥 Только в Telegram"
 
 	// textGroupNotice is sent once to a group the bot was added to, right before it leaves.
 	textGroupNotice = "Я работаю только в личных сообщениях: документы не должны попадать в общий чат. Напиши мне в личку."
-	textUnsupported = "Пока принимаю фото и файлы. Видео/голосовые — отправь как файл"
+	textUnsupported = "Я принимаю фото и файлы. Видео или голосовое пришли как файл: 📎 → Файл."
 	// Intake limits: a refused file is not stored.
 	textTooManyPending = "Этот файл я не сохранил: сначала выбери категорию для файлов выше. Потом пришли его ещё раз."
 	textRateLimited    = "Часть файлов я не сохранил — слишком много сразу. Подожди минуту и пришли их ещё раз."
-	textQuotaExceeded  = "Достигнут лимит документов (%d). Удали ненужные, чтобы добавить новые." // %d = docsbot.MaxDocumentsPerUser
+	textQuotaExceeded  = "У тебя уже %d документов — это максимум. Удали ненужные в /list, и можно будет добавить новые." // %d = docsbot.MaxDocumentsPerUser
 	textUnknown        = "Такой команды нет. Вот что есть: /list, /convert, /settings, /help."
-	textError          = "Что-то пошло не так. Попробуй ещё раз."
+	textError          = "Что-то пошло не так. Попробуй ещё раз через минуту — твои документы на месте."
 	textSendFailed     = "Не удалось отправить файл. Попробуй ещё раз."
 )
 
@@ -110,12 +110,15 @@ const (
 
 // Document card facts, catalog and search headings.
 const (
-	textFactPages    = "%d стр."
+	textFactPages    = "%d\u00A0стр."
 	textFactPhoto    = "Фото"
-	textSizeKB       = "%d КБ"
-	textSizeMBSuffix = " МБ"
+	textFactSaved    = "📅 Сохранён %s" // date
+	textSizeKB       = "%d\u00A0КБ"
+	textSizeMBSuffix = "\u00A0МБ"
 	textCatalogTitle = "Твои документы:"
-	textFoundTitle   = "Нашёл (%d):" // %d = results
+	// textCategoryTitle heads a category page: label, count, plural("документ").
+	textCategoryTitle = "%s · %d %s"
+	textFoundTitle    = "Нашёл %d %s:" // count, plural("документ")
 )
 
 // Command menu descriptions (setMyCommands).
@@ -135,7 +138,7 @@ const (
 
 	textExportEmpty     = "Пока нечего присылать — сохранённых документов нет."
 	textExportRunning   = "Присылаю документы — подожди, пока закончу."
-	textExportStart     = "Присылаю твои документы…"
+	textExportStart     = "Присылаю твои документы — это может занять пару минут."
 	textExportDone      = "Готово — прислал %d %s."                                              // count, plural("документ")
 	textExportTruncated = "Прислал %d из %d. Отправь /export ещё раз, чтобы получить остальные." // sent, total
 
@@ -156,7 +159,7 @@ const (
 	btnOpenDrive          = "☁️ Открыть на Google Диске"
 	btnOpenFolder         = "📁 Папка на Google Диске"
 	btnOpenCategoryFolder = "📁 Папка категории"
-	btnRename             = "✏️ Имя"
+	btnRename             = "✏️ Название"
 	btnChangeCat          = "🗂 Категория"
 	btnDelete             = "🗑 Удалить"
 	btnDeleteYes          = "Да, удалить"
@@ -189,7 +192,7 @@ const (
 // Inline button labels that open the converter from the docs flow.
 const (
 	btnConvertCard      = "🛠 Преобразовать"
-	btnConvertPicker    = "🛠 Сжать / В PDF"
+	btnConvertPicker    = "🛠 Сжать или в PDF"
 	btnConvertPickerPDF = "🛠 Действия с PDF"
 )
 
@@ -210,11 +213,11 @@ const (
 	textReasonQuota       = "нет места на Google Диске"
 	textReasonRevoked     = "доступ отозван"
 	textReasonUnavailable = "Google Диск не отвечает"
-	textReasonTooLarge    = "больше %d МБ"
+	textReasonTooLarge    = "больше %d\u00A0МБ"
 	// textStatusQuotaHint follows the quota error: retrying cannot help until space is freed.
 	textStatusQuotaHint = "Освободи место на Google Диске и нажми «Повторить»."
 
-	textNotInDrive = "📥 %d ещё не на Google Диске" // %d = documents
+	textNotInDrive = "📥 %d %s ещё не на Google Диске" // count, plural("документ")
 	textSettingsOn = "Google Диск: подключён ✅"
 	// textSettingsOff is a format string: %s = Drive root folder name.
 	textSettingsOff = "Google Диск: не подключён\n" +

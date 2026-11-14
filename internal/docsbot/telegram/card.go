@@ -22,7 +22,7 @@ func cardText(doc docsbot.Document) string {
 	b := &strings.Builder{}
 	fmt.Fprintf(b, "%s <b>%s</b>\n", typeIcon(doc), html.EscapeString(doc.Title))
 	b.WriteString("🗂 " + html.EscapeString(strings.Join(cardFacts(doc), " · ")) + "\n")
-	b.WriteString("📅 " + formatDate(doc.CreatedAt) + "\n")
+	fmt.Fprintf(b, textFactSaved+"\n", formatDate(doc.CreatedAt))
 	b.WriteString(html.EscapeString(storageLine(doc)))
 	return b.String()
 }
@@ -63,7 +63,7 @@ func storageLine(doc docsbot.Document) string {
 	case doc.BackupStatus == docsbot.BackupFailed:
 		return textStorageFailed
 	case doc.BackupStatus == docsbot.BackupTooLarge:
-		return textStorageTooLarge
+		return fmt.Sprintf(textStorageTooLarge, docsbot.MaxDriveBytes>>20)
 	default:
 		return textStorageTelegramOnly
 	}

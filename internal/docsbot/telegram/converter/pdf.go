@@ -282,7 +282,7 @@ func (c *Converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 	if total == 0 {
 		return
 	}
-	c.moveDown(ctx, b, chatID, tgUser, fmt.Sprintf(textPDFMergeAdded, total), pdfKeyboard())
+	c.moveDown(ctx, b, chatID, tgUser, fmt.Sprintf(textPDFMergeAdded, total, plural(total, pluralFileOne, pluralFileFew, pluralFileMany)), pdfKeyboard())
 }
 
 // finishMerge joins the collected PDFs. The session is claimed first, so a

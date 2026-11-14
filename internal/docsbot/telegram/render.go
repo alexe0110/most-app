@@ -19,7 +19,7 @@ func renderCatalog(c docsbot.Catalog) (string, *models.InlineKeyboardMarkup) {
 	b := &strings.Builder{}
 	b.WriteString(textCatalogTitle)
 	if c.DriveConnected && c.NotInDrive > 0 {
-		fmt.Fprintf(b, "\n\n"+textNotInDrive, c.NotInDrive)
+		fmt.Fprintf(b, "\n\n"+textNotInDrive, c.NotInDrive, plural(c.NotInDrive, pluralDocumentOne, pluralDocumentFew, pluralDocumentMany))
 	}
 	counts := make(map[docsbot.Category]int, len(c.Counts))
 	cats := make([]docsbot.Category, 0, len(c.Counts))
@@ -135,7 +135,7 @@ func inlineDescription(doc docsbot.Document) string {
 
 // renderCategoryPage lists one page of a category, a card-opening button per document.
 func renderCategoryPage(p docsbot.CategoryPage) (string, *models.InlineKeyboardMarkup) {
-	text := fmt.Sprintf("%s — %d", p.Category.Label(), p.Total)
+	text := fmt.Sprintf(textCategoryTitle, p.Category.Label(), p.Total, plural(p.Total, pluralDocumentOne, pluralDocumentFew, pluralDocumentMany))
 	var rows [][]models.InlineKeyboardButton
 	for _, doc := range p.Docs {
 		rows = append(rows, []models.InlineKeyboardButton{{
@@ -190,7 +190,7 @@ func renderFound(f docsbot.Found) (string, *models.InlineKeyboardMarkup) {
 			CallbackData: docCB(actOpenCard, doc.ID, "s"),
 		}})
 	}
-	return fmt.Sprintf(textFoundTitle, len(f.Docs)), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+	return fmt.Sprintf(textFoundTitle, len(f.Docs), plural(len(f.Docs), pluralDocumentOne, pluralDocumentFew, pluralDocumentMany)), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
 // listTitleRunes is how many runes of a title one list or search button shows.
