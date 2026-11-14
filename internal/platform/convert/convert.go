@@ -1,9 +1,12 @@
 // Package convert makes a PDF from images, shrinks images under a size limit and
-// merges, trims and rotates PDFs. Pure: bytes in, bytes out, no I/O.
+// merges, trims and rotates PDFs. Pure: bytes in, bytes out, no I/O. Every
+// decode-heavy operation runs under one shared concurrency cap and the caller's
+// context, so set a deadline on it.
 package convert
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -22,8 +25,9 @@ const (
 )
 
 // maxPixels guards against decompression bombs (a tiny file claiming huge
-// dimensions). 50 Mpx is above any phone camera.
-const maxPixels = 50_000_000
+// dimensions). 25 Mpx covers current phone cameras, and a decoded RGBA frame of
+// that size is about 100 MB.
+const maxPixels = 25_000_000
 
 // Sentinel errors; callers map them to user messages with errors.Is.
 var (
@@ -45,15 +49,21 @@ const (
 
 // ImagesToPDF puts each image on its own A4 page: centred, scaled to the
 // margins, aspect kept, EXIF rotation applied. Page order follows the input.
-func ImagesToPDF(images [][]byte) ([]byte, error) {
+func ImagesToPDF(ctx context.Context, images [][]byte) ([]byte, error) {
 	if len(images) == 0 {
 		return nil, ErrNoImages
 	}
+	return runBytes(ctx, func(ctx context.Context) ([]byte, error) { return imagesToPDF(ctx, images) })
+}
 
+func imagesToPDF(ctx context.Context, images [][]byte) ([]byte, error) {
 	pdf := fpdf.New("P", "mm", "A4", "")
 	pdf.SetMargins(marginMM, marginMM, marginMM)
 
 	for i, raw := range images {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		img, err := decodeUpright(raw)
 		if err != nil {
 			return nil, fmt.Errorf("image %d: %w", i+1, err)
@@ -91,32 +101,48 @@ const toJPEGQuality = 90
 
 // ToJPEG converts a JPEG, PNG or WEBP image to JPEG at fixed quality, applying
 // EXIF rotation.
-func ToJPEG(img []byte) ([]byte, error) {
-	src, err := decodeUpright(img)
-	if err != nil {
-		return nil, err
-	}
-	return encodeJPEG(src, toJPEGQuality)
+func ToJPEG(ctx context.Context, img []byte) ([]byte, error) {
+	return runBytes(ctx, func(context.Context) ([]byte, error) {
+		src, err := decodeUpright(img)
+		if err != nil {
+			return nil, err
+		}
+		return encodeJPEG(src, toJPEGQuality)
+	})
 }
 
 // Compress re-encodes img to fit maxBytes in the given format. If the target is
 // out of reach it returns the smallest it could make, so the caller can check
 // the size and tell the user how far it got.
-func Compress(img []byte, maxBytes int, format Format) ([]byte, error) {
+func Compress(ctx context.Context, img []byte, maxBytes int, format Format) ([]byte, error) {
 	if maxBytes <= 0 {
 		return nil, ErrInvalidTarget
 	}
-	src, err := decodeUpright(img)
+	if format != JPEG && format != PNG {
+		return nil, ErrInvalidFormat
+	}
+	return runBytes(ctx, func(ctx context.Context) ([]byte, error) {
+		src, err := decodeUpright(img)
+		if err != nil {
+			return nil, err
+		}
+		if format == JPEG {
+			return compressJPEG(ctx, src, maxBytes)
+		}
+		return compressPNG(ctx, src, maxBytes)
+	})
+}
+
+// runBytes runs an operation that produces bytes under the shared cap. The result
+// is read only after run reported success, when fn is known to be finished.
+func runBytes(ctx context.Context, fn func(ctx context.Context) ([]byte, error)) ([]byte, error) {
+	var out []byte
+	err := run(ctx, func(ctx context.Context) (err error) {
+		out, err = fn(ctx)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	switch format {
-	case JPEG:
-		return compressJPEG(src, maxBytes)
-	case PNG:
-		return compressPNG(src, maxBytes)
-	default:
-		return nil, ErrInvalidFormat
-	}
+	return out, nil
 }

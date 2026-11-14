@@ -10,7 +10,7 @@ import (
 )
 
 // cbPrefix tags every inline button the docs feature owns, keeping it clear of
-// the /convert buttons ("conv:").
+// the /convert buttons ("conv:", see the converter package).
 const cbPrefix = "d:"
 
 // Callback actions. Data is "d:<action>" or "d:<action>:<docID>[:<arg>]".
@@ -44,38 +44,10 @@ const (
 	actNoop          = "noop"
 )
 
-// Actions of the /convert buttons ("conv:<action>[:...]").
-const (
-	convActDoc        = "doc"  // conv:doc:<docID> opens the menu
-	convActQuick      = "q"    // conv:q:<docID>:<op> converts a document
-	convActSave       = "save" // conv:save:<token> saves the result
-	convActSkip       = "skip" // conv:skip:<token> keeps only the file
-	convActRepAsk     = "rp"   // conv:rp:<token> asks to replace the original
-	convActRepYes     = "rpy"  // conv:rpy:<token> confirms the replacement
-	convActRepNo      = "rpn"  // conv:rpn:<token> cancels it
-	convActAlbum      = "alb"  // conv:alb:<token> merges an album into a PDF
-	convActMenuCancel = "x"    // closes the convert menu
-	convActPDFOp      = "p"    // conv:p:<op> is a PDF operation of the session
-
-	// Buttons of a /convert session, valid on the dialogue message at their step.
-	convActPDF         = "pdf"
-	convActPDFOps      = "pdfops"
-	convActCompress    = "compress"
-	convActDone        = "done"
-	convActCancel      = "cancel"
-	convActLimit1      = "limit1"
-	convActLimit2      = "limit2"
-	convActLimit5      = "limit5"
-	convActLimitCustom = "limitcustom"
-	convActFmtJPEG     = "fmtjpeg"
-	convActFmtPNG      = "fmtpng"
-)
-
-// callbackData is the parsed data of an inline button: "<prefix><action>" plus,
-// for the actions that carry one, ":<docID>", plus ":<arg>" for each argument.
-// Telegram limits the data to 64 bytes, so it holds ids and short tokens only.
+// callbackData is the parsed data of an inline button: "d:<action>" plus, for the
+// actions that carry one, ":<docID>", plus ":<arg>" for each argument. Telegram
+// limits the data to 64 bytes, so it holds ids and short tokens only.
 type callbackData struct {
-	prefix string // cbPrefix or callbackPrefix
 	action string
 	docID  docsbot.DocumentID
 	args   []string
@@ -83,37 +55,26 @@ type callbackData struct {
 
 // carriesDocID reports whether the third segment of the action's data is a
 // document id; for every other action it is the first argument.
-func carriesDocID(prefix, action string) bool {
-	switch prefix {
-	case cbPrefix:
-		switch action {
-		case actCategory, actCategoryGroup, actGroupPick, actSetCategory, actChangeCat, actSend,
-			actRename, actRenameCancel, actDeleteAsk, actDeleteYes, actDeleteNo, actOpenCard,
-			actRetry, actRetrySync:
-			return true
-		}
-	case callbackPrefix:
-		return action == convActDoc || action == convActQuick
+func carriesDocID(action string) bool {
+	switch action {
+	case actCategory, actCategoryGroup, actGroupPick, actSetCategory, actChangeCat, actSend,
+		actRename, actRenameCancel, actDeleteAsk, actDeleteYes, actDeleteNo, actOpenCard,
+		actRetry, actRetrySync:
+		return true
 	}
 	return false
 }
 
-// parseCallback splits button data of either feature; false when it is neither's.
+// parseCallback splits button data of the docs feature; false when it is not.
 // The parts are not validated: a handler refuses what it cannot use.
 func parseCallback(data string) (callbackData, bool) {
-	var prefix string
-	switch {
-	case strings.HasPrefix(data, cbPrefix):
-		prefix = cbPrefix
-	case strings.HasPrefix(data, callbackPrefix):
-		prefix = callbackPrefix
-	default:
+	if !strings.HasPrefix(data, cbPrefix) {
 		return callbackData{}, false
 	}
-	segs := strings.Split(strings.TrimPrefix(data, prefix), ":")
-	cd := callbackData{prefix: prefix, action: segs[0]}
+	segs := strings.Split(strings.TrimPrefix(data, cbPrefix), ":")
+	cd := callbackData{action: segs[0]}
 	rest := segs[1:]
-	if carriesDocID(prefix, cd.action) && len(rest) > 0 {
+	if carriesDocID(cd.action) && len(rest) > 0 {
 		cd.docID, rest = docsbot.DocumentID(rest[0]), rest[1:]
 	}
 	if len(rest) > 0 {
@@ -128,9 +89,9 @@ func parseCallback(data string) (callbackData, bool) {
 // segment after the action is an empty id ("d:oc:") comes back without it.
 func (c callbackData) String() string {
 	var sb strings.Builder
-	sb.WriteString(c.prefix)
+	sb.WriteString(cbPrefix)
 	sb.WriteString(c.action)
-	if c.docID != "" || (len(c.args) > 0 && carriesDocID(c.prefix, c.action)) {
+	if c.docID != "" || (len(c.args) > 0 && carriesDocID(c.action)) {
 		sb.WriteString(":" + string(c.docID))
 	}
 	for _, a := range c.args {
@@ -146,11 +107,6 @@ func (c callbackData) category() (docsbot.Category, bool) {
 		return "", false
 	}
 	return docsbot.ParseCategory(c.args[0])
-}
-
-// token is the data after the action of a /convert button, "" when it has none.
-func (c callbackData) token() string {
-	return strings.Join(c.args, ":")
 }
 
 // press is one inline-button press, read once from the update so that handlers
@@ -181,17 +137,7 @@ func newPress(ctx context.Context, q *models.CallbackQuery) press {
 
 // docCB builds the data of a docs button; id is "" for an action without one.
 func docCB(action string, id docsbot.DocumentID, args ...string) string {
-	return callbackData{prefix: cbPrefix, action: action, docID: id, args: args}.String()
-}
-
-// convCB builds the data of a /convert button.
-func convCB(action string, args ...string) string {
-	return callbackData{prefix: callbackPrefix, action: action, args: args}.String()
-}
-
-// convDocCB is convCB for the buttons that carry a document id.
-func convDocCB(action string, id docsbot.DocumentID, args ...string) string {
-	return callbackData{prefix: callbackPrefix, action: action, docID: id, args: args}.String()
+	return callbackData{action: action, docID: id, args: args}.String()
 }
 
 // backFromOrig is the callback of the card's "Назад" button for an origin token:

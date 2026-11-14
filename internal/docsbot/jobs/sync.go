@@ -88,12 +88,9 @@ func (w *syncWorker) Work(ctx context.Context, job *river.Job[StorageSyncArgs]) 
 	return nil
 }
 
-// RegisterStorageSync registers the worker and returns a binder that injects
-// its dependencies. Call the binder before queue.Start: Work runs only after.
-func RegisterStorageSync(workers *river.Workers, log *slog.Logger) func(Syncer, SyncNotifier) {
-	w := &syncWorker{log: log}
-	river.AddWorker(workers, w)
-	return func(svc Syncer, n SyncNotifier) { w.svc, w.notify = svc, n }
+// RegisterStorageSync registers the sync worker.
+func RegisterStorageSync(workers *river.Workers, log *slog.Logger, svc Syncer, notify SyncNotifier) {
+	river.AddWorker(workers, &syncWorker{svc: svc, notify: notify, log: log})
 }
 
 // syncInsertOpts leaves jobs non-unique on purpose. River's unique option must

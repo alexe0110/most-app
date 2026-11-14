@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -39,16 +40,16 @@ func decodeResults(t *testing.T, raw string) []inlineResultJSON {
 
 func TestInline_ownDocuments(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	photo := repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindPhoto, Category: docsbot.CatPassport,
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	photo := repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindPhoto, Category: docsbot.CatPassport,
 		Title: "Паспорт", TgFileID: "photo-file", FileSize: 2048,
 	})
-	pdf := repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Category: docsbot.CatCertificates,
+	pdf := repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Category: docsbot.CatCertificates,
 		Title: "Справка", TgFileID: "doc-file", MIME: "application/pdf",
 	})
-	repo.seed(docsbot.Document{UserID: "other", Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Title: "Чужой", TgFileID: "foreign"})
+	repo.Seed(docsbot.Document{UserID: "other", Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Title: "Чужой", TgFileID: "foreign"})
 
 	b.ProcessUpdate(ctx, inlineUpdate(""))
 
@@ -80,9 +81,9 @@ func TestInline_ownDocuments(t *testing.T) {
 
 func TestInline_nextOffset(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	for range 21 {
-		repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Title: "d", TgFileID: "f"})
+		repo.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Title: "d", TgFileID: "f"})
 	}
 
 	b.ProcessUpdate(ctx, inlineUpdate("d"))
@@ -109,13 +110,13 @@ func TestInline_buttons(t *testing.T) {
 			b, sent, repo := newBot(t)
 			ctx := t.Context()
 			if tt.ctxUser {
-				ctx = tg.ContextWithUserID(ctx, testUserID)
+				ctx = tg.ContextWithUserID(ctx, docsbottest.TestUserID)
 			}
 			if tt.seed {
-				repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Title: "d", TgFileID: "f"})
+				repo.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Title: "d", TgFileID: "f"})
 			}
 			if tt.disabled {
-				repo.inlineOff = map[docsbot.UserID]bool{testUserID: true}
+				repo.InlineOff = map[docsbot.UserID]bool{docsbottest.TestUserID: true}
 			}
 
 			b.ProcessUpdate(ctx, inlineUpdate(""))
@@ -143,8 +144,8 @@ func TestInline_buttons(t *testing.T) {
 func TestInline_logsNoContent(t *testing.T) {
 	var buf bytes.Buffer
 	b, _, repo := newBotWithLog(t, slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Title: "СекретныйТитул", TgFileID: "secret-file-id"})
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	repo.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Title: "СекретныйТитул", TgFileID: "secret-file-id"})
 
 	b.ProcessUpdate(ctx, inlineUpdate("СекретныйЗапрос"))
 
@@ -156,20 +157,20 @@ func TestInline_logsNoContent(t *testing.T) {
 
 func TestSettings_inlineToggle(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
-	b.ProcessUpdate(ctx, commandUpdate(100, "settings"))
+	b.ProcessUpdate(ctx, commandUpdate("settings"))
 	require.True(t, has(sent.markups, "Отправка из любого чата: вкл"), "markups %q", sent.markups)
 	require.True(t, has(sent.markups, "d:inl:0"), "markups %q", sent.markups)
 
 	b.ProcessUpdate(ctx, dataCallback("d:inl:0"))
-	require.True(t, repo.inlineOff[testUserID])
+	require.True(t, repo.InlineOff[docsbottest.TestUserID])
 	require.True(t, has(sent.editMarkups, "Отправка из любого чата: выкл"), "edits %q", sent.editMarkups)
 	require.True(t, has(sent.editMarkups, "d:inl:1"), "edits %q", sent.editMarkups)
 	require.Equal(t, []int{7}, sent.editIDs, "settings message is edited in place")
 
 	b.ProcessUpdate(ctx, dataCallback("d:inl:1"))
-	require.False(t, repo.inlineOff[testUserID])
+	require.False(t, repo.InlineOff[docsbottest.TestUserID])
 	require.True(t, has(sent.editMarkups, "Отправка из любого чата: вкл"))
 }
 
@@ -182,32 +183,32 @@ func TestStart_inlinePayload(t *testing.T) {
 
 	t.Run("enabled: normal start", func(t *testing.T) {
 		b, sent, _ := newBot(t)
-		b.ProcessUpdate(tg.ContextWithUserID(t.Context(), testUserID), start("/start inline"))
+		b.ProcessUpdate(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID), start("/start inline"))
 		require.True(t, has(sent.texts, "Most Docs"), "sent %q", sent.texts)
 		require.False(t, has(sent.texts, "Google Диск:"), "sent %q", sent.texts)
 	})
 
 	t.Run("disabled: settings screen", func(t *testing.T) {
 		b, sent, repo := newBot(t)
-		repo.inlineOff = map[docsbot.UserID]bool{testUserID: true}
-		b.ProcessUpdate(tg.ContextWithUserID(t.Context(), testUserID), start("/start inline"))
+		repo.InlineOff = map[docsbot.UserID]bool{docsbottest.TestUserID: true}
+		b.ProcessUpdate(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID), start("/start inline"))
 		require.True(t, has(sent.texts, "Google Диск:"), "sent %q", sent.texts)
 		require.True(t, has(sent.markups, "Отправка из любого чата: выкл"), "markups %q", sent.markups)
 	})
 
 	t.Run("plain start unaffected when disabled", func(t *testing.T) {
 		b, sent, repo := newBot(t)
-		repo.inlineOff = map[docsbot.UserID]bool{testUserID: true}
-		b.ProcessUpdate(tg.ContextWithUserID(t.Context(), testUserID), start("/start"))
+		repo.InlineOff = map[docsbot.UserID]bool{docsbottest.TestUserID: true}
+		b.ProcessUpdate(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID), start("/start"))
 		require.True(t, has(sent.texts, "Most Docs"), "sent %q", sent.texts)
 	})
 }
 
 func TestInline_disabledUserWithDocumentsGetsNothing(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Title: "d", TgFileID: "f"})
-	repo.inlineOff = map[docsbot.UserID]bool{testUserID: true}
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	repo.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, Title: "d", TgFileID: "f"})
+	repo.InlineOff = map[docsbot.UserID]bool{docsbottest.TestUserID: true}
 
 	b.ProcessUpdate(ctx, inlineUpdate("d"))
 
@@ -219,31 +220,31 @@ func TestInline_disabledUserWithDocumentsGetsNothing(t *testing.T) {
 func TestSettings_inlineToggleStale(t *testing.T) {
 	t.Run("repeated tap is idempotent", func(t *testing.T) {
 		b, _, repo := newBot(t)
-		ctx := tg.ContextWithUserID(t.Context(), testUserID)
+		ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 		b.ProcessUpdate(ctx, dataCallback("d:inl:0"))
 		b.ProcessUpdate(ctx, dataCallback("d:inl:0"))
-		require.True(t, repo.inlineOff[testUserID])
+		require.True(t, repo.InlineOff[docsbottest.TestUserID])
 	})
 
 	t.Run("inaccessible message changes nothing", func(t *testing.T) {
 		b, _, repo := newBot(t)
-		ctx := tg.ContextWithUserID(t.Context(), testUserID)
+		ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 		u := dataCallback("d:inl:0")
 		u.CallbackQuery.Message = models.MaybeInaccessibleMessage{
 			Type:                models.MaybeInaccessibleMessageTypeInaccessibleMessage,
 			InaccessibleMessage: &models.InaccessibleMessage{Chat: models.Chat{ID: 100, Type: models.ChatTypePrivate}},
 		}
 		b.ProcessUpdate(ctx, u)
-		require.False(t, repo.inlineOff[testUserID])
+		require.False(t, repo.InlineOff[docsbottest.TestUserID])
 	})
 
 	t.Run("malformed payload does not panic", func(t *testing.T) {
 		b, sent, repo := newBot(t)
-		ctx := tg.ContextWithUserID(t.Context(), testUserID)
+		ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 		for _, data := range []string{"d:inl", "d:inl:x", "d:inl:"} {
 			require.NotPanics(t, func() { b.ProcessUpdate(ctx, dataCallback(data)) })
 		}
-		require.False(t, repo.inlineOff[testUserID], "state unchanged")
+		require.False(t, repo.InlineOff[docsbottest.TestUserID], "state unchanged")
 		require.Empty(t, sent.edits, "nothing redrawn")
 		require.Len(t, sent.answers, 3, "every tap is answered")
 	})
@@ -251,8 +252,8 @@ func TestSettings_inlineToggleStale(t *testing.T) {
 
 func TestInline_serviceErrorStillAnswers(t *testing.T) {
 	b, sent, repo := newBot(t)
-	repo.inlineErr = errors.New("db down")
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	repo.InlineErr = errors.New("db down")
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	b.ProcessUpdate(ctx, inlineUpdate("q"))
 

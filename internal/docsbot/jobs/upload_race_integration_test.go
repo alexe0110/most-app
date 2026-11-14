@@ -238,14 +238,15 @@ func TestUploadDocument_batchCreatesFoldersOnce(t *testing.T) {
 		ids = append(ids, docsbot.DocumentID(did))
 	}
 
-	workers := river.NewWorkers()
-	bind := jobs.RegisterUploadDocument(workers, log)
-	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
+	inserter, err := pjobs.NewInserter(pool, log)
 	require.NoError(t, err)
-	jq := jobs.NewQueue(queue)
+	jq := jobs.NewQueue(inserter)
 	enq := postgres.NewDocuments(pool, jq)
 	svc := newService(pool, enq, jq, raceDrive{gd: gd}, fakeFiles{})
-	bind(svc, &spyNotifier{})
+	workers := river.NewWorkers()
+	jobs.RegisterUploadDocument(workers, log, svc, &spyNotifier{})
+	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
+	require.NoError(t, err)
 
 	require.NoError(t, queue.Start(ctx))
 	t.Cleanup(func() {

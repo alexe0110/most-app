@@ -8,6 +8,7 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // list shows the catalog of categories.
@@ -22,7 +23,7 @@ func (d *docs) list(ctx context.Context, b *bot.Bot, u *models.Update) {
 		return
 	}
 	text, kb := renderCatalog(cat)
-	d.out(b).send(ctx, u.Message.Chat.ID, text, withKeyboard(kb))
+	d.out(b).Send(ctx, u.Message.Chat.ID, text, tg.WithKeyboard(kb))
 }
 
 func (d *docs) runSearch(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, query string) {
@@ -32,7 +33,7 @@ func (d *docs) runSearch(ctx context.Context, b *bot.Bot, chatID int64, user doc
 		return
 	}
 	text, kb := renderFound(found)
-	d.out(b).send(ctx, chatID, text, withKeyboard(kb))
+	d.out(b).Send(ctx, chatID, text, tg.WithKeyboard(kb))
 }
 
 // onInlineSwitch applies the wanted inline-mode state from d:inl:<1|0> and
@@ -56,8 +57,8 @@ func (d *docs) onInlineSwitch(ctx context.Context, b *bot.Bot, p press) {
 	d.log.InfoContext(ctx, "inline mode switched", "user_id", user, "enabled", on)
 	url, haveURL := d.connectURL(ctx, user)
 	text, kb := renderSettings(view, url, haveURL)
-	d.out(b).edit(ctx, chatID, msgID, text, withHTML(), withKeyboard(kb))
-	d.settingsMsgs.set(chatID, msgID)
+	d.out(b).Edit(ctx, chatID, msgID, text, tg.WithHTML(), tg.WithKeyboard(kb))
+	d.settingsMsgs.Set(chatID, msgID)
 }
 
 // myDocsKeyboard is a single "Мои документы" button back to the catalog.
@@ -75,7 +76,7 @@ func (d *docs) editCatalog(ctx context.Context, b *bot.Bot, user docsbot.UserID,
 		return
 	}
 	text, kb := renderCatalog(cat)
-	d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(kb))
+	d.out(b).Edit(ctx, chatID, msgID, text, tg.WithKeyboard(kb))
 }
 
 // onListCat opens (or pages) a category, editing the list message in place.
@@ -99,7 +100,7 @@ func (d *docs) onListCat(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 	text, kb := renderCategoryPage(cp)
-	d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(kb))
+	d.out(b).Edit(ctx, chatID, msgID, text, tg.WithKeyboard(kb))
 }
 
 func (d *docs) onListBack(ctx context.Context, b *bot.Bot, p press) {
@@ -114,7 +115,7 @@ func (d *docs) onListBack(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 	text, kb := renderCatalog(cat)
-	d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(kb))
+	d.out(b).Edit(ctx, chatID, msgID, text, tg.WithKeyboard(kb))
 }
 
 // onSearchBack re-runs the user's last search in place of the card; without a
@@ -125,7 +126,7 @@ func (d *docs) onSearchBack(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 	chatID, msgID := p.chatID, p.msgID
-	q, ok := d.searches.get(p.tgUser)
+	q, ok := d.searches.Get(p.tgUser)
 	if !ok {
 		cat, err := d.svc.Catalog(ctx, user)
 		if err != nil {
@@ -133,7 +134,7 @@ func (d *docs) onSearchBack(ctx context.Context, b *bot.Bot, p press) {
 			return
 		}
 		text, kb := renderCatalog(cat)
-		d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(kb))
+		d.out(b).Edit(ctx, chatID, msgID, text, tg.WithKeyboard(kb))
 		return
 	}
 	found, err := d.svc.Search(ctx, user, q)
@@ -142,5 +143,5 @@ func (d *docs) onSearchBack(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 	text, kb := renderFound(found)
-	d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(kb))
+	d.out(b).Edit(ctx, chatID, msgID, text, tg.WithKeyboard(kb))
 }

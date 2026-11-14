@@ -11,11 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 )
 
 func TestService_Receive_normalizesTitle(t *testing.T) {
-	repo := newFakeRepo()
-	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+	repo := docsbottest.NewFakeRepo()
+	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
 	in := incoming("norm")
 	in.Title = " a\nb\t"
@@ -31,13 +32,13 @@ func TestService_Receive_normalizesTitle(t *testing.T) {
 }
 
 func TestService_ChooseCategoryGroup_parallelTapsSaveOnce(t *testing.T) {
-	repo := newFakeRepo()
+	repo := docsbottest.NewFakeRepo()
 	var first docsbot.DocumentID
 	for _, uid := range []string{"p1", "p2", "p3"} {
-		d := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "alb", TgFileUniqueID: uid})
+		d := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "alb", TgFileUniqueID: uid})
 		first = d.ID
 	}
-	svc, uploads := edgeService(repo, fakeDrive{connected: true})
+	svc, uploads := edgeService(repo, docsbottest.FakeDrive{IsConnected: true})
 
 	var mu sync.Mutex
 	saved := 0
@@ -50,7 +51,7 @@ func TestService_ChooseCategoryGroup_parallelTapsSaveOnce(t *testing.T) {
 	})
 
 	require.Equal(t, 3, saved, "every document is saved by exactly one tap")
-	require.Len(t, uploads.calls, 3, "and queued once")
+	require.Len(t, uploads.Calls, 3, "and queued once")
 }
 
 func TestService_Receive(t *testing.T) {
@@ -67,34 +68,34 @@ func TestService_Receive(t *testing.T) {
 		name   string
 		seed   *docsbot.Document
 		unique string
-		assert func(t *testing.T, rep docsbot.Reply, repo *fakeRepo)
+		assert func(t *testing.T, rep docsbot.Reply, repo *docsbottest.FakeRepo)
 	}{
 		{
 			name:   "new file is created and needs a category",
 			unique: "fresh",
-			assert: func(t *testing.T, rep docsbot.Reply, repo *fakeRepo) {
+			assert: func(t *testing.T, rep docsbot.Reply, repo *docsbottest.FakeRepo) {
 				nc, ok := rep.(docsbot.NeedCategory)
 				require.True(t, ok)
 				require.Equal(t, docsbot.StatusPending, nc.Doc.Status)
-				require.Len(t, repo.docs, 1)
+				require.Len(t, repo.Docs, 1)
 			},
 		},
 		{
 			name:   "pending duplicate re-asks the category",
 			seed:   &pending,
 			unique: "dup-pending",
-			assert: func(t *testing.T, rep docsbot.Reply, repo *fakeRepo) {
+			assert: func(t *testing.T, rep docsbot.Reply, repo *docsbottest.FakeRepo) {
 				nc, ok := rep.(docsbot.NeedCategory)
 				require.True(t, ok)
 				require.Equal(t, docsbot.DocumentID("d-pending"), nc.Doc.ID)
-				require.Len(t, repo.docs, 1, "no new row")
+				require.Len(t, repo.Docs, 1, "no new row")
 			},
 		},
 		{
 			name:   "saved duplicate reports already saved",
 			seed:   &saved,
 			unique: "dup-saved",
-			assert: func(t *testing.T, rep docsbot.Reply, _ *fakeRepo) {
+			assert: func(t *testing.T, rep docsbot.Reply, _ *docsbottest.FakeRepo) {
 				as, ok := rep.(docsbot.AlreadySaved)
 				require.True(t, ok)
 				require.Equal(t, docsbot.DocumentID("d-saved"), as.Doc.ID)
@@ -103,11 +104,11 @@ func TestService_Receive(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := newFakeRepo()
+			repo := docsbottest.NewFakeRepo()
 			if tt.seed != nil {
-				repo.seed(*tt.seed)
+				repo.Seed(*tt.seed)
 			}
-			svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+			svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 			rep, err := svc.Receive(t.Context(), incoming(tt.unique))
 			require.NoError(t, err)
 			tt.assert(t, rep, repo)
@@ -120,9 +121,9 @@ func intakeFile(uid string) docsbot.IncomingFile {
 }
 
 // seedMany stores n documents of the user with the given status and age.
-func seedMany(repo *fakeRepo, n int, status docsbot.Status, createdAt time.Time) {
+func seedMany(repo *docsbottest.FakeRepo, n int, status docsbot.Status, createdAt time.Time) {
 	for i := range n {
-		repo.seed(docsbot.Document{
+		repo.Seed(docsbot.Document{
 			UserID: user, Status: status, TgFileUniqueID: fmt.Sprintf("seed-%s-%d-%d", status, createdAt.Unix(), i),
 			CreatedAt: createdAt,
 		})
@@ -130,8 +131,8 @@ func seedMany(repo *fakeRepo, n int, status docsbot.Status, createdAt time.Time)
 }
 
 func TestService_Receive_albumPhotosBecomeSeparateDocuments(t *testing.T) {
-	repo := newFakeRepo()
-	svc, _ := edgeService(repo, fakeDrive{})
+	repo := docsbottest.NewFakeRepo()
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 
 	for _, uid := range []string{"p1", "p2", "p3"} {
 		in := intakeFile(uid)
@@ -147,9 +148,9 @@ func TestService_Receive_albumPhotosBecomeSeparateDocuments(t *testing.T) {
 }
 
 func TestService_Receive_albumWithDuplicate(t *testing.T) {
-	repo := newFakeRepo()
-	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, TgFileUniqueID: "p2", Category: docsbot.CatOther})
-	svc, _ := edgeService(repo, fakeDrive{})
+	repo := docsbottest.NewFakeRepo()
+	repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, TgFileUniqueID: "p2", Category: docsbot.CatOther})
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 
 	var kinds []string
 	for _, uid := range []string{"p1", "p2", "p3"} {
@@ -177,8 +178,8 @@ func TestService_ChooseCategoryGroup_savesWholeAlbum(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := newFakeRepo()
-			svc, uploads := edgeService(repo, fakeDrive{connected: tt.connected})
+			repo := docsbottest.NewFakeRepo()
+			svc, uploads := edgeService(repo, docsbottest.FakeDrive{IsConnected: tt.connected})
 			var first docsbot.DocumentID
 			for _, uid := range []string{"p1", "p2", "p3"} {
 				in := intakeFile(uid)
@@ -190,8 +191,8 @@ func TestService_ChooseCategoryGroup_savesWholeAlbum(t *testing.T) {
 				}
 			}
 			// A pending document of another album and of another user stay untouched.
-			other := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "album-2", TgFileUniqueID: "x"})
-			foreign := repo.seed(docsbot.Document{UserID: stranger, Status: docsbot.StatusPending, MediaGroupID: "album-1", TgFileUniqueID: "y"})
+			other := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "album-2", TgFileUniqueID: "x"})
+			foreign := repo.Seed(docsbot.Document{UserID: stranger, Status: docsbot.StatusPending, MediaGroupID: "album-1", TgFileUniqueID: "y"})
 
 			got, err := svc.ChooseCategoryGroup(t.Context(), user, first, docsbot.CatReceipts)
 			require.NoError(t, err)
@@ -199,27 +200,27 @@ func TestService_ChooseCategoryGroup_savesWholeAlbum(t *testing.T) {
 			require.False(t, got.Already)
 			require.Len(t, got.Docs, 3)
 			for _, d := range got.Docs {
-				require.Equal(t, docsbot.StatusSaved, repo.docs[d.ID].Status)
-				require.Equal(t, docsbot.CatReceipts, repo.docs[d.ID].Category)
+				require.Equal(t, docsbot.StatusSaved, repo.Docs[d.ID].Status)
+				require.Equal(t, docsbot.CatReceipts, repo.Docs[d.ID].Category)
 			}
-			require.Len(t, uploads.calls, tt.wantQueue)
-			require.Equal(t, docsbot.StatusPending, repo.docs[other.ID].Status)
-			require.Equal(t, docsbot.StatusPending, repo.docs[foreign.ID].Status)
+			require.Len(t, uploads.Calls, tt.wantQueue)
+			require.Equal(t, docsbot.StatusPending, repo.Docs[other.ID].Status)
+			require.Equal(t, docsbot.StatusPending, repo.Docs[foreign.ID].Status)
 
 			// A second tap is a no-op, flagged so the handler does not redraw.
 			again, err := svc.ChooseCategoryGroup(t.Context(), user, first, docsbot.CatReceipts)
 			require.NoError(t, err)
 			require.True(t, again.Already)
 			require.Empty(t, again.Docs)
-			require.Len(t, uploads.calls, tt.wantQueue)
+			require.Len(t, uploads.Calls, tt.wantQueue)
 		})
 	}
 }
 
 func TestService_ChooseCategoryGroup_rejectsBadInput(t *testing.T) {
-	repo := newFakeRepo()
-	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a"})
-	svc, _ := edgeService(repo, fakeDrive{})
+	repo := docsbottest.NewFakeRepo()
+	doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a"})
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 
 	_, err := svc.ChooseCategoryGroup(t.Context(), user, doc.ID, "nope")
 	require.ErrorIs(t, err, docsbot.ErrUnknownCategory)
@@ -240,24 +241,24 @@ func TestService_ChooseCategory_tooLargeStaysInTelegram(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := newFakeRepo()
-			doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, FileSize: tt.size, TgFileUniqueID: "a"})
-			svc, uploads := edgeService(repo, fakeDrive{connected: true})
+			repo := docsbottest.NewFakeRepo()
+			doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, FileSize: tt.size, TgFileUniqueID: "a"})
+			svc, uploads := edgeService(repo, docsbottest.FakeDrive{IsConnected: true})
 
 			saved, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatOther)
 
 			require.NoError(t, err)
 			require.Equal(t, tt.wantStatus, saved.Doc.BackupStatus)
-			require.Equal(t, tt.wantStatus, repo.docs[doc.ID].BackupStatus)
-			require.Len(t, uploads.calls, tt.wantQueued)
+			require.Equal(t, tt.wantStatus, repo.Docs[doc.ID].BackupStatus)
+			require.Len(t, uploads.Calls, tt.wantQueued)
 		})
 	}
 }
 
 func TestService_ChooseCategory_bigFileWithoutDriveIsPlainSaved(t *testing.T) {
-	repo := newFakeRepo()
-	doc := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, FileSize: docsbot.MaxDriveBytes * 2, TgFileUniqueID: "a"})
-	svc, _ := edgeService(repo, fakeDrive{})
+	repo := docsbottest.NewFakeRepo()
+	doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, FileSize: docsbot.MaxDriveBytes * 2, TgFileUniqueID: "a"})
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 
 	saved, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatOther)
 
@@ -266,23 +267,23 @@ func TestService_ChooseCategory_bigFileWithoutDriveIsPlainSaved(t *testing.T) {
 }
 
 func TestService_ChooseCategoryGroup_tooLargeInAlbum(t *testing.T) {
-	repo := newFakeRepo()
-	svc, uploads := edgeService(repo, fakeDrive{connected: true})
-	small := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "g", FileSize: 10, TgFileUniqueID: "a"})
-	big := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "g", FileSize: docsbot.MaxDriveBytes + 1, TgFileUniqueID: "b"})
+	repo := docsbottest.NewFakeRepo()
+	svc, uploads := edgeService(repo, docsbottest.FakeDrive{IsConnected: true})
+	small := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "g", FileSize: 10, TgFileUniqueID: "a"})
+	big := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "g", FileSize: docsbot.MaxDriveBytes + 1, TgFileUniqueID: "b"})
 
 	_, err := svc.ChooseCategoryGroup(t.Context(), user, small.ID, docsbot.CatOther)
 
 	require.NoError(t, err)
-	require.Equal(t, docsbot.BackupTooLarge, repo.docs[big.ID].BackupStatus)
-	require.Equal(t, []docsbot.DocumentID{small.ID}, uploads.calls)
+	require.Equal(t, docsbot.BackupTooLarge, repo.Docs[big.ID].BackupStatus)
+	require.Equal(t, []docsbot.DocumentID{small.ID}, uploads.Calls)
 }
 
 func TestService_NotBackedUpCount_excludesTooLarge(t *testing.T) {
-	repo := newFakeRepo()
-	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupNone, TgFileUniqueID: "a"})
-	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupTooLarge, TgFileUniqueID: "b"})
-	svc, _ := edgeService(repo, fakeDrive{connected: true})
+	repo := docsbottest.NewFakeRepo()
+	repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupNone, TgFileUniqueID: "a"})
+	repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, BackupStatus: docsbot.BackupTooLarge, TgFileUniqueID: "b"})
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{IsConnected: true})
 
 	n, err := svc.NotBackedUpCount(t.Context(), user)
 
@@ -291,8 +292,8 @@ func TestService_NotBackedUpCount_excludesTooLarge(t *testing.T) {
 }
 
 func TestService_Receive_duplicateAndDeleteSemantics(t *testing.T) {
-	repo := newFakeRepo()
-	svc, _ := edgeService(repo, fakeDrive{})
+	repo := docsbottest.NewFakeRepo()
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 	ctx := t.Context()
 
 	first, err := svc.Receive(ctx, intakeFile("dup"))
@@ -321,7 +322,7 @@ func TestService_Receive_duplicateAndDeleteSemantics(t *testing.T) {
 // racingCreate plays a parallel send of the same file: its document lands just
 // before our insert, which then hits the unique constraint.
 type racingCreate struct {
-	*fakeRepo
+	*docsbottest.FakeRepo
 	winner     docsbot.Document
 	rereadErr  error // fails the lookup that follows the lost insert
 	lookupSeen *int  // counts DocumentByFileUniqueID calls when rereadErr is set
@@ -334,11 +335,11 @@ func (r racingCreate) DocumentByFileUniqueID(ctx context.Context, u docsbot.User
 			return docsbot.Document{}, r.rereadErr
 		}
 	}
-	return r.fakeRepo.DocumentByFileUniqueID(ctx, u, uid)
+	return r.FakeRepo.DocumentByFileUniqueID(ctx, u, uid)
 }
 
 func (r racingCreate) CreateDocument(context.Context, docsbot.IncomingFile) (docsbot.Document, error) {
-	r.seed(r.winner)
+	r.Seed(r.winner)
 	return docsbot.Document{}, docsbot.ErrDuplicateFile
 }
 
@@ -355,11 +356,11 @@ func TestService_Receive_lostCreateRaceAnswersByTheWinner(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := newFakeRepo()
+			repo := docsbottest.NewFakeRepo()
 			in := intakeFile("race")
 			winner := docsbot.Document{ID: "winner", UserID: user, Status: tt.status, TgFileUniqueID: in.FileUniqueID, CreatedAt: time.Unix(1, 0)}
-			svc := newService(racingCreate{fakeRepo: repo, winner: winner, rereadErr: tt.rereadErr, lookupSeen: new(int)}, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo,
-				newFakeStatus(repo), &fakeSyncs{repo: repo})
+			svc := docsbottest.NewService(racingCreate{FakeRepo: repo, winner: winner, rereadErr: tt.rereadErr, lookupSeen: new(int)}, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo,
+				docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
 			rep, err := svc.Receive(t.Context(), in)
 
@@ -372,7 +373,7 @@ func TestService_Receive_lostCreateRaceAnswersByTheWinner(t *testing.T) {
 			stored, err := repo.DocumentByID(t.Context(), user, "winner")
 			require.NoError(t, err)
 			require.Equal(t, tt.want(stored), rep)
-			require.Len(t, repo.docs, 1)
+			require.Len(t, repo.Docs, 1)
 		})
 	}
 }
@@ -380,8 +381,8 @@ func TestService_Receive_lostCreateRaceAnswersByTheWinner(t *testing.T) {
 func TestService_Receive_multiPagePDFIsOneDocument(t *testing.T) {
 	// Not reproducible: Telegram delivers a multi-page PDF as one document
 	// message, and Receive stores exactly one document per message.
-	repo := newFakeRepo()
-	svc, _ := edgeService(repo, fakeDrive{})
+	repo := docsbottest.NewFakeRepo()
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 
 	rep, err := svc.Receive(t.Context(), docsbot.IncomingFile{
 		UserID: user, Kind: docsbot.KindDocument, FileID: "pdf", FileUniqueID: "pdf-u",
@@ -390,7 +391,7 @@ func TestService_Receive_multiPagePDFIsOneDocument(t *testing.T) {
 
 	require.NoError(t, err)
 	require.IsType(t, docsbot.NeedCategory{}, rep)
-	require.Len(t, repo.docs, 1)
+	require.Len(t, repo.Docs, 1)
 }
 
 func TestService_Receive_limits(t *testing.T) {
@@ -398,40 +399,40 @@ func TestService_Receive_limits(t *testing.T) {
 	old := now.Add(-time.Hour)
 	tests := []struct {
 		name  string
-		setup func(*fakeRepo)
+		setup func(*docsbottest.FakeRepo)
 		want  docsbot.Reply
 	}{
-		{"under all limits", func(r *fakeRepo) { seedMany(r, 19, docsbot.StatusPending, old) }, docsbot.NeedCategory{}},
-		{"20 pending", func(r *fakeRepo) { seedMany(r, 20, docsbot.StatusPending, old) }, docsbot.TooManyPending{}},
-		{"29 in the last minute", func(r *fakeRepo) { seedMany(r, 29, docsbot.StatusSaved, now.Add(-10*time.Second)) }, docsbot.NeedCategory{}},
-		{"30 in the last minute", func(r *fakeRepo) { seedMany(r, 30, docsbot.StatusSaved, now.Add(-10*time.Second)) }, docsbot.RateLimited{}},
-		{"30 but older than a minute", func(r *fakeRepo) { seedMany(r, 30, docsbot.StatusSaved, now.Add(-2*time.Minute)) }, docsbot.NeedCategory{}},
-		{"4999 total", func(r *fakeRepo) { seedMany(r, 4999, docsbot.StatusSaved, old) }, docsbot.NeedCategory{}},
-		{"5000 total", func(r *fakeRepo) { seedMany(r, 5000, docsbot.StatusSaved, old) }, docsbot.QuotaExceeded{}},
+		{"under all limits", func(r *docsbottest.FakeRepo) { seedMany(r, 19, docsbot.StatusPending, old) }, docsbot.NeedCategory{}},
+		{"20 pending", func(r *docsbottest.FakeRepo) { seedMany(r, 20, docsbot.StatusPending, old) }, docsbot.TooManyPending{}},
+		{"29 in the last minute", func(r *docsbottest.FakeRepo) { seedMany(r, 29, docsbot.StatusSaved, now.Add(-10*time.Second)) }, docsbot.NeedCategory{}},
+		{"30 in the last minute", func(r *docsbottest.FakeRepo) { seedMany(r, 30, docsbot.StatusSaved, now.Add(-10*time.Second)) }, docsbot.RateLimited{}},
+		{"30 but older than a minute", func(r *docsbottest.FakeRepo) { seedMany(r, 30, docsbot.StatusSaved, now.Add(-2*time.Minute)) }, docsbot.NeedCategory{}},
+		{"4999 total", func(r *docsbottest.FakeRepo) { seedMany(r, 4999, docsbot.StatusSaved, old) }, docsbot.NeedCategory{}},
+		{"5000 total", func(r *docsbottest.FakeRepo) { seedMany(r, 5000, docsbot.StatusSaved, old) }, docsbot.QuotaExceeded{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := newFakeRepo()
+			repo := docsbottest.NewFakeRepo()
 			tt.setup(repo)
-			svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
-			before := len(repo.docs)
+			svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo}, docsbot.WithClock(func() time.Time { return now }))
+			before := len(repo.Docs)
 
 			rep, err := svc.Receive(t.Context(), intakeFile("new"))
 
 			require.NoError(t, err)
 			require.IsType(t, tt.want, rep)
 			if _, ok := rep.(docsbot.NeedCategory); !ok {
-				require.Len(t, repo.docs, before, "a rejected file must not be stored")
+				require.Len(t, repo.Docs, before, "a rejected file must not be stored")
 			}
 		})
 	}
 }
 
 func TestService_Receive_duplicateBypassesLimits(t *testing.T) {
-	repo := newFakeRepo()
+	repo := docsbottest.NewFakeRepo()
 	seedMany(repo, 20, docsbot.StatusPending, time.Now().Add(-time.Hour))
-	repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, TgFileUniqueID: "known"})
-	svc, _ := edgeService(repo, fakeDrive{})
+	repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, TgFileUniqueID: "known"})
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 
 	rep, err := svc.Receive(t.Context(), intakeFile("known"))
 
@@ -441,7 +442,7 @@ func TestService_Receive_duplicateBypassesLimits(t *testing.T) {
 
 // failingPurgeRepo fails the pending-documents purge.
 type failingPurgeRepo struct {
-	*fakeRepo
+	*docsbottest.FakeRepo
 	err error
 }
 
@@ -449,7 +450,7 @@ func (r failingPurgeRepo) PurgeStalePending(context.Context, time.Time) (int, er
 
 // failingPurgeStatus fails the closed-status-messages purge and records that it ran.
 type failingPurgeStatus struct {
-	*fakeStatus
+	*docsbottest.FakeStatus
 	err    error
 	called *bool
 }
@@ -473,15 +474,15 @@ func TestService_PurgeStalePending_errors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			now := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
-			repo := newFakeRepo()
-			repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a", CreatedAt: now.Add(-25 * time.Hour)})
+			repo := docsbottest.NewFakeRepo()
+			repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a", CreatedAt: now.Add(-25 * time.Hour)})
 			var purgeSeen bool
 			var r docsbot.Repo = repo
-			var st docsbot.StatusMessages = failingPurgeStatus{fakeStatus: newFakeStatus(repo), err: boom, called: &purgeSeen}
+			var st docsbot.StatusMessages = failingPurgeStatus{FakeStatus: docsbottest.NewFakeStatus(repo), err: boom, called: &purgeSeen}
 			if tt.failRepo {
-				r = failingPurgeRepo{fakeRepo: repo, err: boom}
+				r = failingPurgeRepo{FakeRepo: repo, err: boom}
 			}
-			svc := newService(r, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, st, &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
+			svc := docsbottest.NewService(r, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, st, &docsbottest.FakeSyncs{Repo: repo}, docsbot.WithClock(func() time.Time { return now }))
 
 			res, err := svc.PurgeStalePending(t.Context())
 
@@ -494,24 +495,24 @@ func TestService_PurgeStalePending_errors(t *testing.T) {
 
 func TestService_PurgeStalePending(t *testing.T) {
 	now := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
-	repo := newFakeRepo()
-	stale := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a", CreatedAt: now.Add(-25 * time.Hour)})
-	fresh := repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "b", CreatedAt: now.Add(-23 * time.Hour)})
-	oldSaved := repo.seed(docsbot.Document{UserID: stranger, Status: docsbot.StatusSaved, TgFileUniqueID: "c", CreatedAt: now.Add(-48 * time.Hour)})
-	status := newFakeStatus(repo)
-	status.msgs["old-closed"] = docsbot.StatusMessage{ID: "old-closed", UserID: user, Closed: true, CreatedAt: now.Add(-48 * time.Hour)}
-	status.msgs["old-open"] = docsbot.StatusMessage{ID: "old-open", UserID: user, CreatedAt: now.Add(-48 * time.Hour)}
-	status.msgs["new-closed"] = docsbot.StatusMessage{ID: "new-closed", UserID: user, Closed: true, CreatedAt: now.Add(-time.Hour)}
-	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, status, &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
+	repo := docsbottest.NewFakeRepo()
+	stale := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a", CreatedAt: now.Add(-25 * time.Hour)})
+	fresh := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "b", CreatedAt: now.Add(-23 * time.Hour)})
+	oldSaved := repo.Seed(docsbot.Document{UserID: stranger, Status: docsbot.StatusSaved, TgFileUniqueID: "c", CreatedAt: now.Add(-48 * time.Hour)})
+	status := docsbottest.NewFakeStatus(repo)
+	status.Msgs["old-closed"] = docsbot.StatusMessage{ID: "old-closed", UserID: user, Closed: true, CreatedAt: now.Add(-48 * time.Hour)}
+	status.Msgs["old-open"] = docsbot.StatusMessage{ID: "old-open", UserID: user, CreatedAt: now.Add(-48 * time.Hour)}
+	status.Msgs["new-closed"] = docsbot.StatusMessage{ID: "new-closed", UserID: user, Closed: true, CreatedAt: now.Add(-time.Hour)}
+	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, status, &docsbottest.FakeSyncs{Repo: repo}, docsbot.WithClock(func() time.Time { return now }))
 
 	res, err := svc.PurgeStalePending(t.Context())
 
 	require.NoError(t, err)
 	require.Equal(t, docsbot.PurgeResult{Pending: 1, StatusMessages: 1}, res)
-	require.NotContains(t, status.msgs, docsbot.StatusMessageID("old-closed"))
-	require.Contains(t, status.msgs, docsbot.StatusMessageID("old-open"), "an open message is never purged")
-	require.Contains(t, status.msgs, docsbot.StatusMessageID("new-closed"))
-	require.NotContains(t, repo.docs, stale.ID)
-	require.Contains(t, repo.docs, fresh.ID)
-	require.Contains(t, repo.docs, oldSaved.ID, "saved documents are never purged")
+	require.NotContains(t, status.Msgs, docsbot.StatusMessageID("old-closed"))
+	require.Contains(t, status.Msgs, docsbot.StatusMessageID("old-open"), "an open message is never purged")
+	require.Contains(t, status.Msgs, docsbot.StatusMessageID("new-closed"))
+	require.NotContains(t, repo.Docs, stale.ID)
+	require.Contains(t, repo.Docs, fresh.ID)
+	require.Contains(t, repo.Docs, oldSaved.ID, "saved documents are never purged")
 }

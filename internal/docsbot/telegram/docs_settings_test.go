@@ -9,26 +9,27 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 func TestDeleteData_revokeFailureStillConfirms(t *testing.T) {
-	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{revokeErr: errors.New("google down")})
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Title: "p", TgFileUniqueID: "u1"})
+	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{RevokeErr: errors.New("google down"), DisconnectErr: errors.New("google down")})
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	repo.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Title: "p", TgFileUniqueID: "u1"})
 
 	b.ProcessUpdate(ctx, dataCallback("d:dd"))
 	b.ProcessUpdate(ctx, textUpdate("УДАЛИТЬ"))
 
 	require.True(t, has(sent.texts, "Данные удалены"), "sent %q", sent.texts)
 	require.False(t, has(sent.texts, "Что-то пошло не так"))
-	require.Empty(t, repo.docs)
+	require.Empty(t, repo.Docs)
 }
 
 func TestDisconnect_driveFailureIsShown(t *testing.T) {
-	b, sent, _ := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{revokeErr: errors.New("google down")})
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	b, sent, _ := newBotWith(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{RevokeErr: errors.New("google down"), DisconnectErr: errors.New("google down")})
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	b.ProcessUpdate(ctx, dataCallback("d:dc"))
 
@@ -39,8 +40,8 @@ func TestDisconnect_driveFailureIsShown(t *testing.T) {
 func TestDeleteData_revokeFailureIsWarnedAndConfirmed(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	b, sent, _ := newBotWith(t, log, fakeDrive{revokeErr: errors.New("google down")})
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	b, sent, _ := newBotWith(t, log, docsbottest.FakeDrive{RevokeErr: errors.New("google down"), DisconnectErr: errors.New("google down")})
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	b.ProcessUpdate(ctx, dataCallback("d:dd"))
 	b.ProcessUpdate(ctx, textUpdate("УДАЛИТЬ"))
@@ -52,20 +53,20 @@ func TestDeleteData_revokeFailureIsWarnedAndConfirmed(t *testing.T) {
 }
 
 func TestStart_driveFolder(t *testing.T) {
-	b, sent, _ := newBotOpts(t, slog.New(slog.DiscardHandler), fakeDrive{}, telegram.WithDriveFolder("Most Docs Test"))
+	b, sent, _ := newBotOpts(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{}, telegram.WithDriveFolder("Most Docs Test"))
 
-	b.ProcessUpdate(t.Context(), commandUpdate(100, "start"))
+	b.ProcessUpdate(t.Context(), commandUpdate("start"))
 
 	require.True(t, has(sent.texts, "«Most Docs Test»"), "sent %q", sent.texts)
 }
 
 func TestSettings_showsCountsAndControls(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatPassport, Title: "p", TgFileUniqueID: "u1"})
-	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "o", TgFileUniqueID: "u2"})
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	repo.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Category: docsbot.CatPassport, Title: "p", TgFileUniqueID: "u1"})
+	repo.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "o", TgFileUniqueID: "u2"})
 
-	b.ProcessUpdate(ctx, commandUpdate(100, "settings"))
+	b.ProcessUpdate(ctx, commandUpdate("settings"))
 
 	require.True(t, has(sent.texts, "Google Диск"), "sent %q", sent.texts)
 	require.True(t, has(sent.texts, "Документов: 2"), "sent %q", sent.texts)
@@ -73,8 +74,8 @@ func TestSettings_showsCountsAndControls(t *testing.T) {
 
 func TestDeleteData_confirmation(t *testing.T) {
 	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
-	repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, Title: "p", TgFileUniqueID: "u1"})
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	repo.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Title: "p", TgFileUniqueID: "u1"})
 
 	// Tapping "Удалить мои данные" asks for the exact word.
 	b.ProcessUpdate(ctx, dataCallback("d:dd"))
@@ -83,18 +84,18 @@ func TestDeleteData_confirmation(t *testing.T) {
 	// A wrong word cancels and leaves the data in place.
 	b.ProcessUpdate(ctx, textUpdate("удалить"))
 	require.True(t, has(sent.texts, "отменено"), "sent %q", sent.texts)
-	require.Len(t, repo.docs, 1, "data intact after a wrong word")
+	require.Len(t, repo.Docs, 1, "data intact after a wrong word")
 
 	// Re-arm, then the exact word deletes everything.
 	b.ProcessUpdate(ctx, dataCallback("d:dd"))
 	b.ProcessUpdate(ctx, textUpdate("УДАЛИТЬ"))
 	require.True(t, has(sent.texts, "Данные удалены"), "sent %q", sent.texts)
-	require.Empty(t, repo.docs, "data deleted after the exact word")
+	require.Empty(t, repo.Docs, "data deleted after the exact word")
 }
 
 func TestDeleteData_promptOffersExportFirst(t *testing.T) {
 	b, sent, _ := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	b.ProcessUpdate(ctx, dataCallback("d:dd"))
 
@@ -106,8 +107,8 @@ func TestDeleteData_promptOffersExportFirst(t *testing.T) {
 }
 
 func TestDisconnect_clearsKeyboardWithEmptyArray(t *testing.T) {
-	b, sent, _ := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{})
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	b, sent, _ := newBotWith(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{})
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	b.ProcessUpdate(ctx, dataCallback("d:dc"))
 

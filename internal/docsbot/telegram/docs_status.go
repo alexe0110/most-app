@@ -7,6 +7,7 @@ import (
 	"github.com/go-telegram/bot"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // onRetryAll re-queues every failed Drive upload; the /settings message turns
@@ -24,7 +25,7 @@ func (d *docs) onRetryAll(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 	if !ok {
-		d.out(b).edit(ctx, chatID, msgID, textNoFailed, withKeyboard(nil))
+		d.out(b).Edit(ctx, chatID, msgID, textNoFailed, tg.WithKeyboard(nil))
 		return
 	}
 	d.log.InfoContext(ctx, "retry all", "user_id", user, "count", len(view.Lines))
@@ -36,7 +37,7 @@ func (d *docs) onRetryAll(ctx context.Context, b *bot.Bot, p press) {
 func (d *docs) onRetry(ctx context.Context, b *bot.Bot, p press) {
 	user := p.user
 	toast := ""
-	defer func() { d.out(b).answer(ctx, p.queryID, withToast(toast)) }()
+	defer func() { d.out(b).Answer(ctx, p.queryID, tg.WithToast(toast)) }()
 	id := p.data.docID
 	if id == "" {
 		return
@@ -54,7 +55,7 @@ func (d *docs) onRetry(ctx context.Context, b *bot.Bot, p press) {
 		d.fail(ctx, b, chatID, "retry backup", err)
 		return
 	}
-	d.out(b).edit(ctx, chatID, msgID, textRetryQueued, withKeyboard(nil))
+	d.out(b).Edit(ctx, chatID, msgID, textRetryQueued, tg.WithKeyboard(nil))
 }
 
 // onRetrySync re-queues a failed cloud sync and redraws the card as updating. It
@@ -62,7 +63,7 @@ func (d *docs) onRetry(ctx context.Context, b *bot.Bot, p press) {
 func (d *docs) onRetrySync(ctx context.Context, b *bot.Bot, p press) {
 	user := p.user
 	toast := ""
-	defer func() { d.out(b).answer(ctx, p.queryID, withToast(toast)) }()
+	defer func() { d.out(b).Answer(ctx, p.queryID, tg.WithToast(toast)) }()
 	id := p.data.docID
 	if id == "" {
 		return
@@ -113,7 +114,7 @@ func (d *docs) redrawStatus(ctx context.Context, b *bot.Bot, user docsbot.UserID
 	// must not outlive it. Dropped on both sides of the edit: a prompt armed while
 	// it is in flight is overwritten by it too.
 	dropRenamesOn(d.renames, view.Message.ChatID, view.Message.MessageID)
-	d.out(b).edit(ctx, view.Message.ChatID, view.Message.MessageID, text, withHTML(), withKeyboard(kb))
+	d.out(b).Edit(ctx, view.Message.ChatID, view.Message.MessageID, text, tg.WithHTML(), tg.WithKeyboard(kb))
 	dropRenamesOn(d.renames, view.Message.ChatID, view.Message.MessageID)
 	if view.AllTerminal {
 		if err := d.svc.CloseStatus(ctx, user, view.Message.ID); err != nil {

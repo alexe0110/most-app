@@ -3,8 +3,10 @@ package convert_test
 import (
 	"bytes"
 	"context"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -144,13 +146,13 @@ func TestPDF_cancelledContextTimesOut(t *testing.T) {
 	cancel()
 
 	_, err := convert.RotatePDF(ctx, makePDF(t, 1), 90)
-	require.ErrorIs(t, err, convert.ErrPDFTimeout)
+	require.ErrorIs(t, err, convert.ErrTimeout)
 
 	ctx, cancel = context.WithTimeout(t.Context(), time.Nanosecond)
 	defer cancel()
 	time.Sleep(time.Millisecond)
 	_, err = convert.PageCount(ctx, makePDF(t, 1))
-	require.ErrorIs(t, err, convert.ErrPDFTimeout)
+	require.ErrorIs(t, err, convert.ErrTimeout)
 }
 
 func TestParsePageRange(t *testing.T) {
@@ -207,4 +209,41 @@ func TestPDF_doesNotTouchHome(t *testing.T) {
 	entries, err := os.ReadDir(home)
 	require.NoError(t, err)
 	require.Empty(t, entries)
+}
+
+func TestParsePageRange_garbage(t *testing.T) {
+	bad := []string{"", " ", "0", "3-1", "1-", "-1", "-", ",", "1,,2", "1,", ",1", "1-2-3",
+		"a", "1;2", "١", "+1", "0-3", "99999999999999999999", "9999999", "1-9999999",
+		"1 2", "2-1,3", "1.5"}
+	for _, in := range bad {
+		t.Run(in, func(t *testing.T) {
+			_, err := convert.ParsePageRange(in, 10)
+			require.ErrorIs(t, err, convert.ErrBadPageRange)
+		})
+	}
+
+	_, err := convert.ParsePageRange("1", 0)
+	require.ErrorIs(t, err, convert.ErrBadPageRange, "no pages: nothing is valid")
+	_, err = convert.ParsePageRange(string(rune(0))+"1", 5)
+	require.ErrorIs(t, err, convert.ErrBadPageRange)
+	_, err = convert.ParsePageRange("1-"+strconv.Itoa(math.MaxInt32), 10)
+	require.ErrorIs(t, err, convert.ErrBadPageRange)
+}
+
+func TestParsePageRange_valid(t *testing.T) {
+	tests := []struct {
+		in   string
+		want []int
+	}{
+		{"1-3,5", []int{1, 2, 3, 5}},
+		{" 5 , 1 - 3 ", []int{1, 2, 3, 5}},
+		{"3,3,2-3", []int{2, 3}},
+		{"10", []int{10}},
+		{"1-10", []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}},
+	}
+	for _, tt := range tests {
+		got, err := convert.ParsePageRange(tt.in, 10)
+		require.NoError(t, err, tt.in)
+		require.Equal(t, tt.want, got, tt.in)
+	}
 }

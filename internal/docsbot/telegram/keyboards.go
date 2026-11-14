@@ -4,6 +4,7 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
 )
 
 // categoryRows lays category buttons out two per row, with «Другое» alone in the
@@ -48,9 +49,9 @@ func categoryKeyboard(action string, id docsbot.DocumentID) *models.InlineKeyboa
 // converter can handle gets an extra row opening the convert menu.
 func pickerKeyboard(doc docsbot.Document) *models.InlineKeyboardMarkup {
 	kb := categoryKeyboard(actCategory, doc.ID)
-	if convertible(doc) {
+	if converter.Convertible(doc) {
 		label := btnConvertPicker
-		if isPDF(doc) {
+		if converter.IsPDF(doc) {
 			label = btnConvertPickerPDF
 		}
 		kb.InlineKeyboard = append(kb.InlineKeyboard, convertRow(doc.ID, label))
@@ -61,14 +62,14 @@ func pickerKeyboard(doc docsbot.Document) *models.InlineKeyboardMarkup {
 // albumChoiceKeyboard offers an album as one PDF or saved file by file.
 func albumChoiceKeyboard(token string, pickDoc docsbot.DocumentID) *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-		{{Text: btnAlbumPDF, CallbackData: convCB(convActAlbum, token)}},
+		{{Text: btnAlbumPDF, CallbackData: converter.AlbumCB(token)}},
 		{{Text: btnAlbumEach, CallbackData: docCB(actGroupPick, pickDoc)}},
 	}}
 }
 
 // convertRow is a one-button row opening the convert menu of a document.
 func convertRow(id docsbot.DocumentID, label string) []models.InlineKeyboardButton {
-	return []models.InlineKeyboardButton{{Text: label, CallbackData: convDocCB(convActDoc, id)}}
+	return []models.InlineKeyboardButton{{Text: label, CallbackData: converter.MenuCB(id)}}
 }
 
 // renameCancelKeyboard is the single "Отмена" button under the rename prompt.

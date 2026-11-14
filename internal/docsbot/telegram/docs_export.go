@@ -11,6 +11,7 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // onExport is the "send all documents" button.
@@ -19,7 +20,7 @@ func (d *docs) onExport(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 	// The button is spent: a second tap must not start another export.
-	d.out(b).clearKeyboard(ctx, p.chatID, p.msgID)
+	d.out(b).ClearKeyboard(ctx, p.chatID, p.msgID)
 	d.export(ctx, b, p.chatID, p.user)
 }
 
@@ -37,7 +38,7 @@ func (d *docs) exportCmd(ctx context.Context, b *bot.Bot, u *models.Update) {
 // under the Bot API rate limit.
 func (d *docs) export(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID) {
 	if !d.startExport(user) {
-		d.out(b).send(ctx, chatID, textExportRunning)
+		d.out(b).Send(ctx, chatID, textExportRunning)
 		return
 	}
 	defer d.finishExport(user)
@@ -47,11 +48,11 @@ func (d *docs) export(ctx context.Context, b *bot.Bot, chatID int64, user docsbo
 		return
 	}
 	if exp.Total == 0 {
-		d.out(b).send(ctx, chatID, textExportEmpty)
+		d.out(b).Send(ctx, chatID, textExportEmpty)
 		return
 	}
 	d.log.InfoContext(ctx, "export started", "user_id", user, "count", len(exp.Docs))
-	d.out(b).send(ctx, chatID, textExportStart)
+	d.out(b).Send(ctx, chatID, textExportStart)
 	sent, prev := 0, 0
 	for i, batch := range exportBatches(exp.Docs) {
 		if i > 0 && !pause(ctx, d.exportGap(prev)) {
@@ -67,10 +68,10 @@ func (d *docs) export(ctx context.Context, b *bot.Bot, chatID int64, user docsbo
 		sent += d.sendAlbum(ctx, b, chatID, batch)
 	}
 	if exp.Truncated {
-		d.out(b).send(ctx, chatID, fmt.Sprintf(textExportTruncated, sent, exp.Total))
+		d.out(b).Send(ctx, chatID, fmt.Sprintf(textExportTruncated, sent, exp.Total))
 		return
 	}
-	d.out(b).send(ctx, chatID, fmt.Sprintf(textExportDone, sent))
+	d.out(b).Send(ctx, chatID, fmt.Sprintf(textExportDone, sent))
 }
 
 // exportGap is the pause after a batch of n files. Telegram lets a bot send about
@@ -156,10 +157,10 @@ func (d *docs) sendAlbum(ctx context.Context, b *bot.Bot, chatID int64, batch []
 		_, err := b.SendMediaGroup(ctx, &bot.SendMediaGroupParams{ChatID: chatID, Media: media})
 		return err
 	})
-	traceAPI(ctx, d.log, "sendMediaGroup", start)
+	tg.TraceAPI(ctx, d.log, "sendMediaGroup", start)
 	if err != nil {
 		d.log.ErrorContext(ctx, "send album", "err", err, "user_id", batch[0].UserID, "count", len(batch))
-		d.out(b).send(ctx, chatID, textSendFailed)
+		d.out(b).Send(ctx, chatID, textSendFailed)
 		return 0
 	}
 	d.log.InfoContext(ctx, "album sent", "user_id", batch[0].UserID, "count", len(batch))

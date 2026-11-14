@@ -19,13 +19,13 @@ const providerGoogle = "google"
 // the caller's transaction (they satisfy postgres.JobInserter, checked where the
 // two are wired in cmd/docsbot); the cancel methods implement docsbot.JobCanceler.
 type Queue struct {
-	client *pjobs.Client
+	client *pjobs.Inserter
 }
 
 var _ docsbot.JobCanceler = (*Queue)(nil)
 
-// NewQueue wraps the shared job client.
-func NewQueue(client *pjobs.Client) *Queue {
+// NewQueue wraps the insert-only job client.
+func NewQueue(client *pjobs.Inserter) *Queue {
 	return &Queue{client: client}
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // start greets the user. The OAuth redirect sends the user back with
@@ -20,7 +21,7 @@ func (d *docs) start(ctx context.Context, b *bot.Bot, u *models.Update) {
 	chatID := u.Message.Chat.ID
 	switch startPayload(u.Message.Text) {
 	case startConnected:
-		d.out(b).send(ctx, chatID, textDriveConnected)
+		d.out(b).Send(ctx, chatID, textDriveConnected)
 		return
 	case startInline:
 		if user, ok := userID(ctx); ok {
@@ -35,7 +36,7 @@ func (d *docs) start(ctx context.Context, b *bot.Bot, u *models.Update) {
 			}
 		}
 	}
-	d.out(b).send(ctx, chatID, fmt.Sprintf(textStart, d.driveFolder))
+	d.out(b).Send(ctx, chatID, fmt.Sprintf(textStart, d.driveFolder))
 }
 
 // settings shows the Drive connection state, document counts, and the data
@@ -58,13 +59,13 @@ func (d *docs) settings(ctx context.Context, b *bot.Bot, u *models.Update) {
 func (d *docs) sendSettings(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, view docsbot.SettingsView) {
 	url, haveURL := d.connectURL(ctx, user)
 	text, kb := renderSettings(view, url, haveURL)
-	if id := d.out(b).send(ctx, chatID, text, withHTML(), withKeyboard(kb)); id != 0 {
-		d.settingsMsgs.set(chatID, id)
+	if id := d.out(b).Send(ctx, chatID, text, tg.WithHTML(), tg.WithKeyboard(kb)); id != 0 {
+		d.settingsMsgs.Set(chatID, id)
 	}
 }
 
 func (d *docs) help(ctx context.Context, b *bot.Bot, u *models.Update) {
-	d.out(b).send(ctx, u.Message.Chat.ID, textHelp)
+	d.out(b).Send(ctx, u.Message.Chat.ID, textHelp)
 }
 
 // onDisconnect turns Drive off and stops pending uploads, leaving stored
@@ -82,7 +83,7 @@ func (d *docs) onDisconnect(ctx context.Context, b *bot.Bot, p press) {
 	}
 	d.log.InfoContext(ctx, "drive disconnected", "user_id", user)
 	forgetSettings(d.settingsMsgs, chatID, msgID) // the message is no longer the settings screen
-	d.out(b).edit(ctx, chatID, msgID, textDisconnected, withKeyboard(nil))
+	d.out(b).Edit(ctx, chatID, msgID, textDisconnected, tg.WithKeyboard(nil))
 }
 
 // onDeleteData arms the "type УДАЛИТЬ" confirmation and explains what is removed.
@@ -94,14 +95,14 @@ func (d *docs) onDeleteData(ctx context.Context, b *bot.Bot, p press) {
 	if p.hasUser {
 		d.log.InfoContext(ctx, "delete data requested", "user_id", p.user)
 	}
-	d.confirms.set(p.tgUser, struct{}{})
-	d.out(b).send(ctx, chatID, textDeleteDataPrompt, withKeyboard(exportFirstKeyboard()))
+	d.confirms.Set(p.tgUser, struct{}{})
+	d.out(b).Send(ctx, chatID, textDeleteDataPrompt, tg.WithKeyboard(exportFirstKeyboard()))
 }
 
 // onDeleteConfirm deletes everything once the user typed the exact word.
 func (d *docs) onDeleteConfirm(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, text string) {
 	if strings.TrimSpace(text) != confirmWord {
-		d.out(b).send(ctx, chatID, textDeleteWrongWord)
+		d.out(b).Send(ctx, chatID, textDeleteWrongWord)
 		return
 	}
 	if err := d.svc.DeleteAllData(ctx, user); errors.Is(err, docsbot.ErrRevokeIncomplete) {
@@ -111,8 +112,8 @@ func (d *docs) onDeleteConfirm(ctx context.Context, b *bot.Bot, chatID int64, us
 		return
 	}
 	d.log.InfoContext(ctx, "data deleted", "user_id", user)
-	d.settingsMsgs.delete(chatID) // nothing left to refresh after a connect
-	d.out(b).send(ctx, chatID, textDataDeleted)
+	d.settingsMsgs.Delete(chatID) // nothing left to refresh after a connect
+	d.out(b).Send(ctx, chatID, textDataDeleted)
 }
 
 // onTransfer moves every not-yet-backed-up document to Drive; the offer message
@@ -129,7 +130,7 @@ func (d *docs) onTransfer(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 	if !ok {
-		d.out(b).edit(ctx, chatID, msgID, textNothingToTransfer, withKeyboard(nil))
+		d.out(b).Edit(ctx, chatID, msgID, textNothingToTransfer, tg.WithKeyboard(nil))
 		return
 	}
 	d.log.InfoContext(ctx, "transfer started", "user_id", user, "count", len(view.Lines))
@@ -141,7 +142,7 @@ func (d *docs) onTransferNo(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 	chatID, msgID := p.chatID, p.msgID
-	d.out(b).edit(ctx, chatID, msgID, textTransferDeclined, withKeyboard(nil))
+	d.out(b).Edit(ctx, chatID, msgID, textTransferDeclined, tg.WithKeyboard(nil))
 }
 
 // offerDrive nudges the user to connect Drive, with a consent-link button.
@@ -150,7 +151,7 @@ func (d *docs) offerDrive(ctx context.Context, b *bot.Bot, chatID int64, user do
 	if !ok {
 		return
 	}
-	d.out(b).send(ctx, chatID, textOfferDrive, withKeyboard(connectKeyboard(url)))
+	d.out(b).Send(ctx, chatID, textOfferDrive, tg.WithKeyboard(connectKeyboard(url)))
 }
 
 // connectURL builds the Google consent URL for the user, false if unavailable.

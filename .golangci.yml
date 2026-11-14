@@ -12,6 +12,13 @@ linters:
     - noctx
     - unused
     - unparam
+  exclusions:
+    rules:
+      # The fakes implement ports documented in ports.go; per-method comments would only repeat them.
+      - path: internal/docsbot/docsbottest/
+        linters:
+          - revive
+        text: "exported"
   settings:
     depguard:
       rules:
@@ -19,6 +26,8 @@ linters:
           list-mode: lax
           files:
             - "**/internal/docsbot/*.go"
+          allow:
+            - github.com/alexe0110/most-app/internal/docsbot/docsbottest # test fakes, guarded by the docsbottest rule
           deny:
             - pkg: github.com/alexe0110/most-app/internal/docsbot/
               desc: "domain must not import its adapters"
@@ -44,6 +53,14 @@ linters:
           deny:
             - pkg: github.com/alexe0110/most-app/internal/docsbot/jobs
               desc: "postgres must not import jobs adapter"
+        docsbottest:
+          list-mode: lax
+          files:
+            - "**/*.go"
+            - "!$test"
+          deny:
+            - pkg: github.com/alexe0110/most-app/internal/docsbot/docsbottest
+              desc: "docsbottest holds test fakes; import it from _test.go files only"
         platform:
           list-mode: lax
           files:

@@ -1,12 +1,14 @@
 package telegram
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 func TestCategoryKeyboard_twoPerRowOtherAlone(t *testing.T) {
@@ -27,7 +29,7 @@ func TestCategoryKeyboard_twoPerRowOtherAlone(t *testing.T) {
 // with the worst-case values the limits care about.
 func builtButtons() []string {
 	slug := docsbot.Category(longestSlug())
-	token := newToken()
+	token := tg.NewToken()
 	statusID := docsbot.StatusMessageID(uuidDoc)
 
 	var kbs []*models.InlineKeyboardMarkup
@@ -39,7 +41,7 @@ func builtButtons() []string {
 	}
 	for _, doc := range []docsbot.Document{
 		{ID: uuidDoc, Kind: docsbot.KindPhoto, Category: slug},
-		{ID: uuidDoc, Kind: docsbot.KindDocument, MIME: mimePDF, BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncFailed},
+		{ID: uuidDoc, Kind: docsbot.KindDocument, MIME: "application/pdf", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncFailed},
 		{ID: uuidDoc, Kind: docsbot.KindDocument, MIME: "image/webp", BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing},
 		{ID: uuidDoc, Kind: docsbot.KindDocument, BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncFailed, SyncReason: docsbot.SyncReasonRevoked},
 	} {
@@ -70,14 +72,6 @@ func builtButtons() []string {
 	}))
 	addRender(renderFound(docsbot.Found{Query: "q", Docs: []docsbot.Document{{ID: uuidDoc, Title: "t"}}}))
 
-	for _, kb := range []*models.InlineKeyboardMarkup{
-		actionKeyboard(), pdfKeyboard(), limitKeyboard(), formatKeyboard(), cancelKeyboard(),
-		quickKeyboard(uuidDoc, true), quickKeyboard(uuidDoc, false), pdfMenuKeyboard(uuidDoc), pdfActionsKeyboard(),
-		saveKeyboard(token, true), saveKeyboard(token, false), replaceKeyboard(token),
-	} {
-		add(kb)
-	}
-
 	var data []string
 	for _, kb := range kbs {
 		for _, row := range kb.InlineKeyboard {
@@ -94,16 +88,19 @@ func builtButtons() []string {
 func TestBuiltButtons_everyOneParsesFitsAndIsKnown(t *testing.T) {
 	known := map[string]bool{}
 	for _, tt := range callbackCases() {
-		known[tt.want.prefix+tt.want.action] = true
+		known[tt.want.action] = true
 	}
 
 	data := builtButtons()
 	require.NotEmpty(t, data)
 	for _, d := range data {
+		require.LessOrEqual(t, len(d), 64, d)
+		if strings.HasPrefix(d, "conv:") {
+			continue // the converter package pins its own data
+		}
 		cd, ok := parseCallback(d)
 		require.True(t, ok, d)
-		require.True(t, known[cd.prefix+cd.action], "%s: an action with no round-trip case", d)
+		require.True(t, known[cd.action], "%s: an action with no round-trip case", d)
 		require.Equal(t, d, cd.String(), "String inverts parse")
-		require.LessOrEqual(t, len(d), 64, d)
 	}
 }

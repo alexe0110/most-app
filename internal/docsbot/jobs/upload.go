@@ -120,10 +120,7 @@ func (w *uploadWorker) Work(ctx context.Context, job *river.Job[UploadDocumentAr
 	return nil
 }
 
-// RegisterUploadDocument registers the worker and returns a binder that injects
-// its dependencies. Call the binder before queue.Start: Work runs only after.
-func RegisterUploadDocument(workers *river.Workers, log *slog.Logger) func(Backuper, Notifier) {
-	w := &uploadWorker{log: log}
-	river.AddWorker(workers, w)
-	return func(svc Backuper, n Notifier) { w.svc, w.notify = svc, n }
+// RegisterUploadDocument registers the upload worker.
+func RegisterUploadDocument(workers *river.Workers, log *slog.Logger, svc Backuper, notify Notifier) {
+	river.AddWorker(workers, &uploadWorker{svc: svc, notify: notify, log: log})
 }

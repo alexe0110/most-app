@@ -50,8 +50,7 @@ func TestPurgePendingWorker_deletesStalePendingAndClosedStatusMessagesOnly(t *te
 
 	svc := docsbot.NewService(docsbot.Ports{Repo: repo, Drive: fakeDrive{}, Files: fakeFiles{}, Folders: postgres.NewFolderCache(pool), Status: postgres.NewStatusMessages(pool)})
 	workers := river.NewWorkers()
-	bind, periodic := jobs.RegisterPurgePending(workers, slog.New(slog.DiscardHandler))
-	bind(svc)
+	periodic := jobs.RegisterPurgePending(workers, slog.New(slog.DiscardHandler), svc)
 	queue, err := pjobs.New(pool, slog.New(slog.DiscardHandler), workers, nil, periodic)
 	require.NoError(t, err)
 	startQueue(t, queue)

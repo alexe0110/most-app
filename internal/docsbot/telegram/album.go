@@ -10,6 +10,8 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // albumDebounce is how long the adapter waits after the last photo of an album
@@ -29,18 +31,9 @@ type albumState struct {
 	dups         int           // files that were already saved
 	reject       docsbot.Reply // first limit rejection, shown once
 	group        string
-	images       []albumImage // fresh image files, for the PDF offer
-	nonImage     bool         // the album holds a file the PDF can't take
+	images       []converter.AlbumImage // fresh image files, for the PDF offer
+	nonImage     bool                   // the album holds a file the PDF can't take
 	stop         func() bool
-}
-
-// albumImage is one fresh image of an album. msgID keeps the page order: album
-// photos arrive as separate updates in any order.
-type albumImage struct {
-	msgID  int
-	fileID string
-	size   int64
-	docID  docsbot.DocumentID
 }
 
 // albumBuffer debounces albums per media_group_id.
@@ -89,7 +82,7 @@ func (d *docs) collectAlbum(ctx context.Context, b *bot.Bot, m *models.Message, 
 		tgUser = m.From.ID
 	}
 	detached := context.WithoutCancel(ctx) // the flush outlives this update's request
-	isImage := in.Kind == docsbot.KindPhoto || supportedImageMIME(in.MIME)
+	isImage := in.Kind == docsbot.KindPhoto || converter.SupportedImageMIME(in.MIME)
 	d.albums.add(fmt.Sprintf("%s:%s", user, group), func(st *albumState) {
 		st.chatID, st.user, st.tgUser, st.group = chatID, user, tgUser, group
 		if !isImage {
@@ -99,7 +92,7 @@ func (d *docs) collectAlbum(ctx context.Context, b *bot.Bot, m *models.Message, 
 		case docsbot.NeedCategory:
 			st.fresh++
 			if isImage {
-				st.images = append(st.images, albumImage{msgID: msgID, fileID: in.FileID, size: in.FileSize, docID: r.Doc.ID})
+				st.images = append(st.images, converter.AlbumImage{MsgID: msgID, FileID: in.FileID, Size: in.FileSize})
 			}
 			// Prefer a document of this album: the picker saves the album of its anchor.
 			if st.pickDoc == "" || (r.Doc.MediaGroupID == group && st.pickDocGroup != group) {
@@ -124,8 +117,8 @@ func (d *docs) flushAlbum(ctx context.Context, b *bot.Bot, st albumState) {
 		if st.dups > 0 {
 			text += "\n\n" + fmt.Sprintf(textAlbumDuplicates, st.dups)
 		}
-		token := d.registerAlbum(st.user, st.tgUser, st.group, st.images)
-		d.out(b).send(ctx, st.chatID, text, withKeyboard(albumChoiceKeyboard(token, st.pickDoc)))
+		token := d.albumPDFs.RegisterAlbum(st.user, st.tgUser, st.group, st.images)
+		d.out(b).Send(ctx, st.chatID, text, tg.WithKeyboard(albumChoiceKeyboard(token, st.pickDoc)))
 	case st.fresh > 0:
 		text := textChooseCategory
 		if st.fresh > 1 {
@@ -134,12 +127,12 @@ func (d *docs) flushAlbum(ctx context.Context, b *bot.Bot, st albumState) {
 		if st.dups > 0 {
 			text += "\n\n" + fmt.Sprintf(textAlbumDuplicates, st.dups)
 		}
-		d.out(b).send(ctx, st.chatID, text, withKeyboard(categoryKeyboard(actCategoryGroup, st.pickDoc)))
+		d.out(b).Send(ctx, st.chatID, text, tg.WithKeyboard(categoryKeyboard(actCategoryGroup, st.pickDoc)))
 	case st.dups > 0:
-		d.out(b).send(ctx, st.chatID, fmt.Sprintf(textAlbumDuplicates, st.dups))
+		d.out(b).Send(ctx, st.chatID, fmt.Sprintf(textAlbumDuplicates, st.dups))
 	}
 	if text, ok := rejectionText(st.reject); ok {
-		d.out(b).send(ctx, st.chatID, text)
+		d.out(b).Send(ctx, st.chatID, text)
 	}
 }
 
@@ -147,7 +140,7 @@ func (d *docs) flushAlbum(ctx context.Context, b *bot.Bot, st albumState) {
 // two or more fresh files, all of them images, none refused. Without a sender
 // (tgUser 0) there is nobody to own the PDF token, so the album is saved one by one.
 func (d *docs) offersPDF(st albumState) bool {
-	return d.registerAlbum != nil && st.tgUser != 0 && st.fresh >= 2 && len(st.images) == st.fresh &&
+	return d.albumPDFs != nil && st.tgUser != 0 && st.fresh >= 2 && len(st.images) == st.fresh &&
 		!st.nonImage && st.reject == nil
 }
 
@@ -162,7 +155,7 @@ func (d *docs) onGroupPick(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 	chatID, msgID := p.chatID, p.msgID
-	d.out(b).edit(ctx, chatID, msgID, textChooseCategoryAlbum, withKeyboard(categoryKeyboard(actCategoryGroup, id)))
+	d.out(b).Edit(ctx, chatID, msgID, textChooseCategoryAlbum, tg.WithKeyboard(categoryKeyboard(actCategoryGroup, id)))
 }
 
 // rejectionText is the notice for an intake limit reply.

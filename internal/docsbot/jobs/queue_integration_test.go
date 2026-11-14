@@ -11,7 +11,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/riverqueue/river"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
@@ -35,13 +34,9 @@ func newTxEnv(t *testing.T) txEnv {
 	t.Helper()
 	pool := dbtest.New(t)
 	log := slog.New(slog.DiscardHandler)
-	workers := river.NewWorkers()
-	jobs.RegisterUploadDocument(workers, log)
-	jobs.RegisterStorageSync(workers, log)
-	jobs.RegisterStorageTrash(workers, log)
-	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
+	inserter, err := pjobs.NewInserter(pool, log)
 	require.NoError(t, err)
-	return txEnv{pool: pool, jq: jobs.NewQueue(queue)}.fresh(t)
+	return txEnv{pool: pool, jq: jobs.NewQueue(inserter)}.fresh(t)
 }
 
 // fresh returns the env on the same database with a new user, so subtests share

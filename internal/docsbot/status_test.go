@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 )
 
 func TestService_StatusTarget(t *testing.T) {
@@ -26,12 +27,12 @@ func TestService_StatusTarget(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := newFakeRepo()
-			status := newFakeStatus(repo)
+			repo := docsbottest.NewFakeRepo()
+			status := docsbottest.NewFakeStatus(repo)
 			if tt.msg != nil {
-				status.msgs[tt.msg.ID] = *tt.msg
+				status.Msgs[tt.msg.ID] = *tt.msg
 			}
-			svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, status, &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
+			svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, status, &docsbottest.FakeSyncs{Repo: repo}, docsbot.WithClock(func() time.Time { return now }))
 
 			sm, ok, err := svc.StatusTarget(context.Background(), user)
 			require.NoError(t, err)
@@ -43,9 +44,9 @@ func TestService_StatusTarget(t *testing.T) {
 
 func TestService_StatusView(t *testing.T) {
 	t.Run("not grouped", func(t *testing.T) {
-		repo := newFakeRepo()
-		doc := repo.seed(docsbot.Document{UserID: user})
-		svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, newFakeStatus(repo), &fakeSyncs{repo: repo})
+		repo := docsbottest.NewFakeRepo()
+		doc := repo.Seed(docsbot.Document{UserID: user})
+		svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
 		v, err := svc.StatusView(context.Background(), user, doc.ID)
 		require.NoError(t, err)
@@ -63,14 +64,14 @@ func TestService_StatusView(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run("grouped "+tt.name, func(t *testing.T) {
-			repo := newFakeRepo()
-			repo.folders = map[docsbot.Category]string{docsbot.CatPassport: "folder-p"}
-			status := newFakeStatus(repo)
+			repo := docsbottest.NewFakeRepo()
+			repo.Folders = map[docsbot.Category]string{docsbot.CatPassport: "folder-p"}
+			status := docsbottest.NewFakeStatus(repo)
 			sm, err := status.Create(context.Background(), user, 7, 70, docsbot.StatusBatch)
 			require.NoError(t, err)
-			a := repo.seed(docsbot.Document{UserID: user, Category: docsbot.CatPassport, BackupStatus: docsbot.BackupBackedUp, StatusMessageID: sm.ID})
-			b := repo.seed(docsbot.Document{UserID: user, Category: docsbot.CatAuto, BackupStatus: tt.second, StatusMessageID: sm.ID})
-			svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, status, &fakeSyncs{repo: repo})
+			a := repo.Seed(docsbot.Document{UserID: user, Category: docsbot.CatPassport, BackupStatus: docsbot.BackupBackedUp, StatusMessageID: sm.ID})
+			b := repo.Seed(docsbot.Document{UserID: user, Category: docsbot.CatAuto, BackupStatus: tt.second, StatusMessageID: sm.ID})
+			svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, status, &docsbottest.FakeSyncs{Repo: repo})
 
 			v, err := svc.StatusView(context.Background(), user, a.ID)
 			require.NoError(t, err)
@@ -86,9 +87,9 @@ func TestService_StatusView(t *testing.T) {
 
 func TestService_RetryStatusFailed(t *testing.T) {
 	ctx := context.Background()
-	setup := func() (*docsbot.Service, *fakeUploads, *fakeRepo, docsbot.StatusMessageID, map[string]docsbot.DocumentID) {
-		repo := newFakeRepo()
-		status := newFakeStatus(repo)
+	setup := func() (*docsbot.Service, *docsbottest.FakeUploads, *docsbottest.FakeRepo, docsbot.StatusMessageID, map[string]docsbot.DocumentID) {
+		repo := docsbottest.NewFakeRepo()
+		status := docsbottest.NewFakeStatus(repo)
 		sm, err := status.Create(ctx, user, 7, 70, docsbot.StatusBatch)
 		require.NoError(t, err)
 		ids := map[string]docsbot.DocumentID{}
@@ -96,10 +97,10 @@ func TestService_RetryStatusFailed(t *testing.T) {
 			"failed1": docsbot.BackupFailed, "failed2": docsbot.BackupFailed,
 			"ok": docsbot.BackupBackedUp, "big": docsbot.BackupTooLarge, "busy": docsbot.BackupUploading,
 		} {
-			ids[name] = repo.seed(docsbot.Document{UserID: user, BackupStatus: st, StatusMessageID: sm.ID}).ID
+			ids[name] = repo.Seed(docsbot.Document{UserID: user, BackupStatus: st, StatusMessageID: sm.ID}).ID
 		}
-		up := &fakeUploads{repo: repo}
-		return newService(repo, fakeDrive{}, fakeFiles{}, up, repo, status, &fakeSyncs{repo: repo}), up, repo, sm.ID, ids
+		up := &docsbottest.FakeUploads{Repo: repo}
+		return docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, up, repo, status, &docsbottest.FakeSyncs{Repo: repo}), up, repo, sm.ID, ids
 	}
 
 	t.Run("requeues only failed and flips them back to pending", func(t *testing.T) {
@@ -108,10 +109,10 @@ func TestService_RetryStatusFailed(t *testing.T) {
 		n, err := svc.RetryStatusFailed(ctx, user, smID)
 		require.NoError(t, err)
 		require.Equal(t, 2, n)
-		require.ElementsMatch(t, []docsbot.DocumentID{ids["failed1"], ids["failed2"]}, up.requeued)
-		require.Equal(t, docsbot.BackupPending, repo.docs[ids["failed1"]].BackupStatus)
-		require.Equal(t, docsbot.BackupBackedUp, repo.docs[ids["ok"]].BackupStatus)
-		require.Equal(t, docsbot.BackupTooLarge, repo.docs[ids["big"]].BackupStatus)
+		require.ElementsMatch(t, []docsbot.DocumentID{ids["failed1"], ids["failed2"]}, up.Requeued)
+		require.Equal(t, docsbot.BackupPending, repo.Docs[ids["failed1"]].BackupStatus)
+		require.Equal(t, docsbot.BackupBackedUp, repo.Docs[ids["ok"]].BackupStatus)
+		require.Equal(t, docsbot.BackupTooLarge, repo.Docs[ids["big"]].BackupStatus)
 
 		v, err := svc.StatusViewByID(ctx, user, smID)
 		require.NoError(t, err)
@@ -123,7 +124,7 @@ func TestService_RetryStatusFailed(t *testing.T) {
 
 		_, err := svc.RetryStatusFailed(ctx, "intruder", smID)
 		require.ErrorIs(t, err, docsbot.ErrNotFound)
-		require.Empty(t, up.calls)
+		require.Empty(t, up.Calls)
 
 		_, err = svc.StatusViewByID(ctx, "intruder", smID)
 		require.ErrorIs(t, err, docsbot.ErrNotFound)
@@ -134,17 +135,17 @@ func TestService_RetryStatusFailed(t *testing.T) {
 
 		_, err := svc.RetryStatusFailed(ctx, user, "nope")
 		require.ErrorIs(t, err, docsbot.ErrNotFound)
-		require.Empty(t, up.calls)
+		require.Empty(t, up.Calls)
 	})
 }
 
 func TestService_OpenAndAttachStatus(t *testing.T) {
 	ctx := context.Background()
-	repo := newFakeRepo()
-	status := newFakeStatus(repo)
-	svc := newService(repo, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, status, &fakeSyncs{repo: repo})
-	a := repo.seed(docsbot.Document{UserID: user})
-	b := repo.seed(docsbot.Document{UserID: user})
+	repo := docsbottest.NewFakeRepo()
+	status := docsbottest.NewFakeStatus(repo)
+	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, status, &docsbottest.FakeSyncs{Repo: repo})
+	a := repo.Seed(docsbot.Document{UserID: user})
+	b := repo.Seed(docsbot.Document{UserID: user})
 
 	sm, err := svc.OpenStatus(ctx, user, 9, 90, a.ID, docsbot.StatusSingle)
 	require.NoError(t, err)

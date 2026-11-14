@@ -9,6 +9,7 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // incomingFile reads the file out of a message; ok is false for a non-file one.
@@ -71,20 +72,20 @@ func (d *docs) receive(ctx context.Context, b *bot.Bot, u *models.Update) {
 	switch r := rep.(type) {
 	case docsbot.NeedCategory:
 		d.logReceived(ctx, user, rep)
-		d.out(b).send(ctx, chatID, textChooseCategory, withKeyboard(pickerKeyboard(r.Doc)))
+		d.out(b).Send(ctx, chatID, textChooseCategory, tg.WithKeyboard(pickerKeyboard(r.Doc)))
 	case docsbot.AlreadySaved:
 		d.logReceived(ctx, user, rep)
-		d.sendAlreadySaved(ctx, b, chatID, user, r.Doc.ID)
+		d.SendAlreadySaved(ctx, b, chatID, user, r.Doc.ID)
 	default:
 		d.log.InfoContext(ctx, "document refused", "user_id", user, "reason", fmt.Sprintf("%T", rep))
 		if text, ok := rejectionText(rep); ok {
-			d.out(b).send(ctx, chatID, text)
+			d.out(b).Send(ctx, chatID, text)
 		}
 	}
 }
 
-// sendAlreadySaved shows the card of a document the user already has.
-func (d *docs) sendAlreadySaved(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID) {
+// SendAlreadySaved shows the card of a document the user already has.
+func (d *docs) SendAlreadySaved(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID) {
 	card, err := d.svc.Card(ctx, user, id)
 	if err != nil {
 		d.fail(ctx, b, chatID, "load card", err)
@@ -93,8 +94,8 @@ func (d *docs) sendAlreadySaved(ctx context.Context, b *bot.Bot, chatID int64, u
 	d.sendCard(ctx, b, chatID, card.Doc, textAlreadySaved, card.CategoryFolderID)
 }
 
-// sendReplaced shows the card of a document whose file the converter replaced.
-func (d *docs) sendReplaced(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID) {
+// SendReplaced shows the card of a document whose file the converter replaced.
+func (d *docs) SendReplaced(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID) {
 	card, err := d.svc.Card(ctx, user, id)
 	if err != nil {
 		d.fail(ctx, b, chatID, "load card", err)
@@ -102,6 +103,18 @@ func (d *docs) sendReplaced(ctx context.Context, b *bot.Bot, chatID int64, user 
 	}
 	d.log.InfoContext(ctx, "original replaced", "user_id", user, "doc_id", id)
 	d.sendCard(ctx, b, chatID, card.Doc, textReplacedDone, card.CategoryFolderID)
+}
+
+// SendNotice answers a reply the converter does not own: the category picker of a
+// new document, or the notice of an intake limit.
+func (d *docs) SendNotice(ctx context.Context, b *bot.Bot, chatID int64, rep docsbot.Reply) {
+	if r, ok := rep.(docsbot.NeedCategory); ok {
+		d.out(b).Send(ctx, chatID, textChooseCategory, tg.WithKeyboard(categoryKeyboard(actCategory, r.Doc.ID)))
+		return
+	}
+	if text, ok := rejectionText(rep); ok {
+		d.out(b).Send(ctx, chatID, text)
+	}
 }
 
 // logReceived logs an accepted file: ids and kind only, never the title.
@@ -139,12 +152,12 @@ func (d *docs) onCategory(ctx context.Context, b *bot.Bot, p press) {
 	if saved.Already {
 		return // double tap: the first tap already saved and tracked it
 	}
-	d.renderSaved(ctx, b, chatID, msgID, user, saved)
+	d.RenderSaved(ctx, b, chatID, msgID, user, saved)
 }
 
-// renderSaved turns the text message msgID into the saved document's card (Drive
+// RenderSaved turns the text message msgID into the saved document's card (Drive
 // off) or a live upload card / batch status (Drive on), then offers Drive.
-func (d *docs) renderSaved(ctx context.Context, b *bot.Bot, chatID int64, msgID int, user docsbot.UserID, saved docsbot.Saved) {
+func (d *docs) RenderSaved(ctx context.Context, b *bot.Bot, chatID int64, msgID int, user docsbot.UserID, saved docsbot.Saved) {
 	d.log.InfoContext(ctx, "document saved", "user_id", user, "doc_id", saved.Doc.ID,
 		"category", saved.Doc.Category, "backup_status", saved.Doc.BackupStatus)
 	if saved.Doc.BackupStatus == docsbot.BackupPending {
@@ -211,7 +224,7 @@ func (d *docs) onCategoryGroup(ctx context.Context, b *bot.Bot, p press) {
 		if tooLarge > 0 {
 			text += "\n" + fmt.Sprintf(textGroupTooLarge, tooLarge)
 		}
-		d.out(b).edit(ctx, chatID, msgID, text, withKeyboard(nil))
+		d.out(b).Edit(ctx, chatID, msgID, text, tg.WithKeyboard(nil))
 	}
 	if group.OfferDrive {
 		d.offerDrive(ctx, b, chatID, user)
@@ -226,7 +239,7 @@ func (d *docs) trackGroupUpload(ctx context.Context, b *bot.Bot, chatID int64, u
 		kind = docsbot.StatusBatch
 	}
 	text, kb := renderStatusMessage(docsbot.StatusMessage{Kind: kind}, docs, nil)
-	d.out(b).edit(ctx, chatID, pickerMsgID, text, withHTML(), withKeyboard(kb))
+	d.out(b).Edit(ctx, chatID, pickerMsgID, text, tg.WithHTML(), tg.WithKeyboard(kb))
 	sm, err := d.svc.OpenStatus(ctx, user, chatID, pickerMsgID, docs[0].ID, kind)
 	if err != nil {
 		d.fail(ctx, b, chatID, "open status", err)
@@ -256,7 +269,7 @@ func (d *docs) trackUpload(ctx context.Context, b *bot.Bot, chatID int64, user d
 			d.fail(ctx, b, chatID, "attach status", err)
 			return
 		}
-		d.out(b).delete(ctx, chatID, pickerMsgID)
+		d.out(b).Delete(ctx, chatID, pickerMsgID)
 		d.refreshStatus(ctx, b, user, doc.ID)
 		return
 	case reuse && sm.Kind == docsbot.StatusSingle:
@@ -267,7 +280,7 @@ func (d *docs) trackUpload(ctx context.Context, b *bot.Bot, chatID int64, user d
 		// its own single card (the default below).
 	}
 	text, kb := renderStatusMessage(docsbot.StatusMessage{Kind: kind}, []docsbot.Document{doc}, nil)
-	d.out(b).edit(ctx, chatID, pickerMsgID, text, withHTML(), withKeyboard(kb))
+	d.out(b).Edit(ctx, chatID, pickerMsgID, text, tg.WithHTML(), tg.WithKeyboard(kb))
 	if _, err := d.svc.OpenStatus(ctx, user, chatID, pickerMsgID, doc.ID, kind); err != nil {
 		d.fail(ctx, b, chatID, "open status", err)
 	}

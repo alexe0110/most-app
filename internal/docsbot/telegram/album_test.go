@@ -3,7 +3,6 @@ package telegram_test
 import (
 	"log/slog"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -11,50 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
-
-// fakeTimer is a manual telegram.AfterFunc: nothing fires until the test says so.
-type fakeTimer struct {
-	mu     sync.Mutex
-	timers []*fakeTimerEntry
-}
-
-type fakeTimerEntry struct {
-	f       func()
-	stopped bool
-}
-
-func (ft *fakeTimer) after(_ time.Duration, f func()) func() bool {
-	ft.mu.Lock()
-	defer ft.mu.Unlock()
-	e := &fakeTimerEntry{f: f}
-	ft.timers = append(ft.timers, e)
-	return func() bool {
-		ft.mu.Lock()
-		defer ft.mu.Unlock()
-		was := !e.stopped
-		e.stopped = true
-		return was
-	}
-}
-
-// fire runs every timer that was not stopped, once.
-func (ft *fakeTimer) fire() {
-	ft.mu.Lock()
-	var run []func()
-	for _, e := range ft.timers {
-		if !e.stopped {
-			e.stopped = true
-			run = append(run, e.f)
-		}
-	}
-	ft.mu.Unlock()
-	for _, f := range run {
-		f()
-	}
-}
 
 func albumPhoto(group, uniqueID string) *models.Update {
 	return &models.Update{Message: &models.Message{
@@ -65,19 +24,19 @@ func albumPhoto(group, uniqueID string) *models.Update {
 	}}
 }
 
-func albumBot(t *testing.T, drive fakeDrive) (*fakeTimer, func(*models.Update), *capture, *fakeRepo) {
+func albumBot(t *testing.T, drive docsbottest.FakeDrive) (*docsbottest.FakeTimer, func(*models.Update), *capture, *docsbottest.FakeRepo) {
 	t.Helper()
-	ft := &fakeTimer{}
-	b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), drive, telegram.WithAlbumTimer(ft.after))
-	ctx := tg.ContextWithUserID(t.Context(), testUserID)
+	ft := &docsbottest.FakeTimer{}
+	b, sent, repo := newBotOpts(t, slog.New(slog.DiscardHandler), drive, telegram.WithAlbumTimer(ft.After))
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	send := func(u *models.Update) { b.ProcessUpdate(ctx, u) }
 	return ft, send, sent, repo
 }
 
 // pendingCount counts pending documents of the test album "alb".
-func pendingCount(repo *fakeRepo) int {
+func pendingCount(repo *docsbottest.FakeRepo) int {
 	n := 0
-	for _, d := range repo.docs {
+	for _, d := range repo.Docs {
 		if d.MediaGroupID == "alb" && d.Status == docsbot.StatusPending {
 			n++
 		}
@@ -86,7 +45,7 @@ func pendingCount(repo *fakeRepo) int {
 }
 
 func TestAlbum_threePhotosThreeDocsOnePicker(t *testing.T) {
-	ft, send, sent, repo := albumBot(t, fakeDrive{})
+	ft, send, sent, repo := albumBot(t, docsbottest.FakeDrive{})
 
 	for _, uid := range []string{"p1", "p2", "p3"} {
 		send(albumPhoto("alb", uid))
@@ -94,7 +53,7 @@ func TestAlbum_threePhotosThreeDocsOnePicker(t *testing.T) {
 	require.Equal(t, 3, pendingCount(repo), "each photo is its own document")
 	require.Empty(t, sent.texts, "no picker before the debounce elapses")
 
-	ft.fire()
+	ft.Fire()
 
 	// Intentionally changed: an all-image album first offers one PDF or
 	// file-by-file; the category picker follows "Сохранить по одному".
@@ -106,29 +65,29 @@ func TestAlbum_threePhotosThreeDocsOnePicker(t *testing.T) {
 }
 
 func TestAlbum_callbackDataFitsTelegramLimit(t *testing.T) {
-	ft, send, sent, _ := albumBot(t, fakeDrive{})
+	ft, send, sent, _ := albumBot(t, docsbottest.FakeDrive{})
 	send(albumPhoto("alb", "p1"))
-	ft.fire()
+	ft.Fire()
 
 	for _, cat := range docsbot.AllCategories {
 		// The real ids are 36-char UUIDs; the longest slug is the worst case.
-		data := "d:ga:" + testUserID + ":" + string(cat)
+		data := "d:ga:" + docsbottest.TestUserID + ":" + string(cat)
 		require.LessOrEqual(t, len(data), 64, data)
 	}
 	require.True(t, strings.Contains(sent.markups[0], "d:ga:"))
 }
 
 func TestAlbum_withDuplicateReportsCount(t *testing.T) {
-	ft, send, sent, repo := albumBot(t, fakeDrive{})
-	repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindPhoto, Category: docsbot.CatOther,
+	ft, send, sent, repo := albumBot(t, docsbottest.FakeDrive{})
+	repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindPhoto, Category: docsbot.CatOther,
 		TgFileID: "f-p2", TgFileUniqueID: "p2", BackupStatus: docsbot.BackupNone,
 	})
 
 	for _, uid := range []string{"p1", "p2", "p3"} {
 		send(albumPhoto("alb", uid))
 	}
-	ft.fire()
+	ft.Fire()
 
 	require.Equal(t, 2, pendingCount(repo), "the duplicate creates no document")
 	require.Len(t, sent.texts, 1)
@@ -137,13 +96,13 @@ func TestAlbum_withDuplicateReportsCount(t *testing.T) {
 }
 
 func TestAlbum_pickerSavesWholeAlbum(t *testing.T) {
-	ft, send, sent, repo := albumBot(t, fakeDrive{})
+	ft, send, sent, repo := albumBot(t, docsbottest.FakeDrive{})
 	var first docsbot.DocumentID
 	for _, uid := range []string{"p1", "p2", "p3"} {
 		send(albumPhoto("alb", uid))
 	}
-	ft.fire()
-	for id, d := range repo.docs {
+	ft.Fire()
+	for id, d := range repo.Docs {
 		if d.TgFileUniqueID == "p1" {
 			first = id
 		}
@@ -153,28 +112,28 @@ func TestAlbum_pickerSavesWholeAlbum(t *testing.T) {
 	send(dataCallback("d:ga:" + string(first) + ":" + string(docsbot.CatReceipts)))
 
 	require.Zero(t, pendingCount(repo))
-	require.Len(t, repo.savedFor(testUserID), 3)
+	require.Len(t, repo.SavedFor(docsbottest.TestUserID), 3)
 	require.True(t, has(sent.edits, "Сохранил 3 файла"), "edits %q", sent.edits)
 }
 
 func TestAlbum_twoAlbumsGetTwoPickers(t *testing.T) {
-	ft, send, sent, _ := albumBot(t, fakeDrive{})
+	ft, send, sent, _ := albumBot(t, docsbottest.FakeDrive{})
 	send(albumPhoto("a", "a1"))
 	send(albumPhoto("b", "b1"))
-	ft.fire()
+	ft.Fire()
 	require.Len(t, sent.texts, 2)
 }
 
 func TestAlbum_limitRefusalIsShownOnce(t *testing.T) {
-	ft, send, sent, repo := albumBot(t, fakeDrive{})
+	ft, send, sent, repo := albumBot(t, docsbottest.FakeDrive{})
 	for i := range 20 {
-		repo.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusPending, TgFileUniqueID: "old" + string(rune('a'+i)), CreatedAt: time.Now().Add(-time.Hour)})
+		repo.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusPending, TgFileUniqueID: "old" + string(rune('a'+i)), CreatedAt: time.Now().Add(-time.Hour)})
 	}
 
 	for _, uid := range []string{"p1", "p2", "p3"} {
 		send(albumPhoto("alb", uid))
 	}
-	ft.fire()
+	ft.Fire()
 
 	require.Len(t, sent.texts, 1)
 	require.Contains(t, sent.texts[0], "Сначала выбери категорию")
@@ -202,10 +161,10 @@ func TestUnsupportedMedia_repliesForEveryType(t *testing.T) {
 			msg.From = &models.User{ID: 100}
 			msg.Chat = models.Chat{ID: 100, Type: models.ChatTypePrivate}
 
-			b.ProcessUpdate(tg.ContextWithUserID(t.Context(), testUserID), &models.Update{Message: &msg})
+			b.ProcessUpdate(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID), &models.Update{Message: &msg})
 
 			require.Equal(t, []string{"Пока принимаю фото и файлы. Видео/голосовые — отправь как файл"}, sent.texts)
-			require.Empty(t, repo.docs, "nothing is stored")
+			require.Empty(t, repo.Docs, "nothing is stored")
 		})
 	}
 }
@@ -213,17 +172,17 @@ func TestUnsupportedMedia_repliesForEveryType(t *testing.T) {
 func TestReceive_limitRepliesAreRendered(t *testing.T) {
 	tests := []struct {
 		name  string
-		seed  func(*fakeRepo)
+		seed  func(*docsbottest.FakeRepo)
 		wants string
 	}{
-		{"too many pending", func(r *fakeRepo) {
+		{"too many pending", func(r *docsbottest.FakeRepo) {
 			for i := range 20 {
-				r.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusPending, TgFileUniqueID: "o" + string(rune('a'+i)), CreatedAt: time.Now().Add(-time.Hour)})
+				r.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusPending, TgFileUniqueID: "o" + string(rune('a'+i)), CreatedAt: time.Now().Add(-time.Hour)})
 			}
 		}, "Сначала выбери категорию для предыдущих файлов"},
-		{"rate limited", func(r *fakeRepo) {
+		{"rate limited", func(r *docsbottest.FakeRepo) {
 			for i := range 30 {
-				r.seed(docsbot.Document{UserID: testUserID, Status: docsbot.StatusSaved, TgFileUniqueID: "o" + string(rune('a'+i)), CreatedAt: time.Now()})
+				r.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, TgFileUniqueID: "o" + string(rune('a'+i)), CreatedAt: time.Now()})
 			}
 		}, "Слишком много файлов"},
 	}
@@ -231,9 +190,9 @@ func TestReceive_limitRepliesAreRendered(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			b, sent, repo := newBot(t)
 			tt.seed(repo)
-			before := len(repo.docs)
+			before := len(repo.Docs)
 
-			b.ProcessUpdate(tg.ContextWithUserID(t.Context(), testUserID), &models.Update{Message: &models.Message{
+			b.ProcessUpdate(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID), &models.Update{Message: &models.Message{
 				From:     &models.User{ID: 100},
 				Chat:     models.Chat{ID: 100, Type: models.ChatTypePrivate},
 				Document: &models.Document{FileID: "f", FileUniqueID: "new", FileName: "x.pdf"},
@@ -241,22 +200,22 @@ func TestReceive_limitRepliesAreRendered(t *testing.T) {
 
 			require.Len(t, sent.texts, 1)
 			require.Contains(t, sent.texts[0], tt.wants)
-			require.Len(t, repo.docs, before)
+			require.Len(t, repo.Docs, before)
 		})
 	}
 }
 
 func TestChooseCategory_tooLargeStaysInTelegram(t *testing.T) {
-	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), fakeDrive{connected: true})
-	doc := repo.seed(docsbot.Document{
-		UserID: testUserID, Status: docsbot.StatusPending, Kind: docsbot.KindDocument,
+	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{IsConnected: true, ExistsRes: true})
+	doc := repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusPending, Kind: docsbot.KindDocument,
 		Title: "Видео.mp4", TgFileID: "f", TgFileUniqueID: "u", FileSize: docsbot.MaxDriveBytes + 1,
 	})
 
-	b.ProcessUpdate(tg.ContextWithUserID(t.Context(), testUserID),
+	b.ProcessUpdate(tg.ContextWithUserID(t.Context(), docsbottest.TestUserID),
 		dataCallback("d:cat:"+string(doc.ID)+":"+string(docsbot.CatOther)))
 
-	require.Equal(t, docsbot.BackupTooLarge, repo.docs[doc.ID].BackupStatus)
+	require.Equal(t, docsbot.BackupTooLarge, repo.Docs[doc.ID].BackupStatus)
 	require.True(t, has(sent.edits, "Слишком большой для Google Диска"), "edits %q", sent.edits)
 }
 
@@ -270,17 +229,17 @@ func albumDocument(group, uniqueID, name string) *models.Update {
 }
 
 func TestAlbum_allDuplicatesShowNoPicker(t *testing.T) {
-	ft, send, sent, repo := albumBot(t, fakeDrive{})
+	ft, send, sent, repo := albumBot(t, docsbottest.FakeDrive{})
 	for _, uid := range []string{"p1", "p2"} {
-		repo.seed(docsbot.Document{
-			UserID: testUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindPhoto, Category: docsbot.CatOther,
+		repo.Seed(docsbot.Document{
+			UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindPhoto, Category: docsbot.CatOther,
 			TgFileID: "f-" + uid, TgFileUniqueID: uid, BackupStatus: docsbot.BackupNone,
 		})
 	}
 
 	send(albumPhoto("alb", "p1"))
 	send(albumPhoto("alb", "p2"))
-	ft.fire()
+	ft.Fire()
 
 	require.Zero(t, pendingCount(repo))
 	require.Len(t, sent.texts, 1, "one summary, no picker: %q", sent.texts)
@@ -289,12 +248,12 @@ func TestAlbum_allDuplicatesShowNoPicker(t *testing.T) {
 }
 
 func TestAlbum_photosAndDocumentsGetOnePicker(t *testing.T) {
-	ft, send, sent, repo := albumBot(t, fakeDrive{})
+	ft, send, sent, repo := albumBot(t, docsbottest.FakeDrive{})
 
 	send(albumPhoto("alb", "p1"))
 	send(albumDocument("alb", "d1", "scan.pdf"))
 	send(albumDocument("alb", "d2", "scan2.pdf"))
-	ft.fire()
+	ft.Fire()
 
 	require.Equal(t, 3, pendingCount(repo))
 	require.Len(t, sent.texts, 1)
@@ -304,11 +263,11 @@ func TestAlbum_photosAndDocumentsGetOnePicker(t *testing.T) {
 func TestAlbum_pickerAfterRestartStillSavesAlbum(t *testing.T) {
 	// A fresh bot (no in-memory album state) with the album already in the DB:
 	// the picker button alone must save every pending photo.
-	_, send, _, repo := albumBot(t, fakeDrive{})
+	_, send, _, repo := albumBot(t, docsbottest.FakeDrive{})
 	var anchor docsbot.DocumentID
 	for _, uid := range []string{"p1", "p2"} {
-		d := repo.seed(docsbot.Document{
-			UserID: testUserID, Status: docsbot.StatusPending, Kind: docsbot.KindPhoto, MediaGroupID: "alb",
+		d := repo.Seed(docsbot.Document{
+			UserID: docsbottest.TestUserID, Status: docsbot.StatusPending, Kind: docsbot.KindPhoto, MediaGroupID: "alb",
 			TgFileID: "f-" + uid, TgFileUniqueID: uid, CreatedAt: time.Now(),
 		})
 		anchor = d.ID
@@ -317,15 +276,15 @@ func TestAlbum_pickerAfterRestartStillSavesAlbum(t *testing.T) {
 	send(dataCallback("d:ga:" + string(anchor) + ":" + string(docsbot.CatReceipts)))
 
 	require.Zero(t, pendingCount(repo))
-	require.Len(t, repo.savedFor(testUserID), 2)
+	require.Len(t, repo.SavedFor(docsbottest.TestUserID), 2)
 }
 
 func TestAlbum_pickerDoubleTapOpensOneStatus(t *testing.T) {
-	_, send, sent, repo := albumBot(t, fakeDrive{connected: true})
+	_, send, sent, repo := albumBot(t, docsbottest.FakeDrive{IsConnected: true, ExistsRes: true})
 	var anchor docsbot.DocumentID
 	for _, uid := range []string{"p1", "p2"} {
-		d := repo.seed(docsbot.Document{
-			UserID: testUserID, Status: docsbot.StatusPending, Kind: docsbot.KindPhoto, MediaGroupID: "alb",
+		d := repo.Seed(docsbot.Document{
+			UserID: docsbottest.TestUserID, Status: docsbot.StatusPending, Kind: docsbot.KindPhoto, MediaGroupID: "alb",
 			TgFileID: "f-" + uid, TgFileUniqueID: uid, CreatedAt: time.Now(),
 		})
 		anchor = d.ID
@@ -336,7 +295,7 @@ func TestAlbum_pickerDoubleTapOpensOneStatus(t *testing.T) {
 	edits := len(sent.edits)
 	send(tap)
 
-	require.Len(t, repo.status.msgs, 1, "one status message for the album")
+	require.Len(t, repo.Status.Msgs, 1, "one status message for the album")
 	require.Len(t, sent.edits, edits, "the batch is not redrawn by the second tap")
-	require.Len(t, repo.savedFor(testUserID), 2)
+	require.Len(t, repo.SavedFor(docsbottest.TestUserID), 2)
 }

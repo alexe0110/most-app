@@ -53,9 +53,10 @@ internal/
     ports.go               # интерфейсы, нужные домену
     errors.go              # доменные ошибки
     reply.go               # ответы юзкейсов (смысл, не UI)
-    service*_test.go       # unit-тесты по темам, фейки в fakes_test.go
-    fakes_test.go          # фейки портов
-    telegram/              # входящий адаптер: апдейт → service → рендер; texts.go — тексты; send.go — единственный путь отправки, правки и удаления сообщений
+    service*_test.go       # unit-тесты по темам, фейки портов — из docsbottest
+    docsbottest/           # общие фейки портов (FakeRepo, FakeDrive, ...) для тестов домена и адаптеров; только из _test.go
+    telegram/              # входящий адаптер: апдейт → service → рендер; texts.go — тексты; сообщения отправляет только tg.Sender (platform/tg)
+      converter/           # диалог /convert и меню «Преобразовать»; свои тексты, кнопки и сессии; не импортирует telegram
     jobs/                  # входящий адаптер: воркеры River (upload, sync, trash, sweep, purge_pending)
     web/                   # входящий адаптер: публичные страницы /, /privacy, /terms
     postgres/              # исходящий адаптер: по типу на порт (Documents, StatusMessages, Users, …) через sqlc; inTx — единственная транзакция
@@ -250,17 +251,17 @@ flowchart BT
 | `@pytest.mark.parametrize`         | table-driven тесты + `t.Run`                                                                        |
 | фикстуры                           | хелперы с `t.Helper()` и `t.Cleanup()`                                                              |
 | маркеры                            | build tags `//go:build integration`                                                                 |
-| `unittest.mock`                    | ручные фейки в `fakes_test.go`                                                                      |
+| `unittest.mock`                    | ручные фейки в `docsbot/docsbottest`                                                                |
 | `assert`                           | `testify/require`                                                                                   |
 
 ```go
 func TestService_Receive(t *testing.T) {
 	tests := []struct {
 		name string
-		repo *fakeRepo
+		repo *docsbottest.FakeRepo
 		want docsbot.Reply
 	}{
-		{"новый файл", newFakeRepo(), docsbot.NeedCategory{Options: docsbot.AllCategories}},
+		{"новый файл", docsbottest.NewFakeRepo(), docsbot.NeedCategory{Options: docsbot.AllCategories}},
 		{"дубль", repoWith(existingDoc), docsbot.AlreadySaved{Doc: existingDoc}},
 	}
 	for _, tt := range tests {
@@ -276,7 +277,7 @@ func TestService_Receive(t *testing.T) {
 
 **Уровни и команды**
 
-- **unit** — `make test` (`go test ./...`), без Docker и сети. Домен с ручными фейками (`fakes_test.go`), `platform/*` с лёгкими зависимостями. Образец table-driven теста — `internal/platform/config/config_test.go`.
+- **unit** — `make test` (`go test ./...`), без Docker и сети. Домен с ручными фейками (`docsbot/docsbottest`), `platform/*` с лёгкими зависимостями. Образец table-driven теста — `internal/platform/config/config_test.go`.
 - **integration** — `make test-int` (`go test -tags=integration -count=1 ./...`), файлы с `//go:build integration`. Реальный Postgres поднимает `internal/platform/db/dbtest`: `dbtest.New(t)` стартует контейнер (модуль `postgres` из `testcontainers-go`), отдаёт `*pgxpool.Pool` и сам всё убирает через `t.Cleanup`. Образец — `internal/platform/db/dbtest/dbtest_integration_test.go`.
 - **e2e** — `make test-e2e` (`go test -tags=e2e -count=1 ./tests/e2e/...`), файлы с `//go:build e2e`. Гоняет приложение целиком против dev-стенда.
 

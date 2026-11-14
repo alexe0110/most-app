@@ -9,6 +9,7 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
 )
 
 // cardText describes one document as HTML (every dynamic part is escaped):
@@ -157,7 +158,7 @@ func cardKeyboardWith(doc docsbot.Document, folderID, orig, reconnectURL string)
 		{Text: btnChangeCat, CallbackData: docCB(actChangeCat, doc.ID)},
 	})
 	var last []models.InlineKeyboardButton
-	if convertible(doc) {
+	if converter.Convertible(doc) {
 		last = append(last, convertRow(doc.ID, btnConvertCard)...)
 	}
 	last = append(last, models.InlineKeyboardButton{Text: btnDelete, CallbackData: docCB(actDeleteAsk, doc.ID)})

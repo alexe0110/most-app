@@ -27,15 +27,38 @@ const (
 	rescueStuckJobsAfter = 10 * time.Minute
 )
 
-// Client is a thin façade over a River client: start/stop the workers and
-// enqueue jobs. River is not exposed beyond its job-args and option types.
-type Client struct {
+// Inserter enqueues and cancels jobs without working them. It is built before
+// the workers exist, so the code the workers depend on can hold it without a
+// dependency cycle (workers -> service -> repository -> inserter).
+type Inserter struct {
 	river *river.Client[pgx.Tx]
 }
 
-// New builds a River client bound to pool. workers must have at least one
-// worker registered; queues adds (or overrides) named queues next to the
-// default one; periodic lists scheduled jobs. Migrate must run first.
+// Client is an Inserter that also works the jobs: start/stop the workers. River
+// is not exposed beyond its job-args and option types.
+type Client struct {
+	*Inserter
+}
+
+// NewInserter builds an insert-only client bound to pool: no queues and no
+// workers, so River skips its check that a job kind has a registered worker.
+// Jobs it inserts are worked by the client from New, in this or another process.
+// Migrate must run first.
+func NewInserter(pool *pgxpool.Pool, log *slog.Logger) (*Inserter, error) {
+	rc, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
+		// Defaults are stored on the job row at insert time, so they must match New.
+		MaxAttempts: maxAttempts,
+		Logger:      log,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("new river inserter: %w", err)
+	}
+	return &Inserter{river: rc}, nil
+}
+
+// New builds a River client bound to pool that works jobs. workers must have at
+// least one worker registered; queues adds (or overrides) named queues next to
+// the default one; periodic lists scheduled jobs. Migrate must run first.
 func New(pool *pgxpool.Pool, log *slog.Logger, workers *river.Workers, queues map[string]river.QueueConfig, periodic ...*river.PeriodicJob) (*Client, error) {
 	qs := map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: maxWorkers}}
 	for name, qc := range queues {
@@ -53,7 +76,7 @@ func New(pool *pgxpool.Pool, log *slog.Logger, workers *river.Workers, queues ma
 	if err != nil {
 		return nil, fmt.Errorf("new river client: %w", err)
 	}
-	return &Client{river: rc}, nil
+	return &Client{Inserter: &Inserter{river: rc}}, nil
 }
 
 // Start begins working jobs. Cancel ctx later for a graceful shutdown.
@@ -73,8 +96,8 @@ func (c *Client) Stop(ctx context.Context) error {
 }
 
 // Insert enqueues a job on its own connection.
-func (c *Client) Insert(ctx context.Context, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error) {
-	res, err := c.river.Insert(ctx, args, opts)
+func (i *Inserter) Insert(ctx context.Context, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error) {
+	res, err := i.river.Insert(ctx, args, opts)
 	if err != nil {
 		return nil, fmt.Errorf("insert job: %w", err)
 	}
@@ -83,8 +106,8 @@ func (c *Client) Insert(ctx context.Context, args river.JobArgs, opts *river.Ins
 
 // InsertTx enqueues a job inside tx, so the job and the data change commit or
 // roll back together.
-func (c *Client) InsertTx(ctx context.Context, tx pgx.Tx, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error) {
-	res, err := c.river.InsertTx(ctx, tx, args, opts)
+func (i *Inserter) InsertTx(ctx context.Context, tx pgx.Tx, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error) {
+	res, err := i.river.InsertTx(ctx, tx, args, opts)
 	if err != nil {
 		return nil, fmt.Errorf("insert job in tx: %w", err)
 	}
@@ -95,7 +118,7 @@ func (c *Client) InsertTx(ctx context.Context, tx pgx.Tx, args river.JobArgs, op
 // JSON argument argKey equals argVal, returning how many were deleted. Running
 // jobs are left to finish. argKey must be a trusted constant (a job-args field
 // name), never user input, since it is interpolated into the query.
-func (c *Client) DeleteJobsByArg(ctx context.Context, kind, argKey, argVal string) (int, error) {
+func (i *Inserter) DeleteJobsByArg(ctx context.Context, kind, argKey, argVal string) (int, error) {
 	params := river.NewJobDeleteManyParams().
 		Kinds(kind).
 		States(
@@ -108,7 +131,7 @@ func (c *Client) DeleteJobsByArg(ctx context.Context, kind, argKey, argVal strin
 		First(100)
 	total := 0
 	for {
-		res, err := c.river.JobDeleteMany(ctx, params)
+		res, err := i.river.JobDeleteMany(ctx, params)
 		if err != nil {
 			return total, fmt.Errorf("delete jobs by arg: %w", err)
 		}

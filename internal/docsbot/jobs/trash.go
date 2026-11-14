@@ -65,10 +65,7 @@ func (w *trashWorker) Work(ctx context.Context, job *river.Job[StorageTrashArgs]
 	return fmt.Errorf("trash remote: %w", err)
 }
 
-// RegisterStorageTrash registers the worker and returns a binder that injects
-// its dependencies. Call the binder before queue.Start: Work runs only after.
-func RegisterStorageTrash(workers *river.Workers, log *slog.Logger) func(Trasher, TrashNotifier) {
-	w := &trashWorker{log: log}
-	river.AddWorker(workers, w)
-	return func(svc Trasher, n TrashNotifier) { w.svc, w.notify = svc, n }
+// RegisterStorageTrash registers the trash worker.
+func RegisterStorageTrash(workers *river.Workers, log *slog.Logger, svc Trasher, notify TrashNotifier) {
+	river.AddWorker(workers, &trashWorker{svc: svc, notify: notify, log: log})
 }
