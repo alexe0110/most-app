@@ -23,7 +23,7 @@ func TestDisconnect_resetsQueuedAndUploading(t *testing.T) {
 	drive := &countingDrive{}
 	pool, user, id, svc, spy, enq, start := setupSweep(t, drive, "none", "0 seconds", "active")
 
-	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
+	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 	var uploadingID string
 	require.NoError(t, pool.QueryRow(t.Context(),
 		`insert into documents (user_id, status, kind, category, title, tg_file_id, tg_file_unique_id, backup_status)
@@ -83,7 +83,7 @@ func TestSweepStuckUploads_liveJobDedups(t *testing.T) {
 	pool, user, id, svc, _, enq, start := setupSweep(t, drive, "none", "0 seconds", "active")
 
 	// The queue is not started, so the enqueued job stays live.
-	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
+	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 	_, err := pool.Exec(t.Context(), `update documents set updated_at = now() - interval '31 minutes' where id = $1::uuid`, string(id))
 	require.NoError(t, err)
 

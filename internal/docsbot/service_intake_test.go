@@ -2,6 +2,7 @@ package docsbot_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -321,7 +322,19 @@ func TestService_Receive_duplicateAndDeleteSemantics(t *testing.T) {
 // before our insert, which then hits the unique constraint.
 type racingCreate struct {
 	*fakeRepo
-	winner docsbot.Document
+	winner     docsbot.Document
+	rereadErr  error // fails the lookup that follows the lost insert
+	lookupSeen *int  // counts DocumentByFileUniqueID calls when rereadErr is set
+}
+
+func (r racingCreate) DocumentByFileUniqueID(ctx context.Context, u docsbot.UserID, uid string) (docsbot.Document, error) {
+	if r.rereadErr != nil {
+		*r.lookupSeen++
+		if *r.lookupSeen > 1 {
+			return docsbot.Document{}, r.rereadErr
+		}
+	}
+	return r.fakeRepo.DocumentByFileUniqueID(ctx, u, uid)
 }
 
 func (r racingCreate) CreateDocument(context.Context, docsbot.IncomingFile) (docsbot.Document, error) {
@@ -331,23 +344,30 @@ func (r racingCreate) CreateDocument(context.Context, docsbot.IncomingFile) (doc
 
 func TestService_Receive_lostCreateRaceAnswersByTheWinner(t *testing.T) {
 	tests := []struct {
-		name   string
-		status docsbot.Status
-		want   func(docsbot.Document) docsbot.Reply
+		name      string
+		status    docsbot.Status
+		want      func(docsbot.Document) docsbot.Reply
+		rereadErr error
 	}{
-		{"winner still pending", docsbot.StatusPending, func(d docsbot.Document) docsbot.Reply { return docsbot.NeedCategory{Doc: d} }},
-		{"winner already saved", docsbot.StatusSaved, func(d docsbot.Document) docsbot.Reply { return docsbot.AlreadySaved{Doc: d} }},
+		{"winner still pending", docsbot.StatusPending, func(d docsbot.Document) docsbot.Reply { return docsbot.NeedCategory{Doc: d} }, nil},
+		{"winner already saved", docsbot.StatusSaved, func(d docsbot.Document) docsbot.Reply { return docsbot.AlreadySaved{Doc: d} }, nil},
+		{"winner cannot be reread", docsbot.StatusPending, nil, errors.New("db down")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newFakeRepo()
 			in := intakeFile("race")
 			winner := docsbot.Document{ID: "winner", UserID: user, Status: tt.status, TgFileUniqueID: in.FileUniqueID, CreatedAt: time.Unix(1, 0)}
-			svc := newService(racingCreate{fakeRepo: repo, winner: winner}, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo,
+			svc := newService(racingCreate{fakeRepo: repo, winner: winner, rereadErr: tt.rereadErr, lookupSeen: new(int)}, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo,
 				newFakeStatus(repo), &fakeSyncs{repo: repo})
 
 			rep, err := svc.Receive(t.Context(), in)
 
+			if tt.rereadErr != nil {
+				require.ErrorIs(t, err, tt.rereadErr)
+				require.Nil(t, rep)
+				return
+			}
 			require.NoError(t, err)
 			stored, err := repo.DocumentByID(t.Context(), user, "winner")
 			require.NoError(t, err)
@@ -417,6 +437,59 @@ func TestService_Receive_duplicateBypassesLimits(t *testing.T) {
 
 	require.NoError(t, err)
 	require.IsType(t, docsbot.AlreadySaved{}, rep)
+}
+
+// failingPurgeRepo fails the pending-documents purge.
+type failingPurgeRepo struct {
+	*fakeRepo
+	err error
+}
+
+func (r failingPurgeRepo) PurgeStalePending(context.Context, time.Time) (int, error) { return 0, r.err }
+
+// failingPurgeStatus fails the closed-status-messages purge and records that it ran.
+type failingPurgeStatus struct {
+	*fakeStatus
+	err    error
+	called *bool
+}
+
+func (s failingPurgeStatus) PurgeClosed(context.Context, time.Time) (int, error) {
+	*s.called = true
+	return 0, s.err
+}
+
+func TestService_PurgeStalePending_errors(t *testing.T) {
+	boom := errors.New("db down")
+	tests := []struct {
+		name          string
+		failRepo      bool
+		wantRes       docsbot.PurgeResult
+		wantPurgeSeen bool
+	}{
+		{"documents step fails: status messages are not purged", true, docsbot.PurgeResult{}, false},
+		{"status step fails: the result keeps the documents purged", false, docsbot.PurgeResult{Pending: 1}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
+			repo := newFakeRepo()
+			repo.seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "a", CreatedAt: now.Add(-25 * time.Hour)})
+			var purgeSeen bool
+			var r docsbot.Repo = repo
+			var st docsbot.StatusMessages = failingPurgeStatus{fakeStatus: newFakeStatus(repo), err: boom, called: &purgeSeen}
+			if tt.failRepo {
+				r = failingPurgeRepo{fakeRepo: repo, err: boom}
+			}
+			svc := newService(r, fakeDrive{}, fakeFiles{}, &fakeUploads{repo: repo}, repo, st, &fakeSyncs{repo: repo}, docsbot.WithClock(func() time.Time { return now }))
+
+			res, err := svc.PurgeStalePending(t.Context())
+
+			require.ErrorIs(t, err, boom)
+			require.Equal(t, tt.wantRes, res)
+			require.Equal(t, tt.wantPurgeSeen, purgeSeen)
+		})
+	}
 }
 
 func TestService_PurgeStalePending(t *testing.T) {

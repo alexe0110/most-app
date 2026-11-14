@@ -80,8 +80,17 @@ func runUploadWithLog(t *testing.T, files docsbot.FileSource, drive docsbot.Driv
 	t.Helper()
 	pool, user, id, spy, enq, queue := setupUpload(t, files, drive, log)
 	startQueue(t, queue)
-	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
+	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 	return pool, user, id, spy
+}
+
+// enqueueUpload puts the saved document in the state the claim paths leave it in
+// (backup pending) and queues its upload, unique among live jobs.
+func enqueueUpload(ctx context.Context, pool *pgxpool.Pool, docs *postgres.Documents, user docsbot.UserID, id docsbot.DocumentID) error {
+	if _, err := pool.Exec(ctx, `update documents set backup_status = 'pending' where id = $1::uuid`, string(id)); err != nil {
+		return err
+	}
+	return docs.RequeueUpload(ctx, user, id)
 }
 
 // newService wires a Service over docs and the queue that docs inserts its jobs into.
@@ -185,13 +194,13 @@ func (d *countingDrive) count() int {
 	return d.calls
 }
 
-func TestEnqueueUpload_dedupsWhileQueued(t *testing.T) {
+func TestUploadJob_dedupsWhileQueued(t *testing.T) {
 	drive := &countingDrive{}
 	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, slog.New(slog.DiscardHandler))
 
 	// Queue is not started, so the first job stays available and the second is a duplicate.
-	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
-	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
+	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
+	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 	startQueue(t, queue)
 
 	require.Eventually(t, func() bool {
@@ -211,7 +220,7 @@ func TestUploadDocument_deletedWhileQueuedFinishesSilently(t *testing.T) {
 	log := debugLogger(&logs)
 	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, log)
 
-	require.NoError(t, enq.EnqueueUpload(t.Context(), user, id))
+	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 	_, err := pool.Exec(t.Context(), `delete from documents where id = $1::uuid`, string(id))
 	require.NoError(t, err)
 	startQueue(t, queue)

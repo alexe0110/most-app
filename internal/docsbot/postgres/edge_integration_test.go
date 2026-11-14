@@ -24,7 +24,7 @@ func titled(t *testing.T, repo *adapters, user docsbot.UserID, unique, title str
 		UserID: user, Kind: docsbot.KindDocument, Title: title, FileID: "f-" + unique, FileUniqueID: unique,
 	})
 	require.NoError(t, err)
-	mustSave(t, t.Context(), repo, user, doc.ID, docsbot.CatOther)
+	mustSave(t, repo, user, doc.ID, docsbot.CatOther)
 	return doc
 }
 

@@ -227,7 +227,9 @@ func (r *Documents) SaveChosen(ctx context.Context, c docsbot.SaveChoice) (saved
 		}
 		saved = true
 		if c.Title != "" {
-			if _, err := q.UpdateDocumentTitle(ctx, UpdateDocumentTitleParams{ID: docID, UserID: uid, Title: c.Title}); err != nil {
+			// Cloud stays false: a document saved a moment ago cannot be backed up yet,
+			// so there is no Drive file for a sync to rename.
+			if _, err := q.UpdateDocumentTitle(ctx, UpdateDocumentTitleParams{ID: docID, UserID: uid, Title: c.Title, Cloud: false}); err != nil {
 				return notFoundOr(err, "set default title")
 			}
 		}
@@ -259,46 +261,9 @@ func (r *Documents) applyBackup(ctx context.Context, q *Queries, tx pgx.Tx, c do
 	}
 }
 
-// errUploadSkipped aborts the EnqueueUpload transaction when a live upload job
-// already exists; it never leaves this file.
-var errUploadSkipped = errors.New("upload job already queued")
-
-// EnqueueUpload marks the document backup_status=pending and queues its upload in
-// the same transaction, so the status change and the job commit or roll back
-// together. A live upload job is unique by args: the repeated call is skipped and
-// the transaction rolled back, so the document status stays untouched.
-func (r *Documents) EnqueueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
-	docID, uid, err := ids(id, user)
-	if err != nil {
-		return err
-	}
-	err = inTx(ctx, r.pool, func(q *Queries, tx pgx.Tx) error {
-		err := q.UpdateDocumentBackupStatus(ctx, UpdateDocumentBackupStatusParams{
-			ID:           docID,
-			UserID:       uid,
-			BackupStatus: string(docsbot.BackupPending),
-		})
-		if err != nil {
-			return fmt.Errorf("mark backup pending: %w", err)
-		}
-		skipped, err := r.jobs.InsertUpload(ctx, tx, user, id)
-		if err != nil {
-			return err
-		}
-		if skipped {
-			return errUploadSkipped
-		}
-		return nil
-	})
-	if errors.Is(err, errUploadSkipped) {
-		return nil
-	}
-	return err
-}
-
-// RequeueUpload inserts the upload job only, with the same uniqueness as
-// EnqueueUpload and without touching the document, so a live job dedups to a
-// no-op and the stuck-since clock (updated_at) is preserved.
+// RequeueUpload inserts the upload job only, unique by args among live states,
+// and does not touch the document, so a live job dedups to a no-op and the
+// stuck-since clock (updated_at) is preserved.
 func (r *Documents) RequeueUpload(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) error {
 	return inTx(ctx, r.pool, func(_ *Queries, tx pgx.Tx) error {
 		_, err := r.jobs.InsertUpload(ctx, tx, user, id)

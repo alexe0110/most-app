@@ -23,17 +23,16 @@ func inlineEnv(t *testing.T) (*adapters, *pgxpool.Pool) {
 }
 
 // savedAt stores a saved document and backdates it by age, so ordering is deterministic.
-func savedAt(t *testing.T, repo *adapters, pool *pgxpool.Pool, user docsbot.UserID, title string, cat docsbot.Category, age time.Duration) docsbot.Document {
+func savedAt(t *testing.T, repo *adapters, pool *pgxpool.Pool, user docsbot.UserID, title string, cat docsbot.Category, age time.Duration) {
 	t.Helper()
 	ctx := t.Context()
 	d, err := repo.CreateDocument(ctx, docsbot.IncomingFile{
 		UserID: user, Kind: docsbot.KindDocument, Title: title, FileID: "f-" + title + string(user), FileUniqueID: "u-" + title + string(user),
 	})
 	require.NoError(t, err)
-	mustSave(t, ctx, repo, user, d.ID, cat)
+	mustSave(t, repo, user, d.ID, cat)
 	_, err = pool.Exec(ctx, "update documents set created_at = now() - $2::interval where id = $1", string(d.ID), fmt.Sprintf("%d seconds", int(age.Seconds())))
 	require.NoError(t, err)
-	return d
 }
 
 func titles(docs []docsbot.Document) []string {

@@ -3,7 +3,6 @@
 package postgres_test
 
 import (
-	"context"
 	"sync"
 	"testing"
 
@@ -125,9 +124,9 @@ func TestRepo_integrationsAndFolders(t *testing.T) {
 }
 
 // mustSave saves a pending document and requires that this call did the saving.
-func mustSave(t *testing.T, ctx context.Context, repo *adapters, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) {
+func mustSave(t *testing.T, repo *adapters, user docsbot.UserID, id docsbot.DocumentID, cat docsbot.Category) {
 	t.Helper()
-	saved, err := repo.SaveChosen(ctx, docsbot.SaveChoice{User: user, ID: id, Category: cat, Backup: docsbot.BackupNone})
+	saved, err := repo.SaveChosen(t.Context(), docsbot.SaveChoice{User: user, ID: id, Category: cat, Backup: docsbot.BackupNone})
 	require.NoError(t, err)
 	require.True(t, saved)
 }

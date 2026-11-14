@@ -17,12 +17,11 @@ import (
 // savedDoc creates a saved document for user.
 func savedDoc(t *testing.T, repo *adapters, user docsbot.UserID, unique string) docsbot.Document {
 	t.Helper()
-	ctx := t.Context()
-	doc, err := repo.CreateDocument(ctx, docsbot.IncomingFile{
+	doc, err := repo.CreateDocument(t.Context(), docsbot.IncomingFile{
 		UserID: user, Kind: docsbot.KindDocument, Title: "t", FileID: "f-" + unique, FileUniqueID: unique,
 	})
 	require.NoError(t, err)
-	mustSave(t, ctx, repo, user, doc.ID, docsbot.CatOther)
+	mustSave(t, repo, user, doc.ID, docsbot.CatOther)
 	return doc
 }
 
@@ -112,31 +111,34 @@ func TestBackups_deleteAllFolders(t *testing.T) {
 	require.Equal(t, "other-f", id)
 }
 
-func TestBackups_enqueueUploadTx(t *testing.T) {
-	boom := errors.New("insert failed")
-	repo, user := domainRepoWith(t, uploadJobs{err: boom})
-	ctx := t.Context()
-	doc := savedDoc(t, repo, user, "tx")
+func TestBackups_saveChosenTx(t *testing.T) {
+	tests := []struct {
+		name       string
+		jobs       postgres.JobInserter
+		wantErr    error
+		wantStatus docsbot.Status
+		wantBackup docsbot.BackupStatus
+	}{
+		{"insert fails: nothing is saved", uploadJobs{err: errBoom}, errBoom, docsbot.StatusPending, docsbot.BackupNone},
+		{"live job skipped: the choice still commits", uploadJobs{skipped: true}, nil, docsbot.StatusSaved, docsbot.BackupPending},
+		{"job queued", uploadJobs{}, nil, docsbot.StatusSaved, docsbot.BackupPending},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, user := domainRepoWith(t, tt.jobs)
+			ctx := t.Context()
+			doc, err := repo.CreateDocument(ctx, docsbot.IncomingFile{UserID: user, Kind: docsbot.KindDocument, Title: "t", FileID: "f", FileUniqueID: "u"})
+			require.NoError(t, err)
 
-	err := repo.EnqueueUpload(ctx, user, doc.ID)
-	require.ErrorIs(t, err, boom)
-	got, err := repo.DocumentByID(ctx, user, doc.ID)
-	require.NoError(t, err)
-	require.Equal(t, docsbot.BackupNone, got.BackupStatus, "rolled back")
+			_, err = repo.SaveChosen(ctx, docsbot.SaveChoice{User: user, ID: doc.ID, Category: docsbot.CatOther, Backup: docsbot.BackupPending})
 
-	skipping, user := domainRepoWith(t, uploadJobs{skipped: true})
-	doc = savedDoc(t, skipping, user, "skip")
-	require.NoError(t, skipping.EnqueueUpload(ctx, user, doc.ID))
-	got, err = skipping.DocumentByID(ctx, user, doc.ID)
-	require.NoError(t, err)
-	require.Equal(t, docsbot.BackupNone, got.BackupStatus, "a skipped duplicate leaves the status")
-
-	ok, user := domainRepoWith(t, uploadJobs{})
-	doc = savedDoc(t, ok, user, "ok")
-	require.NoError(t, ok.EnqueueUpload(ctx, user, doc.ID))
-	got, err = ok.DocumentByID(ctx, user, doc.ID)
-	require.NoError(t, err)
-	require.Equal(t, docsbot.BackupPending, got.BackupStatus)
+			require.ErrorIs(t, err, tt.wantErr)
+			got, err := repo.DocumentByID(ctx, user, doc.ID)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantStatus, got.Status)
+			require.Equal(t, tt.wantBackup, got.BackupStatus)
+		})
+	}
 }
 
 func TestFolders_categoryFolderID(t *testing.T) {
@@ -159,7 +161,10 @@ func TestFolders_categoryFolderID(t *testing.T) {
 // noJobs is a JobInserter for tests where no job may be needed.
 type noJobs struct{}
 
-var errUnexpectedJob = errors.New("unexpected job insert")
+var (
+	errUnexpectedJob = errors.New("unexpected job insert")
+	errBoom          = errors.New("insert failed")
+)
 
 var _ postgres.JobInserter = noJobs{}
 
