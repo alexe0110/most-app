@@ -83,7 +83,26 @@ func (s *Service) track(ctx context.Context, e Event) {
 		return
 	}
 	if err := s.events.Record(ctx, e); err != nil {
-		// Only the name is logged: props may carry the acquisition source.
-		s.log.WarnContext(ctx, "record event", "event", e.Name, "user_id", e.User, "err", err)
+		s.warnEvent(ctx, e.Name, e.User, err)
 	}
+}
+
+// Start records a /start of the user. payload is the deep-link argument; it
+// becomes the acquisition source only if ParseSource accepts it, and is stored
+// as the user's source only on their first start. Like Track it never fails: a
+// lost event must not change what /start answers.
+func (s *Service) Start(ctx context.Context, user UserID, payload string) {
+	if s.events == nil {
+		return
+	}
+	source, _ := ParseSource(payload)
+	if _, err := s.events.RecordStart(ctx, user, source); err != nil {
+		s.warnEvent(ctx, EventStart, user, err)
+	}
+}
+
+// warnEvent logs a lost event. Only the name is logged: props may carry the
+// acquisition source.
+func (s *Service) warnEvent(ctx context.Context, name EventName, user UserID, err error) {
+	s.log.WarnContext(ctx, "record event", "event", name, "user_id", user, "err", err)
 }

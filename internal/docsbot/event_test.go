@@ -181,3 +181,52 @@ func TestService_eventWriteFailureChangesNothing(t *testing.T) {
 		})
 	}
 }
+
+func TestService_Start(t *testing.T) {
+	yes, no := true, false
+	tests := []struct {
+		name     string
+		payloads []string
+		want     []docsbot.EventProps
+	}{
+		{"first start with a source", []string{"ad_1"}, []docsbot.EventProps{{Source: "ad_1", New: &yes}}},
+		{"no payload", []string{""}, []docsbot.EventProps{{New: &yes}}},
+		{"invalid payload is not a source", []string{"Ad 1; drop"}, []docsbot.EventProps{{New: &yes}}},
+		{"second start is not new", []string{"ad_1", "ad_2"}, []docsbot.EventProps{
+			{Source: "ad_1", New: &yes}, {Source: "ad_2", New: &no},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := docsbottest.NewFakeRepo()
+			svc, _ := edgeService(repo, docsbottest.FakeDrive{})
+
+			for _, p := range tt.payloads {
+				svc.Start(t.Context(), user, p)
+			}
+
+			var got []docsbot.EventProps
+			for _, e := range repo.Events {
+				require.Equal(t, docsbot.EventStart, e.Name)
+				require.Equal(t, user, e.User)
+				got = append(got, e.Props)
+			}
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestService_Start_writeFailureIsLogged(t *testing.T) {
+	repo := docsbottest.NewFakeRepo()
+	repo.EventsErr = errors.New("db down")
+	var logs bytes.Buffer
+	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{},
+		&docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo},
+		docsbot.WithLogger(slog.New(slog.NewJSONHandler(&logs, nil))))
+
+	svc.Start(t.Context(), user, "ad_1")
+
+	require.Empty(t, repo.Events)
+	require.Contains(t, logs.String(), `"event":"start"`)
+	require.NotContains(t, logs.String(), "ad_1")
+}
