@@ -14,15 +14,17 @@ import (
 const TestUserID = "11111111-1111-1111-1111-111111111111"
 
 // NewService is the one place tests build a Service from fakes. uploads doubles
-// as the JobCanceler when it is one (FakeUploads records the cancels).
+// as the JobCanceler when it is one (FakeUploads records the cancels); repo doubles
+// as the Events port when it is one (FakeRepo records the events).
 func NewService(repo docsbot.Repo, drive docsbot.Drive, files docsbot.FileSource, uploads docsbot.Uploads, folders docsbot.Folders, status docsbot.StatusMessages, syncs docsbot.Syncs, opts ...docsbot.Option) *docsbot.Service {
 	jobs, ok := uploads.(docsbot.JobCanceler)
 	if !ok {
 		jobs = NoJobs{}
 	}
+	events, _ := repo.(docsbot.Events) // nil when repo is not an events fake
 	return docsbot.NewService(docsbot.Ports{
 		Repo: repo, Drive: drive, Files: files, Uploads: uploads, Jobs: jobs,
-		Folders: folders, Status: status, Syncs: syncs,
+		Folders: folders, Status: status, Syncs: syncs, Events: events,
 	}, opts...)
 }
 

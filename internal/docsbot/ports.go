@@ -261,3 +261,16 @@ type StatusMessages interface {
 	// with a failed upload is kept: its retry button still needs it.
 	PurgeClosed(ctx context.Context, olderThan time.Time) (int, error)
 }
+
+// Events stores product events (docs/metrics.sql reads them). Declared here, at the
+// consumer; implemented by docsbot/postgres. A failure is never fatal to the
+// caller, see Service.Track.
+type Events interface {
+	// Record stores one event; an empty Event.User stores it anonymously.
+	Record(ctx context.Context, e Event) error
+	// RecordStart stores a start event, with source and first as its props, in one
+	// transaction with the attribution: first is true when the user has no earlier
+	// start event. Only then source (if not empty) is written to users.source, and
+	// never over a stored one.
+	RecordStart(ctx context.Context, user UserID, source string) (first bool, err error)
+}

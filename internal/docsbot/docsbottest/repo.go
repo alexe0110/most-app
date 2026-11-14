@@ -21,13 +21,16 @@ type FakeRepo struct {
 	InlineOff   map[docsbot.UserID]bool          // users who turned inline mode off
 	InlineErr   error                            // returned by InlineEnabled when set
 	Status      *FakeStatus                      // set by NewDeps
+	Events      []docsbot.Event                  // recorded product events, in order
+	EventsErr   error                            // returned by Record and RecordStart when set
+	Started     map[docsbot.UserID]bool          // users with a recorded start event
 }
 
 var _ docsbot.Repo = (*FakeRepo)(nil)
 
 // NewFakeRepo returns an empty repository.
 func NewFakeRepo() *FakeRepo {
-	return &FakeRepo{Docs: map[docsbot.DocumentID]docsbot.Document{}}
+	return &FakeRepo{Docs: map[docsbot.DocumentID]docsbot.Document{}, Started: map[docsbot.UserID]bool{}}
 }
 
 // Seed stores a document, assigning an id and creation time if absent.
