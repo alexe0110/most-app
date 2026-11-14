@@ -83,7 +83,7 @@ func TestDeleteData_confirmation(t *testing.T) {
 	require.True(t, has(sent.texts, "УДАЛИТЬ"), "prompt asks for the word: %q", sent.texts)
 
 	// A wrong word cancels and leaves the data in place.
-	b.ProcessUpdate(ctx, textUpdate("удалить"))
+	b.ProcessUpdate(ctx, textUpdate("не надо"))
 	require.True(t, has(sent.texts, "отменено"), "sent %q", sent.texts)
 	require.Len(t, repo.Docs, 1, "data intact after a wrong word")
 

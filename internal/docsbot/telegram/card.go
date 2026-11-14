@@ -21,7 +21,7 @@ import (
 func cardText(doc docsbot.Document) string {
 	b := &strings.Builder{}
 	fmt.Fprintf(b, "%s <b>%s</b>\n", typeIcon(doc), html.EscapeString(doc.Title))
-	b.WriteString("🗂 " + html.EscapeString(strings.Join(cardFacts(doc), " · ")) + "\n")
+	fmt.Fprintf(b, textFactCategory+"\n", html.EscapeString(strings.Join(cardFacts(doc), " · ")))
 	fmt.Fprintf(b, textFactSaved+"\n", formatDate(doc.CreatedAt))
 	b.WriteString(html.EscapeString(storageLine(doc)))
 	return b.String()

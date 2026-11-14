@@ -151,7 +151,7 @@ func (d *docs) onDeleteData(ctx context.Context, b *bot.Bot, p press) {
 		d.log.InfoContext(ctx, "delete data requested", "user_id", p.user)
 	}
 	d.confirms.Set(p.tgUser, struct{}{})
-	d.out(b).Send(ctx, chatID, textDeleteDataPrompt, tg.WithKeyboard(deleteDataKeyboard()))
+	d.out(b).Send(ctx, chatID, fmt.Sprintf(textDeleteDataPrompt, confirmWord), tg.WithKeyboard(deleteDataKeyboard()))
 }
 
 // onDeleteDataNo drops the armed confirmation and turns its prompt into the cancel note.
@@ -268,8 +268,9 @@ func sourcePayload(payload string) string {
 	return payload
 }
 
-// confirmWord is the word the user must type to delete all their data.
+// confirmWord is the word the user must type to delete all their data; the prompt
+// shows it, so the text and the check share this one value.
 const confirmWord = "УДАЛИТЬ"
 
-// isConfirmWord reports whether text is the confirmation word.
-func isConfirmWord(text string) bool { return strings.TrimSpace(text) == confirmWord }
+// isConfirmWord reports whether text is the confirmation word, in any letter case.
+func isConfirmWord(text string) bool { return strings.EqualFold(strings.TrimSpace(text), confirmWord) }
