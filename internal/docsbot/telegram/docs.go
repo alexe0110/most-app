@@ -19,21 +19,27 @@ import (
 // Service calls and renders the replies. State is the domain's; the only local
 // state is which document a user is renaming (force-reply).
 type docs struct {
-	svc      *docsbot.Service
-	auth     Authorizer
-	log      *slog.Logger
-	renames  *renameStore
-	confirms *confirmStore
-	searches *searchStore
-	origins  *originStore
+	svc  *docsbot.Service
+	auth Authorizer
+	log  *slog.Logger
+	// renames: the document a user is renaming and the message showing the prompt.
+	renames *ttlMap[int64, renameEntry]
+	// confirms: users asked to confirm data deletion; a stale arm just means the
+	// user taps "Удалить мои данные" again.
+	confirms *ttlMap[int64, struct{}]
+	// searches: a user's last search query, for "Назад" from a card opened from the
+	// results. get keeps the entry so repeated presses work.
+	searches *ttlMap[int64, string]
+	// origins: where each card message was opened from, see originKey.
+	origins *ttlMap[originKey, string]
 	// settingsMsgs remembers the /settings message per chat for the OAuth return.
-	settingsMsgs *settingsStore
+	settingsMsgs *ttlMap[int64, int]
 	albums       *albumBuffer
 	// driveFolder is the Drive root folder name shown in /start.
 	driveFolder string
 	// registerAlbum remembers an album's images for the "one PDF" button and
 	// returns its token; set by Register (the converter owns the PDF work).
-	registerAlbum func(user docsbot.UserID, group string, images []albumImage) string
+	registerAlbum func(user docsbot.UserID, tgUser int64, group string, images []albumImage) string
 	// pauseFile and pauseAlbum space out export sends under the Bot API rate limit.
 	pauseFile, pauseAlbum time.Duration
 	// exports holds the users with an export in flight: one at a time per user.
@@ -44,11 +50,11 @@ type docs struct {
 func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Option) *docs {
 	d := &docs{
 		svc: svc, auth: auth, log: log,
-		renames:      newRenameStore(time.Now),
-		confirms:     newConfirmStore(time.Now),
-		searches:     newSearchStore(time.Now),
-		origins:      newOriginStore(time.Now),
-		settingsMsgs: newSettingsStore(time.Now),
+		renames:      newTTLMap[int64, renameEntry](renameTTL, maxStoreEntries, time.Now),
+		confirms:     newTTLMap[int64, struct{}](confirmTTL, maxStoreEntries, time.Now),
+		searches:     newTTLMap[int64, string](searchTTL, maxStoreEntries, time.Now),
+		origins:      newTTLMap[originKey, string](originTTL, maxStoreEntries, time.Now),
+		settingsMsgs: newTTLMap[int64, int](settingsTTL, maxStoreEntries, time.Now),
 		albums:       newAlbumBuffer(),
 
 		driveFolder: gdrive.DefaultRootFolder,
@@ -100,7 +106,7 @@ func (d *docs) onText(ctx context.Context, b *bot.Bot, u *models.Update) {
 	if !ok {
 		return
 	}
-	if d.confirms.take(u.Message.From.ID) {
+	if _, armed := d.confirms.take(u.Message.From.ID); armed {
 		d.onDeleteConfirm(ctx, b, chatID, user, u.Message.Text)
 		return
 	}

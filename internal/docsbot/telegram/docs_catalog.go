@@ -121,7 +121,7 @@ func (d *docs) onSearchBack(ctx context.Context, b *bot.Bot, u *models.Update, u
 	if !ok {
 		return
 	}
-	q, ok := d.searches.take(u.CallbackQuery.From.ID)
+	q, ok := d.searches.get(u.CallbackQuery.From.ID)
 	if !ok {
 		cat, err := d.svc.Catalog(ctx, user)
 		if err != nil {

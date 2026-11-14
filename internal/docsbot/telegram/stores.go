@@ -7,198 +7,75 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
-// renameStore remembers which document a user is renaming and on which message
-// the prompt sits. In memory only: a restart drops it, and a stale arm (older
-// than the TTL) is ignored.
-type renameStore struct {
-	mu  sync.Mutex
-	m   map[int64]renameEntry
-	now func() time.Time
-}
+// TTLs of the in-memory stores. All of them are memory only: a restart empties
+// them, and each user of a store tolerates that (see its comment).
+const (
+	renameTTL   = 5 * time.Minute
+	originTTL   = 30 * time.Minute
+	searchTTL   = 10 * time.Minute
+	confirmTTL  = 2 * time.Minute
+	settingsTTL = 24 * time.Hour // the user may take a while on Google's consent screen
+)
 
+// renameEntry is a rename the user armed: the document, and the card message that
+// shows the prompt and then the renamed card. A stale arm (older than renameTTL)
+// is ignored.
 type renameEntry struct {
 	id   docsbot.DocumentID
-	chat int64 // the card's message: it shows the prompt, then the renamed card
+	chat int64
 	msg  int
-	at   time.Time
 }
 
-const renameTTL = 5 * time.Minute
-
-func newRenameStore(now func() time.Time) *renameStore {
-	return &renameStore{m: map[int64]renameEntry{}, now: now}
-}
-
-func (s *renameStore) set(user int64, id docsbot.DocumentID, chat int64, msg int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.m[user] = renameEntry{id: id, chat: chat, msg: msg, at: s.now()}
-}
-
-// take removes and returns the armed rename, if any and not expired.
-func (s *renameStore) take(user int64) (renameEntry, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	e, found := s.m[user]
-	if !found {
-		return renameEntry{}, false
-	}
-	delete(s.m, user)
-	if s.now().Sub(e.at) > renameTTL {
-		return renameEntry{}, false
-	}
-	return e, true
-}
-
-// dropMessage forgets every rename armed on that message, whoever armed it. A
-// message that is redrawn (a status message) no longer shows the prompt.
-func (s *renameStore) dropMessage(chat int64, msg int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for user, e := range s.m {
-		if e.chat == chat && e.msg == msg {
-			delete(s.m, user)
-		}
-	}
-}
-
-// Renames is the rename state shared by the docs handlers and the Notifier: the
-// worker redraws status messages, and a redraw ends a rename prompt shown on one.
-type Renames struct{ store *renameStore }
-
-// NewRenames makes the shared rename state; pass it to Register (WithRenames) and
-// to NewNotifier (WithNotifierRenames).
-func NewRenames() *Renames { return &Renames{store: newRenameStore(time.Now)} }
-
-// drop forgets the user's rename if it is armed on that message; one armed on
-// another message (a newer prompt) is left alone.
-func (s *renameStore) drop(user int64, chat int64, msg int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if e, ok := s.m[user]; ok && e.chat == chat && e.msg == msg {
-		delete(s.m, user)
-	}
-}
-
-// originStore remembers where each card message was opened from (a list page, the
-// search, or nowhere) so edits of the card keep its "Назад" and delete can return.
-// In memory only; entries expire after originTTL.
-type originStore struct {
-	mu  sync.Mutex
-	m   map[originKey]originEntry
-	now func() time.Time
-}
-
+// originKey is a card message; its origin is where the card was opened from (a
+// list page "l:<cat>:<page>", the search "s", or nowhere ""), so edits of the card
+// keep its "Назад". Losing it after originTTL only loses the way back.
 type originKey struct {
 	chat int64
 	msg  int
 }
 
-type originEntry struct {
-	orig string // "l:<cat>:<page>", "s" or ""
-	at   time.Time
+// dropRenamesOn forgets every rename armed on that message, whoever armed it. A
+// message that is redrawn (a status message) no longer shows the prompt.
+func dropRenamesOn(m *ttlMap[int64, renameEntry], chat int64, msg int) {
+	m.deleteFunc(func(_ int64, e renameEntry) bool { return e.chat == chat && e.msg == msg })
 }
 
-const originTTL = 30 * time.Minute
-
-func newOriginStore(now func() time.Time) *originStore {
-	return &originStore{m: map[originKey]originEntry{}, now: now}
+// dropRename forgets the user's rename if it is armed on that message; one armed
+// on another message (a newer prompt) is left alone.
+func dropRename(m *ttlMap[int64, renameEntry], user, chat int64, msg int) {
+	m.deleteFunc(func(u int64, e renameEntry) bool { return u == user && e.chat == chat && e.msg == msg })
 }
 
-func (s *originStore) set(chat int64, msg int, orig string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.m[originKey{chat, msg}] = originEntry{orig: orig, at: s.now()}
+// forgetSettings drops the chat's settings message if it is msg: that message
+// stopped being the settings screen. A newer settings message is left alone.
+func forgetSettings(m *ttlMap[int64, int], chat int64, msg int) {
+	m.deleteFunc(func(c int64, id int) bool { return c == chat && id == msg })
 }
 
-// get returns the origin, or "" when absent or expired; the entry is kept.
-func (s *originStore) get(chat int64, msg int) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	k := originKey{chat, msg}
-	e, ok := s.m[k]
-	if !ok {
-		return ""
-	}
-	if s.now().Sub(e.at) > originTTL {
-		delete(s.m, k)
-		return ""
-	}
-	return e.orig
+// Renames is the rename state shared by the docs handlers and the Notifier: the
+// worker redraws status messages, and a redraw ends a rename prompt shown on one.
+type Renames struct{ m *ttlMap[int64, renameEntry] }
+
+// NewRenames makes the shared rename state; pass it to Register (WithRenames) and
+// to NewNotifier (WithNotifierRenames).
+func NewRenames() *Renames {
+	return &Renames{m: newTTLMap[int64, renameEntry](renameTTL, maxStoreEntries, time.Now)}
 }
 
-// searchStore remembers each user's last search query so a card opened from the
-// results can go back to them. In memory only; entries expire after searchTTL.
-type searchStore struct {
-	mu  sync.Mutex
-	m   map[int64]searchEntry
-	now func() time.Time
+// SettingsMessages is the settings-message memory shared by the docs handlers
+// (which record the message) and NotifyConnected (which edits it).
+type SettingsMessages struct{ m *ttlMap[int64, int] }
+
+// NewSettingsMessages makes the shared memory; pass it to Register
+// (WithSettingsMessages) and to NotifyConnected (WithConnectSettings).
+func NewSettingsMessages() *SettingsMessages {
+	return &SettingsMessages{m: newTTLMap[int64, int](settingsTTL, maxStoreEntries, time.Now)}
 }
 
-type searchEntry struct {
-	query string
-	at    time.Time
-}
-
-const searchTTL = 10 * time.Minute
-
-func newSearchStore(now func() time.Time) *searchStore {
-	return &searchStore{m: map[int64]searchEntry{}, now: now}
-}
-
-func (s *searchStore) set(user int64, query string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.m[user] = searchEntry{query: query, at: s.now()}
-}
-
-// take returns the remembered query if not expired. It keeps the entry so
-// repeated "Назад" presses keep working.
-func (s *searchStore) take(user int64) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	e, ok := s.m[user]
-	if !ok {
-		return "", false
-	}
-	if s.now().Sub(e.at) > searchTTL {
-		delete(s.m, user)
-		return "", false
-	}
-	return e.query, true
-}
-
-// confirmStore remembers that a user is being asked to confirm data deletion. In
-// memory only, like renameStore: a restart or a stale arm just means the user
-// taps "Удалить мои данные" again.
-type confirmStore struct {
-	mu  sync.Mutex
-	m   map[int64]time.Time
-	now func() time.Time
-}
-
-const confirmTTL = 2 * time.Minute
-
-func newConfirmStore(now func() time.Time) *confirmStore {
-	return &confirmStore{m: map[int64]time.Time{}, now: now}
-}
-
-func (s *confirmStore) arm(user int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.m[user] = s.now()
-}
-
-// take reports whether the user has a live deletion confirmation armed, clearing it.
-func (s *confirmStore) take(user int64) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	at, ok := s.m[user]
-	if !ok {
-		return false
-	}
-	delete(s.m, user)
-	return s.now().Sub(at) <= confirmTTL
+// WithSettingsMessages makes the docs handlers record their /settings messages
+// in m.
+func WithSettingsMessages(m *SettingsMessages) Option {
+	return func(d *docs) { d.settingsMsgs = m.m }
 }
 
 // maxStoreEntries caps every ttlMap: a flood of distinct keys must not grow the
@@ -259,6 +136,20 @@ func (t *ttlMap[K, V]) take(k K) (V, bool) {
 	return v, ok
 }
 
+// takeIf is take for a value the caller may refuse: a refused value stays, so a
+// foreign attempt does not burn it.
+func (t *ttlMap[K, V]) takeIf(k K, allow func(V) bool) (V, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	v, ok := t.getLocked(k)
+	if !ok || !allow(v) {
+		var zero V
+		return zero, false
+	}
+	delete(t.m, k)
+	return v, true
+}
+
 func (t *ttlMap[K, V]) delete(k K) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -306,4 +197,10 @@ func (t *ttlMap[K, V]) evictOldest() {
 	if found {
 		delete(t.m, oldest)
 	}
+}
+
+// origin is where the card message was opened from; "" when unknown or expired.
+func (d *docs) origin(chat int64, msg int) string {
+	orig, _ := d.origins.get(originKey{chat, msg})
+	return orig
 }

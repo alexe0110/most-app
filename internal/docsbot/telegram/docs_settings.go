@@ -80,7 +80,7 @@ func (d *docs) onDisconnect(ctx context.Context, b *bot.Bot, u *models.Update, u
 		return
 	}
 	d.log.InfoContext(ctx, "drive disconnected", "user_id", user)
-	d.settingsMsgs.forget(chatID, msgID) // the message is no longer the settings screen
+	forgetSettings(d.settingsMsgs, chatID, msgID) // the message is no longer the settings screen
 	d.out(b).edit(ctx, chatID, msgID, textDisconnected, withKeyboard(nil))
 }
 
@@ -93,7 +93,7 @@ func (d *docs) onDeleteData(ctx context.Context, b *bot.Bot, u *models.Update) {
 	if user, ok := userID(ctx); ok {
 		d.log.InfoContext(ctx, "delete data requested", "user_id", user)
 	}
-	d.confirms.arm(u.CallbackQuery.From.ID)
+	d.confirms.set(u.CallbackQuery.From.ID, struct{}{})
 	d.out(b).send(ctx, chatID, textDeleteDataPrompt, withKeyboard(exportFirstKeyboard()))
 }
 
@@ -110,7 +110,7 @@ func (d *docs) onDeleteConfirm(ctx context.Context, b *bot.Bot, chatID int64, us
 		return
 	}
 	d.log.InfoContext(ctx, "data deleted", "user_id", user)
-	d.settingsMsgs.forgetChat(chatID) // nothing left to refresh after a connect
+	d.settingsMsgs.delete(chatID) // nothing left to refresh after a connect
 	d.out(b).send(ctx, chatID, textDataDeleted)
 }
 

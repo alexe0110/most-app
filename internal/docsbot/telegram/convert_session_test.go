@@ -14,8 +14,8 @@ import (
 func TestResultStore_take(t *testing.T) {
 	now := time.Now()
 	clock := func() time.Time { return now }
-	s := newResultStore(clock)
-	s.put("tok", convResult{tgUser: 1, suffix: "x"})
+	s := newTokenMap[convResult](clock)
+	s.put("tok", 1, convResult{suffix: "x"})
 
 	_, ok := s.take("tok", 2)
 	require.False(t, ok, "another user's token is refused")
@@ -28,7 +28,7 @@ func TestResultStore_take(t *testing.T) {
 	_, ok = s.take("tok", 1)
 	require.False(t, ok, "double tap acts once")
 
-	s.put("old", convResult{tgUser: 1})
+	s.put("old", 1, convResult{})
 	now = now.Add(sessionTTL + time.Second)
 	_, ok = s.take("old", 1)
 	require.False(t, ok, "expired token")
@@ -38,40 +38,40 @@ func TestResultStore_take(t *testing.T) {
 
 func TestResultStore_putEvictsExpired(t *testing.T) {
 	now := time.Now()
-	s := newResultStore(func() time.Time { return now })
-	s.put("a", convResult{tgUser: 1})
+	s := newTokenMap[convResult](func() time.Time { return now })
+	s.put("a", 1, convResult{})
 	now = now.Add(sessionTTL + time.Minute)
-	s.put("b", convResult{tgUser: 1})
-	require.Len(t, s.byToken, 1)
+	s.put("b", 1, convResult{})
+	require.Len(t, s.m.m, 1)
 }
 
 func TestAlbumStore(t *testing.T) {
 	now := time.Now()
-	s := newAlbumStore(func() time.Time { return now })
-	s.put("t", convAlbum{user: "u1", group: "g"})
+	s := newTokenMap[convAlbum](func() time.Time { return now })
+	s.put("t", 1, convAlbum{user: "u1", group: "g"})
 
-	_, ok := s.peek("t", "u2")
+	_, ok := s.peek("t", 2)
 	require.False(t, ok, "foreign user can't peek")
-	_, ok = s.take("t", "u2")
+	_, ok = s.take("t", 2)
 	require.False(t, ok, "foreign user can't take")
-	_, ok = s.peek("t", "u1")
+	_, ok = s.peek("t", 1)
 	require.True(t, ok)
-	_, ok = s.take("t", "u1")
+	_, ok = s.take("t", 1)
 	require.True(t, ok)
-	_, ok = s.take("t", "u1")
+	_, ok = s.take("t", 1)
 	require.False(t, ok, "double tap acts once")
 
-	s.put("e", convAlbum{user: "u1"})
+	s.put("e", 1, convAlbum{user: "u1"})
 	now = now.Add(sessionTTL + time.Second)
-	_, ok = s.peek("e", "u1")
+	_, ok = s.peek("e", 1)
 	require.False(t, ok)
-	_, ok = s.take("e", "u1")
+	_, ok = s.take("e", 1)
 	require.False(t, ok)
 }
 
 func TestStores_concurrent(_ *testing.T) {
-	results := newResultStore(time.Now)
-	albums := newAlbumStore(time.Now)
+	results := newTokenMap[convResult](time.Now)
+	albums := newTokenMap[convAlbum](time.Now)
 	sessions := newSessionStore(time.Now)
 
 	var wg sync.WaitGroup
@@ -80,14 +80,14 @@ func TestStores_concurrent(_ *testing.T) {
 		go func() {
 			defer wg.Done()
 			tok := strconv.Itoa(i)
-			results.put(tok, convResult{tgUser: 1})
-			albums.put(tok, convAlbum{user: "u"})
+			results.put(tok, 1, convResult{})
+			albums.put(tok, 1, convAlbum{user: "u"})
 			sessions.start(int64(i % 5))
 			sessions.update(int64(i%5), func(s *session) { s.images = append(s.images, pendingImage{msgID: i}) })
 			sessions.has(int64(i % 5))
-			albums.peek(tok, "u")
+			albums.peek(tok, 1)
 			results.take(tok, 1)
-			albums.take(tok, "u")
+			albums.take(tok, 1)
 			sessions.end(int64(i % 5))
 		}()
 	}
@@ -95,8 +95,8 @@ func TestStores_concurrent(_ *testing.T) {
 }
 
 func TestResultStore_singleWinnerOnConcurrentTake(t *testing.T) {
-	s := newResultStore(time.Now)
-	s.put("t", convResult{tgUser: 1})
+	s := newTokenMap[convResult](time.Now)
+	s.put("t", 1, convResult{})
 
 	var wins int
 	var mu sync.Mutex

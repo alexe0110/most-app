@@ -65,7 +65,7 @@ func (d *docs) receive(ctx context.Context, b *bot.Bot, u *models.Update) {
 	}
 	if in.MediaGroupID != "" {
 		d.logReceived(ctx, user, rep)
-		d.collectAlbum(ctx, b, chatID, user, in.MediaGroupID, rep, u.Message.ID, in)
+		d.collectAlbum(ctx, b, u.Message, rep, in)
 		return
 	}
 	switch r := rep.(type) {

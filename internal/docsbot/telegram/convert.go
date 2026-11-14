@@ -84,8 +84,8 @@ const (
 type converter struct {
 	log      *slog.Logger
 	sessions *sessionStore
-	results  *resultStore
-	albums   *albumStore
+	results  *tokenMap[convResult]
+	albums   *tokenMap[convAlbum]
 	now      func() time.Time
 	http     *http.Client
 
@@ -119,8 +119,8 @@ func newConverter(
 	return &converter{
 		log:              log,
 		sessions:         newSessionStore(time.Now),
-		results:          newResultStore(time.Now),
-		albums:           newAlbumStore(time.Now),
+		results:          newTokenMap[convResult](time.Now),
+		albums:           newTokenMap[convAlbum](time.Now),
 		now:              time.Now,
 		http:             &http.Client{Timeout: downloadWait},
 		inflight:         map[string]struct{}{},

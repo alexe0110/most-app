@@ -21,6 +21,7 @@ const albumDebounce = 1500 * time.Millisecond
 type albumState struct {
 	chatID  int64
 	user    docsbot.UserID
+	tgUser  int64              // owner of the album's PDF token
 	pickDoc docsbot.DocumentID // document the picker's buttons carry
 	// pickDocGroup is that document's own album, to prefer one of this album.
 	pickDocGroup string
@@ -81,11 +82,16 @@ func (a *albumBuffer) add(key string, update func(*albumState), flush func(album
 }
 
 // collectAlbum records one received album file and schedules the single picker.
-func (d *docs) collectAlbum(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, group string, rep docsbot.Reply, msgID int, in docsbot.IncomingFile) {
+func (d *docs) collectAlbum(ctx context.Context, b *bot.Bot, m *models.Message, rep docsbot.Reply, in docsbot.IncomingFile) {
+	chatID, msgID, user, group := m.Chat.ID, m.ID, in.UserID, in.MediaGroupID
+	var tgUser int64
+	if m.From != nil {
+		tgUser = m.From.ID
+	}
 	detached := context.WithoutCancel(ctx) // the flush outlives this update's request
 	isImage := in.Kind == docsbot.KindPhoto || supportedImageMIME(in.MIME)
 	d.albums.add(fmt.Sprintf("%s:%s", user, group), func(st *albumState) {
-		st.chatID, st.user, st.group = chatID, user, group
+		st.chatID, st.user, st.tgUser, st.group = chatID, user, tgUser, group
 		if !isImage {
 			st.nonImage = true
 		}
@@ -118,7 +124,7 @@ func (d *docs) flushAlbum(ctx context.Context, b *bot.Bot, st albumState) {
 		if st.dups > 0 {
 			text += "\n\n" + fmt.Sprintf(textAlbumDuplicates, st.dups)
 		}
-		token := d.registerAlbum(st.user, st.group, st.images)
+		token := d.registerAlbum(st.user, st.tgUser, st.group, st.images)
 		d.out(b).send(ctx, st.chatID, text, withKeyboard(albumChoiceKeyboard(token, st.pickDoc)))
 	case st.fresh > 0:
 		text := textChooseCategory

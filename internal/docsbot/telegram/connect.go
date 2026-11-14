@@ -88,7 +88,7 @@ func (c connectSettings) refresh(ctx context.Context, out sender, chatID int64, 
 	if c.msgs == nil || c.svc == nil {
 		return
 	}
-	msgID, ok := c.msgs.store.get(chatID)
+	msgID, ok := c.msgs.m.get(chatID)
 	if !ok {
 		return
 	}

@@ -56,20 +56,6 @@ func TestRetryOnRateLimit(t *testing.T) {
 	}
 }
 
-func TestRenameStore_dropMessage(t *testing.T) {
-	s := newRenameStore(time.Now)
-	s.set(1, "a", 100, 70)
-	s.set(2, "b", 100, 70)
-	s.set(3, "c", 100, 71)
-	s.dropMessage(100, 70)
-	_, ok := s.take(1)
-	require.False(t, ok)
-	_, ok = s.take(2)
-	require.False(t, ok)
-	_, ok = s.take(3)
-	require.True(t, ok, "another message is untouched")
-}
-
 func TestExportBatches(t *testing.T) {
 	photo := func(n int) []docsbot.Document { return repeatDocs(docsbot.KindPhoto, n) }
 	file := func(n int) []docsbot.Document { return repeatDocs(docsbot.KindDocument, n) }

@@ -15,11 +15,11 @@ import (
 
 // registerAlbum remembers an album's images for the "one PDF" button and returns
 // the button's token.
-func (c *converter) registerAlbum(user docsbot.UserID, group string, images []albumImage) string {
+func (c *converter) registerAlbum(user docsbot.UserID, tgUser int64, group string, images []albumImage) string {
 	sorted := slices.Clone(images)
 	slices.SortFunc(sorted, func(a, b albumImage) int { return a.msgID - b.msgID })
 	token := newToken()
-	c.albums.put(token, convAlbum{user: user, group: group, images: sorted})
+	c.albums.put(token, tgUser, convAlbum{user: user, group: group, images: sorted})
 	return token
 }
 
@@ -31,7 +31,8 @@ func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, update *models.Upda
 	if !ok {
 		return
 	}
-	album, ok := c.albums.peek(token, user)
+	tgUser := update.CallbackQuery.From.ID
+	album, ok := c.albums.peek(token, tgUser)
 	if !ok {
 		c.out(b).send(ctx, chatID, textConvertResultOld)
 		return
@@ -48,7 +49,7 @@ func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, update *models.Upda
 		c.out(b).send(ctx, chatID, fmt.Sprintf(textAlbumTooBig, maxAlbumBytes>>20))
 		return
 	}
-	album, ok = c.albums.take(token, user) // a double tap stops here
+	album, ok = c.albums.take(token, tgUser) // a double tap stops here
 	if !ok {
 		return
 	}
@@ -65,12 +66,12 @@ func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, update *models.Upda
 		data, err := c.download(ctx, b, img.fileID)
 		if err != nil {
 			c.log.ErrorContext(ctx, "convert download album image", "err", err, "user_id", user)
-			c.albums.put(token, album) // let the user retry
+			c.albums.put(token, tgUser, album) // let the user retry
 			c.show(ctx, b, chatID, msgID, textConvertDownloadFailed, choice)
 			return
 		}
 		if total += len(data); total > maxAlbumBytes {
-			c.albums.put(token, album)
+			c.albums.put(token, tgUser, album)
 			c.show(ctx, b, chatID, msgID, fmt.Sprintf(textAlbumTooBig, maxAlbumBytes>>20), choice)
 			return
 		}
@@ -79,16 +80,16 @@ func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, update *models.Upda
 	pdf, err := convert.ImagesToPDF(pages)
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert album to pdf", "err", err, "user_id", user, "pages", len(pages))
-		c.albums.put(token, album)
+		c.albums.put(token, tgUser, album)
 		c.show(ctx, b, chatID, msgID, convertErrorText(err), choice)
 		return
 	}
 	c.log.InfoContext(ctx, "album converted", "user_id", user, "pages", len(pages), "in_bytes", total, "out_bytes", len(pdf))
 
 	name := scanName(c.now())
-	if !c.sendResult(ctx, b, chatID, update.CallbackQuery.From.ID, name, pdf, "", suffixPDF) {
+	if !c.sendResult(ctx, b, chatID, tgUser, name, pdf, "", suffixPDF) {
 		c.show(ctx, b, chatID, msgID, textSendFailed, choice)
-		c.albums.put(token, album)
+		c.albums.put(token, tgUser, album)
 		return
 	}
 	c.finish(ctx, b, chatID, msgID)

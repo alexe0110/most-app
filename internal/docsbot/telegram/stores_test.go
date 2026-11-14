@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
 func TestTTLMap_setGetDeleteTake(t *testing.T) {
@@ -126,4 +128,177 @@ func TestTTLMap_concurrentTakeHasOneWinner(t *testing.T) {
 	}
 	wg.Wait()
 	require.Equal(t, 1, wins)
+}
+
+func TestTTLMap_takeIf(t *testing.T) {
+	m := newTTLMap[string, int](time.Hour, 10, time.Now)
+	m.set("k", 7)
+
+	_, ok := m.takeIf("k", func(v int) bool { return v == 8 })
+	require.False(t, ok, "a refused value is not returned")
+	v, ok := m.takeIf("k", func(v int) bool { return v == 7 })
+	require.True(t, ok, "a refusal does not burn the entry")
+	require.Equal(t, 7, v)
+	_, ok = m.takeIf("k", func(int) bool { return true })
+	require.False(t, ok, "taken once")
+}
+
+func TestRenameStore(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	s := newTTLMap[int64, renameEntry](renameTTL, maxStoreEntries, func() time.Time { return now })
+
+	t.Run("take returns and removes", func(t *testing.T) {
+		s.set(1, renameEntry{id: "doc", chat: 100, msg: 7})
+		e, ok := s.take(1)
+		require.True(t, ok)
+		require.Equal(t, docsbot.DocumentID("doc"), e.id)
+		require.Equal(t, 7, e.msg)
+		_, ok = s.take(1)
+		require.False(t, ok)
+	})
+	t.Run("ttl", func(t *testing.T) {
+		s.set(1, renameEntry{id: "doc", chat: 100, msg: 7})
+		now = now.Add(renameTTL)
+		_, ok := s.take(1)
+		require.True(t, ok, "exactly at the limit is still live")
+		s.set(1, renameEntry{id: "doc", chat: 100, msg: 7})
+		now = now.Add(renameTTL + time.Second)
+		_, ok = s.take(1)
+		require.False(t, ok)
+	})
+	t.Run("drop only its own message", func(t *testing.T) {
+		s.set(1, renameEntry{id: "doc", chat: 100, msg: 7})
+		dropRename(s, 1, 100, 8)
+		_, ok := s.take(1)
+		require.True(t, ok, "another message's cancel leaves it armed")
+		s.set(1, renameEntry{id: "doc", chat: 100, msg: 7})
+		dropRename(s, 1, 100, 7)
+		dropRename(s, 1, 100, 7) // idempotent
+		_, ok = s.take(1)
+		require.False(t, ok)
+	})
+	t.Run("users are separate", func(t *testing.T) {
+		s.set(1, renameEntry{id: "a", chat: 100, msg: 7})
+		s.set(2, renameEntry{id: "b", chat: 200, msg: 8})
+		dropRename(s, 2, 200, 8)
+		e, ok := s.take(1)
+		require.True(t, ok)
+		require.Equal(t, docsbot.DocumentID("a"), e.id)
+	})
+}
+
+func TestRenameStore_concurrent(_ *testing.T) {
+	s := newTTLMap[int64, renameEntry](renameTTL, maxStoreEntries, time.Now)
+	var wg sync.WaitGroup
+	for i := range 50 {
+		wg.Add(3)
+		go func() { defer wg.Done(); s.set(int64(i%5), renameEntry{id: "doc", chat: 1, msg: i}) }()
+		go func() { defer wg.Done(); s.take(int64(i % 5)) }()
+		go func() { defer wg.Done(); dropRename(s, int64(i%5), 1, i) }()
+	}
+	wg.Wait()
+}
+
+func TestRenameStore_dropMessage(t *testing.T) {
+	s := newTTLMap[int64, renameEntry](renameTTL, maxStoreEntries, time.Now)
+	s.set(1, renameEntry{id: "a", chat: 100, msg: 70})
+	s.set(2, renameEntry{id: "b", chat: 100, msg: 70})
+	s.set(3, renameEntry{id: "c", chat: 100, msg: 71})
+	dropRenamesOn(s, 100, 70)
+	_, ok := s.take(1)
+	require.False(t, ok)
+	_, ok = s.take(2)
+	require.False(t, ok)
+	_, ok = s.take(3)
+	require.True(t, ok, "another message is untouched")
+}
+
+func TestSettingsStore_isolationBoundaryAndConcurrency(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	s := newTTLMap[int64, int](settingsTTL, maxStoreEntries, func() time.Time { mu.Lock(); defer mu.Unlock(); return now })
+
+	s.set(1, 10)
+	s.set(2, 20)
+	m1, _ := s.get(1)
+	m2, _ := s.get(2)
+	require.Equal(t, []int{10, 20}, []int{m1, m2}, "chats do not see each other")
+
+	mu.Lock()
+	now = now.Add(settingsTTL) // exactly the TTL: still valid
+	mu.Unlock()
+	_, ok := s.get(1)
+	require.True(t, ok)
+
+	var wg sync.WaitGroup
+	for i := range 50 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.set(int64(i%5), i)
+			s.get(int64(i % 5))
+		}()
+	}
+	wg.Wait()
+}
+
+func TestSettingsStore_ttl(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	s := newTTLMap[int64, int](settingsTTL, maxStoreEntries, func() time.Time { return now })
+
+	_, ok := s.get(1)
+	require.False(t, ok, "unknown chat")
+
+	s.set(1, 10)
+	s.set(2, 20)
+	msg, ok := s.get(1)
+	require.True(t, ok)
+	require.Equal(t, 10, msg)
+
+	s.set(1, 11)
+	msg, _ = s.get(1)
+	require.Equal(t, 11, msg, "the latest settings message wins")
+
+	now = now.Add(settingsTTL + time.Minute)
+	_, ok = s.get(1)
+	require.False(t, ok, "expired")
+
+	s.set(3, 30) // drops the expired chat 2
+	require.Len(t, s.m, 1)
+}
+
+func TestSettingsStore_forget(t *testing.T) {
+	s := newTTLMap[int64, int](settingsTTL, maxStoreEntries, time.Now)
+	s.set(1, 10)
+
+	forgetSettings(s, 1, 99) // a different message: the entry stays
+	_, ok := s.get(1)
+	require.True(t, ok)
+
+	forgetSettings(s, 1, 10)
+	_, ok = s.get(1)
+	require.False(t, ok, "the message left the settings screen")
+
+	s.set(2, 20)
+	s.delete(2)
+	_, ok = s.get(2)
+	require.False(t, ok)
+}
+
+func TestConfirmStore_take(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	s := newTTLMap[int64, struct{}](confirmTTL, maxStoreEntries, func() time.Time { return now })
+
+	s.set(1, struct{}{})
+	_, ok := s.take(2)
+	require.False(t, ok, "another user has nothing armed")
+	_, ok = s.take(1)
+	require.True(t, ok)
+	_, ok = s.take(1)
+	require.False(t, ok, "armed once, taken once")
+
+	s.set(1, struct{}{})
+	now = now.Add(confirmTTL + time.Second)
+	_, ok = s.take(1)
+	require.False(t, ok, "a stale arm is ignored")
 }

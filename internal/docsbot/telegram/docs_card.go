@@ -35,7 +35,7 @@ func (d *docs) onSetCategory(ctx context.Context, b *bot.Bot, u *models.Update, 
 		return
 	}
 	d.log.InfoContext(ctx, "document recategorized", "user_id", user, "doc_id", card.Doc.ID, "category", cat)
-	orig := d.origins.get(chatID, msgID)
+	orig := d.origin(chatID, msgID)
 	if card.FileInOldFolder {
 		d.editCardText(ctx, b, chatID, msgID, cardText(card.Doc)+"\n"+textDriveFileStayed, d.cardKB(ctx, card.Doc, "", orig), orig)
 		return
@@ -89,7 +89,7 @@ func (d *docs) onRenamePrompt(ctx context.Context, b *bot.Bot, u *models.Update,
 	if !ok {
 		return
 	}
-	d.renames.set(u.CallbackQuery.From.ID, id, chatID, msgID)
+	d.renames.set(u.CallbackQuery.From.ID, renameEntry{id: id, chat: chatID, msg: msgID})
 	d.out(b).edit(ctx, chatID, msgID, textRenamePrompt, withHTML(), withKeyboard(renameCancelKeyboard(id)))
 }
 
@@ -104,7 +104,7 @@ func (d *docs) onRenameCancel(ctx context.Context, b *bot.Bot, u *models.Update,
 	if !ok {
 		return
 	}
-	d.renames.drop(u.CallbackQuery.From.ID, chatID, msgID)
+	dropRename(d.renames, u.CallbackQuery.From.ID, chatID, msgID)
 	d.restoreCard(ctx, b, user, chatID, msgID, id)
 }
 
@@ -133,7 +133,7 @@ func (d *docs) restoreCard(ctx context.Context, b *bot.Bot, user docsbot.UserID,
 		d.log.ErrorContext(ctx, "restore card", "err", err, "user_id", user)
 		return
 	}
-	orig := d.origins.get(chatID, msgID)
+	orig := d.origin(chatID, msgID)
 	d.showCard(ctx, b, user, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
 }
 
@@ -169,14 +169,14 @@ func (d *docs) applyRename(ctx context.Context, b *bot.Bot, user docsbot.UserID,
 		d.fail(ctx, b, e.chat, "rename", err)
 	default:
 		d.log.InfoContext(ctx, "document renamed", "user_id", user, "doc_id", e.id)
-		orig := d.origins.get(e.chat, e.msg)
+		orig := d.origin(e.chat, e.msg)
 		d.showCard(ctx, b, user, e.chat, e.msg, card.Doc, card.CategoryFolderID, orig)
 	}
 }
 
 // renameHint re-arms the rename and tells, in the prompt message itself, what was wrong.
 func (d *docs) renameHint(ctx context.Context, b *bot.Bot, tgUser int64, e renameEntry, hint string) {
-	d.renames.set(tgUser, e.id, e.chat, e.msg)
+	d.renames.set(tgUser, e)
 	d.out(b).edit(ctx, e.chat, e.msg, hint, withHTML(), withKeyboard(renameCancelKeyboard(e.id)))
 }
 
@@ -236,7 +236,7 @@ func (d *docs) onDeleteYes(ctx context.Context, b *bot.Bot, u *models.Update, us
 // returnToOrigin replaces the deleted card's message with the list or search it
 // was opened from, falling back to a plain "deleted" note.
 func (d *docs) returnToOrigin(ctx context.Context, b *bot.Bot, u *models.Update, user docsbot.UserID, chatID int64, msgID int) {
-	orig := d.origins.get(chatID, msgID)
+	orig := d.origin(chatID, msgID)
 	switch {
 	case strings.HasPrefix(orig, "l:"):
 		parts := strings.Split(orig, ":")
@@ -258,7 +258,7 @@ func (d *docs) returnToOrigin(ctx context.Context, b *bot.Bot, u *models.Update,
 		}
 		d.editCatalog(ctx, b, user, chatID, msgID)
 	case orig == "s":
-		q, ok := d.searches.take(u.CallbackQuery.From.ID)
+		q, ok := d.searches.get(u.CallbackQuery.From.ID)
 		if !ok {
 			d.editCatalog(ctx, b, user, chatID, msgID)
 			return
@@ -299,7 +299,7 @@ func (d *docs) onDeleteNo(ctx context.Context, b *bot.Bot, u *models.Update, use
 		d.fail(ctx, b, chatID, "load card", err)
 		return
 	}
-	orig := d.origins.get(chatID, msgID)
+	orig := d.origin(chatID, msgID)
 	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
 }
 
@@ -347,7 +347,7 @@ func (d *docs) editCard(ctx context.Context, b *bot.Bot, chatID int64, msgID int
 // editCardText is editCard with a prepared HTML text (the card plus a note).
 func (d *docs) editCardText(ctx context.Context, b *bot.Bot, chatID int64, msgID int, text string, kb *models.InlineKeyboardMarkup, orig string) {
 	d.out(b).edit(ctx, chatID, msgID, text, withHTML(), withKeyboard(kb))
-	d.origins.set(chatID, msgID, orig)
+	d.origins.set(originKey{chatID, msgID}, orig)
 }
 
 // cardKB is the card keyboard; a card whose sync failed on revoked access gets a

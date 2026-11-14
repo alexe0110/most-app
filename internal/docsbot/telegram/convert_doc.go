@@ -201,7 +201,7 @@ func (c *converter) onReplace(ctx context.Context, b *bot.Bot, update *models.Up
 		return
 	}
 	retry := func(text string) {
-		c.results.put(token, res)
+		c.results.put(token, update.CallbackQuery.From.ID, res)
 		c.editResultCaption(ctx, b, update, chatID, "", saveKeyboard(token, true))
 		c.out(b).send(ctx, chatID, text)
 	}

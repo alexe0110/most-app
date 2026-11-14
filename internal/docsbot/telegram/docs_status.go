@@ -17,7 +17,7 @@ func (d *docs) onRetryAll(ctx context.Context, b *bot.Bot, u *models.Update, use
 	if !ok {
 		return
 	}
-	d.settingsMsgs.forget(chatID, msgID) // the settings message turns into a status message
+	forgetSettings(d.settingsMsgs, chatID, msgID) // the settings message turns into a status message
 	view, ok, err := d.svc.RetryFailed(ctx, user, chatID, msgID)
 	if err != nil {
 		d.fail(ctx, b, chatID, "retry failed", err)
@@ -87,7 +87,7 @@ func (d *docs) onRetrySync(ctx context.Context, b *bot.Bot, u *models.Update, us
 		d.fail(ctx, b, chatID, "load card", err)
 		return
 	}
-	orig := d.origins.get(chatID, msgID)
+	orig := d.origin(chatID, msgID)
 	d.editCard(ctx, b, chatID, msgID, card.Doc, card.CategoryFolderID, orig)
 }
 
@@ -110,9 +110,9 @@ func (d *docs) redrawStatus(ctx context.Context, b *bot.Bot, user docsbot.UserID
 	// A redraw replaces a rename prompt shown on this message; the armed rename
 	// must not outlive it. Dropped on both sides of the edit: a prompt armed while
 	// it is in flight is overwritten by it too.
-	d.renames.dropMessage(view.Message.ChatID, view.Message.MessageID)
+	dropRenamesOn(d.renames, view.Message.ChatID, view.Message.MessageID)
 	d.out(b).edit(ctx, view.Message.ChatID, view.Message.MessageID, text, withHTML(), withKeyboard(kb))
-	d.renames.dropMessage(view.Message.ChatID, view.Message.MessageID)
+	dropRenamesOn(d.renames, view.Message.ChatID, view.Message.MessageID)
 	if view.AllTerminal {
 		if err := d.svc.CloseStatus(ctx, user, view.Message.ID); err != nil {
 			d.log.ErrorContext(ctx, "close status message", "err", err, "user_id", user)
