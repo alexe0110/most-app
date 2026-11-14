@@ -19,13 +19,27 @@ type Authorizer interface {
 	AuthURL(ctx context.Context, userID, bot string) (string, error)
 }
 
+// FileDownloader fetches a Telegram file's bytes and content type by file_id.
+// Declared here, at the consumer; platform/tg.Bot implements it.
+type FileDownloader interface {
+	Download(ctx context.Context, fileID string) (data []byte, mime string, err error)
+}
+
+// Deps are the required collaborators of the adapter.
+type Deps struct {
+	Log   *slog.Logger
+	Svc   *docsbot.Service
+	Auth  Authorizer
+	Files FileDownloader
+}
+
 // Register wires the docsbot handlers onto b. Order matters: the first matching
 // handler wins. Commands come first so they always work; then the /convert
 // session claims its user's messages; then document callbacks, unsupported media and files; the
 // catch-all text handler (search) is last.
-func Register(b *bot.Bot, log *slog.Logger, svc *docsbot.Service, auth Authorizer, opts ...Option) {
-	d := newDocs(svc, auth, log, opts...)
-	conv := newConverter(log, svc, d.renderSaved, d.sendAlreadySaved, d.sendReplaced)
+func Register(b *bot.Bot, deps Deps, opts ...Option) {
+	d := newDocs(deps.Svc, deps.Auth, deps.Log, opts...)
+	conv := newConverter(deps.Log, deps.Svc, deps.Files, d)
 	d.registerAlbum = conv.registerAlbum
 
 	b.RegisterHandler(bot.HandlerTypeMessageText, "start", bot.MatchTypeCommand, d.start)

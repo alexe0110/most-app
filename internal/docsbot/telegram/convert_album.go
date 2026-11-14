@@ -61,7 +61,7 @@ func (c *converter) onAlbum(ctx context.Context, b *bot.Bot, p press) {
 	pages := make([][]byte, 0, len(album.images))
 	var total int
 	for _, img := range album.images {
-		data, err := c.download(ctx, b, img.fileID)
+		data, err := c.download(ctx, img.fileID)
 		if err != nil {
 			c.log.ErrorContext(ctx, "convert download album image", "err", err, "user_id", user)
 			c.albums.put(token, tgUser, album) // let the user retry

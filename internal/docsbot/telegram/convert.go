@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net/http"
-	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -61,8 +59,7 @@ const (
 )
 
 const (
-	maxLimitKB   = 20 * 1_024 // largest custom target, in KB
-	downloadWait = 30 * time.Second
+	maxLimitKB = 20 * 1_024 // largest custom target, in KB
 	// photosDownloadBudget caps all downloads of one PDF from photos together.
 	photosDownloadBudget = 80 * time.Second
 )
@@ -75,7 +72,7 @@ type converter struct {
 	results  *tokenMap[convResult]
 	albums   *tokenMap[convAlbum]
 	now      func() time.Time
-	http     *http.Client
+	files    FileDownloader
 
 	// inflight holds the menu messages (chatID:msgID) whose operation is running,
 	// so a double tap on the same menu does the work once.
@@ -89,35 +86,32 @@ type converter struct {
 	dialogue keyedMutex
 
 	svc *docsbot.Service
-	// renderSaved and sendAlreadySaved show what saving a result produced; the
-	// docs adapter owns that rendering.
-	renderSaved      func(ctx context.Context, b *bot.Bot, chatID int64, msgID int, user docsbot.UserID, saved docsbot.Saved)
-	sendAlreadySaved func(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID)
-	// sendReplaced shows the card of a document whose file was replaced.
-	sendReplaced func(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID)
+	// docs shows what saving a result produced; the docs adapter owns that rendering.
+	docs savedView
 }
 
-func newConverter(
-	log *slog.Logger,
-	svc *docsbot.Service,
-	renderSaved func(context.Context, *bot.Bot, int64, int, docsbot.UserID, docsbot.Saved),
-	sendAlreadySaved func(context.Context, *bot.Bot, int64, docsbot.UserID, docsbot.DocumentID),
-	sendReplaced func(context.Context, *bot.Bot, int64, docsbot.UserID, docsbot.DocumentID),
-) *converter {
+// savedView renders the outcome of saving a converted result. Declared here, at
+// the consumer; the docs adapter implements it.
+type savedView interface {
+	renderSaved(ctx context.Context, b *bot.Bot, chatID int64, msgID int, user docsbot.UserID, saved docsbot.Saved)
+	sendAlreadySaved(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID)
+	// sendReplaced shows the card of a document whose file was replaced.
+	sendReplaced(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID, id docsbot.DocumentID)
+}
+
+func newConverter(log *slog.Logger, svc *docsbot.Service, files FileDownloader, docs savedView) *converter {
 	return &converter{
-		log:              log,
-		sessions:         newSessionStore(time.Now),
-		results:          newTokenMap[convResult](time.Now),
-		albums:           newTokenMap[convAlbum](time.Now),
-		now:              time.Now,
-		http:             &http.Client{Timeout: downloadWait},
-		inflight:         map[string]struct{}{},
-		tipShown:         map[int64]bool{},
-		dialogue:         newKeyedMutex(),
-		svc:              svc,
-		renderSaved:      renderSaved,
-		sendAlreadySaved: sendAlreadySaved,
-		sendReplaced:     sendReplaced,
+		log:      log,
+		sessions: newSessionStore(time.Now),
+		results:  newTokenMap[convResult](time.Now),
+		albums:   newTokenMap[convAlbum](time.Now),
+		now:      time.Now,
+		files:    files,
+		inflight: map[string]struct{}{},
+		tipShown: map[int64]bool{},
+		dialogue: newKeyedMutex(),
+		svc:      svc,
+		docs:     docs,
 	}
 }
 
@@ -189,16 +183,6 @@ func (c *converter) message(ctx context.Context, b *bot.Bot, update *models.Upda
 	default:
 		c.out(b).send(ctx, chatID, textConvertUnsupported)
 	}
-}
-
-// stripURL drops the request URL from a transport error: the download link
-// carries the bot token, and the error ends up in the logs.
-func stripURL(err error) error {
-	var ue *url.Error
-	if errors.As(err, &ue) {
-		return ue.Err
-	}
-	return err
 }
 
 // convertErrorText maps a convert error to a user message.

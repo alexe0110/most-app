@@ -2,6 +2,7 @@ package telegram_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -191,8 +192,15 @@ func newBotOpts(t *testing.T, log *slog.Logger, drive fakeDrive, opts ...telegra
 	require.NoError(t, err)
 
 	svc, auth, repo := fakeDepsWith(drive)
-	telegram.Register(b, log, svc, auth, opts...)
+	telegram.Register(b, telegram.Deps{Log: log, Svc: svc, Auth: auth, Files: noFiles{}}, opts...)
 	return b, sent, repo
+}
+
+// noFiles is a file source for tests that never download.
+type noFiles struct{}
+
+func (noFiles) Download(context.Context, string) ([]byte, string, error) {
+	return nil, "", errors.New("unexpected download")
 }
 
 // sentMessageID is the message id the fake API gives every sent message.

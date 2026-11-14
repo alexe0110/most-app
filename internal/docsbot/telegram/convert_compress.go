@@ -41,7 +41,7 @@ func (c *converter) finishPDF(ctx context.Context, b *bot.Bot, p press) {
 	images := make([][]byte, 0, len(pending))
 	total := 0
 	for _, img := range pending {
-		data, err := c.download(dlCtx, b, img.fileID)
+		data, err := c.download(dlCtx, img.fileID)
 		if err != nil {
 			c.log.ErrorContext(ctx, "convert download photo", "err", err, "user_id", user)
 			c.retry(ctx, b, chatID, user, sess, msgID, textConvertDownloadFailed, pdfKeyboard())

@@ -12,7 +12,6 @@ import (
 	"time"
 	_ "time/tzdata" // zone database for images without /usr/share/zoneinfo
 
-	"github.com/go-telegram/bot"
 	"github.com/riverqueue/river"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
@@ -122,12 +121,12 @@ func run() error {
 		WebhookSecret: cfg.TelegramWebhookSecret,
 		GroupNotice:   telegram.GroupNotice(),
 		Unbounded:     telegram.IsExport,
-	}, users, log, func(b *bot.Bot) {
-		telegram.Register(b, log, svc, oauthSvc, telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder))
-	})
+	}, users, log)
 	if err != nil {
 		return err
 	}
+	telegram.Register(tgbot.Client(), telegram.Deps{Log: log, Svc: svc, Auth: oauthSvc, Files: tgbot},
+		telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder))
 	files.bot = tgbot
 	notifier := telegram.NewNotifier(tgbot, users, oauthSvc, svc, log, telegram.WithNotifierRenames(renames))
 	bindUpload(svc, notifier)

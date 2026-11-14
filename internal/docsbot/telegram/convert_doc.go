@@ -81,7 +81,7 @@ func (c *converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
 	}
 	menu := quickKeyboard(id, isWebP(doc))
 	msgID := c.show(ctx, b, chatID, p.msgID, textConvertProgress, nil)
-	src, err := c.download(ctx, b, doc.TgFileID)
+	src, err := c.download(ctx, doc.TgFileID)
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert download document", "err", err, "user_id", user, "doc_id", id)
 		c.show(ctx, b, chatID, msgID, textConvertDownloadFailed, menu)
@@ -150,11 +150,11 @@ func (c *converter) onSave(ctx context.Context, b *bot.Bot, p press) {
 		if id == 0 {
 			return
 		}
-		c.renderSaved(ctx, b, chatID, id, res.user, r)
+		c.docs.renderSaved(ctx, b, chatID, id, res.user, r)
 	case docsbot.NeedCategory:
 		c.out(b).send(ctx, chatID, textChooseCategory, withKeyboard(categoryKeyboard(actCategory, r.Doc.ID)))
 	case docsbot.AlreadySaved:
-		c.sendAlreadySaved(ctx, b, chatID, res.user, r.Doc.ID)
+		c.docs.sendAlreadySaved(ctx, b, chatID, res.user, r.Doc.ID)
 	default:
 		if text, ok := rejectionText(rep); ok {
 			c.out(b).send(ctx, chatID, text)
@@ -219,10 +219,10 @@ func (c *converter) onReplace(ctx context.Context, b *bot.Bot, p press) {
 		retry(textReplaceMissing)
 	case docsbot.Replaced:
 		c.editResultCaption(ctx, b, p, "", nil)
-		c.sendReplaced(ctx, b, chatID, res.user, r.Doc.ID)
+		c.docs.sendReplaced(ctx, b, chatID, res.user, r.Doc.ID)
 	case docsbot.AlreadySaved:
 		c.editResultCaption(ctx, b, p, "", nil)
-		c.sendAlreadySaved(ctx, b, chatID, res.user, r.Doc.ID)
+		c.docs.sendAlreadySaved(ctx, b, chatID, res.user, r.Doc.ID)
 	default:
 		c.editResultCaption(ctx, b, p, "", nil)
 		if text, ok := rejectionText(rep); ok {

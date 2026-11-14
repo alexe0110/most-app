@@ -3,10 +3,6 @@ package telegram
 import (
 	"bytes"
 	"context"
-	"errors"
-	"fmt"
-	"io"
-	"net/http"
 	"path/filepath"
 	"strings"
 
@@ -15,7 +11,6 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/platform/convert"
-	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 // clearButtons removes the keyboard from the message a button was pressed on.
@@ -89,37 +84,11 @@ func (c *converter) removeKeyboard(ctx context.Context, b *bot.Bot, chatID int64
 	}
 }
 
-// download fetches a Telegram file's bytes, capped at tg.MaxFileBytes.
-func (c *converter) download(ctx context.Context, b *bot.Bot, fileID string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, downloadWait)
-	defer cancel()
-
-	file, err := b.GetFile(ctx, &bot.GetFileParams{FileID: fileID})
-	if err != nil {
-		return nil, fmt.Errorf("get file: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.FileDownloadLink(file), nil)
-	if err != nil {
-		return nil, fmt.Errorf("build download request: %w", stripURL(err))
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("download file: %w", stripURL(err))
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download file: status %d", resp.StatusCode)
-	}
-
-	data, err := io.ReadAll(io.LimitReader(resp.Body, tg.MaxFileBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read file: %w", err)
-	}
-	if len(data) > tg.MaxFileBytes {
-		return nil, errors.New("file exceeds download limit")
-	}
-	return data, nil
+// download fetches a Telegram file's bytes; the cap and the token-safe errors
+// belong to the downloader.
+func (c *converter) download(ctx context.Context, fileID string) ([]byte, error) {
+	data, _, err := c.files.Download(ctx, fileID)
+	return data, err
 }
 
 // resultFileName is the file name of a converted document: the title without its

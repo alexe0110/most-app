@@ -2,7 +2,7 @@ package telegram_test
 
 import (
 	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
 	"image"
 	"image/color"
@@ -74,6 +74,25 @@ type convHarness struct {
 	events []string
 	// nextMsg is the id of the next sent message (sendMessage answers with it).
 	nextMsg int
+	// photo is what a file id without an override downloads.
+	photo []byte
+}
+
+// Download makes the harness the converter's file source: it records the file id,
+// waits for the gate and serves the file registered with serve (or the default photo).
+func (h *convHarness) Download(_ context.Context, fileID string) ([]byte, string, error) {
+	h.mu.Lock()
+	h.downloads = append(h.downloads, fileID)
+	data, ok := h.files[fileID]
+	gate := h.gate
+	h.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	if !ok {
+		data = h.photo
+	}
+	return data, "", nil
 }
 
 // serve makes fileID download as data.
@@ -96,35 +115,11 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 	}
 	var photo bytes.Buffer
 	require.NoError(t, jpeg.Encode(&photo, img, &jpeg.Options{Quality: 85}))
+	h.photo = photo.Bytes()
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		switch {
-		case strings.HasPrefix(path, "/file/"):
-			id := strings.TrimSuffix(path[strings.LastIndex(path, "/")+1:], ".jpg")
-			h.mu.Lock()
-			h.downloads = append(h.downloads, id)
-			data, ok := h.files[id]
-			gate := h.gate
-			h.mu.Unlock()
-			if gate != nil {
-				<-gate
-			}
-			if !ok {
-				data = photo.Bytes()
-			}
-			_, _ = w.Write(data)
-			return
-		case strings.HasSuffix(path, "/getFile"):
-			var req struct {
-				FileID string `json:"file_id"`
-			}
-			req.FileID = r.FormValue("file_id")
-			if req.FileID == "" {
-				_ = json.NewDecoder(r.Body).Decode(&req)
-			}
-			writeJSON(w, fmt.Sprintf(`{"ok":true,"result":{"file_id":"f","file_path":"%s.jpg"}}`, req.FileID))
-			return
 		case strings.HasSuffix(path, "/sendDocument"):
 			n := h.captureDocument(t, r)
 			if h.docsFail() {
@@ -201,7 +196,7 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 	b, err := bot.New("123:ABC", bot.WithServerURL(ts.URL), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
 	require.NoError(t, err)
 	svc, auth, repo := fakeDeps()
-	telegram.Register(b, slog.New(slog.DiscardHandler), svc, auth, opts...)
+	telegram.Register(b, telegram.Deps{Log: slog.New(slog.DiscardHandler), Svc: svc, Auth: auth, Files: h}, opts...)
 
 	h.bot = b
 	h.repo = repo

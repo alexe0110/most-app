@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-telegram/bot"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
@@ -143,7 +142,7 @@ func newNotifierEnv(t *testing.T) *notifierEnv {
 	t.Cleanup(func() { http.DefaultTransport = orig })
 
 	log := slog.New(slog.DiscardHandler)
-	b, err := tg.New(tg.Config{Token: "123:ABC", Mode: tg.ModePolling}, stubUsers{}, log, func(*bot.Bot) {})
+	b, err := tg.New(tg.Config{Token: "123:ABC", Mode: tg.ModePolling}, stubUsers{}, log)
 	require.NoError(t, err)
 
 	repo := newFakeRepo()

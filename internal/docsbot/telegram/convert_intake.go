@@ -55,7 +55,7 @@ func (c *converter) onImage(ctx context.Context, b *bot.Bot, update *models.Upda
 		return
 	}
 
-	data, err := c.download(ctx, b, fileID)
+	data, err := c.download(ctx, fileID)
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert download image", "err", err)
 		c.out(b).send(ctx, chatID, textConvertDownloadFailed)

@@ -70,7 +70,7 @@ func (c *converter) runPDFOp(ctx context.Context, b *bot.Bot, chatID, tgUser int
 	}
 	user, _ := userID(ctx)
 	msgID = c.show(ctx, b, chatID, msgID, textConvertProgress, nil)
-	data, err := c.download(ctx, b, src.fileID)
+	data, err := c.download(ctx, src.fileID)
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert download document", "err", err, "user_id", user, "doc_id", src.docID)
 		fail(msgID, textConvertDownloadFailed)
@@ -136,7 +136,7 @@ func (c *converter) onPDFSource(ctx context.Context, b *bot.Bot, update *models.
 		c.out(b).send(ctx, chatID, pdfTooLargeText())
 		return
 	}
-	data, err := c.download(ctx, b, file.FileID)
+	data, err := c.download(ctx, file.FileID)
 	if err != nil {
 		uid, _ := userID(ctx)
 		c.log.ErrorContext(ctx, "convert download pdf", "err", err, "user_id", uid)
@@ -182,7 +182,7 @@ func (c *converter) onRange(ctx context.Context, b *bot.Bot, update *models.Upda
 		c.sessions.restore(tgUser, sess)
 		c.moveDown(ctx, b, chatID, tgUser, text, cancelKeyboard())
 	}
-	src, err := c.download(ctx, b, sess.pdfs[0].fileID)
+	src, err := c.download(ctx, sess.pdfs[0].fileID)
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert download pdf", "err", err, "user_id", uid, "doc_id", sess.sourceDoc)
 		again(textConvertDownloadFailed)
@@ -236,7 +236,7 @@ func (c *converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 		return
 	}
 	// Download once to check the file; only its id and size are kept.
-	data, err := c.download(ctx, b, file.FileID)
+	data, err := c.download(ctx, file.FileID)
 	if err != nil {
 		uid, _ := userID(ctx)
 		c.log.ErrorContext(ctx, "convert download pdf", "err", err, "user_id", uid)
@@ -299,7 +299,7 @@ func (c *converter) finishMerge(ctx context.Context, b *bot.Bot, p press) {
 	files := make([][]byte, 0, len(sess.pdfs))
 	total := 0
 	for _, part := range sess.pdfs {
-		data, err := c.download(ctx, b, part.fileID)
+		data, err := c.download(ctx, part.fileID)
 		if err != nil {
 			c.log.ErrorContext(ctx, "convert download pdf", "err", err, "user_id", uid, "doc_id", sess.sourceDoc)
 			c.retry(ctx, b, chatID, tgUser, sess, msgID, textConvertDownloadFailed, pdfKeyboard())

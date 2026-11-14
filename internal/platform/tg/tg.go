@@ -52,7 +52,7 @@ type Config struct {
 
 // Bot wraps the go-telegram client: it owns the lifecycle (polling or webhook,
 // middleware, command menu) and file downloads. A bot adapter adds its handlers
-// through the register callback and sends messages with the client from Client.
+// and sends messages with the client from Client.
 type Bot struct {
 	api  *bot.Bot
 	cfg  Config
@@ -61,8 +61,9 @@ type Bot struct {
 }
 
 // New builds the bot, installs the common middleware (panic recovery, private-only
-// filter, update logging, user upsert) and lets the adapter add handlers via register.
-func New(cfg Config, users Users, log *slog.Logger, register func(*bot.Bot)) (*Bot, error) {
+// filter, update logging, user upsert). The adapter adds its handlers afterwards
+// through Client.
+func New(cfg Config, users Users, log *slog.Logger) (*Bot, error) {
 	opts := []bot.Option{
 		bot.WithMiddlewares(recoverPanic(log), withTimeout(handlerTimeout, cfg.Unbounded, log), privateOnly(leaveGroup(cfg.GroupNotice, log), log), logUpdate(log), ensureUser(users, log)),
 		// Unmatched updates are already logged by the middleware; stay silent.
@@ -76,7 +77,6 @@ func New(cfg Config, users Users, log *slog.Logger, register func(*bot.Bot)) (*B
 	if err != nil {
 		return nil, fmt.Errorf("new telegram bot: %w", err)
 	}
-	register(api)
 
 	return &Bot{api: api, cfg: cfg, http: &http.Client{Timeout: downloadWait}, log: log}, nil
 }
