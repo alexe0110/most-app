@@ -59,13 +59,12 @@ func scanPDFObjects(pctx *model.Context) pdfRisks {
 	return r
 }
 
-// startxrefLine is a real trailer: the keyword alone on its line, then the offset.
-// The same word inside a title or a stream sits mid-line.
-var startxrefLine = regexp.MustCompile(`(?m)^startxref[ \t]*\r?\n[ \t]*\d+`)
-
 // incrementalUpdates counts the saves appended to the original file: every
 // update adds a startxref, and a linearized file has a second one by design.
 func incrementalUpdates(data []byte, pctx *model.Context) int64 {
+	// A trailer: the keyword alone on its line, then the offset. The same word
+	// inside a title or a stream sits mid-line.
+	startxrefLine := regexp.MustCompile(`(?m)^startxref[ \t]*\r?\n[ \t]*\d+`)
 	n := len(startxrefLine.FindAll(data, -1)) - 1
 	if pctx.Read != nil && pctx.Read.Linearized {
 		n--
@@ -96,8 +95,11 @@ func pageSize(ctx context.Context, pctx *model.Context) any {
 			return f.name
 		}
 	}
-	const mmPerPoint = 25.4 / 72
-	if w <= 0 || h <= 0 || math.IsNaN(w) || math.IsNaN(h) {
+	const (
+		mmPerPoint  = 25.4 / 72
+		maxPageSize = 1e6 // points; far beyond any real sheet, and safe to convert to int
+	)
+	if !(w > 0 && h > 0 && w < maxPageSize && h < maxPageSize) { // also rejects NaN and Inf
 		return nil
 	}
 	return Dimensions{Width: int(math.Round(w * mmPerPoint)), Height: int(math.Round(h * mmPerPoint))}

@@ -95,7 +95,7 @@ func inspectOffice(data []byte, info *FileInfo) error {
 	if n := len(custom.Props); n > 0 {
 		fs.add(GroupOther, "Office:CustomProperties", int64(n), false)
 	}
-	info.Groups = fs.result()
+	info.Groups, info.Dropped = fs.result(), fs.dropped
 
 	if core != (coreProps{}) || app != (appProps{}) || len(custom.Props) > 0 {
 		info.Blocks = append(info.Blocks, BlockOfficeProps)

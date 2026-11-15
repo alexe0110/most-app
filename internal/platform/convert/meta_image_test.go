@@ -3,6 +3,7 @@ package convert_test
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"image"
 	"image/png"
 	"strings"
@@ -91,4 +92,29 @@ func TestInspect_hostileImages(t *testing.T) {
 			tt.check(t, info)
 		})
 	}
+}
+
+// A PNG can carry as many text chunks as its size allows; the fields kept, and
+// the work done for them, stop at a cap, and the rest is only counted.
+func TestInspect_manyTextChunksAreCapped(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, png.Encode(&buf, image.NewGray(image.Rect(0, 0, 8, 8))))
+	b := buf.Bytes()
+	const ihdrEnd = 8 + 25
+	data := append([]byte{}, b[:ihdrEnd]...)
+	for i := range 5000 {
+		data = append(data, pngChunkBytes("tEXt", []byte(fmt.Sprintf("Key%05d\x00v", i)))...)
+	}
+	data = append(data, b[ihdrEnd:]...)
+
+	info, err := convert.Inspect(t.Context(), data)
+
+	require.NoError(t, err)
+	kept := 0
+	for _, g := range info.Groups {
+		kept += len(g.Fields)
+	}
+	require.LessOrEqual(t, kept, 1000)
+	require.Greater(t, info.Dropped, 3000)
+	require.Equal(t, kept+info.Dropped, info.FieldCount(), "the rest is counted, not lost")
 }

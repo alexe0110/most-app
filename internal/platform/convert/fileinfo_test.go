@@ -207,7 +207,8 @@ func TestInspect_fixtures(t *testing.T) {
 		require.Equal(t, "A4", fieldValue(t, info, "PDF:PageSize"))
 		require.Equal(t, "Scan Station", fieldValue(t, info, "PDF:Creator"))
 		require.Equal(t, "Scanner Firmware 3.2", fieldValue(t, info, "PDF:Producer"))
-		require.EqualValues(t, 0, fieldValue(t, info, "PDF:IncrementalUpdates"))
+		_, found := info.Field("PDF:IncrementalUpdates")
+		require.False(t, found, "no edits, no field")
 		require.Equal(t, false, fieldValue(t, info, "PDF:JavaScript"))
 	}
 	ironPDF := func(t testing.TB, info convert.FileInfo) {

@@ -66,11 +66,7 @@ func TestInspect_pdfFacts(t *testing.T) {
 			p.SetAttachments([]fpdf.Attachment{{Content: []byte("x"), Filename: "a.txt"}})
 		}), "PDF:EmbeddedFiles", true},
 		{"not signed", pdfWith(t, true, nil), "PDF:Signature", false},
-		{"original save", pdfWith(t, true, nil), "PDF:IncrementalUpdates", int64(0)},
 		{"one edit after creation", appendUpdate(t, pdfWith(t, true, nil)), "PDF:IncrementalUpdates", int64(1)},
-		{"a title that spells startxref is not an edit", pdfWith(t, true, func(p *fpdf.Fpdf) {
-			p.SetTitle("startxref", false)
-		}), "PDF:IncrementalUpdates", int64(0)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -89,4 +85,20 @@ func TestInspect_pdfXMPFieldsAreListed(t *testing.T) {
 	require.Equal(t, "Ann Author", fieldValue(t, info, "XMP:Creator"))
 	f, _ := info.Field("XMP:Creator")
 	require.True(t, f.Sensitive)
+}
+
+func TestInspect_pdfWithoutEditsHasNoEditCount(t *testing.T) {
+	tests := map[string][]byte{
+		"original save": pdfWith(t, true, nil),
+		"a title that spells startxref is not an edit": pdfWith(t, true, func(p *fpdf.Fpdf) { p.SetTitle("startxref", false) }),
+	}
+	for name, data := range tests {
+		t.Run(name, func(t *testing.T) {
+			info, err := convert.Inspect(t.Context(), data)
+
+			require.NoError(t, err)
+			_, found := info.Field("PDF:IncrementalUpdates")
+			require.False(t, found)
+		})
+	}
 }

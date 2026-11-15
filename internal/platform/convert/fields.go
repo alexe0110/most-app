@@ -1,7 +1,7 @@
 package convert
 
 import (
-	"sort"
+	"slices"
 	"time"
 )
 
@@ -78,9 +78,9 @@ func (i FileInfo) Field(key string) (Field, bool) {
 	return Field{}, false
 }
 
-// FieldCount is the number of fields found.
+// FieldCount is the number of fields found, those past the cap included.
 func (i FileInfo) FieldCount() int {
-	n := 0
+	n := i.Dropped
 	for _, g := range i.Groups {
 		n += len(g.Fields)
 	}
@@ -103,9 +103,15 @@ func (i FileInfo) SensitiveFields() []Field {
 // fieldSet collects fields while a file is read. The first field with a key
 // wins, so the main image's tags beat a thumbnail's.
 type fieldSet struct {
-	groups map[Group][]Field
-	seen   map[string]bool
+	groups  map[Group][]Field
+	seen    map[string]bool
+	count   int
+	dropped int // fields past maxFields
 }
+
+// maxFields caps the fields of one file: PNG text chunks, PDF custom properties
+// and XMP are a stranger's, and each field is memory and screen.
+const maxFields = 1000
 
 func newFieldSet() *fieldSet {
 	return &fieldSet{groups: map[Group][]Field{}, seen: map[string]bool{}}
@@ -116,6 +122,11 @@ func (s *fieldSet) add(g Group, key string, value any, sensitive bool) {
 	if value == nil || value == "" || s.seen[key] {
 		return
 	}
+	if s.count == maxFields {
+		s.dropped++
+		return
+	}
+	s.count++
 	s.seen[key] = true
 	s.groups[g] = append(s.groups[g], Field{Key: key, Value: value, Sensitive: sensitive})
 }
@@ -126,6 +137,6 @@ func (s *fieldSet) result() []GroupFields {
 	for g, fields := range s.groups {
 		out = append(out, GroupFields{Group: g, Fields: fields})
 	}
-	sort.Slice(out, func(a, b int) bool { return out[a].Group < out[b].Group })
+	slices.SortFunc(out, func(a, b GroupFields) int { return int(a.Group) - int(b.Group) })
 	return out
 }

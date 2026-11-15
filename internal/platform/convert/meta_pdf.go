@@ -19,7 +19,7 @@ import (
 func inspectPDF(ctx context.Context, data []byte, info *FileInfo) error {
 	pctx, err := api.ReadAndValidate(ctx, bytes.NewReader(data), pdfConf())
 	if errors.Is(err, pdfcpu.ErrWrongPassword) {
-		info.Encrypted = true
+		info.Encrypted, info.NeedsPassword = true, true
 		fs := newFieldSet()
 		fs.add(GroupSecurity, "PDF:Encrypted", true, false)
 		info.Groups = fs.result()
@@ -43,7 +43,7 @@ func inspectPDF(ctx context.Context, data []byte, info *FileInfo) error {
 	for _, p := range xmpProps(pctx) {
 		addValue(fs, "XMP:"+sanitizeText(p.Name), p.Name, normalize(p.Value), "")
 	}
-	info.Groups = fs.result()
+	info.Groups, info.Dropped = fs.result(), fs.dropped
 
 	if hasPDFInfo(pctx) {
 		info.Blocks = append(info.Blocks, BlockPDFInfo)
@@ -70,7 +70,9 @@ func addPDFFacts(ctx context.Context, fs *fieldSet, pctx *model.Context, data []
 	if pctx.HeaderVersion != nil {
 		fs.add(GroupDocument, "PDF:Version", pctx.HeaderVersion.String(), false)
 	}
-	fs.add(GroupDates, "PDF:IncrementalUpdates", incrementalUpdates(data, pctx), false)
+	if n := incrementalUpdates(data, pctx); n > 0 {
+		fs.add(GroupDates, "PDF:IncrementalUpdates", n, false)
+	}
 	fs.add(GroupSecurity, "PDF:Encrypted", encrypted, false)
 	fs.add(GroupSecurity, "PDF:JavaScript", risks.javascript, false)
 	fs.add(GroupSecurity, "PDF:EmbeddedFiles", risks.embedded, false)

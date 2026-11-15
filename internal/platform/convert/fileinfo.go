@@ -68,6 +68,11 @@ type FileInfo struct {
 	// Groups holds every field found, by group in display order; empty groups
 	// are left out.
 	Groups []GroupFields
+	// Dropped counts the fields found past maxFields; they are in no group.
+	Dropped int
+	// NeedsPassword marks a PDF whose content hides behind a user password: only
+	// the Security group is known.
+	NeedsPassword bool
 	// Blocks lists the metadata physically in the file; empty means clean.
 	Blocks []MetaBlock
 }
@@ -126,6 +131,7 @@ func unreadable(err error) error {
 // invisible formatting characters (a right-to-left override could reorder what
 // the reader sees), trimmed and capped.
 func sanitizeText(s string) string {
+	s = capBytes(s, maxValueRunes)
 	s = strings.Map(func(r rune) rune {
 		switch {
 		case r == '\n' || r == '\t':
@@ -138,6 +144,16 @@ func sanitizeText(s string) string {
 	s = strings.TrimSpace(s)
 	if r := []rune(s); len(r) > maxValueRunes {
 		s = string(r[:maxValueRunes])
+	}
+	return s
+}
+
+// capBytes cuts a string to at most 4 bytes per rune of the limit before it is
+// processed, so a huge value costs no more than a small one. A rune split by the
+// cut is replaced by strings.Map.
+func capBytes(s string, runes int) string {
+	if len(s) > runes*4 {
+		return s[:runes*4]
 	}
 	return s
 }

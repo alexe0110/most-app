@@ -74,7 +74,7 @@ func inspectImage(ctx context.Context, data []byte, info *FileInfo) error {
 		return err
 	}
 	info.Blocks = append(info.Blocks, extra...)
-	info.Groups = fs.result()
+	info.Groups, info.Dropped = fs.result(), fs.dropped
 	return nil
 }
 
