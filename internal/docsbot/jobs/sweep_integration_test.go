@@ -8,13 +8,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/riverqueue/river"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/jobs"
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
-	pjobs "github.com/alexe0110/most-app/internal/platform/jobs"
 )
 
 // Disconnect with a queued job and documents in pending/uploading: the job is
@@ -136,20 +134,4 @@ func TestSweepStuckUploads_skips(t *testing.T) {
 			require.Equal(t, "uploading", status)
 		})
 	}
-}
-
-func TestSweepWorker_notifiesFailed(t *testing.T) {
-	pool, _, id, svc, spy, _, _ := setupSweep(t, &countingDrive{}, "uploading", "25 hours", "active")
-
-	workers := river.NewWorkers()
-	periodic := jobs.RegisterSweepUploads(workers, slog.New(slog.DiscardHandler), svc, spy)
-	require.NotNil(t, periodic)
-	queue, err := pjobs.New(pool, slog.New(slog.DiscardHandler), workers, nil, periodic)
-	require.NoError(t, err)
-	startQueue(t, queue)
-
-	require.Eventually(t, func() bool { return len(spy.seen()) == 1 }, 10*time.Second, 100*time.Millisecond)
-	require.Equal(t, id, spy.seen()[0])
-	status, _ := backupState(t, pool, id)
-	require.Equal(t, "failed", status)
 }

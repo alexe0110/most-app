@@ -3,6 +3,7 @@
 package jobs_test
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"strings"
@@ -20,6 +21,28 @@ import (
 	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 	pjobs "github.com/alexe0110/most-app/internal/platform/jobs"
 )
+
+// syncBuffer is a log sink safe for the worker goroutine and the test.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func debugLogger(sink *syncBuffer) *slog.Logger {
+	return slog.New(slog.NewJSONHandler(sink, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
 
 type fakeDrive struct{}
 
