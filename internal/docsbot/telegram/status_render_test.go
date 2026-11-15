@@ -45,7 +45,7 @@ func TestRenderStatusMessage_tooLargeOnly(t *testing.T) {
 		batchDoc("a", docsbot.CatWork, docsbot.BackupTooLarge, ""),
 		batchDoc("b", docsbot.CatWork, docsbot.BackupTooLarge, ""),
 	}, nil)
-	require.Equal(t, "⚠️ Загружено 0 из 2\n\n📁 Работа · 2\n• ⚠️ a — больше 20\u00a0МБ\n• ⚠️ b — больше 20\u00a0МБ", text)
+	require.Equal(t, "⚠️ Загрузил 0 из 2\n\n📁 Работа · 2\n• ⚠️ a — больше 20\u00a0МБ\n• ⚠️ b — больше 20\u00a0МБ", text)
 	require.NotNil(t, kb)
 	require.Equal(t, [][]string{{btnMyDocs}}, buttonTexts(kb.InlineKeyboard), "nothing to retry")
 }
@@ -208,7 +208,7 @@ func TestRenderStatusMessage_failures(t *testing.T) {
 		{
 			name:     "partial failure: counted in the header, the line says why",
 			lines:    []docsbot.Document{ok, batchDoc("bad", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonQuota)},
-			want:     "⚠️ Загружено 1 из 2\n\nОсвободи место на Google Диске и нажми «Повторить».\n\n📁 Работа · 2\n• ✅ ok\n• ⚠️ bad — нет места на Google Диске",
+			want:     "⚠️ Загрузил 1 из 2\n\nОсвободи место на Google Диске и нажми «Повторить».\n\n📁 Работа · 2\n• ✅ ok\n• ⚠️ bad — нет места на Google Диске",
 			wantRows: [][]string{{"🔁 Повторить (1)", btnMyDocs}},
 		},
 		{
@@ -217,7 +217,7 @@ func TestRenderStatusMessage_failures(t *testing.T) {
 				batchDoc("a", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonRevoked),
 				batchDoc("b", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonRevoked),
 			},
-			want:     "⚠️ Загружено 0 из 2\n\n📁 Работа · 2\n• ⚠️ a — доступ отозван\n• ⚠️ b — доступ отозван",
+			want:     "⚠️ Загрузил 0 из 2\n\n📁 Работа · 2\n• ⚠️ a — доступ отозван\n• ⚠️ b — доступ отозван",
 			wantRows: [][]string{{"🔁 Повторить (2)", btnMyDocs}},
 		},
 		{
@@ -226,7 +226,7 @@ func TestRenderStatusMessage_failures(t *testing.T) {
 				batchDoc("a", docsbot.CatWork, docsbot.BackupFailed, ""),
 				batchDoc("b", docsbot.CatWork, docsbot.BackupFailed, "weird"),
 			},
-			want:     "⚠️ Загружено 0 из 2\n\n📁 Работа · 2\n• ⚠️ a — Google Диск не отвечает\n• ⚠️ b — Google Диск не отвечает",
+			want:     "⚠️ Загрузил 0 из 2\n\n📁 Работа · 2\n• ⚠️ a — Google Диск не отвечает\n• ⚠️ b — Google Диск не отвечает",
 			wantRows: [][]string{{"🔁 Повторить (2)", btnMyDocs}},
 		},
 		{
@@ -237,14 +237,14 @@ func TestRenderStatusMessage_failures(t *testing.T) {
 				batchDoc("c", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonQuota),
 				batchDoc("d", docsbot.CatWork, docsbot.BackupTooLarge, ""),
 			},
-			want: "⚠️ Загружено 0 из 4\n\nОсвободи место на Google Диске и нажми «Повторить».\n\n📁 Работа · 4\n" +
+			want: "⚠️ Загрузил 0 из 4\n\nОсвободи место на Google Диске и нажми «Повторить».\n\n📁 Работа · 4\n" +
 				"• ⚠️ a — Google Диск не отвечает\n• ⚠️ b — нет места на Google Диске\n• ⚠️ c — нет места на Google Диске\n• ⚠️ d — больше 20\u00a0МБ",
 			wantRows: [][]string{{"🔁 Повторить (3)", btnMyDocs}},
 		},
 		{
 			name:     "too large only: no quota hint, no retry",
 			lines:    []docsbot.Document{ok, batchDoc("big", docsbot.CatWork, docsbot.BackupTooLarge, "")},
-			want:     "⚠️ Загружено 1 из 2\n\n📁 Работа · 2\n• ✅ ok\n• ⚠️ big — больше 20\u00a0МБ",
+			want:     "⚠️ Загрузил 1 из 2\n\n📁 Работа · 2\n• ✅ ok\n• ⚠️ big — больше 20\u00a0МБ",
 			wantRows: [][]string{{btnMyDocs}},
 		},
 		{
@@ -256,7 +256,7 @@ func TestRenderStatusMessage_failures(t *testing.T) {
 		{
 			name:     "no quota failure, no hint",
 			lines:    []docsbot.Document{batchDoc("bad", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonRevoked)},
-			want:     "⚠️ Загружено 0 из 1\n\n📁 Работа · 1\n• ⚠️ bad — доступ отозван",
+			want:     "⚠️ Загрузил 0 из 1\n\n📁 Работа · 1\n• ⚠️ bad — доступ отозван",
 			wantRows: [][]string{{"🔁 Повторить (1)", btnMyDocs}},
 		},
 	}
@@ -359,7 +359,7 @@ func TestRenderStatusMessage_fitsTelegramLimit(t *testing.T) {
 	text, kb := renderStatusMessage(batchMsg, lines, folders)
 
 	require.LessOrEqual(t, utf16Len(text), statusTextLimit)
-	require.True(t, strings.HasPrefix(text, "⚠️ Загружено 440 из 441\n"), text[:60])
+	require.True(t, strings.HasPrefix(text, "⚠️ Загрузил 440 из 441\n"), text[:60])
 	require.Contains(t, text, textStatusQuotaHint)
 	require.Contains(t, text, "и ещё")
 	require.NotNil(t, kb)

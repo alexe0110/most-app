@@ -18,6 +18,9 @@ import (
 // before it asks for one category for the whole album.
 const albumDebounce = 1500 * time.Millisecond
 
+// albumTitleTimeout bounds the one database write that numbers an album.
+const albumTitleTimeout = 5 * time.Second
+
 // albumState is what the adapter has learned about one album so far. Only the
 // in-flight picker is held in memory; the documents themselves are in the DB.
 type albumState struct {
@@ -152,6 +155,9 @@ func (d *docs) titleAlbum(ctx context.Context, st albumState) {
 	if st.caption == "" || st.fresh < 2 {
 		return
 	}
+	// The flush context is detached from the request, so it has no deadline of its own.
+	ctx, cancel := context.WithTimeout(ctx, albumTitleTimeout)
+	defer cancel()
 	if err := d.svc.TitleAlbum(ctx, st.user, st.group, st.caption); err != nil {
 		d.log.ErrorContext(ctx, "title album", "err", err, "user_id", st.user, "group", st.group)
 	}

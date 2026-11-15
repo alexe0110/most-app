@@ -199,7 +199,7 @@ func TestNotifier_UploadOutcome_closesWhenAllTerminal(t *testing.T) {
 	require.True(t, e.status.Msgs[sm.ID].Closed)
 	edits := e.api.callsOf("editMessageText")
 	require.Len(t, edits, 1)
-	require.Contains(t, edits[0].text, "⚠️ Загружено 1 из 2")
+	require.Contains(t, edits[0].text, "⚠️ Загрузил 1 из 2")
 }
 
 func TestNotifier_UploadOutcome_editErrors(t *testing.T) {

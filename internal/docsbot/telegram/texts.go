@@ -226,7 +226,7 @@ const (
 const (
 	textStatusProgress    = "⏳ Загружаю на Google Диск · %d из %d" // done, total
 	textStatusDone        = "✅ Загрузил на Google Диск %d %s"      // backed up, plural("документ")
-	textStatusPartial     = "⚠️ Загружено %d из %d"                // backed up, total
+	textStatusPartial     = "⚠️ Загрузил %d из %d"                 // backed up, total
 	textStatusLineDone    = "• ✅ %s"                               // title
 	textStatusLinePending = "• ⏳ %s"                               // title
 	textStatusLineFailed  = "• ⚠️ %s — %s"                         // title, reason
