@@ -65,7 +65,7 @@ func TestPurgePendingWorker_deletesStalePendingAndClosedStatusMessagesOnly(t *te
 		require.NoError(t, pool.QueryRow(ctx, `select count(*) from status_messages where id = $1::uuid`, id).Scan(&n))
 		return n == 1
 	}
-	require.Eventually(t, func() bool { return !exists(stale) && !statusExists(oldClosed) }, 30*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool { return !exists(stale) && !statusExists(oldClosed) }, 10*time.Second, 100*time.Millisecond)
 	require.True(t, exists(fresh))
 	require.True(t, exists(oldSaved), "a document outlives its purged status message")
 	require.True(t, statusExists(recentClosed))

@@ -31,7 +31,7 @@ func TestDisconnect_resetsQueuedAndUploading(t *testing.T) {
 
 	require.NoError(t, svc.Disconnect(t.Context(), user))
 	start()
-	time.Sleep(2 * time.Second)
+	awaitQueueDrained(t, pool) // a job left behind by Disconnect would have uploaded by now
 
 	for _, d := range []docsbot.DocumentID{id, docsbot.DocumentID(uploadingID)} {
 		status, _ := backupState(t, pool, d)
@@ -75,7 +75,7 @@ func TestSweepStuckUploads_requeuesStaleAndBacksUp(t *testing.T) {
 	require.Eventually(t, func() bool {
 		status, _ := backupState(t, pool, id)
 		return status == "backed_up"
-	}, 30*time.Second, 100*time.Millisecond)
+	}, 10*time.Second, 100*time.Millisecond)
 }
 
 func TestSweepStuckUploads_liveJobDedups(t *testing.T) {
@@ -95,9 +95,8 @@ func TestSweepStuckUploads_liveJobDedups(t *testing.T) {
 	require.Eventually(t, func() bool {
 		status, _ := backupState(t, pool, id)
 		return status == "backed_up"
-	}, 30*time.Second, 100*time.Millisecond)
-	// Give a wrongly inserted second job time to run before asserting.
-	time.Sleep(time.Second)
+	}, 10*time.Second, 100*time.Millisecond)
+	awaitQueueDrained(t, pool) // a wrongly inserted second job would have run by now
 	require.Equal(t, 1, drive.count())
 }
 
@@ -149,7 +148,7 @@ func TestSweepWorker_notifiesFailed(t *testing.T) {
 	require.NoError(t, err)
 	startQueue(t, queue)
 
-	require.Eventually(t, func() bool { return len(spy.seen()) == 1 }, 30*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool { return len(spy.seen()) == 1 }, 10*time.Second, 100*time.Millisecond)
 	require.Equal(t, id, spy.seen()[0])
 	status, _ := backupState(t, pool, id)
 	require.Equal(t, "failed", status)

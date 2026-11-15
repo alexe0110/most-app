@@ -140,6 +140,19 @@ func startQueue(t *testing.T, queue *pjobs.Client) {
 	})
 }
 
+// awaitQueueDrained waits until no job is queued, running or waiting for a
+// retry. Negative assertions ("it must not run again") go after it so they see
+// the final state instead of racing a job that is still in flight.
+func awaitQueueDrained(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		var live int
+		err := pool.QueryRow(t.Context(),
+			`select count(*) from river_job where state in ('available', 'pending', 'running', 'retryable', 'scheduled')`).Scan(&live)
+		return err == nil && live == 0
+	}, 10*time.Second, 50*time.Millisecond, "the queue must drain")
+}
+
 func backupState(t *testing.T, pool *pgxpool.Pool, id docsbot.DocumentID) (status, driveID string) {
 	t.Helper()
 	var drive *string
@@ -157,7 +170,7 @@ func TestUploadDocument_backsUp(t *testing.T) {
 	require.Eventually(t, func() bool {
 		status, _ := backupState(t, pool, id)
 		return status == "backed_up"
-	}, 30*time.Second, 100*time.Millisecond)
+	}, 10*time.Second, 100*time.Millisecond)
 	_, driveID := backupState(t, pool, id)
 	require.Equal(t, "drive-1", driveID)
 	require.Eventually(t, func() bool { return len(spy.seen()) == 1 }, 5*time.Second, 50*time.Millisecond)
@@ -170,7 +183,7 @@ func TestUploadDocument_tooLarge(t *testing.T) {
 	require.Eventually(t, func() bool {
 		status, _ := backupState(t, pool, id)
 		return status == "too_large"
-	}, 30*time.Second, 100*time.Millisecond)
+	}, 10*time.Second, 100*time.Millisecond)
 	require.Eventually(t, func() bool { return len(spy.seen()) == 1 }, 5*time.Second, 50*time.Millisecond)
 	require.Equal(t, id, spy.seen()[0], "outcome is reported so the status line shows the file stays in Telegram")
 }
@@ -207,10 +220,9 @@ func TestUploadJob_dedupsWhileQueued(t *testing.T) {
 	require.Eventually(t, func() bool {
 		status, _ := backupState(t, pool, id)
 		return status == "backed_up"
-	}, 30*time.Second, 100*time.Millisecond)
+	}, 10*time.Second, 100*time.Millisecond)
 	require.Eventually(t, func() bool { return len(spy.seen()) >= 1 }, 5*time.Second, 50*time.Millisecond)
-	// Give a wrongly inserted second job time to run before asserting.
-	time.Sleep(time.Second)
+	awaitQueueDrained(t, pool) // a wrongly inserted second job would have run by now
 	require.Equal(t, 1, drive.count())
 	require.Len(t, spy.seen(), 1)
 }
@@ -228,8 +240,8 @@ func TestUploadDocument_deletedWhileQueuedFinishesSilently(t *testing.T) {
 
 	// The job finishes without a retry; wait for the noop log line.
 	require.Eventually(t, func() bool { return strings.Contains(logs.String(), "upload noop") },
-		30*time.Second, 100*time.Millisecond)
-	time.Sleep(time.Second)
+		10*time.Second, 100*time.Millisecond)
+	awaitQueueDrained(t, pool)
 	require.Zero(t, drive.count())
 	require.Empty(t, spy.seen())
 	require.NotContains(t, logs.String(), "upload retry")
@@ -247,8 +259,8 @@ func TestUploadDocument_userDisconnectFinishesSilently(t *testing.T) {
 	pool, _, id, spy := runUploadWithLog(t, fakeFiles{}, disconnectedDrive{}, debugLogger(&logs))
 
 	require.Eventually(t, func() bool { return strings.Contains(logs.String(), "upload noop") },
-		30*time.Second, 100*time.Millisecond)
-	time.Sleep(time.Second)
+		10*time.Second, 100*time.Millisecond)
+	awaitQueueDrained(t, pool)
 	status, _ := backupState(t, pool, id)
 	require.Equal(t, "none", status)
 	require.Empty(t, spy.seen())

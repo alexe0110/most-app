@@ -51,7 +51,7 @@ func TestUploadDocument_logsLifecycle(t *testing.T) {
 	_, user, id, _ := runUploadWithLog(t, fakeFiles{}, fakeDrive{}, debugLogger(&sink))
 
 	require.Eventually(t, func() bool { return strings.Contains(sink.String(), "upload finished") },
-		30*time.Second, 50*time.Millisecond)
+		10*time.Second, 50*time.Millisecond)
 	out := sink.String()
 	require.Contains(t, out, "upload started")
 	require.Contains(t, out, `"doc_id":"`+string(id)+`"`)
@@ -68,7 +68,7 @@ func TestUploadDocument_logsRetry(t *testing.T) {
 	_, _, id, _ := runUploadWithLog(t, fakeFiles{err: errors.New("telegram down")}, fakeDrive{}, debugLogger(&sink))
 
 	require.Eventually(t, func() bool { return strings.Contains(sink.String(), "upload retry") },
-		30*time.Second, 50*time.Millisecond)
+		10*time.Second, 50*time.Millisecond)
 	out := sink.String()
 	require.Contains(t, out, `"doc_id":"`+string(id)+`"`)
 	require.Contains(t, out, `"job_id"`)
@@ -88,7 +88,7 @@ func TestUploadDocument_logsRevoke(t *testing.T) {
 	pool, user, id, _ := runUploadWithLog(t, fakeFiles{}, revokedDrive{}, debugLogger(&sink))
 
 	require.Eventually(t, func() bool { return strings.Contains(sink.String(), "access revoked") },
-		30*time.Second, 50*time.Millisecond)
+		10*time.Second, 50*time.Millisecond)
 	out := sink.String()
 	require.Contains(t, out, `"level":"WARN"`)
 	require.Contains(t, out, `"doc_id":"`+string(id)+`"`)

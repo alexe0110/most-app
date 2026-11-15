@@ -161,7 +161,7 @@ func TestStorageSync_renameRunsAndMarksOK(t *testing.T) {
 	_, err := e.svc.Rename(t.Context(), e.user, e.id, "Договор")
 	require.NoError(t, err)
 
-	require.Eventually(t, func() bool { return e.syncStatus(t) == "ok" }, 30*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool { return e.syncStatus(t) == "ok" }, 10*time.Second, 100*time.Millisecond)
 	require.Equal(t, []string{"Договор.pdf"}, drive.renamed())
 }
 
@@ -179,7 +179,7 @@ func TestStorageSync_queuedChangesApplyLatestOnce(t *testing.T) {
 	require.NoError(t, err)
 
 	startQueue(t, e.queue)
-	require.Eventually(t, func() bool { return e.syncStatus(t) == "ok" }, 30*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool { return e.syncStatus(t) == "ok" }, 10*time.Second, 100*time.Millisecond)
 	require.Equal(t, []string{"Третье.pdf"}, drive.renamed())
 }
 
@@ -195,7 +195,7 @@ func TestStorageSync_changeDuringRunningSyncQueuesFollowUp(t *testing.T) {
 	require.NoError(t, err)
 	select {
 	case <-drive.entered:
-	case <-time.After(30 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("sync did not start")
 	}
 	require.Equal(t, 1, e.jobCount(t, "storage_sync", "running"))
@@ -207,7 +207,7 @@ func TestStorageSync_changeDuringRunningSyncQueuesFollowUp(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return e.syncStatus(t) == "ok" && len(drive.renamed()) >= 2
-	}, 30*time.Second, 100*time.Millisecond)
+	}, 10*time.Second, 100*time.Millisecond)
 	names := drive.renamed()
 	require.Equal(t, "Второе.pdf", names[len(names)-1], "the last sync applies the newest title")
 }
@@ -222,7 +222,7 @@ func TestStorageTrash_deleteTrashesRemoteFile(t *testing.T) {
 	require.Equal(t, 1, e.jobCount(t, "storage_trash", ""), "queued with the row deletion")
 
 	startQueue(t, e.queue)
-	require.Eventually(t, func() bool { return len(drive.trashed()) == 1 }, 30*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool { return len(drive.trashed()) == 1 }, 10*time.Second, 100*time.Millisecond)
 	require.Equal(t, []string{"remote-1"}, drive.trashed())
 	_, _, kept := e.spy.counts()
 	require.Zero(t, kept)
@@ -241,7 +241,7 @@ func TestStorageTrash_revokedAccessTellsUserTheFileStays(t *testing.T) {
 
 	startQueue(t, e.queue)
 
-	require.Eventually(t, func() bool { _, _, kept := e.spy.counts(); return kept == 1 }, 30*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool { _, _, kept := e.spy.counts(); return kept == 1 }, 10*time.Second, 100*time.Millisecond)
 	require.Equal(t, 1, len(drive.trashed()), "terminal: not retried")
 }
 
@@ -253,7 +253,7 @@ func TestStorageSync_revokedMarksFailedWithReasonAndAsksToReconnect(t *testing.T
 	_, err := e.svc.Rename(t.Context(), e.user, e.id, "Новое")
 	require.NoError(t, err)
 
-	require.Eventually(t, func() bool { return e.syncStatus(t) == "failed" }, 30*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool { return e.syncStatus(t) == "failed" }, 10*time.Second, 100*time.Millisecond)
 	var reason *string
 	require.NoError(t, e.pool.QueryRow(t.Context(), `select sync_reason from documents where id = $1::uuid`, string(e.id)).Scan(&reason))
 	require.NotNil(t, reason)
@@ -278,6 +278,6 @@ func TestStorageSync_deletedDocumentIsNoop(t *testing.T) {
 
 	startQueue(t, e.queue)
 
-	require.Eventually(t, func() bool { return e.jobCount(t, "storage_sync", "completed") == 1 }, 30*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool { return e.jobCount(t, "storage_sync", "completed") == 1 }, 10*time.Second, 100*time.Millisecond)
 	require.Empty(t, drive.renamed())
 }

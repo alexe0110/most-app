@@ -5,7 +5,6 @@ package postgres_test
 import (
 	"context"
 	"errors"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,26 +27,17 @@ type syncEnv struct {
 func newSyncEnv(t *testing.T) syncEnv {
 	t.Helper()
 	pool := dbtest.New(t)
-	return syncEnv{pool: pool, repo: newAdapters(pool, noJobs{})}.fresh(t)
+	repo := newAdapters(pool, noJobs{})
+	a, b := makeUser(t, repo, 1), makeUser(t, repo, 2)
+	return syncEnv{
+		pool: pool, repo: repo,
+		user: docsbot.UserID(a.ID.String()), otherUser: docsbot.UserID(b.ID.String()),
+	}
 }
 
 // with is a repo over the same database whose jobs go to ji.
 func (e syncEnv) with(ji postgres.JobInserter) *adapters {
 	return newAdapters(e.pool, ji)
-}
-
-// userSeq gives every fresh pair of users distinct Telegram ids.
-var userSeq atomic.Int64
-
-// fresh returns the env on the same database with two new users, so table
-// subtests share one container yet never see each other's documents.
-func (e syncEnv) fresh(t *testing.T) syncEnv {
-	t.Helper()
-	n := 10_000 + 2*userSeq.Add(1)
-	a := makeUser(t, e.repo, n)
-	b := makeUser(t, e.repo, n+1)
-	e.user, e.otherUser = docsbot.UserID(a.ID.String()), docsbot.UserID(b.ID.String())
-	return e
 }
 
 // seed inserts a saved document with the given states and returns its id.
@@ -95,9 +85,6 @@ func (e syncEnv) exists(t *testing.T, id docsbot.DocumentID) bool {
 
 // marker is the "job insert": it writes a row through the same transaction so a
 // test can tell whether it committed or rolled back with the document change.
-// markerSeq keeps the marker rows of all markers unique.
-var markerSeq atomic.Int64
-
 type marker struct {
 	pool   *pgxpool.Pool
 	calls  int
@@ -109,7 +96,7 @@ var _ postgres.JobInserter = (*marker)(nil)
 
 func (m *marker) insert(ctx context.Context, tx pgx.Tx) error {
 	m.calls++
-	if _, err := tx.Exec(ctx, `insert into users (tg_user_id) values ($1)`, 9000+markerSeq.Add(1)); err != nil {
+	if _, err := tx.Exec(ctx, `insert into users (tg_user_id) select 9000 + count(*) from users where tg_user_id between 9000 and 9999`); err != nil {
 		return err
 	}
 	return m.fail
@@ -158,10 +145,9 @@ func TestSyncs_titleAndCategoryDecideSyncInSQL(t *testing.T) {
 		{"not on drive", "none", "ok", false, "ok"},
 		{"failed upload", "failed", "ok", false, "ok"},
 	}
-	shared := newSyncEnv(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := shared.fresh(t)
+			e := newSyncEnv(t)
 			ctx := t.Context()
 
 			titleDoc := e.seed(t, e.user, "t", tt.backup, tt.sync)
@@ -263,10 +249,9 @@ func TestSyncs_markBackedUpComparesVersion(t *testing.T) {
 		{"renamed during upload", 1, true, "pending"},
 		{"renamed twice during upload", 2, true, "pending"},
 	}
-	shared := newSyncEnv(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := shared.fresh(t)
+			e := newSyncEnv(t)
 			ctx := t.Context()
 			id := e.seed(t, e.user, "a", "uploading", "ok")
 			start := e.row(t, id).Meta
@@ -351,10 +336,9 @@ func TestSyncs_enqueueSyncGuards(t *testing.T) {
 		{"missing file", "backed_up", "missing", 0, "missing"},
 		{"not backed up", "pending", "ok", 0, "ok"},
 	}
-	shared := newSyncEnv(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := shared.fresh(t)
+			e := newSyncEnv(t)
 			id := e.seed(t, e.user, "a", tt.backup, tt.sync)
 			m := &marker{pool: e.pool}
 
@@ -365,7 +349,7 @@ func TestSyncs_enqueueSyncGuards(t *testing.T) {
 		})
 	}
 	t.Run("gone document", func(t *testing.T) {
-		e := shared.fresh(t)
+		e := newSyncEnv(t)
 		m := &marker{pool: e.pool}
 		require.NoError(t, e.with(m).EnqueueSync(t.Context(), e.user, "00000000-0000-0000-0000-000000000001"))
 		require.Zero(t, m.calls)
@@ -419,10 +403,9 @@ func TestSyncs_replaceContentGuards(t *testing.T) {
 		{"failed upload", "failed", "ok", true, 0, false, "ok"},
 		{"too large", "too_large", "ok", true, 0, false, "ok"},
 	}
-	shared := newSyncEnv(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := shared.fresh(t)
+			e := newSyncEnv(t)
 			id := e.seed(t, e.user, "a", tt.backup, tt.sync)
 			m := &marker{pool: e.pool}
 
@@ -706,4 +689,60 @@ func TestSyncs_transitionSyncStatusIsConditional(t *testing.T) {
 			require.False(t, moved)
 		})
 	}
+}
+
+func TestSyncs_pageCountOnBackedUpAndReplace(t *testing.T) {
+	e := newSyncEnv(t)
+	ctx := t.Context()
+
+	// MarkBackedUp records pages when known and keeps the stored value otherwise.
+	id := e.seed(t, e.user, "pg1", "uploading", "ok")
+	_, err := e.repo.MarkBackedUp(ctx, e.user, id, "drive-1", 0, 5)
+	require.NoError(t, err)
+	require.Equal(t, 5, e.pages(t, id))
+
+	id2 := e.seed(t, e.user, "pg2", "uploading", "ok")
+	_, err = e.repo.MarkBackedUp(ctx, e.user, id2, "drive-2", 0, 0)
+	require.NoError(t, err)
+	require.Zero(t, e.pages(t, id2), "unknown stays unknown")
+
+	// coalesce: an unknown count never wipes a known one.
+	id3 := e.seed(t, e.user, "pg3", "uploading", "ok")
+	_, err = e.pool.Exec(ctx, `update documents set page_count = 9 where id = $1::uuid`, string(id3))
+	require.NoError(t, err)
+	_, err = e.repo.MarkBackedUp(ctx, e.user, id3, "drive-3", 0, 0)
+	require.NoError(t, err)
+	require.Equal(t, 9, e.pages(t, id3))
+
+	// ReplaceContent swaps the file, so its page count follows the new file, known or not.
+	id4 := e.seed(t, e.user, "pg4", "none", "ok")
+	_, err = e.pool.Exec(ctx, `update documents set page_count = 9 where id = $1::uuid`, string(id4))
+	require.NoError(t, err)
+	in := docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "n1", FileUniqueID: "n1u", MIME: "application/pdf", PageCount: 2}
+	replaced, err := e.repo.ReplaceContent(ctx, e.user, id4, in, false)
+	require.NoError(t, err)
+	require.True(t, replaced)
+	require.Equal(t, 2, e.pages(t, id4))
+	_, err = e.pool.Exec(ctx, `update documents set image_width = 800, image_height = 600 where id = $1::uuid`, string(id4))
+	require.NoError(t, err)
+	in = docsbot.IncomingFile{Kind: docsbot.KindPhoto, FileID: "n2", FileUniqueID: "n2u"}
+	replaced, err = e.repo.ReplaceContent(ctx, e.user, id4, in, false)
+	require.NoError(t, err)
+	require.True(t, replaced)
+	require.Zero(t, e.pages(t, id4), "a file of unknown length does not keep the old file's pages")
+	var w, h *int
+	require.NoError(t, e.pool.QueryRow(ctx, `select image_width, image_height from documents where id = $1::uuid`, string(id4)).Scan(&w, &h))
+	require.Nil(t, w, "a replaced file never shows the old pixel size")
+	require.Nil(t, h)
+}
+
+// pages reads the stored page count (0 for null).
+func (e syncEnv) pages(t *testing.T, id docsbot.DocumentID) int {
+	t.Helper()
+	var n *int
+	require.NoError(t, e.pool.QueryRow(t.Context(), `select page_count from documents where id = $1::uuid`, string(id)).Scan(&n))
+	if n == nil {
+		return 0
+	}
+	return *n
 }

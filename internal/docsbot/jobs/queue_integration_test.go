@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"sync/atomic"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -28,26 +27,24 @@ type txEnv struct {
 	user docsbot.UserID
 }
 
-var txUserSeq atomic.Int64
-
 func newTxEnv(t *testing.T) txEnv {
 	t.Helper()
 	pool := dbtest.New(t)
 	log := slog.New(slog.DiscardHandler)
 	inserter, err := pjobs.NewInserter(pool, log)
 	require.NoError(t, err)
-	return txEnv{pool: pool, jq: jobs.NewQueue(inserter)}.fresh(t)
+	e := txEnv{pool: pool, jq: jobs.NewQueue(inserter)}
+	e.user = e.newUser(t, 1)
+	return e
 }
 
-// fresh returns the env on the same database with a new user, so subtests share
-// one container yet never see each other's documents or jobs.
-func (e txEnv) fresh(t *testing.T) txEnv {
+// newUser inserts a user with the given Telegram id and returns its id.
+func (e txEnv) newUser(t *testing.T, tgID int64) docsbot.UserID {
 	t.Helper()
 	var uid string
 	require.NoError(t, e.pool.QueryRow(t.Context(),
-		`insert into users (tg_user_id) values ($1) returning id::text`, 50_000+txUserSeq.Add(1)).Scan(&uid))
-	e.user = docsbot.UserID(uid)
-	return e
+		`insert into users (tg_user_id) values ($1) returning id::text`, tgID).Scan(&uid))
+	return docsbot.UserID(uid)
 }
 
 func (e txEnv) docs(ji postgres.JobInserter) *postgres.Documents {
@@ -208,11 +205,10 @@ func TestQueue_failedTxLeavesNoJobAndNoRowChange(t *testing.T) {
 			return err
 		}},
 	}
-	shared := newTxEnv(t)
 	boom := errors.New("queue down")
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := shared.fresh(t)
+			e := newTxEnv(t)
 			ctx := t.Context()
 			id := e.seed(t, tt.status, tt.backup, tt.syncState)
 			before := e.snapshot(t, id)

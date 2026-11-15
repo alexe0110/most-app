@@ -110,7 +110,7 @@ func TestClient_retriesUntilSuccess(t *testing.T) {
 	select {
 	case attempt := <-succeeded:
 		require.Equal(t, 3, attempt, "job must succeed on its third attempt")
-	case <-time.After(30 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("flaky job never completed")
 	}
 }
@@ -148,7 +148,7 @@ func TestInserter_jobsAreWorkedByFullClient(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(30 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("job inserted by the inserter was not worked")
 	}
 }
@@ -219,7 +219,7 @@ func TestClient_restartDoesNotLoseJobs(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(30 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("persisted job was lost across restart")
 	}
 }
@@ -364,7 +364,7 @@ func TestClient_extraQueueKeepsDefault(t *testing.T) {
 	for range 2 {
 		select {
 		case <-done:
-		case <-time.After(30 * time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatal("job on default or extra queue never ran")
 		}
 	}
