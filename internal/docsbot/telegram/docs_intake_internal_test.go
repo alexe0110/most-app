@@ -78,6 +78,13 @@ func TestIncomingFile(t *testing.T) {
 			want: docsbot.IncomingFile{UserID: "u", Kind: docsbot.KindPhoto, FileID: "p", FileUniqueID: "up", FileSize: 5},
 		},
 		{
+			name: "invisible-only caption falls back to the file name",
+			msg: &models.Message{Caption: "\u200b\u200b", Document: &models.Document{
+				FileID: "d", FileUniqueID: "ud", FileName: "scan.pdf",
+			}},
+			want: docsbot.IncomingFile{UserID: "u", Kind: docsbot.KindDocument, FileID: "d", FileUniqueID: "ud", Title: "scan"},
+		},
+		{
 			name: "document caption used when no file name",
 			msg:  &models.Message{Caption: "подпись", Document: &models.Document{FileID: "d", FileUniqueID: "ud"}},
 			want: docsbot.IncomingFile{UserID: "u", Kind: docsbot.KindDocument, FileID: "d", FileUniqueID: "ud", Title: "подпись"},

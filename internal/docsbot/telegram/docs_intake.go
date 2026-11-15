@@ -52,12 +52,13 @@ func photoTitle(m *models.Message) string {
 	return captionTitle(m.Caption)
 }
 
-// captionTitle is the first non-blank line of a caption, trimmed; "" when there is
-// none. The domain caps its length.
+// captionTitle is the first line of a caption that is visible after the domain's
+// own normalization; "" when there is none. Checking with NormalizeTitle, not
+// TrimSpace, keeps a line of zero-width characters from hiding the file name.
 func captionTitle(caption string) string {
 	for line := range strings.SplitSeq(caption, "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			return line
+		if title := docsbot.NormalizeTitle(line); title != "" {
+			return title
 		}
 	}
 	return ""
