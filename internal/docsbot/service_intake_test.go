@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -29,6 +30,71 @@ func TestService_Receive_normalizesTitle(t *testing.T) {
 	reply, err = svc.Receive(t.Context(), in)
 	require.NoError(t, err)
 	require.Empty(t, reply.(docsbot.NeedCategory).Doc.Title, "blank stays empty: the default title is set on save")
+}
+
+func TestService_Receive_capsLongTitle(t *testing.T) {
+	repo := docsbottest.NewFakeRepo()
+	svc := docsbottest.NewService(repo, docsbottest.FakeDrive{}, docsbottest.FakeFiles{}, &docsbottest.FakeUploads{Repo: repo}, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
+
+	in := incoming("long")
+	in.Title = strings.Repeat("я", docsbot.MaxTitleRunes+50)
+	reply, err := svc.Receive(t.Context(), in)
+	require.NoError(t, err)
+	require.Len(t, []rune(reply.(docsbot.NeedCategory).Doc.Title), docsbot.MaxTitleRunes)
+}
+
+func TestService_TitleAlbum(t *testing.T) {
+	tests := []struct {
+		name    string
+		caption string
+		want    []string // titles in arrival order
+		other   string   // title of the document of another album
+	}{
+		{"numbered in arrival order", "Отпуск", []string{"Отпуск (1)", "Отпуск (2)", "Отпуск (3)"}, "keep"},
+		{"caption is normalized", "  Отпуск\n2026 ", []string{"Отпуск 2026 (1)", "Отпуск 2026 (2)", "Отпуск 2026 (3)"}, "keep"},
+		{"blank caption changes nothing", " \n ", []string{"a", "b", "c"}, "keep"},
+		{
+			"long caption leaves room for the number",
+			strings.Repeat("я", docsbot.MaxTitleRunes+10),
+			[]string{
+				strings.Repeat("я", docsbot.MaxTitleRunes-5) + " (1)",
+				strings.Repeat("я", docsbot.MaxTitleRunes-5) + " (2)",
+				strings.Repeat("я", docsbot.MaxTitleRunes-5) + " (3)",
+			},
+			"keep",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := docsbottest.NewFakeRepo()
+			var ids []docsbot.DocumentID
+			for _, title := range []string{"a", "b", "c"} {
+				d := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "alb", Title: title})
+				ids = append(ids, d.ID)
+			}
+			other := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, MediaGroupID: "other", Title: tt.other})
+			saved := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, MediaGroupID: "alb", Title: "saved"})
+			svc, _ := edgeService(repo, docsbottest.FakeDrive{})
+
+			require.NoError(t, svc.TitleAlbum(t.Context(), user, "alb", tt.caption))
+
+			var got []string
+			for _, id := range ids {
+				got = append(got, repo.Docs[id].Title)
+			}
+			require.Equal(t, tt.want, got)
+			require.Equal(t, tt.other, repo.Docs[other.ID].Title, "another album is untouched")
+			require.Equal(t, "saved", repo.Docs[saved.ID].Title, "a saved document is untouched")
+		})
+	}
+}
+
+func TestService_TitleAlbum_failureIsReturned(t *testing.T) {
+	repo := docsbottest.NewFakeRepo()
+	repo.NumberErr = errors.New("db down")
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
+
+	require.ErrorIs(t, svc.TitleAlbum(t.Context(), user, "alb", "Отпуск"), repo.NumberErr)
 }
 
 func TestService_ChooseCategoryGroup_parallelTapsSaveOnce(t *testing.T) {

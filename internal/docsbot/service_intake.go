@@ -128,6 +128,27 @@ func (s *Service) DiscardAlbum(ctx context.Context, user UserID, group string) (
 	return n, nil
 }
 
+// albumNumberRunes is the room " (10)" takes after an album title: Telegram
+// albums hold up to ten files.
+const albumNumberRunes = len(" (10)")
+
+// TitleAlbum names the still-pending documents of an album after its caption:
+// "caption (1)", "caption (2)", ... in arrival order. A blank caption changes
+// nothing. The base is cut so the numbered title still fits MaxTitleRunes.
+func (s *Service) TitleAlbum(ctx context.Context, user UserID, group, caption string) error {
+	base := NormalizeTitle(caption)
+	if group == "" || base == "" {
+		return nil
+	}
+	if r := []rune(base); len(r) > MaxTitleRunes-albumNumberRunes {
+		base = strings.TrimSpace(string(r[:MaxTitleRunes-albumNumberRunes]))
+	}
+	if err := s.repo.NumberPendingAlbum(ctx, user, group, base); err != nil {
+		return fmt.Errorf("number album: %w", err)
+	}
+	return nil
+}
+
 // PurgeResult counts what one purge removed.
 type PurgeResult struct {
 	// Pending is the documents nobody categorized in time.

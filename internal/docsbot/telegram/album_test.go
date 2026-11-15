@@ -1,6 +1,9 @@
 package telegram_test
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -220,11 +223,101 @@ func TestChooseCategory_tooLargeStaysInTelegram(t *testing.T) {
 	require.True(t, has(sent.edits, "Только в Telegram: больше 20\u00a0МБ"), "edits %q", sent.edits)
 }
 
-func albumDocument(group, uniqueID, name string) *models.Update {
+// captioned puts a caption on an album element, as Telegram does for one of them.
+func captioned(u *models.Update, caption string) *models.Update {
+	u.Message.Caption = caption
+	return u
+}
+
+// albumTitles lists the titles of the pending documents of album "alb", in arrival order.
+func albumTitles(repo *docsbottest.FakeRepo) []string {
+	pending, _ := repo.PendingByMediaGroup(context.Background(), docsbottest.TestUserID, "alb")
+	var titles []string
+	for _, d := range pending {
+		titles = append(titles, d.Title)
+	}
+	return titles
+}
+
+func TestAlbum_captionNamesEveryElement(t *testing.T) {
+	tests := []struct {
+		name string
+		send []*models.Update
+		want []string
+	}{
+		{
+			"caption on a document, photos and documents mixed",
+			[]*models.Update{
+				albumPhoto("alb", "p1"),
+				captioned(albumDocument("d1", "scan.pdf"), "\n Отпуск 2026\nвторая строка"),
+				albumPhoto("alb", "p2"),
+			},
+			[]string{"Отпуск 2026 (1)", "Отпуск 2026 (2)", "Отпуск 2026 (3)"},
+		},
+		{
+			"caption on the first photo",
+			[]*models.Update{captioned(albumPhoto("alb", "p1"), "Чеки"), albumPhoto("alb", "p2")},
+			[]string{"Чеки (1)", "Чеки (2)"},
+		},
+		{
+			"no caption keeps the automatic titles",
+			[]*models.Update{albumDocument("d1", "one.pdf"), albumDocument("d2", "two.pdf"), albumPhoto("alb", "p1")},
+			[]string{"one", "two", ""},
+		},
+		{
+			"whitespace caption is no caption",
+			[]*models.Update{captioned(albumDocument("d1", "one.pdf"), " \n "), albumDocument("d2", "two.pdf")},
+			[]string{"one", "two"},
+		},
+		{
+			"a single captioned file has the plain caption, no number",
+			[]*models.Update{captioned(albumPhoto("alb", "p1"), "Чек")},
+			[]string{"Чек"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ft, send, sent, repo := albumBot(t, docsbottest.FakeDrive{})
+			for _, u := range tt.send {
+				send(u)
+			}
+			ft.Fire()
+
+			require.Equal(t, tt.want, albumTitles(repo))
+			require.NotEmpty(t, sent.texts, "the picker is sent")
+		})
+	}
+}
+
+func TestAlbum_captionIsNeverLogged(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ft := &docsbottest.FakeTimer{}
+	b, sent, repo := newBotOpts(t, log, docsbottest.FakeDrive{}, telegram.WithAlbumTimer(ft.After))
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+
+	b.ProcessUpdate(ctx, captioned(albumPhoto("alb", "p1"), "СекретнаяПодпись"))
+	b.ProcessUpdate(ctx, albumPhoto("alb", "p2"))
+	ft.Fire()
+	require.Equal(t, []string{"СекретнаяПодпись (1)", "СекретнаяПодпись (2)"}, albumTitles(repo))
+	require.NotEmpty(t, sent.texts)
+
+	// A failing numbering is logged without the caption and does not stop the picker.
+	repo.NumberErr = errors.New("db down")
+	b.ProcessUpdate(ctx, captioned(albumPhoto("alb2", "p3"), "СекретнаяПодпись"))
+	b.ProcessUpdate(ctx, albumPhoto("alb2", "p4"))
+	before := len(sent.texts)
+	ft.Fire()
+	require.Greater(t, len(sent.texts), before, "picker still sent")
+	require.Contains(t, buf.String(), "title album")
+	require.NotContains(t, buf.String(), "СекретнаяПодпись")
+}
+
+func albumDocument(uniqueID, name string) *models.Update {
 	return &models.Update{Message: &models.Message{
 		From:         &models.User{ID: 100},
 		Chat:         models.Chat{ID: 100, Type: models.ChatTypePrivate},
-		MediaGroupID: group,
+		MediaGroupID: "alb",
 		Document:     &models.Document{FileID: "f-" + uniqueID, FileUniqueID: uniqueID, FileName: name, FileSize: 1000},
 	}}
 }
@@ -252,8 +345,8 @@ func TestAlbum_photosAndDocumentsGetOnePicker(t *testing.T) {
 	ft, send, sent, repo := albumBot(t, docsbottest.FakeDrive{})
 
 	send(albumPhoto("alb", "p1"))
-	send(albumDocument("alb", "d1", "scan.pdf"))
-	send(albumDocument("alb", "d2", "scan2.pdf"))
+	send(albumDocument("d1", "scan.pdf"))
+	send(albumDocument("d2", "scan2.pdf"))
 	ft.Fire()
 
 	require.Equal(t, 3, pendingCount(repo))
@@ -331,7 +424,7 @@ func TestAlbum_textsAgreeWithTheCount(t *testing.T) {
 			for i := range tt.n - 1 {
 				send(albumPhoto("alb", fmt.Sprintf("p%d", i)))
 			}
-			send(albumDocument("alb", "d1", "scan.pdf"))
+			send(albumDocument("d1", "scan.pdf"))
 			ft.Fire()
 			require.Len(t, sent.texts, 1)
 			require.Equal(t, tt.wantFiles, sent.texts[0])

@@ -35,13 +35,47 @@ func TestIncomingFile(t *testing.T) {
 		},
 		{
 			name: "document file name loses its extension",
-			msg: &models.Message{Caption: "подпись", Document: &models.Document{
+			msg: &models.Message{Document: &models.Document{
 				FileID: "d", FileUniqueID: "ud", FileName: "scan.pdf", FileSize: 99, MimeType: "application/pdf",
 			}},
 			want: docsbot.IncomingFile{
 				UserID: "u", Kind: docsbot.KindDocument, FileID: "d", FileUniqueID: "ud",
 				Title: "scan", FileSize: 99, MIME: "application/pdf",
 			},
+		},
+		{
+			name: "document caption wins over the file name",
+			msg: &models.Message{Caption: "Alexey Cherkashin — Backend", Document: &models.Document{
+				FileID: "d", FileUniqueID: "ud", FileName: "Alexey_Cherkashin.pdf", FileSize: 99, MimeType: "application/pdf",
+			}},
+			want: docsbot.IncomingFile{
+				UserID: "u", Kind: docsbot.KindDocument, FileID: "d", FileUniqueID: "ud",
+				Title: "Alexey Cherkashin — Backend", FileSize: 99, MIME: "application/pdf",
+			},
+		},
+		{
+			name: "multi-line caption: first non-empty line, leading blanks skipped",
+			msg: &models.Message{Caption: "\n  \n  Договор аренды  \nвторая строка", Document: &models.Document{
+				FileID: "d", FileUniqueID: "ud", FileName: "scan.pdf",
+			}},
+			want: docsbot.IncomingFile{UserID: "u", Kind: docsbot.KindDocument, FileID: "d", FileUniqueID: "ud", Title: "Договор аренды"},
+		},
+		{
+			name: "whitespace-only caption falls back to the file name",
+			msg: &models.Message{Caption: " \n\t ", Document: &models.Document{
+				FileID: "d", FileUniqueID: "ud", FileName: "scan.pdf",
+			}},
+			want: docsbot.IncomingFile{UserID: "u", Kind: docsbot.KindDocument, FileID: "d", FileUniqueID: "ud", Title: "scan"},
+		},
+		{
+			name: "photo multi-line caption: first line only",
+			msg:  &models.Message{Caption: "Чек\nмагазин", Photo: []models.PhotoSize{{FileID: "p", FileUniqueID: "up", FileSize: 5}}},
+			want: docsbot.IncomingFile{UserID: "u", Kind: docsbot.KindPhoto, FileID: "p", FileUniqueID: "up", Title: "Чек", FileSize: 5},
+		},
+		{
+			name: "photo with a blank caption has no title",
+			msg:  &models.Message{Caption: "  \n ", Photo: []models.PhotoSize{{FileID: "p", FileUniqueID: "up", FileSize: 5}}},
+			want: docsbot.IncomingFile{UserID: "u", Kind: docsbot.KindPhoto, FileID: "p", FileUniqueID: "up", FileSize: 5},
 		},
 		{
 			name: "document caption used when no file name",

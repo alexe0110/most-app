@@ -856,6 +856,32 @@ func (q *Queries) MarkSynced(ctx context.Context, arg MarkSyncedParams) (int64, 
 	return result.RowsAffected(), nil
 }
 
+const numberPendingAlbum = `-- name: NumberPendingAlbum :exec
+update documents d
+set title = $1::text || ' (' || n.num || ')'
+from (select a.id, row_number() over (order by a.created_at, a.id) as num
+      from documents a
+      where a.user_id = $2
+        and a.media_group_id = $3
+        and a.status = 'pending') n
+where d.id = n.id
+  and d.user_id = $2
+  and d.status = 'pending'
+`
+
+type NumberPendingAlbumParams struct {
+	Base         string
+	UserID       pgtype.UUID
+	MediaGroupID pgtype.Text
+}
+
+// Titles the still-pending documents of one album "base (1)", "base (2)", ... in
+// arrival order (the order of ListPendingByMediaGroup).
+func (q *Queries) NumberPendingAlbum(ctx context.Context, arg NumberPendingAlbumParams) error {
+	_, err := q.db.Exec(ctx, numberPendingAlbum, arg.Base, arg.UserID, arg.MediaGroupID)
+	return err
+}
+
 const recentSavedDocuments = `-- name: RecentSavedDocuments :many
 select id, user_id, status, category, title, tg_file_id, tg_file_unique_id, drive_file_id, created_at, updated_at, kind, backup_status, status_message_id, file_size, mime_type, media_group_id, sync_status, sync_reason, meta_version, content_dirty, page_count, image_width, image_height, backup_reason
 from documents

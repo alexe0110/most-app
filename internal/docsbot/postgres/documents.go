@@ -107,6 +107,23 @@ func (r *Documents) PendingByMediaGroup(ctx context.Context, user docsbot.UserID
 	return toDocuments(rows), nil
 }
 
+// NumberPendingAlbum retitles the user's pending documents of one album "base (n)" in arrival order.
+func (r *Documents) NumberPendingAlbum(ctx context.Context, user docsbot.UserID, group, base string) error {
+	uid, err := parseUUID(string(user))
+	if err != nil {
+		return err
+	}
+	err = r.q.NumberPendingAlbum(ctx, NumberPendingAlbumParams{
+		UserID:       uid,
+		MediaGroupID: pgtype.Text{String: group, Valid: true},
+		Base:         base,
+	})
+	if err != nil {
+		return fmt.Errorf("number pending album: %w", err)
+	}
+	return nil
+}
+
 // IntakeStats returns the user's pending count, files created since `since`
 // and total documents in one query.
 func (r *Documents) IntakeStats(ctx context.Context, user docsbot.UserID, since time.Time) (docsbot.IntakeStats, error) {
