@@ -64,6 +64,10 @@ func renderInfo(title string, info convert.FileInfo) string {
 	default:
 		fmt.Fprintf(&sb, textInfoHidden, html.EscapeString(blockNames(info, false)))
 	}
+	if isDocumentType(info.Type) && (info.PDF == nil || !info.PDF.Encrypted) {
+		// Only the properties are read; say so instead of letting «чистый» cover more.
+		sb.WriteString("\n" + textInfoDocCaveat)
+	}
 	return sb.String()
 }
 
@@ -145,6 +149,16 @@ func formatSize(n int) string {
 	default:
 		return fmt.Sprintf("%d %s", n, unitB)
 	}
+}
+
+// isDocumentType reports the types whose content may hold more than the
+// properties Inspect reads: comments, tracked changes, embedded pictures.
+func isDocumentType(t convert.FileType) bool {
+	switch t {
+	case convert.FilePDF, convert.FileDOCX, convert.FileXLSX, convert.FilePPTX:
+		return true
+	}
+	return false
 }
 
 func isImageType(t convert.FileType) bool {

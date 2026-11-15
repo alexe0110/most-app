@@ -341,6 +341,49 @@ func TestStrip_jpegOrientationRows(t *testing.T) {
 	}
 }
 
+func TestStrip_jpegWithoutEOIIsCopiedToTheEnd(t *testing.T) {
+	whole := makeJPEG(t, exifSegment(1))
+	src := whole[:len(whole)-2] // cut off the EOI
+	require.Equal(t, []byte{0xFF, 0xD9}, whole[len(whole)-2:])
+
+	before, err := convert.Inspect(t.Context(), src)
+	require.NoError(t, err, "Inspect and Strip treat a cut-off image the same way")
+	require.False(t, before.Clean())
+
+	out, err := convert.Strip(t.Context(), src)
+
+	require.NoError(t, err)
+	require.Equal(t, scanOf(t, src), scanOf(t, out))
+	after, err := convert.Inspect(t.Context(), out)
+	require.NoError(t, err)
+	require.True(t, after.Clean(), "got blocks %v", after.Blocks)
+}
+
+func TestStrip_progressiveJPEGDropsMetadataBetweenScans(t *testing.T) {
+	base := makeJPEG(t)
+	body := base[:len(base)-2]
+	secondScan := bytes.Join([][]byte{
+		jpegSegment(0xC4, bytes.Repeat([]byte{1}, 20)), // DHT: needed by the scan
+		jpegSegment(0xDA, []byte{1, 1, 0, 0, 63, 0}),   // SOS
+		{0x12, 0x34, 0xFF, 0x00, 0x56},                 // entropy data with a stuffed byte
+	}, nil)
+	src := bytes.Join([][]byte{
+		body,
+		jpegSegment(0xFE, []byte("SECRET comment")),
+		exifSegment(3),
+		secondScan,
+		{0xFF, 0xD9},
+	}, nil)
+
+	out, err := convert.Strip(t.Context(), src)
+
+	require.NoError(t, err)
+	require.NotContains(t, string(out), "SECRET")
+	require.NotContains(t, string(out), "Foo")
+	want := bytes.Join([][]byte{scanOf(t, body), secondScan, {0xFF, 0xD9}}, nil)
+	require.Equal(t, want, scanOf(t, out), "scans, tables and entropy data stay byte for byte")
+}
+
 func TestStrip_jpegDropsEverythingAfterEOI(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -480,6 +523,38 @@ func TestStrip_heicConstructionMethods(t *testing.T) {
 			require.NotContains(t, string(out), "Foo")
 			require.Equal(t, src[:at[0]], out[:at[0]])
 			require.Equal(t, src[at[1]:], out[at[1]:])
+		})
+	}
+}
+
+// makeExtentHEIC is a container with a 64-byte idat and a 64-byte mdat whose Exif
+// item has one extent at off with length n; method is its construction method.
+func makeExtentHEIC(method, off, n int) []byte {
+	infe := box("infe", []byte{2, 0, 0, 0}, be16(1), be16(0), []byte("Exif"), []byte("Exif\x00"))
+	iinf := box("iinf", []byte{0, 0, 0, 0}, be16(1), infe)
+	iloc := box("iloc", []byte{1, 0, 0, 0}, []byte{0x44, 0x00}, be16(1),
+		be16(1), be16(method), be16(0), be16(1), be32(off), be32(n))
+	meta := box("meta", []byte{0, 0, 0, 0}, iinf, iloc, box("idat", bytes.Repeat([]byte{'a'}, 64)))
+	ftyp := box("ftyp", []byte("heic"), be32(0), []byte("mif1heic"))
+	return bytes.Join([][]byte{ftyp, meta, box("mdat", bytes.Repeat([]byte{'b'}, 64))}, nil)
+}
+
+func TestStrip_heicExtentsMustStayInTheirData(t *testing.T) {
+	tests := []struct {
+		name           string
+		method, off, n int
+	}{
+		{"idat extent runs past the idat body into mdat", 1, 60, 20},
+		{"idat extent starts after the body", 1, 70, 4},
+		{"file extent inside the meta box", 0, 30, 18},
+		{"file extent past the end of the file", 0, 1 << 20, 18},
+		{"file extent straddling the start of meta", 0, 20, 18},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := convert.Strip(t.Context(), makeExtentHEIC(tt.method, tt.off, tt.n))
+
+			require.ErrorIs(t, err, convert.ErrUnreadable)
 		})
 	}
 }

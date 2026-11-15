@@ -128,7 +128,7 @@ func TestPickerKeyboard_infoButtonJoinsTheLastRow(t *testing.T) {
 			require.Len(t, rows, base+1)
 			last := rows[len(rows)-1]
 			require.Len(t, last, tt.want)
-			require.Equal(t, converter.InfoCB(uuidDoc), last[len(last)-1].CallbackData)
+			require.Equal(t, converter.InfoButton(uuidDoc).CallbackData, last[len(last)-1].CallbackData)
 		})
 	}
 }

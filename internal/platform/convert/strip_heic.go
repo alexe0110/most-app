@@ -51,7 +51,7 @@ func stripHEIC(data []byte) ([]byte, error) {
 		if !ok || !item.isMetadata() {
 			continue
 		}
-		if err := blankItem(out, loc, item.kind == itemExif, l.idat); err != nil {
+		if err := blankItem(out, loc, item.kind == itemExif, l); err != nil {
 			return nil, unreadable(err)
 		}
 	}
@@ -63,6 +63,7 @@ func stripHEIC(data []byte) ([]byte, error) {
 type heicLayout struct {
 	items map[uint32]heicItem
 	locs  []heicLocation
+	meta  isoBox
 	idat  isoBox
 }
 
@@ -96,45 +97,51 @@ func parseHEIC(data []byte) (heicLayout, error) {
 	if err != nil {
 		return heicLayout{}, unreadable(err)
 	}
-	return heicLayout{items: items, locs: locs, idat: idat}, nil
+	return heicLayout{items: items, locs: locs, meta: meta, idat: idat}, nil
 }
 
 // blankItem overwrites the extents of one item with an empty Exif or XMP of the
-// same total length.
-func blankItem(data []byte, loc heicLocation, isExif bool, idat isoBox) error {
-	origin := uint64(0)
+// same total length. Every extent must lie in the data it points into: the idat
+// body for construction method 1, the file outside the meta box for method 0. A
+// hostile iloc could otherwise aim the blanking at the boxes that describe the
+// file.
+func blankItem(data []byte, loc heicLocation, isExif bool, l heicLayout) error {
+	lo, hi := uint64(0), uint64(len(data))
 	switch loc.method {
 	case 0:
 	case 1:
-		if idat.kind != "idat" {
+		if l.idat.kind != "idat" {
 			return errBadContainer
 		}
-		origin = uint64(idat.body)
+		lo, hi = uint64(l.idat.body), uint64(l.idat.end)
 	default:
 		return errBadContainer // item offsets are not used for metadata
 	}
-	limit := uint64(len(data))
 
+	spans := make([][2]uint64, 0, len(loc.extents))
 	var total uint64
 	for _, e := range loc.extents {
-		if e.length > limit {
+		room := hi - lo
+		if loc.base > room || e.offset > room-loc.base || e.length > room-loc.base-e.offset {
 			return errBadContainer
 		}
-		if total += e.length; total > limit {
+		start := lo + loc.base + e.offset
+		end := start + e.length
+		if loc.method == 0 && e.length > 0 && start < uint64(l.meta.end) && end > uint64(l.meta.start) {
 			return errBadContainer
 		}
+		if total += e.length; total > uint64(len(data)) {
+			return errBadContainer
+		}
+		spans = append(spans, [2]uint64{start, end})
 	}
+
 	blank := blankXMP(int(total))
 	if isExif {
 		blank = blankExif(int(total))
 	}
-
-	for _, e := range loc.extents {
-		start := origin + loc.base + e.offset
-		if loc.base > limit || e.offset > limit || start > limit || e.length > limit-start {
-			return errBadContainer
-		}
-		n := copy(data[start:start+e.length], blank)
+	for _, sp := range spans {
+		n := copy(data[sp[0]:sp[1]], blank)
 		blank = blank[n:]
 	}
 	return nil

@@ -173,13 +173,13 @@ func convDocCB(action string, id docsbot.DocumentID, args ...string) string {
 // document. The docs adapter puts it on its cards and pickers.
 func MenuCB(id docsbot.DocumentID) string { return convDocCB(convActDoc, id) }
 
-// InfoCB is the data of the «О файле» button of a stored document.
-func InfoCB(id docsbot.DocumentID) string { return convDocCB(convActInfo, id) }
+// infoCB is the data of the «О файле» button of a stored document.
+func infoCB(id docsbot.DocumentID) string { return convDocCB(convActInfo, id) }
 
 // InfoButton is the «О файле» button of a stored document. The docs adapter puts
 // it on its pickers.
 func InfoButton(id docsbot.DocumentID) models.InlineKeyboardButton {
-	return models.InlineKeyboardButton{Text: btnInfo, CallbackData: InfoCB(id)}
+	return models.InlineKeyboardButton{Text: btnInfo, CallbackData: infoCB(id)}
 }
 
 // AlbumCB is the data of the "one PDF" button of an album; token comes from

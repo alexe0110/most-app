@@ -23,9 +23,6 @@ const (
 	mimePPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 )
 
-// errDownload marks a failure to fetch the file, as opposed to reading it.
-var errDownload = errors.New("download file")
-
 // cleanedCopy is a cleaned file waiting for the choice between it and the
 // original. The copy is already in Telegram: file holds the ids Telegram returned.
 type cleanedCopy struct {
@@ -63,6 +60,31 @@ func inspectableType(mime, name string) bool {
 	return false
 }
 
+// notInspectableText explains why the screen has nothing to show for a document
+// that was offered the button earlier: it may have been over the limit already,
+// the check being about the stored size.
+func notInspectableText(doc docsbot.Document) string {
+	if doc.Kind == docsbot.KindDocument && doc.FileSize > tg.MaxFileBytes {
+		return infoTooLargeText()
+	}
+	return textInfoUnsupported
+}
+
+// showWorking turns the pressed message into the progress note and takes its
+// buttons away, so nothing can be pressed while the work runs. If the edit fails
+// the note goes out as a new message.
+func (c *Converter) showWorking(ctx context.Context, b *bot.Bot, chatID int64, msgID int) int {
+	if err := c.out(b).TryEdit(ctx, chatID, msgID, textConvertProgress, tg.WithKeyboard(nil)); err == nil {
+		return msgID
+	}
+	return c.show(ctx, b, chatID, msgID, textConvertProgress, nil)
+}
+
+// metaTimeout bounds one metadata operation (reading, cleaning, checking the
+// copy: each gets its own). A PDF takes no longer than an image here: pdfTimeout
+// and imageTimeout are the same 20 seconds, so one value serves both.
+const metaTimeout = imageTimeout
+
 // canClean reports whether cleaning would change anything and can be done.
 func canClean(info convert.FileInfo) bool {
 	return !info.Clean() && (info.PDF == nil || !info.PDF.Encrypted)
@@ -91,7 +113,7 @@ func (c *Converter) onInfo(ctx context.Context, b *bot.Bot, p press) {
 		out.Send(ctx, chatID, textInfoCompressedPhoto, tg.WithKeyboard(back))
 		return
 	case !Inspectable(doc):
-		out.Send(ctx, chatID, textInfoUnsupported, tg.WithKeyboard(back))
+		out.Send(ctx, chatID, notInspectableText(doc), tg.WithKeyboard(back))
 		return
 	}
 	_, info, err := c.loadInfo(ctx, doc)
@@ -140,13 +162,13 @@ func fileFormat(t convert.FileType) docsbot.FileFormat {
 	return ""
 }
 
-// loadInfo downloads the document and reads its metadata, under imageTimeout.
+// loadInfo downloads the document and reads its metadata, under metaTimeout.
 func (c *Converter) loadInfo(ctx context.Context, doc docsbot.Document) ([]byte, convert.FileInfo, error) {
 	data, err := c.download(ctx, doc.TgFileID)
 	if err != nil {
 		return nil, convert.FileInfo{}, fmt.Errorf("%w: %w", errDownload, err)
 	}
-	ictx, cancel := context.WithTimeout(ctx, imageTimeout)
+	ictx, cancel := context.WithTimeout(ctx, metaTimeout)
 	defer cancel()
 	info, err := convert.Inspect(ictx, data)
 	if err != nil {
@@ -173,11 +195,11 @@ func (c *Converter) onClean(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 	if doc.Kind != docsbot.KindDocument || !Inspectable(doc) {
-		c.out(b).Send(ctx, chatID, textInfoUnsupported)
+		c.out(b).Send(ctx, chatID, notInspectableText(doc))
 		return
 	}
 	back := infoKeyboard(id, false)
-	msgID := c.show(ctx, b, chatID, p.msgID, textConvertProgress, nil)
+	msgID := c.showWorking(ctx, b, chatID, p.msgID)
 
 	data, before, err := c.loadInfo(ctx, doc)
 	if err != nil {
@@ -197,8 +219,8 @@ func (c *Converter) onClean(ctx context.Context, b *bot.Bot, p press) {
 	}
 
 	name := resultFileName(doc.Title, nameFallbackDocument, nameTagClean, fileExt(before.Type))
-	caption := fmt.Sprintf(textCleanedCaption, blockNames(before, true))
-	if !c.sendCleaned(ctx, b, chatID, p.tgUser, name, caption, cleaned, id) {
+	file := cleanedFile{name: name, caption: cleanedCaption(before), data: cleaned, sourceDoc: id}
+	if !c.sendCleaned(ctx, b, chatID, p.tgUser, file) {
 		c.show(ctx, b, chatID, msgID, textSendFailed, infoKeyboard(id, true))
 		return
 	}
@@ -208,16 +230,19 @@ func (c *Converter) onClean(ctx context.Context, b *bot.Bot, p press) {
 	c.finish(ctx, b, chatID, msgID)
 }
 
-// strip removes the metadata and checks the result: a copy that still reads as
-// dirty is never offered, so «чистый» is never a promise the file does not keep.
+// strip removes the metadata of a file and checks the result: a copy
+// that still reads as dirty is never offered, so «чистый» is never a promise the
+// file does not keep. Cleaning and the check each get their own timeout.
 func (c *Converter) strip(ctx context.Context, data []byte) ([]byte, error) {
-	sctx, cancel := context.WithTimeout(ctx, imageTimeout)
+	sctx, cancel := context.WithTimeout(ctx, metaTimeout)
 	defer cancel()
 	cleaned, err := convert.Strip(sctx, data)
 	if err != nil {
 		return nil, err
 	}
-	after, err := convert.Inspect(sctx, cleaned)
+	cctx, cancelCheck := context.WithTimeout(ctx, metaTimeout)
+	defer cancelCheck()
+	after, err := convert.Inspect(cctx, cleaned)
 	if err != nil {
 		return nil, err
 	}
@@ -227,19 +252,30 @@ func (c *Converter) strip(ctx context.Context, data []byte) ([]byte, error) {
 	return cleaned, nil
 }
 
-// errStillDirty means the stripped file still carries metadata.
-var errStillDirty = errors.New("metadata left after cleaning")
+// cleanedFile is a cleaned copy ready to be sent.
+type cleanedFile struct {
+	name, caption string
+	data          []byte
+	sourceDoc     docsbot.DocumentID
+}
+
+// cleanedCaption says what was removed, and for documents what was not looked at.
+func cleanedCaption(before convert.FileInfo) string {
+	caption := fmt.Sprintf(textCleanedCaption, blockNames(before, true))
+	if isDocumentType(before.Type) {
+		caption += "\n" + textInfoDocCaveat
+	}
+	return caption
+}
 
 // sendCleaned uploads the cleaned copy with the keep-which buttons and reports
 // whether Telegram accepted it. As in sendResult the choice is remembered only if
 // Telegram echoes the stored file back.
-func (c *Converter) sendCleaned(ctx context.Context, b *bot.Bot, chatID, tgUser int64, filename, caption string,
-	data []byte, sourceDoc docsbot.DocumentID,
-) bool {
+func (c *Converter) sendCleaned(ctx context.Context, b *bot.Bot, chatID, tgUser int64, f cleanedFile) bool {
 	params := &bot.SendDocumentParams{
 		ChatID:   chatID,
-		Document: &models.InputFileUpload{Filename: filename, Data: bytes.NewReader(data)},
-		Caption:  caption,
+		Document: &models.InputFileUpload{Filename: f.name, Data: bytes.NewReader(f.data)},
+		Caption:  f.caption,
 	}
 	user, haveUser := userID(ctx)
 	token := tg.NewToken()
@@ -258,12 +294,12 @@ func (c *Converter) sendCleaned(ctx context.Context, b *bot.Bot, chatID, tgUser 
 		c.removeKeyboard(ctx, b, chatID, msg)
 		return true
 	}
-	pages, width, height := c.fileFacts(ctx, data, filename, msg.Document.MimeType)
+	pages, width, height := c.fileFacts(ctx, f.data, f.name, msg.Document.MimeType)
 	c.cleaned.put(token, tgUser, cleanedCopy{
-		user: user, sourceDoc: sourceDoc,
+		user: user, sourceDoc: f.sourceDoc,
 		file: docsbot.IncomingFile{
 			Kind: docsbot.KindDocument, FileID: msg.Document.FileID, FileUniqueID: msg.Document.FileUniqueID,
-			Title: docsbot.TrimExt(filename), FileSize: msg.Document.FileSize, MIME: msg.Document.MimeType,
+			Title: docsbot.TrimExt(f.name), FileSize: msg.Document.FileSize, MIME: msg.Document.MimeType,
 			PageCount: pages, Width: width, Height: height,
 		},
 	})
@@ -337,56 +373,6 @@ func (c *Converter) showKept(ctx context.Context, b *bot.Bot, chatID int64, user
 		c.docs.SendReplaced(ctx, b, chatID, user, doc.ID)
 	default:
 		c.docs.SendAlreadySaved(ctx, b, chatID, user, doc.ID)
-	}
-}
-
-// logMetaFailure logs a failed metadata operation once. The error text of a
-// parser can quote bytes of the user's file, so only its class is logged; a
-// download failure is token-safe and logged whole.
-func (c *Converter) logMetaFailure(ctx context.Context, what string, err error, attrs ...any) {
-	if errors.Is(err, errDownload) {
-		c.log.ErrorContext(ctx, what+": download failed", append(attrs, "err", err)...)
-		return
-	}
-	c.log.WarnContext(ctx, what+" failed", append(attrs, "reason", metaFailure(err))...)
-}
-
-// metaFailure names why a metadata operation failed.
-func metaFailure(err error) string {
-	switch {
-	case errors.Is(err, convert.ErrUnsupportedFormat):
-		return "unsupported"
-	case errors.Is(err, convert.ErrFileTooLarge):
-		return "too_large"
-	case errors.Is(err, convert.ErrEncrypted):
-		return "encrypted"
-	case errors.Is(err, convert.ErrTimeout):
-		return "timeout"
-	case errors.Is(err, convert.ErrUnreadable):
-		return "unreadable"
-	case errors.Is(err, errStillDirty):
-		return "still_dirty"
-	}
-	return "other"
-}
-
-// infoErrorText is what the user is told about a failed metadata operation.
-func infoErrorText(err error) string {
-	switch {
-	case errors.Is(err, errDownload):
-		return textConvertDownloadFailed
-	case errors.Is(err, convert.ErrUnsupportedFormat):
-		return textInfoUnsupported
-	case errors.Is(err, convert.ErrFileTooLarge):
-		return textInfoTooLarge
-	case errors.Is(err, convert.ErrEncrypted):
-		return textInfoEncrypted
-	case errors.Is(err, convert.ErrTimeout):
-		return textPDFTimeout
-	case errors.Is(err, errStillDirty):
-		return textInfoCleanFailed
-	default:
-		return textInfoUnreadable
 	}
 }
 

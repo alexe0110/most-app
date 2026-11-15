@@ -20,8 +20,6 @@ const (
 	// merge. It equals the Bot API download limit tg.MaxFileBytes, not imported
 	// to keep this package free of the Telegram SDK.
 	MaxInputBytes = 20 << 20
-	// MaxPDFBytes is MaxInputBytes under its older, PDF-specific name.
-	MaxPDFBytes = MaxInputBytes
 	// MaxPDFPages caps the pages of an input (and of a merge result).
 	MaxPDFPages = 500
 )
@@ -51,7 +49,7 @@ func MergePDF(ctx context.Context, pdfs [][]byte) ([]byte, error) {
 	}
 	total := 0
 	for _, p := range pdfs {
-		if total += len(p); total > MaxPDFBytes {
+		if total += len(p); total > MaxInputBytes {
 			return nil, ErrPDFTooLarge
 		}
 	}
@@ -226,7 +224,7 @@ func checkPDFSize(pdf []byte) error {
 	switch {
 	case len(pdf) == 0:
 		return ErrPDFInvalid
-	case len(pdf) > MaxPDFBytes:
+	case len(pdf) > MaxInputBytes:
 		return ErrPDFTooLarge
 	}
 	return nil

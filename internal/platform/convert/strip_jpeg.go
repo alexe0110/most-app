@@ -13,7 +13,7 @@ const (
 )
 
 // stripJPEG drops EXIF, XMP, IPTC, comments and other application segments
-// before the first scan and everything after the closing EOI (a trailing MPF
+// before the first scan and between scans, and everything after the closing EOI (a trailing MPF
 // frame has metadata of its own). Segments the decoder needs stay, and the scan
 // data is copied untouched.
 func stripJPEG(data []byte) ([]byte, error) {
@@ -21,10 +21,7 @@ func stripJPEG(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, unreadable(err)
 	}
-	end, err := jpegScanEnd(data, sos)
-	if err != nil {
-		return nil, unreadable(err)
-	}
+	end, between := jpegScan(data, sos)
 
 	var kept []segment
 	orientation := 0
@@ -52,7 +49,14 @@ func stripJPEG(data []byte) ([]byte, error) {
 	for _, s := range kept[at:] {
 		out = append(out, data[s.start:s.end]...)
 	}
-	return append(out, data[sos:end]...), nil
+	// The scan data is copied as it is, except for metadata segments that sit
+	// between the scans of a progressive image.
+	from := sos
+	for _, s := range between {
+		out = append(out, data[from:s.start]...)
+		from = s.end
+	}
+	return append(out, data[from:end]...), nil
 }
 
 // keepJPEGSegment keeps what decoding or colour needs: tables, frame headers,

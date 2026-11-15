@@ -433,3 +433,13 @@ func TestInspect_pngWithOnlyXMPIsNotClean(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(out), "Ann Author", "and Strip does remove it")
 }
+
+func TestInspectAndStrip_pdfPageLimit(t *testing.T) {
+	src := makePDF(t, convert.MaxPDFPages+1)
+
+	_, err := convert.Inspect(t.Context(), src)
+	require.ErrorIs(t, err, convert.ErrPDFTooManyPages)
+
+	_, err = convert.Strip(t.Context(), src)
+	require.ErrorIs(t, err, convert.ErrPDFTooManyPages)
+}

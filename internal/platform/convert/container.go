@@ -63,11 +63,13 @@ func jpegSegments(data []byte) (segs []segment, sos int, err error) {
 	}
 }
 
-// jpegScanEnd returns the offset just after the EOI that closes the image whose
-// first scan starts at sos. Progressive images have several scans, so it walks
-// the markers instead of looking for the last FFD9 (a trailing MPF frame has its
-// own).
-func jpegScanEnd(data []byte, sos int) (int, error) {
+// jpegScan walks the markers after the first scan header at sos and returns the
+// offset just after the EOI that closes the image, plus the application and
+// comment segments found between scans (progressive images may have them). It
+// walks the markers instead of looking for the last FFD9, because a trailing MPF
+// frame has its own EOI. An image cut off before its EOI ends where the input
+// does, so Strip and Inspect agree on what such a file is.
+func jpegScan(data []byte, sos int) (end int, between []segment) {
 	for i := sos; i+1 < len(data); {
 		j := bytes.IndexByte(data[i:], 0xFF)
 		if j < 0 {
@@ -80,19 +82,26 @@ func jpegScanEnd(data []byte, sos int) (int, error) {
 		m := data[i+1]
 		switch {
 		case m == jpegEOI:
-			return i + 2, nil
+			return i + 2, between
 		case m == 0x00 || (m >= 0xD0 && m <= 0xD7):
 			i += 2 // stuffed byte or restart marker inside entropy data
 		case m == 0xFF:
 			i++
 		default:
 			if i+4 > len(data) {
-				return 0, errBadContainer
+				return len(data), between
 			}
-			i += 2 + int(binary.BigEndian.Uint16(data[i+2:]))
+			next := i + 2 + int(binary.BigEndian.Uint16(data[i+2:]))
+			if next > len(data) {
+				return len(data), between
+			}
+			if m == jpegCOM || (m >= 0xE0 && m <= 0xEF) {
+				between = append(between, segment{marker: m, start: i, end: next})
+			}
+			i = next
 		}
 	}
-	return 0, errBadContainer
+	return len(data), between
 }
 
 // pngChunks splits a PNG into chunks up to and including IEND. kind is the

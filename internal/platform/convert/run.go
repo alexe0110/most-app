@@ -17,12 +17,6 @@ const maxConcurrent = 2
 // slot became free in time.
 var ErrTimeout = errors.New("convert: operation timed out")
 
-// errPanic is what run returns for a panic inside fn, so callers can tell a
-// parser crash from an ordinary failure.
-type errPanic struct{ value any }
-
-func (e errPanic) Error() string { return fmt.Sprintf("convert: panic: %v", e.value) }
-
 // slots is the semaphore of running operations. It is process-wide on purpose:
 // the cap protects the memory of the whole process, not of one caller.
 var slots = make(chan struct{}, maxConcurrent)
@@ -66,7 +60,7 @@ func run(ctx context.Context, fn func(ctx context.Context) error) error {
 		func() {
 			defer func() {
 				if p := recover(); p != nil {
-					err = errPanic{value: p}
+					err = fmt.Errorf("convert: panic: %v", p)
 				}
 			}()
 			err = fn(ctx)
@@ -96,7 +90,8 @@ func metaOp(ctx context.Context, fn func(ctx context.Context) error) error {
 		errors.Is(err, ErrTimeout),
 		errors.Is(err, ErrUnsupportedFormat),
 		errors.Is(err, ErrUnreadable),
-		errors.Is(err, ErrEncrypted):
+		errors.Is(err, ErrEncrypted),
+		errors.Is(err, ErrPDFTooManyPages):
 		return err
 	default:
 		return unreadable(err)

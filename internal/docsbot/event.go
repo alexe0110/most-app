@@ -39,6 +39,8 @@ const (
 
 // FileFormat names the type of a file in a file_info or file_cleaned event. It
 // is the type found from the content, never the name or the declared MIME type.
+// It mirrors convert.FileType: the domain does not import platform/convert, so
+// the converter adapter maps one to the other.
 type FileFormat string
 
 // File formats of the «О файле» screen.

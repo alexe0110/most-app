@@ -93,9 +93,11 @@ const (
 	textInfoEncrypted       = "🔒 Файл зашифрован: метаданные не прочитать и не убрать."
 	textInfoUnsupported     = "Этот формат не поддерживаю. Могу показать, что внутри, у JPEG, PNG, WEBP, HEIC, PDF, DOCX, XLSX и PPTX."
 	textInfoUnreadable      = "Не получилось прочитать файл: он повреждён."
-	textInfoTooLarge        = "Файл больше 20 МБ — прочитать его не получится."
+	textInfoTooLarge        = "Файл больше %d МБ — прочитать его не получится." // %d = the limit
 	textInfoCleanFailed     = "Не получилось полностью убрать метаданные, файл остался без изменений."
-	textInfoNothingToClean  = "Метаданных нет — убирать нечего."
+	// textInfoDocCaveat is added for documents: only their properties are read.
+	textInfoDocCaveat      = "Проверены свойства документа. Комментарии, правки и вложенные картинки не проверял."
+	textInfoNothingToClean = "Метаданных нет — убирать нечего."
 
 	textInfoLocationWarn = "⚠️ Видно, где сделан снимок"
 	textInfoMapLink      = "Открыть на карте"

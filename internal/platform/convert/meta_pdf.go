@@ -23,6 +23,9 @@ func inspectPDF(ctx context.Context, data []byte, info *FileInfo) error {
 	if err != nil {
 		return unreadable(err)
 	}
+	if pctx.PageCount > MaxPDFPages {
+		return ErrPDFTooManyPages
+	}
 	// Optimizing collects the fonts; a document with none is a scan.
 	if err := api.OptimizeContext(ctx, pctx); err != nil {
 		return unreadable(err)

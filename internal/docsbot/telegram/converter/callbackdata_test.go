@@ -226,7 +226,7 @@ func builtButtons() []string {
 			}
 		}
 	}
-	return append(data, MenuCB(uuidDoc), AlbumCB(token), InfoCB(uuidDoc))
+	return append(data, MenuCB(uuidDoc), AlbumCB(token), infoCB(uuidDoc))
 }
 
 func TestBuiltButtons_everyOneParsesFitsAndIsKnown(t *testing.T) {

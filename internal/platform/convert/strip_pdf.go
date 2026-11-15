@@ -25,6 +25,9 @@ func stripPDF(ctx context.Context, data []byte) ([]byte, error) {
 	if pctx.Encrypt != nil {
 		return nil, ErrEncrypted
 	}
+	if pctx.PageCount > MaxPDFPages {
+		return nil, ErrPDFTooManyPages
+	}
 
 	info, err := pctx.IndRefForNewObject(types.NewDict())
 	if err != nil {
