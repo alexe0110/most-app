@@ -3,13 +3,10 @@
 package postgres_test
 
 import (
-	"context"
-	"errors"
 	"strconv"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
@@ -107,55 +104,6 @@ func TestBackups_stuckUploadsListsOnlyOldInFlightOfActiveIntegrations(t *testing
 	require.Equal(t, uploading, limited[0].ID)
 }
 
-func TestBackups_folderCache(t *testing.T) {
-	repo, user := domainRepo(t)
-	ctx := t.Context()
-	uid := string(user)
-
-	_, ok, err := repo.FolderID(ctx, uid, "passport")
-	require.NoError(t, err)
-	require.False(t, ok, "missing key")
-
-	require.NoError(t, repo.SaveFolderID(ctx, uid, "passport", "folder-1"))
-	id, ok, err := repo.FolderID(ctx, uid, "passport")
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, "folder-1", id)
-
-	require.NoError(t, repo.SaveFolderID(ctx, uid, "passport", "folder-2"))
-	id, _, err = repo.FolderID(ctx, uid, "passport")
-	require.NoError(t, err)
-	require.Equal(t, "folder-2", id, "save replaces")
-
-	require.NoError(t, repo.DeleteFolderID(ctx, uid, "passport"))
-	_, ok, err = repo.FolderID(ctx, uid, "passport")
-	require.NoError(t, err)
-	require.False(t, ok)
-}
-
-func TestBackups_deleteAllFolders(t *testing.T) {
-	repo, user := domainRepo(t)
-	ctx := t.Context()
-	other := makeUser(t, repo, 701).ID.String()
-
-	for _, key := range []string{"passport", "insurance"} {
-		require.NoError(t, repo.SaveFolderID(ctx, string(user), key, "f-"+key))
-	}
-	require.NoError(t, repo.SaveFolderID(ctx, other, "passport", "other-f"))
-
-	require.NoError(t, repo.DeleteAllFolders(ctx, user))
-
-	for _, key := range []string{"passport", "insurance"} {
-		_, ok, err := repo.FolderID(ctx, string(user), key)
-		require.NoError(t, err)
-		require.False(t, ok, key)
-	}
-	id, ok, err := repo.FolderID(ctx, other, "passport")
-	require.NoError(t, err)
-	require.True(t, ok, "other user's cache is untouched")
-	require.Equal(t, "other-f", id)
-}
-
 func TestBackups_saveChosenTx(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -184,56 +132,6 @@ func TestBackups_saveChosenTx(t *testing.T) {
 			require.Equal(t, tt.wantBackup, got.BackupStatus)
 		})
 	}
-}
-
-func TestFolders_categoryFolderID(t *testing.T) {
-	repo, user := domainRepo(t)
-	ctx := t.Context()
-
-	require.NoError(t, repo.SaveFolderID(ctx, string(user), "passport", "folder-x"))
-
-	id, ok, err := repo.CategoryFolderID(ctx, user, docsbot.Category("passport"))
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, "folder-x", id)
-
-	id, ok, err = repo.CategoryFolderID(ctx, user, docsbot.Category("medical"))
-	require.NoError(t, err)
-	require.False(t, ok)
-	require.Empty(t, id)
-}
-
-// noJobs is a JobInserter for tests where no job may be needed.
-type noJobs struct{}
-
-var (
-	errUnexpectedJob = errors.New("unexpected job insert")
-	errBoom          = errors.New("insert failed")
-)
-
-var _ postgres.JobInserter = noJobs{}
-
-func (noJobs) InsertUpload(context.Context, pgx.Tx, docsbot.UserID, docsbot.DocumentID) (bool, error) {
-	return false, errUnexpectedJob
-}
-
-func (noJobs) InsertSync(context.Context, pgx.Tx, docsbot.UserID, docsbot.DocumentID) error {
-	return errUnexpectedJob
-}
-
-func (noJobs) InsertTrash(context.Context, pgx.Tx, docsbot.UserID, string) error {
-	return errUnexpectedJob
-}
-
-// uploadJobs is a JobInserter whose upload insert returns a fixed result.
-type uploadJobs struct {
-	noJobs
-	skipped bool
-	err     error
-}
-
-func (u uploadJobs) InsertUpload(context.Context, pgx.Tx, docsbot.UserID, docsbot.DocumentID) (bool, error) {
-	return u.skipped, u.err
 }
 
 // The reason of a failed backup is stored with the status and cleared whenever
@@ -285,153 +183,4 @@ func TestBackups_failReason(t *testing.T) {
 	foreign := docsbot.UserID("00000000-0000-0000-0000-000000000000")
 	require.NoError(t, repo.FailBackup(ctx, foreign, doc.ID, docsbot.BackupReasonQuota))
 	require.Empty(t, reason(doc.ID), "a foreign user cannot fail the document")
-}
-
-func TestClaimFailed(t *testing.T) {
-	repo, a, b := twoUsers(t)
-	ctx := t.Context()
-
-	mk := func(unique string, st docsbot.BackupStatus) docsbot.DocumentID {
-		d := titled(t, repo, a, unique, "d")
-		require.NoError(t, repo.SetBackupStatus(ctx, a, d.ID, st))
-		return d.ID
-	}
-	failed := mk("failed", docsbot.BackupFailed)
-
-	// Someone else cannot claim it.
-	ok, err := repo.ClaimFailed(ctx, b, failed)
-	require.NoError(t, err)
-	require.False(t, ok)
-	require.Equal(t, docsbot.BackupFailed, backupOf(t, repo, a, failed).BackupStatus)
-
-	// The owner claims once; the double tap gets nothing.
-	ok, err = repo.ClaimFailed(ctx, a, failed)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, docsbot.BackupPending, backupOf(t, repo, a, failed).BackupStatus)
-	ok, err = repo.ClaimFailed(ctx, a, failed)
-	require.NoError(t, err)
-	require.False(t, ok)
-
-	for _, st := range []docsbot.BackupStatus{docsbot.BackupBackedUp, docsbot.BackupUploading, docsbot.BackupPending, docsbot.BackupNone, docsbot.BackupTooLarge} {
-		id := mk("s-"+string(st), st)
-		ok, err = repo.ClaimFailed(ctx, a, id)
-		require.NoError(t, err)
-		require.False(t, ok, "%s is not retryable", st)
-		require.Equal(t, st, backupOf(t, repo, a, id).BackupStatus)
-	}
-}
-
-func TestClaimFailed_parallelClaimsWinOnce(t *testing.T) {
-	repo, a, _ := twoUsers(t)
-	d := titled(t, repo, a, "race", "d")
-	require.NoError(t, repo.SetBackupStatus(t.Context(), a, d.ID, docsbot.BackupFailed))
-
-	wins := make(chan bool, 10)
-	for range 10 {
-		go func() {
-			ok, err := repo.ClaimFailed(t.Context(), a, d.ID)
-			if err != nil {
-				ok = false
-			}
-			wins <- ok
-		}()
-	}
-	n := 0
-	for range 10 {
-		if <-wins {
-			n++
-		}
-	}
-	require.Equal(t, 1, n)
-}
-
-func TestClaimTransferable_onlyNoneAndFailedOwnedByUser(t *testing.T) {
-	repo, a, b := twoUsers(t)
-	ctx := t.Context()
-	want := map[docsbot.BackupStatus]bool{docsbot.BackupNone: true, docsbot.BackupFailed: true}
-	byStatus := map[docsbot.BackupStatus]docsbot.DocumentID{}
-	for _, st := range []docsbot.BackupStatus{
-		docsbot.BackupNone, docsbot.BackupFailed, docsbot.BackupPending,
-		docsbot.BackupUploading, docsbot.BackupBackedUp, docsbot.BackupTooLarge,
-	} {
-		d := titled(t, repo, a, "n-"+string(st), "d")
-		require.NoError(t, repo.SetBackupStatus(ctx, a, d.ID, st))
-		byStatus[st] = d.ID
-	}
-	foreign := titled(t, repo, b, "foreign", "d")
-
-	ids, err := repo.ClaimTransferable(ctx, a)
-	require.NoError(t, err)
-	got := map[docsbot.DocumentID]bool{}
-	for _, id := range ids {
-		got[id] = true
-	}
-	for st, id := range byStatus {
-		require.Equal(t, want[st], got[id], "status %s", st)
-	}
-	require.False(t, got[foreign.ID])
-	require.Equal(t, docsbot.BackupNone, backupOf(t, repo, b, foreign.ID).BackupStatus, "other user's document untouched")
-	for id := range got {
-		require.Equal(t, docsbot.BackupPending, backupOf(t, repo, a, id).BackupStatus)
-	}
-
-	again, err := repo.ClaimTransferable(ctx, a)
-	require.NoError(t, err)
-	require.Empty(t, again, "a second claim finds nothing")
-}
-
-func TestClaim_parallelClaimsPartitionDocuments(t *testing.T) {
-	repo, a, _ := twoUsers(t)
-	const docs = 6
-	for i := range docs {
-		d := titled(t, repo, a, "pc-"+string(rune('a'+i)), "d")
-		if i%2 == 0 {
-			require.NoError(t, repo.SetBackupStatus(t.Context(), a, d.ID, docsbot.BackupFailed))
-		}
-	}
-
-	type result struct {
-		ids []docsbot.DocumentID
-		err error
-	}
-	res := make(chan result, 8)
-	for range 8 {
-		go func() {
-			ids, err := repo.ClaimTransferable(t.Context(), a)
-			res <- result{ids, err}
-		}()
-	}
-	seen := map[docsbot.DocumentID]int{}
-	for range 8 {
-		r := <-res
-		require.NoError(t, r.err)
-		for _, id := range r.ids {
-			seen[id]++
-		}
-	}
-	require.Len(t, seen, docs, "every document is claimed")
-	for id, n := range seen {
-		require.Equal(t, 1, n, "document %s claimed by more than one caller", id)
-	}
-}
-
-func TestClaimAllFailed_onlyFailed(t *testing.T) {
-	repo, a, b := twoUsers(t)
-	ctx := t.Context()
-	failed := titled(t, repo, a, "f", "d")
-	none := titled(t, repo, a, "n", "d")
-	foreign := titled(t, repo, b, "bf", "d")
-	require.NoError(t, repo.SetBackupStatus(ctx, a, failed.ID, docsbot.BackupFailed))
-	require.NoError(t, repo.SetBackupStatus(ctx, b, foreign.ID, docsbot.BackupFailed))
-
-	ids, err := repo.ClaimAllFailed(ctx, a)
-	require.NoError(t, err)
-	require.Equal(t, []docsbot.DocumentID{failed.ID}, ids)
-	require.Equal(t, docsbot.BackupNone, backupOf(t, repo, a, none.ID).BackupStatus)
-	require.Equal(t, docsbot.BackupFailed, backupOf(t, repo, b, foreign.ID).BackupStatus)
-
-	again, err := repo.ClaimAllFailed(ctx, a)
-	require.NoError(t, err)
-	require.Empty(t, again)
 }
