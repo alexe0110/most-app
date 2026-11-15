@@ -3,6 +3,7 @@
 package dbtest_test
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -42,4 +43,25 @@ func TestNew_isolatedMigratedDatabases(t *testing.T) {
 	require.NoError(t, second.QueryRow(t.Context(), "select count(*) from users").Scan(&inSecond))
 	require.Equal(t, 1, inFirst)
 	require.Zero(t, inSecond)
+}
+
+// Tests may clone the template in parallel, and a finished test leaves no
+// database behind: the container would otherwise fill up over a long run.
+func TestNew_parallelClonesAreDropped(t *testing.T) {
+	own := dbtest.New(t)
+
+	t.Run("clones", func(t *testing.T) {
+		for i := range 8 {
+			t.Run(strconv.Itoa(i), func(t *testing.T) {
+				t.Parallel()
+				pool := dbtest.New(t)
+				_, err := pool.Exec(t.Context(), "insert into users (tg_user_id) values ($1)", i)
+				require.NoError(t, err)
+			})
+		}
+	})
+
+	var left int
+	require.NoError(t, own.QueryRow(t.Context(), `select count(*) from pg_database where datname like 't\_%'`).Scan(&left))
+	require.Equal(t, 1, left, "only this test's own database is left")
 }
