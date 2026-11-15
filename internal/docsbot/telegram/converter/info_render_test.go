@@ -1,6 +1,8 @@
 package converter
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 )
 
 func TestInspectable(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		doc  docsbot.Document
@@ -33,6 +36,7 @@ func TestInspectable(t *testing.T) {
 }
 
 func TestRenderInfo_groupsEscapesAndHidesEmpty(t *testing.T) {
+	t.Parallel()
 	info := convert.FileInfo{
 		Type: convert.FileJPEG, Size: 2 << 20,
 		Capture:  convert.Capture{Taken: time.Date(2026, 2, 19, 14, 22, 0, 0, time.UTC), Make: "Apple", Model: "iPhone <15>"},
@@ -54,6 +58,7 @@ func TestRenderInfo_groupsEscapesAndHidesEmpty(t *testing.T) {
 }
 
 func TestRenderInfo_cleanFile(t *testing.T) {
+	t.Parallel()
 	got := renderInfo("a.png", convert.FileInfo{Type: convert.FilePNG, Size: 100})
 
 	require.Contains(t, got, textInfoClean)
@@ -61,6 +66,7 @@ func TestRenderInfo_cleanFile(t *testing.T) {
 }
 
 func TestRenderInfo_cutsLongValues(t *testing.T) {
+	t.Parallel()
 	info := convert.FileInfo{Type: convert.FileDOCX, People: convert.People{Author: strings.Repeat("я", 500)}}
 
 	got := renderInfo("d", info)
@@ -70,6 +76,7 @@ func TestRenderInfo_cutsLongValues(t *testing.T) {
 }
 
 func TestRenderInfo_encryptedPDFIsNotCalledClean(t *testing.T) {
+	t.Parallel()
 	info := convert.FileInfo{Type: convert.FilePDF, PDF: &convert.PDFFacts{Encrypted: true}}
 
 	got := renderInfo("a.pdf", info)
@@ -80,12 +87,14 @@ func TestRenderInfo_encryptedPDFIsNotCalledClean(t *testing.T) {
 }
 
 func TestInfoKeyboard_cleanButtonOnlyWhenThereIsSomethingToClean(t *testing.T) {
+	t.Parallel()
 	require.Len(t, infoKeyboard("d1", true).InlineKeyboard[0], 2)
 	require.Len(t, infoKeyboard("d1", false).InlineKeyboard[0], 1)
 	require.Equal(t, cbMenuCancel, infoKeyboard("d1", false).InlineKeyboard[0][0].CallbackData, "back removes the screen")
 }
 
 func TestFileFormat_coversEveryType(t *testing.T) {
+	t.Parallel()
 	for _, ft := range []convert.FileType{
 		convert.FileJPEG, convert.FilePNG, convert.FileWebP, convert.FileHEIC,
 		convert.FilePDF, convert.FileDOCX, convert.FileXLSX, convert.FilePPTX,
@@ -95,6 +104,7 @@ func TestFileFormat_coversEveryType(t *testing.T) {
 }
 
 func TestRenderInfo_worstCaseFitsOneMessage(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("<&>я", 200) // the reader caps a value at 256 runes
 	info := convert.FileInfo{
 		Type: convert.FilePDF, Size: convert.MaxInputBytes,
@@ -114,6 +124,7 @@ func TestRenderInfo_worstCaseFitsOneMessage(t *testing.T) {
 }
 
 func TestRenderInfo_documentsCarryTheCaveat(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		info convert.FileInfo
@@ -135,18 +146,93 @@ func TestRenderInfo_documentsCarryTheCaveat(t *testing.T) {
 }
 
 func TestCleanedCaption(t *testing.T) {
+	t.Parallel()
 	photo := cleanedCaption(convert.FileInfo{Type: convert.FileJPEG, Blocks: []convert.MetaBlock{convert.BlockEXIF}, Location: &convert.GeoPoint{Lat: 1, Lon: 2}})
 	require.Contains(t, photo, "геолокация, EXIF")
 	require.NotContains(t, photo, textInfoDocCaveat)
 
 	doc := cleanedCaption(convert.FileInfo{Type: convert.FileDOCX, Blocks: []convert.MetaBlock{convert.BlockOfficeProps}})
-	require.Contains(t, doc, "свойства документа")
+	require.Contains(t, doc, blockOfficeProps)
 	require.Contains(t, doc, textInfoDocCaveat)
 }
 
 func TestNotInspectableText(t *testing.T) {
+	t.Parallel()
 	big := docsbot.Document{Kind: docsbot.KindDocument, MIME: mimePDF, FileSize: 21 << 20}
 	require.Equal(t, infoTooLargeText(), notInspectableText(big), "a stale button on a file over the limit")
 	require.Contains(t, infoTooLargeText(), "20\u00a0МБ", "the limit is taken from convert.MaxInputBytes")
 	require.Equal(t, textInfoUnsupported, notInspectableText(docsbot.Document{Kind: docsbot.KindDocument, MIME: "video/mp4"}))
+}
+
+// wrapped is an error as the handlers pass it on: with context around it.
+func wrapped(err error) error { return fmt.Errorf("operation: %w", err) }
+
+func TestMetaFailure_namesTheClassOfTheError(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"unsupported", wrapped(convert.ErrUnsupportedFormat), "unsupported"},
+		{"too large", wrapped(convert.ErrFileTooLarge), "too_large"},
+		{"too many pages", wrapped(convert.ErrPDFTooManyPages), "too_many_pages"},
+		{"encrypted", wrapped(convert.ErrEncrypted), "encrypted"},
+		{"timeout", wrapped(convert.ErrTimeout), "timeout"},
+		{"unreadable", wrapped(convert.ErrUnreadable), "unreadable"},
+		{"still dirty", wrapped(errStillDirty), "still_dirty"},
+		{"anything else", errors.New("boom"), "other"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, metaFailure(tt.err))
+		})
+	}
+}
+
+func TestInfoErrorText_mapsEachErrorToItsText(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"download", wrapped(errDownload), textConvertDownloadFailed},
+		{"unsupported", wrapped(convert.ErrUnsupportedFormat), textInfoUnsupported},
+		{"too large", wrapped(convert.ErrFileTooLarge), infoTooLargeText()},
+		{"too many pages", wrapped(convert.ErrPDFTooManyPages), fmt.Sprintf(textPDFTooMany, convert.MaxPDFPages)},
+		{"encrypted", wrapped(convert.ErrEncrypted), textInfoEncrypted},
+		{"timeout", wrapped(convert.ErrTimeout), textPDFTimeout},
+		{"still dirty", wrapped(errStillDirty), textInfoCleanFailed},
+		{"unreadable", wrapped(convert.ErrUnreadable), textInfoUnreadable},
+		{"anything else", errors.New("boom"), textInfoUnreadable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, infoErrorText(tt.err))
+		})
+	}
+}
+
+func TestPDFErrorText_mapsEachErrorToItsText(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"too large", wrapped(convert.ErrPDFTooLarge), pdfTooLargeText()},
+		{"too many pages", wrapped(convert.ErrPDFTooManyPages), fmt.Sprintf(textPDFTooMany, convert.MaxPDFPages)},
+		{"timeout", wrapped(convert.ErrTimeout), textPDFTimeout},
+		{"bad page range", wrapped(convert.ErrBadPageRange), textPDFBadRange},
+		{"anything else", errors.New("boom"), textPDFInvalid},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, pdfErrorText(tt.err))
+		})
+	}
 }

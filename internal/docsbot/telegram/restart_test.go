@@ -7,6 +7,7 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -51,11 +52,11 @@ func TestRestart_callbacksWithoutStoreEntries(t *testing.T) {
 
 	// an album picker pressed after restart for an album that no longer exists.
 	b.ProcessUpdate(ctx, dataCallback("d:ga:missing:"+string(docsbot.CatPassport)))
-	require.Contains(t, sent.edits[len(sent.edits)-1], "Этого документа уже нет")
+	require.Contains(t, sent.edits[len(sent.edits)-1], telegram.TextGone)
 
 	// the delete confirmation was never armed: "yes" on a missing document.
 	b.ProcessUpdate(ctx, dataCallback("d:dy:missing"))
-	require.True(t, has(sent.edits, "Этого документа уже нет"), "edits %q", sent.edits)
+	require.True(t, has(sent.edits, telegram.TextGone), "edits %q", sent.edits)
 }
 
 func TestRestart_deleteWordWithoutArmedConfirmationIsASearch(t *testing.T) {

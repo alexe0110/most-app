@@ -13,6 +13,7 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -43,6 +44,7 @@ func namedDocumentUpdate(fileID, mime, name string) *models.Update {
 }
 
 func TestConvertWebP_compressInCommand(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	h.serve("webp-in", padWebP(tinyWebP(t), bigPhotoSize))
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
@@ -60,6 +62,7 @@ func TestConvertWebP_compressInCommand(t *testing.T) {
 }
 
 func TestConvertWebP_pdfInCommand(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	h.serve("webp-in", tinyWebP(t))
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
@@ -75,6 +78,7 @@ func TestConvertWebP_pdfInCommand(t *testing.T) {
 }
 
 func TestConvertWebP_cardToJPG(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	h.serve("webp-src", tinyWebP(t))
 	src := h.repo.Seed(docsbot.Document{
@@ -95,7 +99,7 @@ func TestConvertWebP_cardToJPG(t *testing.T) {
 
 	tok := resultToken.FindStringSubmatch(h.docMarkups[0])
 	require.NotNil(t, tok)
-	require.Contains(t, h.docMarkups[0], "Заменить оригинал", "the source is saved")
+	require.Contains(t, h.docMarkups[0], converter.BtnReplaceOriginal, "the source is saved")
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rp:"+tok[1]))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpy:"+tok[1]))
 	require.Len(t, h.repo.Docs, 1)
@@ -103,6 +107,7 @@ func TestConvertWebP_cardToJPG(t *testing.T) {
 }
 
 func TestConvertWebP_pendingCardOffersToSaveJPG(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	h.serve("webp-src", tinyWebP(t))
 	src := h.repo.Seed(docsbot.Document{
@@ -114,11 +119,12 @@ func TestConvertWebP_pendingCardOffersToSaveJPG(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":jpg"))
 
 	require.Len(t, h.docs, 1)
-	require.Contains(t, h.docMarkups[0], "Сохранить JPG")
+	require.Contains(t, h.docMarkups[0], converter.BtnSaveJPG)
 	require.NotContains(t, h.docMarkups[0], "Заменить")
 }
 
 func TestConvertWebP_jpgButtonOnlyForWebP(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved) // a photo
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
@@ -130,6 +136,7 @@ func TestConvertWebP_jpgButtonOnlyForWebP(t *testing.T) {
 }
 
 func TestConvertHEIC_refusedInCommand(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ name, mime, file string }{
 		{"heic mime", "image/heic", "a.heic"},
 		{"heif mime", "image/heif", ""},
@@ -147,12 +154,13 @@ func TestConvertHEIC_refusedInCommand(t *testing.T) {
 			h.bot.ProcessUpdate(ctx, namedDocumentUpdate("x", tt.mime, tt.file))
 
 			require.Empty(t, h.docs)
-			require.Equal(t, "Этот формат пока не поддерживается. Пришли JPG, PNG или WEBP.", h.lastText())
+			require.Equal(t, converter.TextConvertFormatNotSupported, h.lastText())
 		})
 	}
 }
 
 func TestConvertHEIC_callbacksAreRefused(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	heic := h.repo.Seed(docsbot.Document{
 		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "image/heic",

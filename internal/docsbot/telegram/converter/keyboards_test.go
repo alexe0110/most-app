@@ -12,6 +12,7 @@ import (
 )
 
 func TestCallbackDataFitsTelegramLimit(t *testing.T) {
+	t.Parallel()
 	// A UUID doc id is the longest id we use (36 bytes).
 	id := docsbot.DocumentID("123e4567-e89b-12d3-a456-426614174000")
 	token := tg.NewToken()
@@ -41,6 +42,7 @@ func TestCallbackDataFitsTelegramLimit(t *testing.T) {
 }
 
 func TestResultKeyboard(t *testing.T) {
+	t.Parallel()
 	token := "abc123"
 	tests := []struct {
 		name    string
@@ -48,12 +50,12 @@ func TestResultKeyboard(t *testing.T) {
 		replace bool
 		want    [][]string // label and callback data per row
 	}{
-		{"compress, not replaceable", resultCompressed, false, [][]string{{"💾 Сохранить сжатый", "conv:sv:abc123"}, {"Ничего не делать", "conv:skip:abc123"}}},
-		{"compress, replaceable", resultCompressed, true, [][]string{{"♻️ Заменить сжатым", "conv:rp:abc123"}, {"Ничего не делать", "conv:skip:abc123"}}},
-		{"pdf, not replaceable", resultPDF, false, [][]string{{"💾 Сохранить PDF", "conv:sv:abc123"}, {"Ничего не делать", "conv:skip:abc123"}}},
-		{"pdf, replaceable", resultPDF, true, [][]string{{"♻️ Заменить оригинал", "conv:rp:abc123"}, {"Ничего не делать", "conv:skip:abc123"}}},
-		{"jpg, not replaceable", resultJPG, false, [][]string{{"💾 Сохранить JPG", "conv:sv:abc123"}, {"Ничего не делать", "conv:skip:abc123"}}},
-		{"jpg, replaceable", resultJPG, true, [][]string{{"♻️ Заменить оригинал", "conv:rp:abc123"}, {"Ничего не делать", "conv:skip:abc123"}}},
+		{"compress, not replaceable", resultCompressed, false, [][]string{{btnSaveCompressed, "conv:sv:abc123"}, {btnSkipResult, "conv:skip:abc123"}}},
+		{"compress, replaceable", resultCompressed, true, [][]string{{btnReplaceCompressed, "conv:rp:abc123"}, {btnSkipResult, "conv:skip:abc123"}}},
+		{"pdf, not replaceable", resultPDF, false, [][]string{{btnSavePDF, "conv:sv:abc123"}, {btnSkipResult, "conv:skip:abc123"}}},
+		{"pdf, replaceable", resultPDF, true, [][]string{{btnReplaceOriginal, "conv:rp:abc123"}, {btnSkipResult, "conv:skip:abc123"}}},
+		{"jpg, not replaceable", resultJPG, false, [][]string{{btnSaveJPG, "conv:sv:abc123"}, {btnSkipResult, "conv:skip:abc123"}}},
+		{"jpg, replaceable", resultJPG, true, [][]string{{btnReplaceOriginal, "conv:rp:abc123"}, {btnSkipResult, "conv:skip:abc123"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -71,6 +73,7 @@ func TestResultKeyboard(t *testing.T) {
 }
 
 func TestPDFKeyboards_layout(t *testing.T) {
+	t.Parallel()
 	id := docsbot.DocumentID("123e4567-e89b-12d3-a456-426614174000")
 	tests := []struct {
 		name string

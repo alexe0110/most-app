@@ -18,8 +18,8 @@ import (
 // once, queue one job and upload the file once.
 func TestRetryBackup_simultaneousTapsUploadOnce(t *testing.T) {
 	drive := &countingDrive{}
-	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, slog.New(slog.DiscardHandler))
-	svc := newService(pool, enq, jobs.NewQueue(queue.Inserter), drive, fakeFiles{})
+	pool, user, id, spy, enq, queue := setupUpload(t, drive, slog.New(slog.DiscardHandler))
+	svc := newService(pool, enq, jobs.NewQueue(queue.Inserter), drive)
 	_, err := pool.Exec(t.Context(), `update documents set backup_status = 'failed' where id = $1::uuid`, string(id))
 	require.NoError(t, err)
 
@@ -49,9 +49,9 @@ func TestRetryBackup_simultaneousTapsUploadOnce(t *testing.T) {
 	require.Eventually(t, func() bool {
 		status, _ := backupState(t, pool, id)
 		return status == "backed_up"
-	}, 30*time.Second, 100*time.Millisecond)
+	}, 10*time.Second, 100*time.Millisecond)
 	require.Eventually(t, func() bool { return len(spy.seen()) >= 1 }, 5*time.Second, 50*time.Millisecond)
-	time.Sleep(time.Second) // let a wrongly inserted second job run before asserting
+	awaitQueueDrained(t, pool) // a wrongly inserted second job would have run by now
 	require.Equal(t, 1, drive.count())
 
 	// A stale button on the now backed-up document is a quiet no-op.

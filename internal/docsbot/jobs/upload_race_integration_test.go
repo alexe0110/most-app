@@ -31,7 +31,7 @@ func discardLog() *slog.Logger { return slog.New(slog.DiscardHandler) }
 // Many simultaneous taps / duplicate updates for one document give one upload.
 func TestUploadJob_concurrentSameDocumentUploadsOnce(t *testing.T) {
 	drive := &countingDrive{}
-	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, discardLog())
+	pool, user, id, spy, enq, queue := setupUpload(t, drive, discardLog())
 
 	const taps = 10
 	var wg sync.WaitGroup
@@ -49,8 +49,8 @@ func TestUploadJob_concurrentSameDocumentUploadsOnce(t *testing.T) {
 	require.Eventually(t, func() bool {
 		status, _ := backupState(t, pool, id)
 		return status == "backed_up"
-	}, 30*time.Second, 100*time.Millisecond)
-	time.Sleep(time.Second)
+	}, 10*time.Second, 100*time.Millisecond)
+	awaitQueueDrained(t, pool) // a duplicate job would have run by now
 	require.Equal(t, 1, drive.count())
 	require.Len(t, spy.seen(), 1)
 }
@@ -58,33 +58,33 @@ func TestUploadJob_concurrentSameDocumentUploadsOnce(t *testing.T) {
 // "Retry" after a failed upload: the earlier job is finished, so a new one is created.
 func TestUploadJob_retryAfterFailedRuns(t *testing.T) {
 	drive := &countingDrive{}
-	pool, user, id, _, enq, queue := setupUpload(t, fakeFiles{}, drive, discardLog())
+	pool, user, id, _, enq, queue := setupUpload(t, drive, discardLog())
 	startQueue(t, queue)
 
 	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 	require.Eventually(t, func() bool {
 		status, _ := backupState(t, pool, id)
 		return status == "backed_up"
-	}, 30*time.Second, 100*time.Millisecond)
+	}, 10*time.Second, 100*time.Millisecond)
 	// backed_up is written inside Work; River marks the job Completed only after Work returns.
 	// Until then the job is still Running and a re-enqueue is deduplicated (unique ByState
-	// includes Running). Let the job settle; do not remove this pause.
-	time.Sleep(2 * time.Second)
+	// includes Running), so wait for the job to leave the queue first.
+	awaitQueueDrained(t, pool)
 
 	_, err := pool.Exec(t.Context(), `update documents set backup_status = 'failed', drive_file_id = null where id = $1::uuid`, string(id))
 	require.NoError(t, err)
 	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 
-	require.Eventually(t, func() bool { return drive.count() == 2 }, 30*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool { return drive.count() == 2 }, 10*time.Second, 100*time.Millisecond)
 	require.Eventually(t, func() bool {
 		status, _ := backupState(t, pool, id)
 		return status == "backed_up"
-	}, 30*time.Second, 100*time.Millisecond)
+	}, 10*time.Second, 100*time.Millisecond)
 }
 
 // Requeueing while a job is live inserts nothing and leaves the document status as it was.
 func TestRequeueUpload_duplicateKeepsStatus(t *testing.T) {
-	pool, user, id, _, enq, _ := setupUpload(t, fakeFiles{}, &countingDrive{}, discardLog())
+	pool, user, id, _, enq, _ := setupUpload(t, &countingDrive{}, discardLog())
 
 	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 	_, err := pool.Exec(t.Context(), `update documents set backup_status = 'uploading' where id = $1::uuid`, string(id))
@@ -242,7 +242,7 @@ func TestUploadDocument_batchCreatesFoldersOnce(t *testing.T) {
 	require.NoError(t, err)
 	jq := jobs.NewQueue(inserter)
 	enq := postgres.NewDocuments(pool, jq)
-	svc := newService(pool, enq, jq, raceDrive{gd: gd}, fakeFiles{})
+	svc := newService(pool, enq, jq, raceDrive{gd: gd})
 	workers := river.NewWorkers()
 	jobs.RegisterUploadDocument(workers, log, svc, &spyNotifier{})
 	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
@@ -264,7 +264,7 @@ func TestUploadDocument_batchCreatesFoldersOnce(t *testing.T) {
 		require.NoError(t, pool.QueryRow(ctx,
 			`select count(*) from documents where user_id = $1::uuid and backup_status = 'backed_up'`, uid).Scan(&n))
 		return n == total
-	}, 30*time.Second, 100*time.Millisecond)
+	}, 10*time.Second, 100*time.Millisecond)
 
 	require.Equal(t, 1, fd.createdCount("Most Docs"))
 	for _, cat := range used {

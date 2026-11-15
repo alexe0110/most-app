@@ -3,6 +3,8 @@
 package postgres_test
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -53,24 +55,28 @@ func newRepo(t *testing.T) *adapters {
 	return newAdapters(dbtest.New(t), noJobs{}) // boots Postgres + applies migrations
 }
 
-func TestRepo_users(t *testing.T) {
-	repo := newRepo(t)
-	ctx := t.Context()
+// twoUsers returns a repo with users A and B.
+func twoUsers(t *testing.T) (repo *adapters, a, b docsbot.UserID) {
+	t.Helper()
+	repo = newRepo(t)
+	return repo, docsbot.UserID(makeUser(t, repo, 900).ID.String()), docsbot.UserID(makeUser(t, repo, 901).ID.String())
+}
 
-	u := makeUser(t, repo, 100)
-	require.True(t, u.ID.Valid)
-	require.EqualValues(t, 7, u.ID.Bytes[6]>>4, "id must be a UUID v7")
-
-	got, err := repo.q.GetUserByTgID(ctx, 100)
+func titled(t *testing.T, repo *adapters, user docsbot.UserID, unique, title string) docsbot.Document {
+	t.Helper()
+	doc, err := repo.CreateDocument(t.Context(), docsbot.IncomingFile{
+		UserID: user, Kind: docsbot.KindDocument, Title: title, FileID: "f-" + unique, FileUniqueID: unique,
+	})
 	require.NoError(t, err)
-	require.Equal(t, u.ID, got.ID)
+	mustSave(t, repo, user, doc.ID, docsbot.CatOther)
+	return doc
+}
 
-	_, err = repo.q.GetUserByTgID(ctx, 999)
-	require.ErrorIs(t, err, pgx.ErrNoRows)
-
-	require.NoError(t, repo.q.SoftDeleteUser(ctx, u.ID))
-	_, err = repo.q.GetUserByTgID(ctx, 100)
-	require.ErrorIs(t, err, pgx.ErrNoRows, "soft-deleted user is hidden")
+func backupOf(t *testing.T, repo *adapters, user docsbot.UserID, id docsbot.DocumentID) docsbot.Document {
+	t.Helper()
+	d, err := repo.DocumentByID(t.Context(), user, id)
+	require.NoError(t, err)
+	return d
 }
 
 func TestRepo_statusCheck(t *testing.T) {
@@ -168,4 +174,37 @@ func TestSaveChosen_parallelTapsSaveOnce(t *testing.T) {
 	saved, err := repo.SaveChosen(ctx, docsbot.SaveChoice{User: user, ID: doc.ID, Category: docsbot.CatOther, Backup: docsbot.BackupNone})
 	require.NoError(t, err)
 	require.False(t, saved)
+}
+
+// noJobs is a JobInserter for tests where no job may be needed.
+type noJobs struct{}
+
+var (
+	errUnexpectedJob = errors.New("unexpected job insert")
+	errBoom          = errors.New("insert failed")
+)
+
+var _ postgres.JobInserter = noJobs{}
+
+func (noJobs) InsertUpload(context.Context, pgx.Tx, docsbot.UserID, docsbot.DocumentID) (bool, error) {
+	return false, errUnexpectedJob
+}
+
+func (noJobs) InsertSync(context.Context, pgx.Tx, docsbot.UserID, docsbot.DocumentID) error {
+	return errUnexpectedJob
+}
+
+func (noJobs) InsertTrash(context.Context, pgx.Tx, docsbot.UserID, string) error {
+	return errUnexpectedJob
+}
+
+// uploadJobs is a JobInserter whose upload insert returns a fixed result.
+type uploadJobs struct {
+	noJobs
+	skipped bool
+	err     error
+}
+
+func (u uploadJobs) InsertUpload(context.Context, pgx.Tx, docsbot.UserID, docsbot.DocumentID) (bool, error) {
+	return u.skipped, u.err
 }

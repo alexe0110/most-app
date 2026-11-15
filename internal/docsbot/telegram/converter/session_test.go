@@ -25,6 +25,7 @@ import (
 )
 
 func TestResultStore_take(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	clock := func() time.Time { return now }
 	s := newTokenMap[convResult](clock)
@@ -50,6 +51,7 @@ func TestResultStore_take(t *testing.T) {
 }
 
 func TestResultStore_putEvictsExpired(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	s := newTokenMap[convResult](func() time.Time { return now })
 	s.put("a", 1, convResult{})
@@ -59,6 +61,7 @@ func TestResultStore_putEvictsExpired(t *testing.T) {
 }
 
 func TestAlbumStore(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	s := newTokenMap[convAlbum](func() time.Time { return now })
 	s.put("t", 1, convAlbum{user: "u1", group: "g"})
@@ -108,6 +111,7 @@ func TestStores_concurrent(_ *testing.T) {
 }
 
 func TestResultStore_singleWinnerOnConcurrentTake(t *testing.T) {
+	t.Parallel()
 	s := newTokenMap[convResult](time.Now)
 	s.put("t", 1, convResult{})
 
@@ -130,6 +134,7 @@ func TestResultStore_singleWinnerOnConcurrentTake(t *testing.T) {
 }
 
 func TestSessionStore_timeout(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	clock := func() time.Time { return now }
 	store := newSessionStore(clock)
@@ -146,6 +151,7 @@ func TestSessionStore_timeout(t *testing.T) {
 // of the same user running in parallel) must not show through it, or the reader
 // races with the writer that holds the store lock.
 func TestSessionStore_liveReturnsASnapshot(t *testing.T) {
+	t.Parallel()
 	store := newSessionStore(time.Now)
 	store.start(1)
 
@@ -184,6 +190,7 @@ func TestSessionStore_liveAndUpdateDoNotRace(_ *testing.T) {
 }
 
 func TestSessionStore_ttlBoundary(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		idle time.Duration
@@ -209,6 +216,7 @@ func TestSessionStore_ttlBoundary(t *testing.T) {
 
 // Every touch of a session (an update refreshes it) restarts its TTL.
 func TestSessionStore_updateRefreshesTheTTL(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	store := newSessionStore(func() time.Time { return now })
 	store.start(1)
@@ -222,6 +230,7 @@ func TestSessionStore_updateRefreshesTheTTL(t *testing.T) {
 
 // The cap counts users, not calls: fill to exactly max, one over is refused.
 func TestSessionStore_capBoundary(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		users int
@@ -244,6 +253,7 @@ func TestSessionStore_capBoundary(t *testing.T) {
 }
 
 func TestSessionStore_orderedImages(t *testing.T) {
+	t.Parallel()
 	store := newSessionStore(time.Now)
 	store.start(1)
 
@@ -266,6 +276,7 @@ func TestSessionStore_orderedImages(t *testing.T) {
 }
 
 func TestSessionStore_endReportsLiveness(t *testing.T) {
+	t.Parallel()
 	store := newSessionStore(time.Now)
 
 	require.False(t, store.end(5), "nothing to end")
@@ -275,6 +286,7 @@ func TestSessionStore_endReportsLiveness(t *testing.T) {
 }
 
 func TestSessionStore_pressValidation(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	store := newSessionStore(func() time.Time { return now })
 	store.start(1)
@@ -305,6 +317,7 @@ func TestSessionStore_pressValidation(t *testing.T) {
 // A session whose dialogue message is unknown (the send failed) has no current
 // button: a press on an old message must not slip through.
 func TestSessionStore_unknownDialogueMessageRejectsPresses(t *testing.T) {
+	t.Parallel()
 	store := newSessionStore(time.Now)
 	store.start(1)
 
@@ -319,6 +332,7 @@ func TestSessionStore_unknownDialogueMessageRejectsPresses(t *testing.T) {
 }
 
 func TestConverter_claimMenuOnce(t *testing.T) {
+	t.Parallel()
 	c := New(Deps{Log: slog.New(slog.DiscardHandler)})
 
 	release, ok := c.claimMenu(1, 10)
@@ -336,6 +350,7 @@ func TestConverter_claimMenuOnce(t *testing.T) {
 // A session keeps file ids and sizes, never file bytes: a few users with twenty
 // photos each must not be able to exhaust memory.
 func TestSession_holdsNoBytes(t *testing.T) {
+	t.Parallel()
 	var walk func(path string, typ reflect.Type, seen map[reflect.Type]bool)
 	walk = func(path string, typ reflect.Type, seen map[reflect.Type]bool) {
 		switch typ.Kind() {
@@ -365,6 +380,7 @@ func TestSession_holdsNoBytes(t *testing.T) {
 }
 
 func TestSessionStore_refusesNewSessionsWhenFull(t *testing.T) {
+	t.Parallel()
 	store := newSessionStore(time.Now)
 	store.max = 2
 	require.True(t, store.start(1))
@@ -379,6 +395,7 @@ func TestSessionStore_refusesNewSessionsWhenFull(t *testing.T) {
 }
 
 func TestSessionStore_expiredSessionsMakeRoom(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	store := newSessionStore(func() time.Time { return now })
 	store.max = 1
@@ -392,6 +409,7 @@ func TestSessionStore_expiredSessionsMakeRoom(t *testing.T) {
 }
 
 func TestSessionStore_restoreRespectsTheCap(t *testing.T) {
+	t.Parallel()
 	store := newSessionStore(time.Now)
 	store.max = 1
 	require.True(t, store.start(1))
@@ -445,6 +463,7 @@ func onePagePDF(t *testing.T) []byte {
 // A refused session says why and opens nothing; a user who already has a session
 // is never locked out of restarting it.
 func TestConverter_sessionsAreFull(t *testing.T) {
+	t.Parallel()
 	const owner, other = int64(1), int64(2) // owner holds the only slot
 	pdfMenu := func(c *Converter, b *bot.Bot, user int64) {
 		c.onPDFOp(t.Context(), b, press{chatID: user, tgUser: user}, docsbot.Document{ID: "d", TgFileID: "f"}, opKeep)
@@ -492,6 +511,7 @@ func TestConverter_sessionsAreFull(t *testing.T) {
 // Timed-out sessions of other users are dropped on any access, not only when
 // their own owner returns.
 func TestSessionStore_expiredSessionsAreSwept(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	store := newSessionStore(func() time.Time { return now })
 	store.start(1)
@@ -508,6 +528,7 @@ func TestSessionStore_expiredSessionsAreSwept(t *testing.T) {
 }
 
 func TestTokenMap_ownership(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	s := newTokenMap[convResult](func() time.Time { return now })
 
@@ -561,6 +582,7 @@ func TestTokenMap_ownership(t *testing.T) {
 }
 
 func TestTokenMap_foreignPressesNeverWinARace(t *testing.T) {
+	t.Parallel()
 	s := newTokenMap[convAlbum](time.Now)
 	s.put("t", 1, convAlbum{user: "u1"})
 
@@ -590,6 +612,7 @@ func TestTokenMap_foreignPressesNeverWinARace(t *testing.T) {
 }
 
 func TestTokenMap_isBoundedByTheCap(t *testing.T) {
+	t.Parallel()
 	s := &tokenMap[convResult]{m: tg.NewTTLMap[string, owned[convResult]](sessionTTL, 5, time.Now)}
 
 	for i := range 20 {
@@ -602,6 +625,7 @@ func TestTokenMap_isBoundedByTheCap(t *testing.T) {
 // The token stores are the ones that leaked; this pins their TTL and cap to the
 // constants.
 func TestTokenMaps_areBoundedByTTLAndCap(t *testing.T) {
+	t.Parallel()
 	results, albums := newTokenMap[convResult](time.Now), newTokenMap[convAlbum](time.Now)
 
 	require.Equal(t, sessionTTL, results.m.TTL())

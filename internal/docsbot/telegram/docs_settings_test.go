@@ -3,6 +3,7 @@ package telegram_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -62,7 +63,7 @@ func TestSettings_showsCountsAndControls(t *testing.T) {
 	b.ProcessUpdate(ctx, commandUpdate("settings"))
 
 	require.True(t, has(sent.texts, "Google Диск"), "sent %q", sent.texts)
-	require.True(t, has(sent.texts, "Документов: 2"), "sent %q", sent.texts)
+	require.True(t, has(sent.texts, fmt.Sprintf(telegram.TextSettingsTotal, 2)), "sent %q", sent.texts)
 }
 
 func TestDeleteData_confirmation(t *testing.T) {
@@ -96,7 +97,7 @@ func TestDeleteData_promptOffersExportFirst(t *testing.T) {
 	require.Contains(t, sent.texts[0], "УДАЛИТЬ")
 	require.Contains(t, sent.texts[0], "/export")
 	require.Contains(t, sent.markups[0], "d:exp")
-	require.Contains(t, sent.markups[0], "Прислать все документы")
+	require.Contains(t, sent.markups[0], telegram.BtnExportAll)
 }
 
 func startUpdate(payload string) *models.Update {
@@ -208,7 +209,7 @@ func TestDeleteData_wordWithoutPromptIsNotASearch(t *testing.T) {
 
 			b.ProcessUpdate(ctx, textUpdate(tt.reply))
 
-			require.Equal(t, []string{"Время на подтверждение вышло — открой /settings ещё раз."}, sent.snapshot(&sent.texts))
+			require.Equal(t, []string{telegram.TextDeleteExpired}, sent.snapshot(&sent.texts))
 			require.Len(t, repo.Docs, 1, "nothing is deleted")
 			require.Empty(t, repo.Events, "not counted as a search")
 		})
@@ -222,7 +223,7 @@ func TestDeleteData_otherWordWithoutPromptIsASearch(t *testing.T) {
 
 	b.ProcessUpdate(ctx, textUpdate("удалить после"))
 
-	require.Equal(t, []string{"Нашёл 1 документ:"}, sent.snapshot(&sent.texts))
+	require.Equal(t, []string{fmt.Sprintf(telegram.TextFoundTitle, 1, telegram.PluralDocumentOne)}, sent.snapshot(&sent.texts))
 }
 
 func TestDeleteData_cancelButton(t *testing.T) {
@@ -231,11 +232,11 @@ func TestDeleteData_cancelButton(t *testing.T) {
 	repo.Seed(docsbot.Document{UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Title: "p", TgFileUniqueID: "u1"})
 	b.ProcessUpdate(ctx, dataCallback("d:dd"))
 	require.Contains(t, sent.markups[0], "d:ddn", "the prompt has a cancel button")
-	require.Contains(t, sent.markups[0], "Отмена")
+	require.Contains(t, sent.markups[0], telegram.BtnCancel)
 
 	b.ProcessUpdate(ctx, dataCallback("d:ddn"))
 
-	require.Equal(t, "Удаление отменено, твои данные на месте.", sent.edits[len(sent.edits)-1], "the prompt turns into the note")
+	require.Equal(t, telegram.TextDeleteWrongWord, sent.edits[len(sent.edits)-1], "the prompt turns into the note")
 	require.Contains(t, sent.editMarkups[len(sent.editMarkups)-1], `"inline_keyboard":[]`)
 	require.Equal(t, []int{7}, sent.editIDs)
 
@@ -296,7 +297,7 @@ func TestHelp_optionalLines(t *testing.T) {
 			require.Len(t, sent.texts, 1)
 			text := sent.texts[0]
 			require.Equal(t, tt.wantInline, strings.Contains(text, "@most_files_bot"), text)
-			require.Equal(t, tt.wantPrivacy, strings.Contains(text, "Как я обращаюсь с данными: https://most.example/privacy"), text)
+			require.Equal(t, tt.wantPrivacy, strings.Contains(text, fmt.Sprintf(telegram.TextPrivacy, "https://most.example/privacy")), text)
 			require.NotContains(t, text, "%!", "no broken format verbs")
 			require.NotContains(t, text, "%s")
 			require.NotContains(t, text, "@\n", "no empty username")

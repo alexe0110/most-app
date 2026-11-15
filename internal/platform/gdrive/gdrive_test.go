@@ -179,6 +179,7 @@ func testUpload() Upload {
 }
 
 func TestUpload_happyPath(t *testing.T) {
+	t.Parallel()
 	d := &fakeDrive{}
 	cache := newFakeCache()
 	svc := newService(t, d, fakeClients{}, cache)
@@ -198,6 +199,7 @@ func TestUpload_happyPath(t *testing.T) {
 }
 
 func TestUpload_rootFolder(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		opts     []Option
@@ -221,6 +223,7 @@ func TestUpload_rootFolder(t *testing.T) {
 }
 
 func TestUpload_cachedFolderGone(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		drv  *fakeDrive
@@ -245,6 +248,7 @@ func TestUpload_cachedFolderGone(t *testing.T) {
 }
 
 func TestUpload_findFolderPicksOldest(t *testing.T) {
+	t.Parallel()
 	d := &fakeDrive{folders: []map[string]string{
 		{"id": "root", "name": DefaultRootFolder},
 		{"id": "old", "name": "Паспорт и ID"},
@@ -267,6 +271,7 @@ func TestUpload_findFolderPicksOldest(t *testing.T) {
 // Case (c) (root deleted permanently) is indistinguishable for the search: the
 // root is simply absent, which TestUpload_happyPath already covers.
 func TestUpload_trashedRootIsIgnored(t *testing.T) {
+	t.Parallel()
 	d := &fakeDrive{folders: []map[string]string{
 		{"id": "old-root", "name": DefaultRootFolder, "trashed": "true"},
 	}}
@@ -284,6 +289,7 @@ func TestUpload_trashedRootIsIgnored(t *testing.T) {
 // Case (b): the cached category folder is trashed while the root is alive; the
 // cache entry is dropped and the category is recreated under the same root.
 func TestUpload_trashedCategoryKeepsRoot(t *testing.T) {
+	t.Parallel()
 	d := &fakeDrive{
 		trashed: map[string]bool{"stale": true},
 		folders: []map[string]string{{"id": "live-root", "name": DefaultRootFolder}},
@@ -303,6 +309,7 @@ func TestUpload_trashedCategoryKeepsRoot(t *testing.T) {
 // Case (e): two roots with the same name (one restored from the trash, one
 // created later); the oldest wins and no new root is created.
 func TestUpload_findFolderPicksOldestRoot(t *testing.T) {
+	t.Parallel()
 	d := &fakeDrive{folders: []map[string]string{
 		{"id": "old-root", "name": DefaultRootFolder},
 		{"id": "new-root", "name": DefaultRootFolder},
@@ -319,6 +326,7 @@ func TestUpload_findFolderPicksOldestRoot(t *testing.T) {
 // Case (g): the user renamed or moved the folders; the cache is keyed by id, so
 // the cached folder stays alive, no search runs and the upload goes to that id.
 func TestUpload_cachedFolderAlive(t *testing.T) {
+	t.Parallel()
 	d := &fakeDrive{}
 	cache := newFakeCache()
 	cache.ids["passport"] = "alive"
@@ -333,6 +341,7 @@ func TestUpload_cachedFolderAlive(t *testing.T) {
 }
 
 func TestUpload_duplicateName(t *testing.T) {
+	t.Parallel()
 	d := &fakeDrive{existingName: "scan.pdf"}
 	svc := newService(t, d, fakeClients{}, newFakeCache())
 
@@ -343,6 +352,7 @@ func TestUpload_duplicateName(t *testing.T) {
 }
 
 func TestUpload_revoked(t *testing.T) {
+	t.Parallel()
 	svc := New(fakeClients{err: oauth.ErrAccessRevoked}, newFakeCache())
 
 	_, err := svc.Upload(context.Background(), "user-1", testUpload())
@@ -351,6 +361,7 @@ func TestUpload_revoked(t *testing.T) {
 }
 
 func TestUpload_idempotentByDocID(t *testing.T) {
+	t.Parallel()
 	d := &fakeDrive{}
 	svc := newService(t, d, fakeClients{}, newFakeCache())
 	up := testUpload()
@@ -370,6 +381,7 @@ func TestUpload_idempotentByDocID(t *testing.T) {
 }
 
 func TestEscapeQuery(t *testing.T) {
+	t.Parallel()
 	require.Equal(t, `it\'s`, escapeQuery("it's"))
 }
 
@@ -403,6 +415,7 @@ func newRacyService(t *testing.T, d racyDrive, cache FolderCache) *Service {
 }
 
 func TestUpload_staleFolderRaceRetriesOnce(t *testing.T) {
+	t.Parallel()
 	d := racyDrive{fakeDrive: &fakeDrive{}, gone: func(p string) bool { return p == "stale" }}
 	cache := newFakeCache()
 	cache.ids["passport"] = "stale"
@@ -420,6 +433,7 @@ func TestUpload_staleFolderRaceRetriesOnce(t *testing.T) {
 }
 
 func TestUpload_staleFolderRacePersistentFails(t *testing.T) {
+	t.Parallel()
 	d := racyDrive{fakeDrive: &fakeDrive{}, gone: func(string) bool { return true }}
 	cache := newFakeCache()
 	cache.ids["passport"] = "stale"
@@ -446,6 +460,7 @@ func countOf(items []string, want string) int {
 // An empty DocID (legacy callers) keeps the plain upload: no appProperties,
 // no lookup by property.
 func TestUpload_emptyDocIDSkipsIdempotency(t *testing.T) {
+	t.Parallel()
 	d := &fakeDrive{}
 	svc := newService(t, d, fakeClients{}, newFakeCache())
 
@@ -460,6 +475,7 @@ func TestUpload_emptyDocIDSkipsIdempotency(t *testing.T) {
 
 // Files of other documents, or in another folder, are not reused.
 func TestUpload_docIDLookupIsScoped(t *testing.T) {
+	t.Parallel()
 	d := &fakeDrive{}
 	svc := newService(t, d, fakeClients{}, newFakeCache())
 	a, b := testUpload(), testUpload()
@@ -482,6 +498,7 @@ func TestUpload_docIDLookupIsScoped(t *testing.T) {
 
 // The lookup must not match a quote in the id as query syntax.
 func TestUpload_docIDIsEscapedInQuery(t *testing.T) {
+	t.Parallel()
 	d := &fakeDrive{}
 	svc := newService(t, d, fakeClients{}, newFakeCache())
 	up := testUpload()
@@ -494,6 +511,7 @@ func TestUpload_docIDIsEscapedInQuery(t *testing.T) {
 }
 
 func TestUpload_canceledContext(t *testing.T) {
+	t.Parallel()
 	d := &fakeDrive{}
 	svc := newService(t, d, fakeClients{}, newFakeCache())
 	ctx, cancel := context.WithCancel(context.Background())
@@ -507,6 +525,7 @@ func TestUpload_canceledContext(t *testing.T) {
 
 // The user disconnect maps to its own error, never to the revoke one.
 func TestUpload_disconnectedByUser(t *testing.T) {
+	t.Parallel()
 	svc := newService(t, &fakeDrive{}, fakeClients{err: oauth.ErrAccessDisconnected}, newFakeCache())
 
 	_, err := svc.Upload(context.Background(), "user-1", testUpload())

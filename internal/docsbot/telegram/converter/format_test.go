@@ -9,6 +9,7 @@ import (
 )
 
 func TestPlural(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		n          int
 		page, file string
@@ -36,6 +37,7 @@ func TestPlural(t *testing.T) {
 }
 
 func TestCountTexts_agreeWithTheCount(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		n                   int
 		accepted, mergeNote string
@@ -52,13 +54,14 @@ func TestCountTexts_agreeWithTheCount(t *testing.T) {
 			require.Equal(t, tt.accepted, fmt.Sprintf(textConvertPDFAccepted, tt.n, plural(tt.n, pluralPageOne, pluralPageFew, pluralPageMany)))
 			require.Equal(t, tt.mergeNote, fmt.Sprintf(textPDFMergeAdded, tt.n, plural(tt.n, pluralFileOne, pluralFileFew, pluralFileMany)))
 			require.Equal(t,
-				fmt.Sprintf("Готово: %d %s.", tt.n, plural(tt.n, pluralPageOne, pluralPageFew, pluralPageMany)),
+				fmt.Sprintf(textResultPages, tt.n, plural(tt.n, pluralPageOne, pluralPageFew, pluralPageMany)),
 				fmt.Sprintf(textResultPages, tt.n, plural(tt.n, pluralPageOne, pluralPageFew, pluralPageMany)))
 		})
 	}
 }
 
 func TestHumanSize(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		n    int64
@@ -83,6 +86,7 @@ func TestHumanSize(t *testing.T) {
 }
 
 func TestCompressedCaption(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name          string
 		before, after int
@@ -102,6 +106,7 @@ func TestCompressedCaption(t *testing.T) {
 }
 
 func TestCompressUseless(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name                 string
 		before, limit, after int
@@ -123,6 +128,7 @@ func TestCompressUseless(t *testing.T) {
 }
 
 func TestCompressNothingText(t *testing.T) {
+	t.Parallel()
 	require.Equal(t, "Фото уже меньше 1,0\u00A0МБ — сжимать нечего.", compressNothingText(1<<20))
 	require.Equal(t, "Фото уже меньше 300\u00A0КБ — сжимать нечего.", compressNothingText(300<<10))
 }

@@ -1,6 +1,7 @@
 package telegram_test
 
 import (
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -25,20 +26,18 @@ func TestConnect_screenBeforeGoogle(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallback("d:cna"))
 
 	intro := sent.texts[len(sent.texts)-1]
-	require.Equal(t, "Сейчас откроется Google. Я попрошу доступ только к своей папке «Мои Доки» — "+
-		"другие файлы на твоём Google Диске я не вижу. "+
-		"Если у тебя уже есть папка с таким названием, появится вторая — это нормально.", intro)
+	require.Equal(t, fmt.Sprintf(telegram.TextConnectIntro, "Мои Доки"), intro)
 	kb := sent.markups[len(sent.markups)-1]
 	require.Contains(t, kb, `"text":"☁️ Продолжить","url":"https://auth.example/consent"`, "continue is a link button")
 	require.NotContains(t, kb, `"callback_data":"d:cna"`)
 	require.Contains(t, kb, `"callback_data":"d:cnc"`)
-	require.Contains(t, kb, "Отмена")
+	require.Contains(t, kb, telegram.BtnCancel)
 	require.Equal(t, 2, strings.Count(kb, `"text"`), "continue and cancel only")
 	require.Empty(t, sent.edits, "the settings message stays as it is")
 
 	b.ProcessUpdate(ctx, dataCallbackMsg(8, "d:cnc"))
 
-	require.Equal(t, "Хорошо, подключить можно позже в /settings.", sent.edits[len(sent.edits)-1])
+	require.Equal(t, telegram.TextConnectLater, sent.edits[len(sent.edits)-1])
 	require.Equal(t, []int{8}, sent.editIDs, "the intro message itself is edited")
 	require.Contains(t, sent.editMarkups[len(sent.editMarkups)-1], `"inline_keyboard":[]`)
 }
@@ -92,6 +91,6 @@ func TestConnect_pressWhenAlreadyConnected(t *testing.T) {
 
 	b.ProcessUpdate(ctx, dataCallback("d:cna"))
 
-	require.Equal(t, []string{"Google Диск подключён ✅"}, sent.snapshot(&sent.texts))
+	require.Equal(t, []string{telegram.TextDriveConnected}, sent.snapshot(&sent.texts))
 	require.NotContains(t, strings.Join(sent.snapshot(&sent.markups), ""), "auth.example", "no consent link")
 }

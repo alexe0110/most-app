@@ -47,7 +47,7 @@ func TestNotifyConnected_settingsMessage(t *testing.T) {
 
 			sends := e.api.callsOf("sendMessage")
 			require.Len(t, sends, 1)
-			require.Equal(t, "Google Диск подключён ✅", sends[0].text)
+			require.Equal(t, telegram.TextDriveConnected, sends[0].text)
 			edits := e.api.callsOf("editMessageText")
 			if !tt.wantEdit {
 				require.Empty(t, edits)
@@ -55,8 +55,8 @@ func TestNotifyConnected_settingsMessage(t *testing.T) {
 			}
 			require.Len(t, edits, 1)
 			require.Equal(t, "777", edits[0].messageID)
-			require.Contains(t, edits[0].text, "Google Диск: подключён ✅")
-			require.Contains(t, edits[0].markup, "Отключить Google Диск")
+			require.Contains(t, edits[0].text, telegram.TextSettingsOn)
+			require.Contains(t, edits[0].markup, telegram.BtnDisconnect)
 		})
 	}
 }

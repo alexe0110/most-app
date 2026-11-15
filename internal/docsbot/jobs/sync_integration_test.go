@@ -20,16 +20,15 @@ import (
 	pjobs "github.com/alexe0110/most-app/internal/platform/jobs"
 )
 
-// cloudDrive records sync calls; Rename can block to hold a sync "running".
+// cloudDrive records renames and trashes; Rename can block to hold a sync "running".
 type cloudDrive struct {
 	fakeDrive
-	mu       sync.Mutex
-	renames  []string
-	trashes  []string
-	trashErr error
-	entered  chan struct{} // closed-over signal: first Rename started
-	release  chan struct{} // when non-nil the first Rename waits for it
-	once     sync.Once
+	mu      sync.Mutex
+	renames []string
+	trashes []string
+	entered chan struct{} // closed-over signal: first Rename started
+	release chan struct{} // when non-nil the first Rename waits for it
+	once    sync.Once
 }
 
 func (d *cloudDrive) Rename(_ context.Context, _ docsbot.UserID, _, name string) error {
@@ -47,21 +46,11 @@ func (d *cloudDrive) Rename(_ context.Context, _ docsbot.UserID, _, name string)
 	return nil
 }
 
-func (d *cloudDrive) FileExists(context.Context, docsbot.UserID, string) (bool, error) {
-	return true, nil
-}
-
 func (d *cloudDrive) Trash(_ context.Context, _ docsbot.UserID, remoteID string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.trashes = append(d.trashes, remoteID)
-	return d.trashErr
-}
-
-func (d *cloudDrive) renamed() []string {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return append([]string(nil), d.renames...)
+	return nil
 }
 
 func (d *cloudDrive) trashed() []string {
@@ -70,43 +59,28 @@ func (d *cloudDrive) trashed() []string {
 	return append([]string(nil), d.trashes...)
 }
 
-type syncSpy struct {
-	mu                         sync.Mutex
-	outcomes, reconnects, kept int
+func (d *cloudDrive) renamed() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.renames...)
 }
 
-func (s *syncSpy) SyncOutcome(context.Context, docsbot.UserID, docsbot.DocumentID) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.outcomes++
+// quietSyncNotifier drops the notices: these tests check the queue, not what
+// the user is told (covered by the sync worker unit tests).
+type quietSyncNotifier struct{}
+
+func (quietSyncNotifier) SyncOutcome(context.Context, docsbot.UserID, docsbot.DocumentID) error {
 	return nil
 }
 
-func (s *syncSpy) Reconnect(context.Context, docsbot.UserID) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.reconnects++
-	return nil
-}
+func (quietSyncNotifier) Reconnect(context.Context, docsbot.UserID) error { return nil }
 
-func (s *syncSpy) RemoteKept(context.Context, docsbot.UserID) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.kept++
-	return nil
-}
-
-func (s *syncSpy) counts() (outcomes, reconnects, kept int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.outcomes, s.reconnects, s.kept
-}
+func (quietSyncNotifier) RemoteKept(context.Context, docsbot.UserID) error { return nil }
 
 type syncEnv struct {
 	pool  *pgxpool.Pool
 	svc   *docsbot.Service
 	queue *pjobs.Client
-	spy   *syncSpy
 	user  docsbot.UserID
 	id    docsbot.DocumentID
 }
@@ -128,14 +102,13 @@ func setupSync(t *testing.T, drive docsbot.Drive) syncEnv {
 	inserter, err := pjobs.NewInserter(pool, log)
 	require.NoError(t, err)
 	jq := jobs.NewQueue(inserter)
-	svc := newService(pool, postgres.NewDocuments(pool, jq), jq, drive, fakeFiles{})
-	spy := &syncSpy{}
+	svc := newService(pool, postgres.NewDocuments(pool, jq), jq, drive)
 	workers := river.NewWorkers()
-	jobs.RegisterStorageSync(workers, log, svc, spy)
-	jobs.RegisterStorageTrash(workers, log, svc, spy)
+	jobs.RegisterStorageSync(workers, log, svc, quietSyncNotifier{})
+	jobs.RegisterStorageTrash(workers, log, svc, quietSyncNotifier{})
 	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
 	require.NoError(t, err)
-	return syncEnv{pool: pool, svc: svc, queue: queue, spy: spy, user: docsbot.UserID(uid), id: docsbot.DocumentID(did)}
+	return syncEnv{pool: pool, svc: svc, queue: queue, user: docsbot.UserID(uid), id: docsbot.DocumentID(did)}
 }
 
 func (e syncEnv) syncStatus(t *testing.T) string {
@@ -161,7 +134,7 @@ func TestStorageSync_renameRunsAndMarksOK(t *testing.T) {
 	_, err := e.svc.Rename(t.Context(), e.user, e.id, "Договор")
 	require.NoError(t, err)
 
-	require.Eventually(t, func() bool { return e.syncStatus(t) == "ok" }, 30*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool { return e.syncStatus(t) == "ok" }, 10*time.Second, 100*time.Millisecond)
 	require.Equal(t, []string{"Договор.pdf"}, drive.renamed())
 }
 
@@ -179,7 +152,7 @@ func TestStorageSync_queuedChangesApplyLatestOnce(t *testing.T) {
 	require.NoError(t, err)
 
 	startQueue(t, e.queue)
-	require.Eventually(t, func() bool { return e.syncStatus(t) == "ok" }, 30*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool { return e.syncStatus(t) == "ok" }, 10*time.Second, 100*time.Millisecond)
 	require.Equal(t, []string{"Третье.pdf"}, drive.renamed())
 }
 
@@ -195,7 +168,7 @@ func TestStorageSync_changeDuringRunningSyncQueuesFollowUp(t *testing.T) {
 	require.NoError(t, err)
 	select {
 	case <-drive.entered:
-	case <-time.After(30 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("sync did not start")
 	}
 	require.Equal(t, 1, e.jobCount(t, "storage_sync", "running"))
@@ -207,11 +180,13 @@ func TestStorageSync_changeDuringRunningSyncQueuesFollowUp(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return e.syncStatus(t) == "ok" && len(drive.renamed()) >= 2
-	}, 30*time.Second, 100*time.Millisecond)
+	}, 10*time.Second, 100*time.Millisecond)
 	names := drive.renamed()
 	require.Equal(t, "Второе.pdf", names[len(names)-1], "the last sync applies the newest title")
 }
 
+// Deleting a backed-up document queues the trash job with the row deletion, the
+// worker trashes that very Drive file, and a double tap queues nothing more.
 func TestStorageTrash_deleteTrashesRemoteFile(t *testing.T) {
 	drive := &cloudDrive{fakeDrive: fakeDrive{}}
 	e := setupSync(t, drive)
@@ -222,62 +197,12 @@ func TestStorageTrash_deleteTrashesRemoteFile(t *testing.T) {
 	require.Equal(t, 1, e.jobCount(t, "storage_trash", ""), "queued with the row deletion")
 
 	startQueue(t, e.queue)
-	require.Eventually(t, func() bool { return len(drive.trashed()) == 1 }, 30*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool { return len(drive.trashed()) == 1 }, 10*time.Second, 100*time.Millisecond)
 	require.Equal(t, []string{"remote-1"}, drive.trashed())
-	_, _, kept := e.spy.counts()
-	require.Zero(t, kept)
 
-	// Double tap on delete: the row is gone, no second job.
 	_, err = e.svc.Delete(t.Context(), e.user, e.id)
 	require.ErrorIs(t, err, docsbot.ErrNotFound)
-	require.Equal(t, 1, e.jobCount(t, "storage_trash", ""))
-}
-
-func TestStorageTrash_revokedAccessTellsUserTheFileStays(t *testing.T) {
-	drive := &cloudDrive{fakeDrive: fakeDrive{}, trashErr: docsbot.ErrDriveRevoked}
-	e := setupSync(t, drive)
-	_, err := e.svc.Delete(t.Context(), e.user, e.id)
-	require.NoError(t, err)
-
-	startQueue(t, e.queue)
-
-	require.Eventually(t, func() bool { _, _, kept := e.spy.counts(); return kept == 1 }, 30*time.Second, 100*time.Millisecond)
-	require.Equal(t, 1, len(drive.trashed()), "terminal: not retried")
-}
-
-func TestStorageSync_revokedMarksFailedWithReasonAndAsksToReconnect(t *testing.T) {
-	drive := &revokedMoveDrive{cloudDrive: cloudDrive{fakeDrive: fakeDrive{}}}
-	e := setupSync(t, drive)
-	startQueue(t, e.queue)
-
-	_, err := e.svc.Rename(t.Context(), e.user, e.id, "Новое")
-	require.NoError(t, err)
-
-	require.Eventually(t, func() bool { return e.syncStatus(t) == "failed" }, 30*time.Second, 100*time.Millisecond)
-	var reason *string
-	require.NoError(t, e.pool.QueryRow(t.Context(), `select sync_reason from documents where id = $1::uuid`, string(e.id)).Scan(&reason))
-	require.NotNil(t, reason)
-	require.Equal(t, docsbot.SyncReasonRevoked, *reason)
-	require.Eventually(t, func() bool { o, r, _ := e.spy.counts(); return o == 1 && r == 1 }, 5*time.Second, 50*time.Millisecond)
-}
-
-type revokedMoveDrive struct{ cloudDrive }
-
-func (d *revokedMoveDrive) Move(context.Context, docsbot.UserID, string, docsbot.Category) error {
-	return docsbot.ErrDriveRevoked
-}
-
-// A sync job for a document that was deleted meanwhile finishes silently.
-func TestStorageSync_deletedDocumentIsNoop(t *testing.T) {
-	drive := &cloudDrive{fakeDrive: fakeDrive{}}
-	e := setupSync(t, drive)
-	_, err := e.svc.Rename(t.Context(), e.user, e.id, "Новое")
-	require.NoError(t, err)
-	_, err = e.pool.Exec(t.Context(), `delete from documents where id = $1::uuid`, string(e.id))
-	require.NoError(t, err)
-
-	startQueue(t, e.queue)
-
-	require.Eventually(t, func() bool { return e.jobCount(t, "storage_sync", "completed") == 1 }, 30*time.Second, 100*time.Millisecond)
-	require.Empty(t, drive.renamed())
+	awaitQueueDrained(t, e.pool)
+	require.Equal(t, 1, e.jobCount(t, "storage_trash", ""), "the double tap queued no second job")
+	require.Len(t, drive.trashed(), 1)
 }

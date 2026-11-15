@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"sync/atomic"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -28,26 +27,24 @@ type txEnv struct {
 	user docsbot.UserID
 }
 
-var txUserSeq atomic.Int64
-
 func newTxEnv(t *testing.T) txEnv {
 	t.Helper()
 	pool := dbtest.New(t)
 	log := slog.New(slog.DiscardHandler)
 	inserter, err := pjobs.NewInserter(pool, log)
 	require.NoError(t, err)
-	return txEnv{pool: pool, jq: jobs.NewQueue(inserter)}.fresh(t)
+	e := txEnv{pool: pool, jq: jobs.NewQueue(inserter)}
+	e.user = e.newUser(t, 1)
+	return e
 }
 
-// fresh returns the env on the same database with a new user, so subtests share
-// one container yet never see each other's documents or jobs.
-func (e txEnv) fresh(t *testing.T) txEnv {
+// newUser inserts a user with the given Telegram id and returns its id.
+func (e txEnv) newUser(t *testing.T, tgID int64) docsbot.UserID {
 	t.Helper()
 	var uid string
 	require.NoError(t, e.pool.QueryRow(t.Context(),
-		`insert into users (tg_user_id) values ($1) returning id::text`, 50_000+txUserSeq.Add(1)).Scan(&uid))
-	e.user = docsbot.UserID(uid)
-	return e
+		`insert into users (tg_user_id) values ($1) returning id::text`, tgID).Scan(&uid))
+	return docsbot.UserID(uid)
 }
 
 func (e txEnv) docs(ji postgres.JobInserter) *postgres.Documents {
@@ -56,7 +53,7 @@ func (e txEnv) docs(ji postgres.JobInserter) *postgres.Documents {
 
 // service is a Service whose Documents insert jobs through ji; Drive is connected or not.
 func (e txEnv) service(ji postgres.JobInserter, connected bool) *docsbot.Service {
-	return newService(e.pool, e.docs(ji), e.jq, driveStatus{connected: connected}, fakeFiles{})
+	return newService(e.pool, e.docs(ji), e.jq, driveStatus{connected: connected})
 }
 
 // seed inserts a document with the given states and returns its id.
@@ -208,11 +205,10 @@ func TestQueue_failedTxLeavesNoJobAndNoRowChange(t *testing.T) {
 			return err
 		}},
 	}
-	shared := newTxEnv(t)
 	boom := errors.New("queue down")
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := shared.fresh(t)
+			e := newTxEnv(t)
 			ctx := t.Context()
 			id := e.seed(t, tt.status, tt.backup, tt.syncState)
 			before := e.snapshot(t, id)
@@ -258,4 +254,30 @@ func TestRequeue_dedupsUploadsAndLeavesTheDocumentAlone(t *testing.T) {
 	require.Equal(t, 2, e.jobCount(t, jobs.StorageSyncArgs{}.Kind()))
 
 	require.Equal(t, before, e.snapshot(t, id), "requeue keeps the stuck clock and every status")
+}
+
+// Deleting a user's data must stop everything queued for them, whatever the
+// kind, without touching another user's jobs.
+func TestQueue_cancelUserJobsRemovesOnlyTheUsersPendingJobs(t *testing.T) {
+	e := newTxEnv(t)
+	ctx := t.Context()
+	other := e
+	other.user = e.newUser(t, 2)
+	id := e.seed(t, "saved", "none", "ok")
+
+	for _, owner := range []docsbot.UserID{e.user, other.user} {
+		tx, err := e.pool.Begin(ctx)
+		require.NoError(t, err)
+		_, err = e.jq.InsertUpload(ctx, tx, owner, id)
+		require.NoError(t, err)
+		require.NoError(t, e.jq.InsertSync(ctx, tx, owner, id))
+		require.NoError(t, e.jq.InsertTrash(ctx, tx, owner, "remote-1"))
+		require.NoError(t, tx.Commit(ctx))
+	}
+	require.Equal(t, 3, e.jobCount(t, ""))
+
+	require.NoError(t, e.jq.CancelUserJobs(ctx, e.user))
+
+	require.Zero(t, e.jobCount(t, ""), "upload, sync and trash jobs are cancelled")
+	require.Equal(t, 3, other.jobCount(t, ""), "another user's jobs are untouched")
 }

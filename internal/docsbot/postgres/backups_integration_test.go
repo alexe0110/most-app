@@ -3,15 +3,15 @@
 package postgres_test
 
 import (
-	"context"
-	"errors"
+	"strconv"
 	"testing"
+	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
+	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 )
 
 // savedDoc creates a saved document for user.
@@ -62,53 +62,46 @@ func TestBackups_excludesTooLarge(t *testing.T) {
 	require.Equal(t, []docsbot.DocumentID{failed.ID}, ids)
 }
 
-func TestBackups_folderCache(t *testing.T) {
-	repo, user := domainRepo(t)
+// The sweeper only recovers uploads that are old, still in flight and belong to
+// a user whose Drive is connected; anything else it must leave alone.
+func TestBackups_stuckUploadsListsOnlyOldInFlightOfActiveIntegrations(t *testing.T) {
+	pool := dbtest.New(t)
+	repo := newAdapters(pool, noJobs{})
 	ctx := t.Context()
-	uid := string(user)
-
-	_, ok, err := repo.FolderID(ctx, uid, "passport")
-	require.NoError(t, err)
-	require.False(t, ok, "missing key")
-
-	require.NoError(t, repo.SaveFolderID(ctx, uid, "passport", "folder-1"))
-	id, ok, err := repo.FolderID(ctx, uid, "passport")
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, "folder-1", id)
-
-	require.NoError(t, repo.SaveFolderID(ctx, uid, "passport", "folder-2"))
-	id, _, err = repo.FolderID(ctx, uid, "passport")
-	require.NoError(t, err)
-	require.Equal(t, "folder-2", id, "save replaces")
-
-	require.NoError(t, repo.DeleteFolderID(ctx, uid, "passport"))
-	_, ok, err = repo.FolderID(ctx, uid, "passport")
-	require.NoError(t, err)
-	require.False(t, ok)
-}
-
-func TestBackups_deleteAllFolders(t *testing.T) {
-	repo, user := domainRepo(t)
-	ctx := t.Context()
-	other := makeUser(t, repo, 701).ID.String()
-
-	for _, key := range []string{"passport", "insurance"} {
-		require.NoError(t, repo.SaveFolderID(ctx, string(user), key, "f-"+key))
-	}
-	require.NoError(t, repo.SaveFolderID(ctx, other, "passport", "other-f"))
-
-	require.NoError(t, repo.DeleteAllFolders(ctx, user))
-
-	for _, key := range []string{"passport", "insurance"} {
-		_, ok, err := repo.FolderID(ctx, string(user), key)
+	seed := func(tgID int64, integration, backup, age string) docsbot.DocumentID {
+		t.Helper()
+		user := docsbot.UserID(makeUser(t, repo, tgID).ID.String())
+		if integration != "" {
+			_, err := pool.Exec(ctx, `insert into integrations (user_id, bot, provider, status) values ($1::uuid, 'docs', 'google', $2)`, string(user), integration)
+			require.NoError(t, err)
+		}
+		doc := savedDoc(t, repo, user, strconv.FormatInt(tgID, 10))
+		_, err := pool.Exec(ctx, `update documents set backup_status = $2, updated_at = now() - $3::interval where id = $1::uuid`, string(doc.ID), backup, age)
 		require.NoError(t, err)
-		require.False(t, ok, key)
+		return doc.ID
 	}
-	id, ok, err := repo.FolderID(ctx, other, "passport")
+	pending := seed(940, "active", "pending", "31 minutes")
+	uploading := seed(941, "active", "uploading", "2 hours")
+	seed(942, "active", "uploading", "1 minute")
+	seed(943, "active", "backed_up", "2 hours")
+	seed(944, "active", "none", "2 hours")
+	seed(945, "revoked", "uploading", "2 hours")
+	seed(946, "", "uploading", "2 hours")
+	olderThan := time.Now().Add(-30 * time.Minute)
+
+	got, err := repo.StuckUploads(ctx, olderThan, 10)
+
 	require.NoError(t, err)
-	require.True(t, ok, "other user's cache is untouched")
-	require.Equal(t, "other-f", id)
+	ids := make([]docsbot.DocumentID, 0, len(got))
+	for _, s := range got {
+		ids = append(ids, s.ID)
+	}
+	require.Equal(t, []docsbot.DocumentID{uploading, pending}, ids, "oldest first")
+
+	limited, err := repo.StuckUploads(ctx, olderThan, 1)
+	require.NoError(t, err)
+	require.Len(t, limited, 1)
+	require.Equal(t, uploading, limited[0].ID)
 }
 
 func TestBackups_saveChosenTx(t *testing.T) {
@@ -139,56 +132,6 @@ func TestBackups_saveChosenTx(t *testing.T) {
 			require.Equal(t, tt.wantBackup, got.BackupStatus)
 		})
 	}
-}
-
-func TestFolders_categoryFolderID(t *testing.T) {
-	repo, user := domainRepo(t)
-	ctx := t.Context()
-
-	require.NoError(t, repo.SaveFolderID(ctx, string(user), "passport", "folder-x"))
-
-	id, ok, err := repo.CategoryFolderID(ctx, user, docsbot.Category("passport"))
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, "folder-x", id)
-
-	id, ok, err = repo.CategoryFolderID(ctx, user, docsbot.Category("medical"))
-	require.NoError(t, err)
-	require.False(t, ok)
-	require.Empty(t, id)
-}
-
-// noJobs is a JobInserter for tests where no job may be needed.
-type noJobs struct{}
-
-var (
-	errUnexpectedJob = errors.New("unexpected job insert")
-	errBoom          = errors.New("insert failed")
-)
-
-var _ postgres.JobInserter = noJobs{}
-
-func (noJobs) InsertUpload(context.Context, pgx.Tx, docsbot.UserID, docsbot.DocumentID) (bool, error) {
-	return false, errUnexpectedJob
-}
-
-func (noJobs) InsertSync(context.Context, pgx.Tx, docsbot.UserID, docsbot.DocumentID) error {
-	return errUnexpectedJob
-}
-
-func (noJobs) InsertTrash(context.Context, pgx.Tx, docsbot.UserID, string) error {
-	return errUnexpectedJob
-}
-
-// uploadJobs is a JobInserter whose upload insert returns a fixed result.
-type uploadJobs struct {
-	noJobs
-	skipped bool
-	err     error
-}
-
-func (u uploadJobs) InsertUpload(context.Context, pgx.Tx, docsbot.UserID, docsbot.DocumentID) (bool, error) {
-	return u.skipped, u.err
 }
 
 // The reason of a failed backup is stored with the status and cleared whenever

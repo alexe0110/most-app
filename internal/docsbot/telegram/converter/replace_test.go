@@ -11,6 +11,7 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -36,23 +37,25 @@ func lastCaption(h *convHarness) string {
 }
 
 func TestConvertReplace_commandResultKeyboard(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	compressFromCommand(t, h)
 
-	require.Contains(t, h.docMarkups[0], "Сохранить сжатый")
-	require.Contains(t, h.docMarkups[0], "Ничего не делать")
+	require.Contains(t, h.docMarkups[0], converter.BtnSaveCompressed)
+	require.Contains(t, h.docMarkups[0], converter.BtnSkipResult)
 	require.Contains(t, h.docMarkups[0], "conv:sv:")
 	require.NotContains(t, h.docMarkups[0], "conv:rp:")
 	require.NotContains(t, h.docMarkups[0], "Заменить")
 }
 
 func TestConvertReplace_keyboard(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	resultFromCard(t, h, src.ID)
 
-	require.Contains(t, h.docMarkups[0], "Заменить сжатым")
-	require.Contains(t, h.docMarkups[0], "Ничего не делать")
+	require.Contains(t, h.docMarkups[0], converter.BtnReplaceCompressed)
+	require.Contains(t, h.docMarkups[0], converter.BtnSkipResult)
 	require.Contains(t, h.docMarkups[0], "conv:skip:")
 	require.NotContains(t, h.docMarkups[0], "Сохранить")
 	require.NotContains(t, h.docMarkups[0], "conv:sv:")
@@ -60,6 +63,7 @@ func TestConvertReplace_keyboard(t *testing.T) {
 }
 
 func TestConvertReplace_askThenConfirm(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := resultFromCard(t, h, src.ID)
@@ -86,6 +90,7 @@ func TestConvertReplace_askThenConfirm(t *testing.T) {
 }
 
 func TestConvertReplace_cancelRestoresButtons(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := resultFromCard(t, h, src.ID)
@@ -94,7 +99,7 @@ func TestConvertReplace_cancelRestoresButtons(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rp:"+tok))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpn:"+tok))
 
-	require.Contains(t, lastCaption(h), "Заменить сжатым")
+	require.Contains(t, lastCaption(h), converter.BtnReplaceCompressed)
 	require.Contains(t, lastCaption(h), "conv:rp:"+tok)
 	require.Contains(t, lastCaption(h), "conv:skip:"+tok)
 	require.Equal(t, src, h.repo.Docs[src.ID])
@@ -105,6 +110,7 @@ func TestConvertReplace_cancelRestoresButtons(t *testing.T) {
 }
 
 func TestConvertReplace_staleToken(t *testing.T) {
+	t.Parallel()
 	for _, data := range []string{"conv:rp:", "conv:rpy:", "conv:rpn:"} {
 		t.Run(data, func(t *testing.T) {
 			h := newConvHarness(t)
@@ -121,6 +127,7 @@ func TestConvertReplace_staleToken(t *testing.T) {
 }
 
 func TestConvertReplace_afterSkipIsStale(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := resultFromCard(t, h, src.ID)
@@ -134,6 +141,7 @@ func TestConvertReplace_afterSkipIsStale(t *testing.T) {
 }
 
 func TestConvertReplace_refusals(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		mod  func(d *docsbot.Document)
@@ -173,6 +181,7 @@ func TestConvertReplace_refusals(t *testing.T) {
 }
 
 func TestConvertReplace_duplicateFileShowsExistingCard(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := resultFromCard(t, h, src.ID)
@@ -189,6 +198,7 @@ func TestConvertReplace_duplicateFileShowsExistingCard(t *testing.T) {
 }
 
 func TestConvertReplace_goneDocument(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := resultFromCard(t, h, src.ID)
@@ -209,6 +219,7 @@ func resultButtons(t *testing.T, h *convHarness) [][]models.InlineKeyboardButton
 }
 
 func TestConvertResult_buttonsFollowSourceAndKind(t *testing.T) {
+	t.Parallel()
 	compress := func(t *testing.T, h *convHarness, status docsbot.Status) {
 		src := seedSource(h, status)
 		ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
@@ -228,10 +239,10 @@ func TestConvertResult_buttonsFollowSourceAndKind(t *testing.T) {
 		save   string // label of the first button
 		action string // its callback action
 	}{
-		{"compress, saved source", compress, docsbot.StatusSaved, "♻️ Заменить сжатым", "conv:rp:"},
-		{"compress, pending source", compress, docsbot.StatusPending, "💾 Сохранить сжатый", "conv:sv:"},
-		{"pdf, saved source", rotate, docsbot.StatusSaved, "♻️ Заменить оригинал", "conv:rp:"},
-		{"pdf, pending source", rotate, docsbot.StatusPending, "💾 Сохранить PDF", "conv:sv:"},
+		{"compress, saved source", compress, docsbot.StatusSaved, converter.BtnReplaceCompressed, "conv:rp:"},
+		{"compress, pending source", compress, docsbot.StatusPending, converter.BtnSaveCompressed, "conv:sv:"},
+		{"pdf, saved source", rotate, docsbot.StatusSaved, converter.BtnReplaceOriginal, "conv:rp:"},
+		{"pdf, pending source", rotate, docsbot.StatusPending, converter.BtnSavePDF, "conv:sv:"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -245,13 +256,14 @@ func TestConvertResult_buttonsFollowSourceAndKind(t *testing.T) {
 			require.Equal(t, tt.save, rows[0][0].Text)
 			require.True(t, strings.HasPrefix(rows[0][0].CallbackData, tt.action), rows[0][0].CallbackData)
 			require.Len(t, rows[1], 1)
-			require.Equal(t, "Ничего не делать", rows[1][0].Text)
+			require.Equal(t, converter.BtnSkipResult, rows[1][0].Text)
 			require.True(t, strings.HasPrefix(rows[1][0].CallbackData, "conv:skip:"), rows[1][0].CallbackData)
 		})
 	}
 }
 
 func TestConvertResult_sourceGoneBeforeTheResultOffersToSave(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
@@ -262,11 +274,12 @@ func TestConvertResult_sourceGoneBeforeTheResultOffersToSave(t *testing.T) {
 
 	require.Len(t, h.docs, 1)
 	rows := resultButtons(t, h)
-	require.Equal(t, "💾 Сохранить PDF", rows[0][0].Text, "a deleted source can't be replaced")
+	require.Equal(t, converter.BtnSavePDF, rows[0][0].Text, "a deleted source can't be replaced")
 	require.True(t, strings.HasPrefix(rows[0][0].CallbackData, "conv:sv:"))
 }
 
 func TestConvertSave_pendingDocumentTakesTheFile(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusPending)
 	tok := compressFromMenu(t, h, src.ID)
@@ -284,11 +297,12 @@ func TestConvertSave_pendingDocumentTakesTheFile(t *testing.T) {
 	require.Equal(t, src.Title, got.Title)
 	require.Equal(t, src.Category, got.Category)
 	require.Equal(t, editsBefore+1, h.edits, "the buttons are removed once")
-	require.Contains(t, h.allTexts(), "Подменил файл. Категорию выбери в сообщении выше.")
-	require.Contains(t, h.lastText(), "Эта кнопка уже не работает", "the second tap is stale")
+	require.Contains(t, h.allTexts(), converter.TextResultSwapped)
+	require.Contains(t, h.lastText(), converter.TextConvertResultOld, "the second tap is stale")
 }
 
 func TestConvertSave_documentSavedMeanwhileAsksBeforeReplacing(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusPending)
 	tok := compressFromMenu(t, h, src.ID)
@@ -300,7 +314,7 @@ func TestConvertSave_documentSavedMeanwhileAsksBeforeReplacing(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:sv:"+tok))
 
 	require.Equal(t, saved, h.repo.Docs[src.ID], "nothing is replaced silently")
-	require.Contains(t, lastCaption(h), "Заменить оригинал этим файлом?")
+	require.Contains(t, lastCaption(h), converter.TextReplaceConfirm)
 	require.Contains(t, lastCaption(h), "conv:rpy:"+tok)
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpn:"+tok))
@@ -311,6 +325,7 @@ func TestConvertSave_documentSavedMeanwhileAsksBeforeReplacing(t *testing.T) {
 }
 
 func TestConvertSave_pendingDocumentGone(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusPending)
 	tok := compressFromMenu(t, h, src.ID)
@@ -320,12 +335,13 @@ func TestConvertSave_pendingDocumentGone(t *testing.T) {
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:sv:"+tok))
 
-	require.Contains(t, h.lastText(), "уже нет")
+	require.Contains(t, h.lastText(), converter.TextGone)
 	require.Empty(t, h.repo.Docs, "nothing is created in its place")
 	require.Equal(t, editsBefore+1, h.edits, "the dead buttons are removed")
 }
 
 func TestConvertSave_legacyButtonsAnswerStale(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	tok := compressFromCommand(t, h)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
@@ -337,7 +353,7 @@ func TestConvertSave_legacyButtonsAnswerStale(t *testing.T) {
 		callbackUpdate("conv:save:"), callbackUpdate("conv:save"), foreign,
 	} {
 		require.NotPanics(t, func() { h.bot.ProcessUpdate(ctx, u) })
-		require.Contains(t, h.lastText(), "Эта кнопка уже не работает")
+		require.Contains(t, h.lastText(), converter.TextConvertResultOld)
 	}
 
 	require.Empty(t, h.repo.Docs, "an old button saves nothing")
@@ -346,6 +362,7 @@ func TestConvertSave_legacyButtonsAnswerStale(t *testing.T) {
 }
 
 func TestConvertSkip_removesButtonsAndKillsTheToken(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusPending)
 	tok := compressFromMenu(t, h, src.ID)
@@ -357,5 +374,5 @@ func TestConvertSkip_removesButtonsAndKillsTheToken(t *testing.T) {
 
 	require.Equal(t, editsBefore+1, h.edits, "the buttons are removed")
 	require.Equal(t, src, h.repo.Docs[src.ID], "the token no longer saves anything")
-	require.Contains(t, h.lastText(), "Эта кнопка уже не работает")
+	require.Contains(t, h.lastText(), converter.TextConvertResultOld)
 }

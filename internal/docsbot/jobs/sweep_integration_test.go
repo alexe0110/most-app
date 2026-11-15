@@ -3,6 +3,7 @@
 package jobs_test
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/jobs"
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
+	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 	pjobs "github.com/alexe0110/most-app/internal/platform/jobs"
 )
 
@@ -31,7 +33,7 @@ func TestDisconnect_resetsQueuedAndUploading(t *testing.T) {
 
 	require.NoError(t, svc.Disconnect(t.Context(), user))
 	start()
-	time.Sleep(2 * time.Second)
+	awaitQueueDrained(t, pool) // a job left behind by Disconnect would have uploaded by now
 
 	for _, d := range []docsbot.DocumentID{id, docsbot.DocumentID(uploadingID)} {
 		status, _ := backupState(t, pool, d)
@@ -47,8 +49,8 @@ func TestDisconnect_resetsQueuedAndUploading(t *testing.T) {
 // the upload queue.
 func setupSweep(t *testing.T, drive docsbot.Drive, backup, age, integrationStatus string) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, svc *docsbot.Service, spy *spyNotifier, enq *postgres.Documents, start func()) {
 	t.Helper()
-	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, slog.New(slog.DiscardHandler))
-	svc = newService(pool, enq, jobs.NewQueue(queue.Inserter), drive, fakeFiles{})
+	pool, user, id, spy, enq, queue := setupUpload(t, drive, slog.New(slog.DiscardHandler))
+	svc = newService(pool, enq, jobs.NewQueue(queue.Inserter), drive)
 
 	ctx := t.Context()
 	_, err := pool.Exec(ctx, `update documents set backup_status = $2, updated_at = now() - $3::interval where id = $1::uuid`,
@@ -75,7 +77,7 @@ func TestSweepStuckUploads_requeuesStaleAndBacksUp(t *testing.T) {
 	require.Eventually(t, func() bool {
 		status, _ := backupState(t, pool, id)
 		return status == "backed_up"
-	}, 30*time.Second, 100*time.Millisecond)
+	}, 10*time.Second, 100*time.Millisecond)
 }
 
 func TestSweepStuckUploads_liveJobDedups(t *testing.T) {
@@ -95,62 +97,42 @@ func TestSweepStuckUploads_liveJobDedups(t *testing.T) {
 	require.Eventually(t, func() bool {
 		status, _ := backupState(t, pool, id)
 		return status == "backed_up"
-	}, 30*time.Second, 100*time.Millisecond)
-	// Give a wrongly inserted second job time to run before asserting.
-	time.Sleep(time.Second)
+	}, 10*time.Second, 100*time.Millisecond)
+	awaitQueueDrained(t, pool) // a wrongly inserted second job would have run by now
 	require.Equal(t, 1, drive.count())
 }
 
-func TestSweepStuckUploads_failsOldUpload(t *testing.T) {
-	pool, _, id, svc, _, _, _ := setupSweep(t, &countingDrive{}, "uploading", "25 hours", "active")
+type idleSweeper struct{}
 
-	res, err := svc.SweepStuckUploads(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, 1, res.Found)
-	require.Zero(t, res.Requeued)
-	require.Len(t, res.Failed, 1)
-	require.Equal(t, id, res.Failed[0].ID)
-	status, _ := backupState(t, pool, id)
-	require.Equal(t, "failed", status)
+func (idleSweeper) SweepStuckUploads(context.Context) (docsbot.SweepResult, error) {
+	return docsbot.SweepResult{}, nil
 }
 
-func TestSweepStuckUploads_skips(t *testing.T) {
-	tests := []struct {
-		name        string
-		age         string
-		integration string
-	}{
-		{name: "fresh upload", age: "0 seconds", integration: "active"},
-		{name: "revoked integration", age: "31 minutes", integration: "revoked"},
-		{name: "no integration", age: "31 minutes", integration: ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			pool, _, id, svc, _, _, _ := setupSweep(t, &countingDrive{}, "uploading", tt.age, tt.integration)
+type idlePurger struct{}
 
-			res, err := svc.SweepStuckUploads(t.Context())
-			require.NoError(t, err)
-			require.Zero(t, res.Found)
-			require.Zero(t, res.Requeued)
-			require.Empty(t, res.Failed)
-			status, _ := backupState(t, pool, id)
-			require.Equal(t, "uploading", status)
-		})
-	}
+func (idlePurger) PurgeStalePending(context.Context) (docsbot.PurgeResult, error) {
+	return docsbot.PurgeResult{}, nil
 }
 
-func TestSweepWorker_notifiesFailed(t *testing.T) {
-	pool, _, id, svc, spy, _, _ := setupSweep(t, &countingDrive{}, "uploading", "25 hours", "active")
-
+// The sweep and the purge are periodic: without the registered worker and the
+// run-on-start flag nothing would ever recover a stuck upload or delete a stale
+// pending document.
+func TestPeriodicJobs_runOnStart(t *testing.T) {
+	pool := dbtest.New(t)
+	log := slog.New(slog.DiscardHandler)
 	workers := river.NewWorkers()
-	periodic := jobs.RegisterSweepUploads(workers, slog.New(slog.DiscardHandler), svc, spy)
-	require.NotNil(t, periodic)
-	queue, err := pjobs.New(pool, slog.New(slog.DiscardHandler), workers, nil, periodic)
+	sweep := jobs.RegisterSweepUploads(workers, log, idleSweeper{}, &spyNotifier{})
+	purge := jobs.RegisterPurgePending(workers, log, idlePurger{})
+	queue, err := pjobs.New(pool, log, workers, nil, sweep, purge)
 	require.NoError(t, err)
+
 	startQueue(t, queue)
 
-	require.Eventually(t, func() bool { return len(spy.seen()) == 1 }, 30*time.Second, 100*time.Millisecond)
-	require.Equal(t, id, spy.seen()[0])
-	status, _ := backupState(t, pool, id)
-	require.Equal(t, "failed", status)
+	for _, kind := range []string{jobs.SweepUploadsArgs{}.Kind(), jobs.PurgePendingArgs{}.Kind()} {
+		require.Eventually(t, func() bool {
+			var n int
+			err := pool.QueryRow(t.Context(), `select count(*) from river_job where kind = $1 and state = 'completed'`, kind).Scan(&n)
+			return err == nil && n == 1
+		}, 10*time.Second, 50*time.Millisecond, kind)
+	}
 }

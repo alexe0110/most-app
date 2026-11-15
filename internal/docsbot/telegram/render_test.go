@@ -77,14 +77,14 @@ func TestRenderFound_opensCards(t *testing.T) {
 	text, kb := renderFound(docsbot.Found{DriveConnected: true, Docs: []docsbot.Document{
 		{ID: "x1", Title: "Паспорт", Category: docsbot.CatPassport},
 	}})
-	require.Equal(t, "Нашёл 1 документ:", text)
+	require.Equal(t, fmt.Sprintf(textFoundTitle, 1, pluralDocumentOne), text)
 	btn := kb.InlineKeyboard[0][0]
 	require.Equal(t, "📥 📄 Паспорт", btn.Text, "same row format as the list, no category")
 	require.True(t, strings.HasPrefix(btn.CallbackData, "d:oc:"))
 	require.True(t, strings.HasSuffix(btn.CallbackData, ":s"))
 
 	text, kb = renderFound(docsbot.Found{Query: "привет"})
-	require.Equal(t, "По запросу «привет» ничего нет. Я ищу по названиям документов — попробуй другое слово или открой /list.", text)
+	require.Equal(t, fmt.Sprintf(textNothingFound, "привет"), text)
 	require.Nil(t, kb)
 }
 
@@ -282,7 +282,7 @@ func TestRenderCounts_plural(t *testing.T) {
 				docs[i] = docsbot.Document{ID: docsbot.DocumentID(fmt.Sprint(i)), Title: "Док"}
 			}
 			found, _ := renderFound(docsbot.Found{Docs: docs})
-			require.Equal(t, "Нашёл "+want+":", found)
+			require.Equal(t, strings.Replace(textFoundTitle, "%d %s", want, 1), found)
 
 			page, _ := renderCategoryPage(docsbot.CategoryPage{Category: docsbot.CatPassport, Total: tt.n, Page: 1, Pages: 1})
 			require.Equal(t, docsbot.CatPassport.Label()+" · "+want, page)
@@ -292,7 +292,7 @@ func TestRenderCounts_plural(t *testing.T) {
 				NotInDrive:     tt.n,
 				DriveConnected: true,
 			})
-			require.Contains(t, catalog, fmt.Sprintf("📥 %s ещё не на Google Диске", want))
+			require.Contains(t, catalog, strings.Replace(textNotInDrive, "%d %s", want, 1))
 		})
 	}
 }
@@ -360,7 +360,7 @@ func TestRenderFound_queryIsShownAsTyped(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Search answers are sent as plain text, so the query goes in verbatim.
 			text, kb := renderFound(docsbot.Found{Query: tt.query})
-			require.Equal(t, "По запросу «"+tt.query+"» ничего нет. Я ищу по названиям документов — попробуй другое слово или открой /list.", text)
+			require.Equal(t, fmt.Sprintf(textNothingFound, tt.query), text)
 			require.Nil(t, kb)
 		})
 	}

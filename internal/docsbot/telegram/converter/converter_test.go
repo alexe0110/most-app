@@ -13,6 +13,7 @@ import (
 )
 
 func TestConvert_unsupportedDocument(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 
@@ -25,6 +26,7 @@ func TestConvert_unsupportedDocument(t *testing.T) {
 }
 
 func TestConvert_cancelReturnsToMainScenario(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 
@@ -39,6 +41,7 @@ func TestConvert_cancelReturnsToMainScenario(t *testing.T) {
 
 // Every finished conversion is one convert_done event naming only the operation.
 func TestConvert_recordsConvertDone(t *testing.T) {
+	t.Parallel()
 	user := func(t *testing.T) context.Context {
 		return tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	}
@@ -134,6 +137,7 @@ func TestConvert_recordsConvertDone(t *testing.T) {
 }
 
 func TestConvert_noEventWhenTheResultIsNotSent(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	src := seedSource(h, docsbot.StatusSaved)
@@ -146,6 +150,7 @@ func TestConvert_noEventWhenTheResultIsNotSent(t *testing.T) {
 }
 
 func TestConvert_eventFailureDoesNotBreakTheResult(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	h.repo.EventsErr = errors.New("db down")
 	src := seedSource(h, docsbot.StatusSaved)

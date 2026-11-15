@@ -30,10 +30,9 @@ func TestChooseCategory_savesAndQueuesInOneTransaction(t *testing.T) {
 		{"exactly the limit is uploaded", true, docsbot.MaxDriveBytes, "pending", 1},
 		{"size unknown is uploaded", true, 0, "pending", 1},
 	}
-	shared := newTxEnv(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := shared.fresh(t)
+			e := newTxEnv(t)
 			svc := e.service(e.jq, tt.connected)
 			doc := e.receive(t, svc, "a", tt.size)
 
@@ -135,14 +134,13 @@ func TestSaveChosen_guards(t *testing.T) {
 		{"cancelled context changes nothing", "pending", false, true, docsbot.BackupPending, false, true, state{"pending", "", "none"}, 0},
 		{"unsupported backup status rolls back", "pending", false, false, docsbot.BackupFailed, false, true, state{"pending", "", "none"}, 0},
 	}
-	shared := newTxEnv(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := shared.fresh(t)
+			e := newTxEnv(t)
 			id := e.seed(t, tt.status, "none", "ok")
 			who := e.user
 			if tt.foreign {
-				who = shared.fresh(t).user
+				who = e.newUser(t, 2)
 			}
 			ctx := t.Context()
 			if tt.cancelled {

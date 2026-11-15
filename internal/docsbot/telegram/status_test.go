@@ -13,6 +13,7 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -57,7 +58,7 @@ func TestChooseCategory_driveOn_oneFileBecomesLiveCard(t *testing.T) {
 	require.Contains(t, sent.texts[0], "Чтобы найти его потом")
 	require.Len(t, sent.edits, 1)
 	require.Contains(t, sent.edits[0], "🗂 ")
-	require.Contains(t, sent.edits[0], "⏳ Загружаю на Google Диск…")
+	require.Contains(t, sent.edits[0], telegram.TextStoragePending)
 	require.NotEmpty(t, repo.Docs[id].StatusMessageID)
 	sm, err := repo.Status.ByID(t.Context(), docsbottest.TestUserID, repo.Docs[id].StatusMessageID)
 	require.NoError(t, err)
@@ -85,7 +86,7 @@ func TestChooseCategory_driveOn_manyFilesShareOneBatch(t *testing.T) {
 	batches := statusEdits(sent)
 	require.Len(t, batches, 4, "file 2 opens the batch, files 3..5 refresh it")
 	last := batches[len(batches)-1]
-	require.Contains(t, last, "Загружаю на Google Диск · 0 из 4")
+	require.Contains(t, last, fmt.Sprintf(telegram.TextStatusProgress, 0, 4))
 
 	smIDs := map[docsbot.StatusMessageID]bool{}
 	for _, d := range repo.Docs {
@@ -167,7 +168,7 @@ func TestRetryBatch_requeuesFailedAndRedraws(t *testing.T) {
 	require.Len(t, edits, 1)
 	require.Contains(t, edits[0], "ok.pdf", "the transferred document stays listed")
 	require.NotContains(t, edits[0], "Не перенёс", "the failed document is back in progress")
-	require.Contains(t, edits[0], "⏳ Загружаю на Google Диск · 1 из 2")
+	require.Contains(t, edits[0], fmt.Sprintf(telegram.TextStatusProgress, 1, 2))
 }
 
 func TestRetryBatch_foreignMessageIsIgnored(t *testing.T) {
@@ -194,7 +195,7 @@ func TestTransfer_editsOfferIntoStatusMessage(t *testing.T) {
 
 	require.Empty(t, sent.texts, "no per-document or extra message")
 	require.Len(t, sent.edits, 1)
-	require.Contains(t, sent.edits[0], "Загружаю на Google Диск · 0 из 3")
+	require.Contains(t, sent.edits[0], fmt.Sprintf(telegram.TextStatusProgress, 0, 3))
 }
 
 func TestTransfer_nothingToTransfer(t *testing.T) {
@@ -204,7 +205,7 @@ func TestTransfer_nothingToTransfer(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallbackMsg(21, "d:try"))
 
 	require.Len(t, sent.edits, 1)
-	require.Contains(t, sent.edits[0], "Всё уже на Google Диске.")
+	require.Contains(t, sent.edits[0], telegram.TextNothingToTransfer)
 }
 
 func TestRetryAll_editsSettingsIntoStatusMessage(t *testing.T) {
@@ -215,7 +216,7 @@ func TestRetryAll_editsSettingsIntoStatusMessage(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallbackMsg(22, "d:rta"))
 
 	require.Len(t, sent.edits, 1)
-	require.Contains(t, sent.edits[0], "Загружаю на Google Диск · 0 из 1")
+	require.Contains(t, sent.edits[0], fmt.Sprintf(telegram.TextStatusProgress, 0, 1))
 }
 
 // nudges counts the connect-Drive offers among sent messages.
@@ -269,7 +270,7 @@ func TestTransfer_manyDocsShareOneStatusMessage(t *testing.T) {
 
 	require.Empty(t, sent.texts, "one status message, no per-document notices")
 	require.Len(t, sent.edits, 1)
-	require.Contains(t, sent.edits[0], "Загружаю на Google Диск · 0 из 7")
+	require.Contains(t, sent.edits[0], fmt.Sprintf(telegram.TextStatusProgress, 0, 7))
 	smIDs := map[docsbot.StatusMessageID]bool{}
 	for _, id := range seeded {
 		require.NotEmpty(t, repo.Docs[id].StatusMessageID)
@@ -291,7 +292,7 @@ func TestRetryAll_nothingFailed(t *testing.T) {
 
 	require.Empty(t, sent.texts)
 	require.Len(t, sent.edits, 1)
-	require.Contains(t, sent.edits[0], "Документов с ошибкой загрузки нет.")
+	require.Contains(t, sent.edits[0], telegram.TextNoFailed)
 }
 
 func TestTransfer_otherUsersDocsAreNotTouched(t *testing.T) {
@@ -302,7 +303,7 @@ func TestTransfer_otherUsersDocsAreNotTouched(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallbackMsg(21, "d:try"))
 
 	require.Empty(t, repo.Docs[other.ID].StatusMessageID)
-	require.Contains(t, sent.edits[0], "Всё уже на Google Диске.")
+	require.Contains(t, sent.edits[0], telegram.TextNothingToTransfer)
 }
 
 func TestLogs_retryAllAndUploadStartWithoutLeaks(t *testing.T) {

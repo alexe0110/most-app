@@ -4,19 +4,22 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
 )
 
 // The sessions and result tokens are empty after a restart. These tests press old
 // buttons against empty stores.
 
 func TestRestart_convertCallbackWithoutSession(t *testing.T) {
+	t.Parallel()
 	for _, data := range []string{"conv:pdf", "conv:compress", "conv:done", "conv:cancel"} {
 		t.Run(data, func(t *testing.T) {
 			h := newConvHarness(t)
 
 			h.bot.ProcessUpdate(t.Context(), callbackUpdate(data))
 
-			require.Equal(t, "Эта кнопка уже не работает. Открой документ заново.", h.lastText())
+			require.Equal(t, converter.TextStale, h.lastText())
 		})
 	}
 }
@@ -24,6 +27,7 @@ func TestRestart_convertCallbackWithoutSession(t *testing.T) {
 // The cleaned copy waits in memory for the choice. After a restart its buttons
 // are old, and the info screen's buttons point at documents that may be gone.
 func TestRestart_infoCallbacksWithoutState(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		data string
 		want string

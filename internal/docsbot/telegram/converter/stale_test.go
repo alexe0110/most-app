@@ -23,6 +23,7 @@ func (h *convHarness) lastMsg() int {
 }
 
 func TestConvert_staleButtons(t *testing.T) {
+	t.Parallel()
 	const staleText = "Эта кнопка уже не работает. Открой документ заново."
 
 	tests := []struct {
@@ -203,6 +204,7 @@ func (h *convHarness) servePNG() {
 
 // /convert again replaces the session: buttons of the old dialogue are stale.
 func TestConvertDialogue_restartKillsOldButtons(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
@@ -229,6 +231,7 @@ func inaccessible(u *models.Update) *models.Update {
 }
 
 func TestConvert_inaccessibleMessageDoesNothing(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := compressFromMenu(t, h, src.ID)
@@ -260,6 +263,7 @@ func TestConvert_inaccessibleMessageDoesNothing(t *testing.T) {
 }
 
 func TestConvert_unknownActionsAreStale(t *testing.T) {
+	t.Parallel()
 	const staleText = "Эта кнопка уже не работает. Открой документ заново."
 
 	for _, data := range []string{"conv:zzz", "conv:", "conv:p:", "conv:p:rot:x", "conv:p:zzz", "conv:fmt", "conv:limit3"} {

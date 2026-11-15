@@ -2,6 +2,7 @@ package telegram_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -29,7 +30,7 @@ func TestRename_onStatusCardKeepsStatusRendering(t *testing.T) {
 			repo.Docs[id] = d
 
 			b.ProcessUpdate(ctx, dataCallbackMsg(11, "d:rn:"+string(id)))
-			require.Equal(t, "Сейчас: «file0.pdf». Пришли новое название — до 100 символов.", sent.edits[len(sent.edits)-1])
+			require.Equal(t, fmt.Sprintf(telegram.TextRenamePrompt, "file0.pdf", docsbot.MaxTitleRunes), sent.edits[len(sent.edits)-1])
 
 			if finish == "cancel" {
 				b.ProcessUpdate(ctx, dataCallbackMsg(11, "d:rnc:"+string(id)))
@@ -83,7 +84,7 @@ func TestRename_editsCardInPlace(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallback("d:rn:"+string(doc.ID)))
 
 	prompt := sent.edits[len(sent.edits)-1]
-	require.Equal(t, "Сейчас: «Старое». Пришли новое название — до 100 символов.", prompt, "the card message turns into the prompt")
+	require.Equal(t, fmt.Sprintf(telegram.TextRenamePrompt, "Старое", docsbot.MaxTitleRunes), prompt, "the card message turns into the prompt")
 	require.Equal(t, "d:rnc:"+string(doc.ID), cancelData(t, sent.editMarkups[len(sent.editMarkups)-1]))
 	require.Empty(t, sent.texts, "no separate prompt message, no force reply")
 
@@ -104,7 +105,7 @@ func cancelData(t *testing.T, markup string) string {
 	require.NoError(t, json.Unmarshal([]byte(markup), &kb))
 	require.Len(t, kb.InlineKeyboard, 1)
 	require.Len(t, kb.InlineKeyboard[0], 1)
-	require.Equal(t, "Отмена", kb.InlineKeyboard[0][0].Text)
+	require.Equal(t, telegram.BtnCancel, kb.InlineKeyboard[0][0].Text)
 	return kb.InlineKeyboard[0][0].CallbackData
 }
 
@@ -221,7 +222,7 @@ func TestRename_newPromptRestoresPreviousCard(t *testing.T) {
 
 	require.Equal(t, []int{7, 9}, sent.editIDs)
 	require.Contains(t, sent.edits[0], "Первое", "the first message is a card again")
-	require.Equal(t, "Сейчас: «Второе». Пришли новое название — до 100 символов.", sent.edits[1])
+	require.Equal(t, fmt.Sprintf(telegram.TextRenamePrompt, "Второе", docsbot.MaxTitleRunes), sent.edits[1])
 	b.ProcessUpdate(ctx, textUpdateID(63, "Новое для второго"))
 	require.Equal(t, "Новое для второго", repo.Docs[c.ID].Title)
 	require.Equal(t, "Первое", repo.Docs[a.ID].Title)
@@ -254,7 +255,7 @@ func TestRename_deletedDocumentIsGone(t *testing.T) {
 
 	b.ProcessUpdate(ctx, textUpdateID(65, "Новое"))
 
-	require.True(t, has(sent.edits, "Этого документа уже нет"), "edits %q", sent.edits)
+	require.True(t, has(sent.edits, telegram.TextGone), "edits %q", sent.edits)
 	require.False(t, has(sent.texts, "Что-то пошло не так"))
 }
 

@@ -3,6 +3,8 @@
 package postgres_test
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -158,7 +160,7 @@ func TestDocuments_listPagination(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		d, err := repo.CreateDocument(ctx, docsbot.IncomingFile{
 			UserID: user, Kind: docsbot.KindDocument, Title: "Чек",
-			FileID: "f", FileUniqueID: "u-" + itoa(i),
+			FileID: "f", FileUniqueID: "u-" + strconv.Itoa(i),
 		})
 		require.NoError(t, err)
 		mustSave(t, repo, user, d.ID, docsbot.CatReceipts)
@@ -192,33 +194,6 @@ func TestDocuments_searchTypoTolerant(t *testing.T) {
 	}
 }
 
-func TestDocuments_scopedByUser(t *testing.T) {
-	repo, user := domainRepo(t)
-	ctx := t.Context()
-	other := docsbot.UserID(makeUser(t, repo, 701).ID.String())
-
-	d, err := repo.CreateDocument(ctx, docsbot.IncomingFile{
-		UserID: user, Kind: docsbot.KindDocument, Title: "Паспорт", FileID: "f", FileUniqueID: "u",
-	})
-	require.NoError(t, err)
-
-	_, err = repo.DocumentByID(ctx, other, d.ID)
-	require.ErrorIs(t, err, docsbot.ErrNotFound, "one user cannot read another's document")
-}
-
-// itoa avoids importing strconv for a tiny loop counter.
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	var b []byte
-	for i > 0 {
-		b = append([]byte{byte('0' + i%10)}, b...)
-		i /= 10
-	}
-	return string(b)
-}
-
 func TestDocuments_resetPendingUploads(t *testing.T) {
 	repo, user := domainRepo(t)
 	ctx := t.Context()
@@ -226,7 +201,7 @@ func TestDocuments_resetPendingUploads(t *testing.T) {
 	mk := func(n int, s docsbot.BackupStatus) docsbot.DocumentID {
 		doc, err := repo.CreateDocument(ctx, docsbot.IncomingFile{
 			UserID: user, Kind: docsbot.KindDocument, Title: "d",
-			FileID: "f" + itoa(n), FileUniqueID: "u" + itoa(n),
+			FileID: "f" + strconv.Itoa(n), FileUniqueID: "u" + strconv.Itoa(n),
 		})
 		require.NoError(t, err)
 		mustSave(t, repo, user, doc.ID, docsbot.CatOther)
@@ -317,62 +292,6 @@ func TestDocuments_pageCount(t *testing.T) {
 	require.Zero(t, got.Height)
 }
 
-func TestSyncs_pageCountOnBackedUpAndReplace(t *testing.T) {
-	e := newSyncEnv(t)
-	ctx := t.Context()
-
-	// MarkBackedUp records pages when known and keeps the stored value otherwise.
-	id := e.seed(t, e.user, "pg1", "uploading", "ok")
-	_, err := e.repo.MarkBackedUp(ctx, e.user, id, "drive-1", 0, 5)
-	require.NoError(t, err)
-	require.Equal(t, 5, e.pages(t, id))
-
-	id2 := e.seed(t, e.user, "pg2", "uploading", "ok")
-	_, err = e.repo.MarkBackedUp(ctx, e.user, id2, "drive-2", 0, 0)
-	require.NoError(t, err)
-	require.Zero(t, e.pages(t, id2), "unknown stays unknown")
-
-	// coalesce: an unknown count never wipes a known one.
-	id3 := e.seed(t, e.user, "pg3", "uploading", "ok")
-	_, err = e.pool.Exec(ctx, `update documents set page_count = 9 where id = $1::uuid`, string(id3))
-	require.NoError(t, err)
-	_, err = e.repo.MarkBackedUp(ctx, e.user, id3, "drive-3", 0, 0)
-	require.NoError(t, err)
-	require.Equal(t, 9, e.pages(t, id3))
-
-	// ReplaceContent swaps the file, so its page count follows the new file, known or not.
-	id4 := e.seed(t, e.user, "pg4", "none", "ok")
-	_, err = e.pool.Exec(ctx, `update documents set page_count = 9 where id = $1::uuid`, string(id4))
-	require.NoError(t, err)
-	in := docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "n1", FileUniqueID: "n1u", MIME: "application/pdf", PageCount: 2}
-	replaced, err := e.repo.ReplaceContent(ctx, e.user, id4, in, false)
-	require.NoError(t, err)
-	require.True(t, replaced)
-	require.Equal(t, 2, e.pages(t, id4))
-	_, err = e.pool.Exec(ctx, `update documents set image_width = 800, image_height = 600 where id = $1::uuid`, string(id4))
-	require.NoError(t, err)
-	in = docsbot.IncomingFile{Kind: docsbot.KindPhoto, FileID: "n2", FileUniqueID: "n2u"}
-	replaced, err = e.repo.ReplaceContent(ctx, e.user, id4, in, false)
-	require.NoError(t, err)
-	require.True(t, replaced)
-	require.Zero(t, e.pages(t, id4), "a file of unknown length does not keep the old file's pages")
-	var w, h *int
-	require.NoError(t, e.pool.QueryRow(ctx, `select image_width, image_height from documents where id = $1::uuid`, string(id4)).Scan(&w, &h))
-	require.Nil(t, w, "a replaced file never shows the old pixel size")
-	require.Nil(t, h)
-}
-
-// pages reads the stored page count (0 for null).
-func (e syncEnv) pages(t *testing.T, id docsbot.DocumentID) int {
-	t.Helper()
-	var n *int
-	require.NoError(t, e.pool.QueryRow(t.Context(), `select page_count from documents where id = $1::uuid`, string(id)).Scan(&n))
-	if n == nil {
-		return 0
-	}
-	return *n
-}
-
 // A row saved under a retired slug (before the category set changed) is "Другое":
 // listed there, counted there, and in no other category.
 func TestDocuments_retiredSlugBelongsToOther(t *testing.T) {
@@ -420,4 +339,66 @@ func TestDocuments_retiredSlugBelongsToOther(t *testing.T) {
 	require.Equal(t, 1, got["contracts"], "the raw count keeps the slug; the service folds it into other")
 	require.Equal(t, 1, got["edu_work"])
 	require.Equal(t, 1, got[docsbot.CatOther])
+}
+
+func TestSearch_treatsMetacharactersLiterally(t *testing.T) {
+	repo, user, _ := twoUsers(t)
+	ctx := t.Context()
+	percent := titled(t, repo, user, "p", "Скидка 100% навсегда")
+	under := titled(t, repo, user, "u", "file_name final")
+	plain := titled(t, repo, user, "x", "fileXname final")
+	slash := titled(t, repo, user, "s", `C:\scans\passport`)
+	emoji := titled(t, repo, user, "e", "Паспорт 🛂 РК")
+	cyr := titled(t, repo, user, "c", "Договор аренды")
+
+	ids := func(q string) []docsbot.DocumentID {
+		t.Helper()
+		docs, err := repo.Search(ctx, user, q, 10)
+		require.NoError(t, err, "query %q must not fail", q)
+		out := make([]docsbot.DocumentID, 0, len(docs))
+		for _, d := range docs {
+			out = append(out, d.ID)
+		}
+		return out
+	}
+
+	require.Equal(t, []docsbot.DocumentID{percent.ID}, ids("%"), "% is a literal, not a wildcard for everything")
+	require.Equal(t, []docsbot.DocumentID{percent.ID}, ids("100%"))
+	require.Contains(t, ids("_name"), under.ID)
+	require.NotContains(t, ids("_name"), plain.ID, "_ must not match any single character")
+	require.Equal(t, []docsbot.DocumentID{slash.ID}, ids(`\`), "a lone backslash neither fails nor matches everything")
+	require.Equal(t, []docsbot.DocumentID{slash.ID}, ids(`\scans\`))
+	require.Contains(t, ids("🛂"), emoji.ID)
+	require.Contains(t, ids("ДОГОВОР"), cyr.ID, "Cyrillic is case-insensitive")
+	require.Contains(t, ids("договор"), cyr.ID)
+	require.Empty(t, ids(strings.Repeat("я", 10_000)), "a huge query is harmless")
+}
+
+func TestSearch_otherUsersDocumentsAreInvisible(t *testing.T) {
+	repo, a, b := twoUsers(t)
+	titled(t, repo, a, "a1", "Секрет")
+
+	docs, err := repo.Search(t.Context(), b, "%", 10)
+	require.NoError(t, err)
+	require.Empty(t, docs)
+}
+
+func TestSetTitleCategoryDelete_missingDocumentIsNotFound(t *testing.T) {
+	repo, a, _ := twoUsers(t)
+	ctx := t.Context()
+	const missing docsbot.DocumentID = "00000000-0000-7000-8000-000000000000"
+
+	_, err := repo.SetTitle(ctx, a, missing, "x", false)
+	require.ErrorIs(t, err, docsbot.ErrNotFound)
+	_, err = repo.SetCategory(ctx, a, missing, docsbot.CatOther, false)
+	require.ErrorIs(t, err, docsbot.ErrNotFound)
+	_, err = repo.DeleteDocument(ctx, a, missing, false)
+	require.ErrorIs(t, err, docsbot.ErrNotFound)
+
+	// Double delete: the second sees it gone.
+	doc := titled(t, repo, a, "dd", "d")
+	_, err = repo.DeleteDocument(ctx, a, doc.ID, false)
+	require.NoError(t, err)
+	_, err = repo.DeleteDocument(ctx, a, doc.ID, false)
+	require.ErrorIs(t, err, docsbot.ErrNotFound)
 }

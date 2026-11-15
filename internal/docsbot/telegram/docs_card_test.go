@@ -10,6 +10,7 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -77,7 +78,7 @@ func TestOpenCard_editsMessageWithBack(t *testing.T) {
 
 			require.True(t, has(sent.edits, "🗂 "), "edits %q", sent.edits)
 			require.True(t, has(sent.edits, "📄"), "edits %q", sent.edits)
-			require.True(t, has(sent.editMarkups, "⬅️ Назад"), "markups %q", sent.editMarkups)
+			require.True(t, has(sent.editMarkups, telegram.BtnBack), "markups %q", sent.editMarkups)
 			require.True(t, has(sent.editMarkups, tt.wantBack), "markups %q", sent.editMarkups)
 			require.Empty(t, sent.texts, "no file or message is sent")
 		})
@@ -90,8 +91,8 @@ func TestOpenCard_unknownDocumentIsGone(t *testing.T) {
 
 	b.ProcessUpdate(ctx, dataCallback("d:oc:missing:s"))
 
-	require.True(t, has(sent.edits, "Этого документа уже нет"), "edits %q", sent.edits)
-	require.True(t, has(sent.editMarkups, "Мои документы"), "markups %q", sent.editMarkups)
+	require.True(t, has(sent.edits, telegram.TextGone), "edits %q", sent.edits)
+	require.True(t, has(sent.editMarkups, telegram.BtnMyDocs), "markups %q", sent.editMarkups)
 }
 
 func TestSetCategory_editsCardInPlace(t *testing.T) {
@@ -122,7 +123,7 @@ func TestSend_sendsFileWithCaptionAndStaleIsGone(t *testing.T) {
 	require.Equal(t, []string{"Паспорт РК · " + docsbot.CatPassport.Label()}, sent.files)
 
 	b.ProcessUpdate(ctx, dataCallback("d:snd:missing"))
-	require.True(t, has(sent.texts, "Этого документа уже нет"), "texts %q", sent.texts)
+	require.True(t, has(sent.texts, telegram.TextGone), "texts %q", sent.texts)
 }
 
 func TestOpenCard_detectsFileDeletedInDrive(t *testing.T) {
@@ -253,7 +254,7 @@ func TestChangeCategory_pickerAndBack(t *testing.T) {
 				require.Contains(t, pickerKB, "d:sc:"+id+":"+string(cat))
 			}
 			require.Contains(t, pickerKB, "d:cb:"+id, "a way back")
-			require.Contains(t, pickerKB, "⬅️ Назад")
+			require.Contains(t, pickerKB, telegram.BtnBack)
 
 			b.ProcessUpdate(ctx, dataCallback("d:cb:"+id))
 
@@ -302,7 +303,7 @@ func TestChangeCategory_staleButtons(t *testing.T) {
 				return
 			}
 			require.Equal(t, tt.want, sent.edits[len(sent.edits)-1])
-			require.Contains(t, sent.editMarkups[len(sent.editMarkups)-1], "Мои документы")
+			require.Contains(t, sent.editMarkups[len(sent.editMarkups)-1], telegram.BtnMyDocs)
 		})
 	}
 }
@@ -331,7 +332,7 @@ func TestChangeCategory_anotherUsersDocumentIsGone(t *testing.T) {
 
 			b.ProcessUpdate(ctx, dataCallback(data+string(foreign.ID)))
 
-			require.Equal(t, "Этого документа уже нет.", sent.edits[len(sent.edits)-1])
+			require.Equal(t, telegram.TextGone, sent.edits[len(sent.edits)-1])
 			require.NotContains(t, strings.Join(sent.snapshot(&sent.edits), "\n"), "Чужой паспорт")
 			require.Equal(t, docsbot.CatPassport, repo.Docs[foreign.ID].Category)
 		})

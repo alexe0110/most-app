@@ -1,6 +1,7 @@
 package converter
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 )
 
 func TestResultFileName(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name, title, fallback, tag, ext, want string
 	}{
@@ -27,5 +29,6 @@ func TestResultFileName(t *testing.T) {
 }
 
 func TestScanName(t *testing.T) {
-	require.Equal(t, "Скан 10.11.2026.pdf", scanName(time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)))
+	t.Parallel()
+	require.Equal(t, fmt.Sprintf(nameScan, "10.11.2026"), scanName(time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)))
 }

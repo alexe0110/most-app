@@ -63,7 +63,7 @@ func TestCardText(t *testing.T) {
 		{
 			"file deleted in drive",
 			docsbot.Document{Title: "x", CreatedAt: created, BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing},
-			[]string{"📥 На Google Диске файла нет, копия осталась в Telegram"}, nil,
+			[]string{textStorageMissing}, nil,
 		},
 		{
 			"sync failed keeps its line",
@@ -198,7 +198,7 @@ func TestStorageLine(t *testing.T) {
 
 func TestStorageLine_fileDeletedInDrive(t *testing.T) {
 	doc := docsbot.Document{BackupStatus: docsbot.BackupBackedUp, SyncStatus: docsbot.SyncMissing}
-	require.Equal(t, "📥 На Google Диске файла нет, копия осталась в Telegram", storageLine(doc))
+	require.Equal(t, textStorageMissing, storageLine(doc))
 }
 
 func TestHumanSize_boundaries(t *testing.T) {

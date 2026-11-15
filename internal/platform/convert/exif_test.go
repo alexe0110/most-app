@@ -38,6 +38,7 @@ func jpegWithOrientation(t *testing.T, img image.Image, o int) []byte {
 }
 
 func TestExifOrientation(t *testing.T) {
+	t.Parallel()
 	base := image.NewRGBA(image.Rect(0, 0, 4, 4))
 
 	tests := []struct {
@@ -59,6 +60,7 @@ func TestExifOrientation(t *testing.T) {
 }
 
 func TestApplyOrientation_dimensions(t *testing.T) {
+	t.Parallel()
 	src := image.NewRGBA(image.Rect(0, 0, 3, 2)) // 3 wide, 2 tall
 	tests := []struct {
 		o     int
@@ -79,6 +81,7 @@ func TestApplyOrientation_dimensions(t *testing.T) {
 }
 
 func TestApplyOrientation_rotate90(t *testing.T) {
+	t.Parallel()
 	// 2×1 image: left red, right blue. Orientation 6 rotates 90° CW, so red
 	// moves to the top.
 	src := image.NewRGBA(image.Rect(0, 0, 2, 1))
@@ -95,6 +98,7 @@ func TestApplyOrientation_rotate90(t *testing.T) {
 }
 
 func TestDecodeUpright_appliesExif(t *testing.T) {
+	t.Parallel()
 	src := image.NewRGBA(image.Rect(0, 0, 10, 4)) // 10 wide, 4 tall
 	data := jpegWithOrientation(t, src, 6)
 
