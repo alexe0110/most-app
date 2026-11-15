@@ -58,3 +58,23 @@ func TestParseXMP_countsAreCapped(t *testing.T) {
 	require.Len(t, got, 1)
 	require.Len(t, got[0].Value, maxXMPPropItems)
 }
+
+func TestParseXMP_hostileNesting(t *testing.T) {
+	t.Parallel()
+	deep := strings.Repeat("<a>", 100000) + "text" + strings.Repeat("</a>", 100000)
+
+	props := parseXMP(rdfPacket(`<xmp:Before>kept</xmp:Before><xmp:Deep>` + deep + `</xmp:Deep>`))
+
+	require.NotEmpty(t, props)
+	require.Equal(t, "Before", props[0].Name, "what came before the nesting is kept")
+}
+
+func TestParseXMP_textInNestedListsBelongsToTheProperty(t *testing.T) {
+	t.Parallel()
+
+	props := parseXMP(rdfPacket(`<dc:creator><rdf:Seq><rdf:li>Ann</rdf:li><rdf:li>Bob</rdf:li></rdf:Seq></dc:creator>`))
+
+	require.Len(t, props, 1)
+	require.Equal(t, "Creator", props[0].Name)
+	require.Equal(t, []any{"Ann", "Bob"}, props[0].Value)
+}

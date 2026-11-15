@@ -12,6 +12,7 @@ const (
 	maxXMPBytes     = 1 << 20
 	maxXMPProps     = 200
 	maxXMPPropItems = 16
+	maxXMPDepth     = 64
 )
 
 // xmpProp is one top-level XMP property; list values (rdf:Seq, rdf:Bag, rdf:Alt)
@@ -26,7 +27,8 @@ type xmpProp struct {
 func parseXMP(packet []byte) []xmpProp {
 	dec := xml.NewDecoder(io.LimitReader(bytes.NewReader(packet), maxXMPBytes))
 	var (
-		stack  []string
+		stack  []string // element names, root first
+		props  []string // props[i] is the property stack[i] belongs to, "" outside any
 		order  []string
 		values = map[string][]any{}
 	)
@@ -48,7 +50,11 @@ func parseXMP(packet []byte) []xmpProp {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
+			if len(stack) == maxXMPDepth {
+				return collectXMP(order, values) // a hostile nesting: what came before is enough
+			}
 			stack = append(stack, t.Name.Local)
+			props = append(props, xmpPropertyName(stack, props))
 			if t.Name.Local != "Description" {
 				continue
 			}
@@ -60,17 +66,22 @@ func parseXMP(packet []byte) []xmpProp {
 			}
 		case xml.EndElement:
 			if len(stack) > 0 {
-				stack = stack[:len(stack)-1]
+				stack, props = stack[:len(stack)-1], props[:len(props)-1]
 			}
 		case xml.CharData:
 			if text := string(bytes.TrimSpace(t)); text != "" {
-				if name := xmpPropertyName(stack); name != "" {
-					add(name, text)
+				if len(props) > 0 && props[len(props)-1] != "" {
+					add(props[len(props)-1], text)
 				}
 			}
 		}
 	}
 
+	return collectXMP(order, values)
+}
+
+// collectXMP lists the properties in document order.
+func collectXMP(order []string, values map[string][]any) []xmpProp {
 	props := make([]xmpProp, 0, len(order))
 	for _, name := range order {
 		props = append(props, xmpProp{Name: capitalize(name), Value: values[name]})
@@ -78,15 +89,19 @@ func parseXMP(packet []byte) []xmpProp {
 	return props
 }
 
-// xmpPropertyName is the property a text belongs to: the element directly under
-// rdf:Description, however deep the text sits in lists and structures.
-func xmpPropertyName(stack []string) string {
-	for i := 1; i < len(stack); i++ {
-		if stack[i-1] == "Description" {
-			return stack[i]
-		}
+// xmpPropertyName is the property the element on top of stack belongs to: the
+// element directly under rdf:Description, however deep it sits in lists and
+// structures. props holds the answer for each element below it, so the lookup
+// costs one step whatever the depth.
+func xmpPropertyName(stack, props []string) string {
+	n := len(stack)
+	if n < 2 {
+		return ""
 	}
-	return ""
+	if stack[n-2] == "Description" {
+		return stack[n-1]
+	}
+	return props[n-2]
 }
 
 // capitalize makes "creator" (dc:creator) match the tag names of EXIF and IPTC.
