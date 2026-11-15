@@ -141,16 +141,13 @@ func riffChunks(data []byte) ([]segment, error) {
 	return chunks, nil
 }
 
-// isPNGText reports a chunk that carries free text or a date: tEXt, zTXt, tIME,
-// and iTXt other than the XMP packet, which counts as XMP.
-func isPNGText(data []byte, c segment) bool {
+// isPNGText reports a chunk that carries free text or a date: tEXt, zTXt, iTXt
+// and tIME. An XMP iTXt counts too: imagemeta does not read iTXt, so it would
+// otherwise go unnoticed and the file would read as clean.
+func isPNGText(c segment) bool {
 	switch c.kind {
-	case "tEXt", "zTXt", "tIME":
+	case "tEXt", "zTXt", "iTXt", "tIME":
 		return true
-	case "iTXt":
-		body := data[c.start+8 : c.end-4]
-		keyword, _, _ := bytes.Cut(body, []byte{0})
-		return string(keyword) != "XML:com.adobe.xmp"
 	}
 	return false
 }

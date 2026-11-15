@@ -62,7 +62,7 @@ func inspectImage(ctx context.Context, data []byte, info *FileInfo) error {
 	info.Capture.Make = tagText(exif, "Make")
 	info.Capture.Model = tagText(exif, "Model")
 	info.Capture.Software = firstNonEmpty(tagText(exif, "Software"), tagText(xmp, "CreatorTool"))
-	info.People.Author = firstNonEmpty(tagText(exif, "Artist"), tagText(xmp, "creator"))
+	info.People.Author = firstNonEmpty(tagText(exif, "Artist"), tagText(xmp, "Creator"))
 	// An unparseable date is just not shown.
 	if t, err := tags.GetDateTime(); err == nil {
 		info.Capture.Taken = t
@@ -101,13 +101,17 @@ func containerBlock(data []byte, t FileType) ([]MetaBlock, error) {
 			return nil, unreadable(err)
 		}
 		for _, c := range chunks {
-			if isPNGText(data, c) {
+			if isPNGText(c) {
 				return []MetaBlock{BlockText}, nil
 			}
 		}
 	case FileWebP:
 		if _, err := riffChunks(data); err != nil {
 			return nil, unreadable(err)
+		}
+	case FileHEIC:
+		if _, err := parseHEIC(data); err != nil {
+			return nil, err
 		}
 	}
 	return nil, nil

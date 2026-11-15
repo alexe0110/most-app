@@ -41,45 +41,62 @@ type heicLocation struct {
 // size, no offset and no other byte moves, and the file stays a valid
 // container.
 func stripHEIC(data []byte) ([]byte, error) {
+	l, err := parseHEIC(data)
+	if err != nil {
+		return nil, err
+	}
+	out := bytes.Clone(data)
+	for _, loc := range l.locs {
+		item, ok := l.items[loc.id]
+		if !ok || !item.isMetadata() {
+			continue
+		}
+		if err := blankItem(out, loc, item.kind == itemExif, l.idat); err != nil {
+			return nil, unreadable(err)
+		}
+	}
+	return out, nil
+}
+
+// heicLayout is what stripping needs from a HEIC: its items, where they lie and
+// the idat box that construction method 1 points into.
+type heicLayout struct {
+	items map[uint32]heicItem
+	locs  []heicLocation
+	idat  isoBox
+}
+
+// parseHEIC reads the item layout of the meta box. Inspect calls it too, so a
+// container Strip would refuse is never reported as clean.
+func parseHEIC(data []byte) (heicLayout, error) {
 	top, err := isoBoxes(data, 0, len(data))
 	if err != nil {
-		return nil, unreadable(err)
+		return heicLayout{}, unreadable(err)
 	}
 	meta, ok := findBox(top, "meta")
 	if !ok || meta.body+4 > meta.end {
-		return nil, unreadable(errBadContainer)
+		return heicLayout{}, unreadable(errBadContainer)
 	}
 	kids, err := isoBoxes(data, meta.body+4, meta.end) // meta is a full box: version and flags first
 	if err != nil {
-		return nil, unreadable(err)
+		return heicLayout{}, unreadable(err)
 	}
 	iinf, hasIinf := findBox(kids, "iinf")
 	iloc, hasIloc := findBox(kids, "iloc")
 	if !hasIinf || !hasIloc {
-		return nil, unreadable(errBadContainer)
+		return heicLayout{}, unreadable(errBadContainer)
 	}
 	idat, _ := findBox(kids, "idat")
 
 	items, err := parseIinf(data, iinf)
 	if err != nil {
-		return nil, unreadable(err)
+		return heicLayout{}, unreadable(err)
 	}
 	locs, err := parseIloc(data[iloc.body:iloc.end])
 	if err != nil {
-		return nil, unreadable(err)
+		return heicLayout{}, unreadable(err)
 	}
-
-	out := bytes.Clone(data)
-	for _, loc := range locs {
-		item, ok := items[loc.id]
-		if !ok || !item.isMetadata() {
-			continue
-		}
-		if err := blankItem(out, loc, item.kind == itemExif, idat); err != nil {
-			return nil, unreadable(err)
-		}
-	}
-	return out, nil
+	return heicLayout{items: items, locs: locs, idat: idat}, nil
 }
 
 // blankItem overwrites the extents of one item with an empty Exif or XMP of the
