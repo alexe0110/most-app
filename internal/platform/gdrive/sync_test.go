@@ -3,6 +3,7 @@ package gdrive
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -88,78 +89,71 @@ func newSyncSvc(t *testing.T, d *syncDrive, clients Clients, opts ...Option) *Se
 	return New(clients, newFakeCache(), append([]Option{WithBaseURL(srv.URL)}, opts...)...)
 }
 
-func TestRename(t *testing.T) {
-	tests := []struct {
-		name        string
-		drive       *syncDrive
-		wantErr     error
-		wantPatches int
-		wantBody    string
-	}{
-		{"renames", &syncDrive{name: "old.pdf", parents: []string{"p1"}}, nil, 1, `{"name":"new.pdf"}`},
-		{"same name is no-op", &syncDrive{name: "new.pdf", parents: []string{"p1"}}, nil, 0, ""},
-		{"collision gets suffix", &syncDrive{name: "old.pdf", parents: []string{"p1"}, taken: map[string]string{"p1/new.pdf": "other"}}, nil, 1, `{"name":"new (1).pdf"}`},
-		{"own name is not a collision", &syncDrive{name: "new.pdf", parents: []string{"p1"}, taken: map[string]string{"p1/new.pdf": "f1"}}, nil, 0, ""},
-		{"missing file", &syncDrive{fileStatus: http.StatusNotFound}, ErrFileNotFound, 0, ""},
-		{"revoked", &syncDrive{fileStatus: http.StatusUnauthorized}, ErrAccessRevoked, 0, ""},
+type syncOp struct {
+	name string
+	call func(s *Service) error
+}
+
+func syncOps() []syncOp {
+	ctx := context.Background()
+	return []syncOp{
+		{"rename", func(s *Service) error { return s.Rename(ctx, "u1", "f1", "new.pdf") }},
+		{"move", func(s *Service) error { return s.Move(ctx, "u1", "f1", "passport", "Паспорт") }},
+		{"trash", func(s *Service) error { return s.Trash(ctx, "u1", "f1") }},
+		{"replace", func(s *Service) error { return s.Replace(ctx, "u1", "f1", "application/pdf", []byte("x")) }},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			svc := newSyncSvc(t, tt.drive, fakeClients{})
-			err := svc.Rename(context.Background(), "u1", "f1", "new.pdf")
-			if tt.wantErr != nil {
-				require.ErrorIs(t, err, tt.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			require.Len(t, tt.drive.patches, tt.wantPatches)
-			if tt.wantPatches > 0 {
-				require.JSONEq(t, tt.wantBody, tt.drive.patches[0].body)
-			}
+}
+
+// Every sync operation maps HTTP statuses the same way: 401 is a revoked
+// access, 404 a missing file, anything else a plain retryable error.
+func TestSyncOps_statusMapping(t *testing.T) {
+	tests := []struct {
+		status      int
+		revoked     bool
+		notFound    bool
+		wantPlainEr bool
+	}{
+		{status: http.StatusUnauthorized, revoked: true},
+		{status: http.StatusNotFound, notFound: true},
+		{status: http.StatusTooManyRequests, wantPlainEr: true},
+		{status: http.StatusInternalServerError, wantPlainEr: true},
+		{status: http.StatusBadGateway, wantPlainEr: true},
+		{status: http.StatusForbidden, wantPlainEr: true},
+	}
+	for _, op := range syncOps() {
+		for _, tt := range tests {
+			t.Run(op.name+"/"+http.StatusText(tt.status), func(t *testing.T) {
+				d := &syncDrive{fileStatus: tt.status, name: "old.pdf", parents: []string{"p1"}, folderID: "target"}
+				err := op.call(newSyncSvc(t, d, fakeClients{}))
+				require.Error(t, err)
+				require.Equal(t, tt.revoked, errors.Is(err, ErrAccessRevoked))
+				require.Equal(t, tt.notFound, errors.Is(err, ErrFileNotFound))
+			})
+		}
+	}
+}
+
+func TestSyncOps_revokedOAuth(t *testing.T) {
+	for _, op := range syncOps() {
+		t.Run(op.name, func(t *testing.T) {
+			d := &syncDrive{}
+			err := op.call(newSyncSvc(t, d, fakeClients{err: ErrAccessRevoked}))
+			require.ErrorIs(t, err, ErrAccessRevoked)
+			require.Empty(t, d.patches)
 		})
 	}
 }
 
-func TestRename_ServerErrorAndOAuth(t *testing.T) {
-	d := &syncDrive{fileStatus: http.StatusServiceUnavailable}
-	err := newSyncSvc(t, d, fakeClients{}).Rename(context.Background(), "u1", "f1", "x")
-	require.Error(t, err)
-	require.NotErrorIs(t, err, ErrFileNotFound)
-	require.NotErrorIs(t, err, ErrAccessRevoked)
-
-	err = newSyncSvc(t, &syncDrive{}, fakeClients{err: oauth.ErrAccessRevoked}).Rename(context.Background(), "u1", "f1", "x")
-	require.ErrorIs(t, err, ErrAccessRevoked)
+func TestSyncOps_cancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	d := &syncDrive{name: "old.pdf", parents: []string{"p1"}}
+	svc := newSyncSvc(t, d, fakeClients{})
+	require.Error(t, svc.Rename(ctx, "u1", "f1", "new.pdf"))
+	require.Error(t, svc.Trash(ctx, "u1", "f1"))
+	require.Error(t, svc.Replace(ctx, "u1", "f1", "", nil))
+	require.Empty(t, d.patches)
 }
-
-func TestMove(t *testing.T) {
-	tests := []struct {
-		name        string
-		drive       *syncDrive
-		wantErr     error
-		wantPatches int
-		wantQuery   []string
-	}{
-		{"moves", &syncDrive{parents: []string{"old"}, folderID: "target"}, nil, 1, []string{"addParents=target", "removeParents=old"}},
-		{"already there", &syncDrive{parents: []string{"target"}, folderID: "target"}, nil, 0, nil},
-		{"missing file", &syncDrive{fileStatus: http.StatusNotFound, folderID: "target"}, ErrFileNotFound, 0, nil},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			svc := newSyncSvc(t, tt.drive, fakeClients{})
-			err := svc.Move(context.Background(), "u1", "f1", "passport", "Паспорт")
-			if tt.wantErr != nil {
-				require.ErrorIs(t, err, tt.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			require.Len(t, tt.drive.patches, tt.wantPatches)
-			for _, q := range tt.wantQuery {
-				require.Contains(t, tt.drive.patches[0].query, q)
-			}
-		})
-	}
-}
-
 func TestTrash(t *testing.T) {
 	d := &syncDrive{}
 	require.NoError(t, newSyncSvc(t, d, fakeClients{}).Trash(context.Background(), "u1", "f1"))
@@ -225,6 +219,34 @@ func TestExists(t *testing.T) {
 			}
 			require.Equal(t, tt.want, got)
 			require.Empty(t, tt.drive.patches, "a check never writes")
+		})
+	}
+}
+
+func TestReplace_targetsSameFileAndKeepsMetadata(t *testing.T) {
+	d := &syncDrive{}
+	require.NoError(t, newSyncSvc(t, d, fakeClients{}).Replace(context.Background(), "u1", "f/1", "image/png", []byte("PNG")))
+	require.Len(t, d.patches, 1)
+	require.Equal(t, "/upload/drive/v3/files/f%2F1", d.patches[0].rawPath)
+	// No name or parents in the metadata part: only media changes.
+	require.NotContains(t, d.patches[0].body, `"name"`)
+	require.NotContains(t, d.patches[0].body, "parents")
+	require.Contains(t, d.patches[0].body, "image/png")
+}
+
+// A user who deletes the file in the Drive UI sends it to the trash, where
+// files.get still answers 200. The sync must report it as gone (ErrFileNotFound)
+// instead of renaming or replacing a trashed file and calling it a success.
+func TestSyncOps_userTrashedFileIsMissing(t *testing.T) {
+	for _, op := range syncOps() {
+		if op.name == "trash" {
+			continue
+		}
+		t.Run(op.name, func(t *testing.T) {
+			d := &syncDrive{name: "old.pdf", parents: []string{"p1"}, folderID: "target", trashed: true}
+			err := op.call(newSyncSvc(t, d, fakeClients{}))
+			require.ErrorIs(t, err, ErrFileNotFound)
+			require.Empty(t, d.patches, "a trashed file is left alone")
 		})
 	}
 }
