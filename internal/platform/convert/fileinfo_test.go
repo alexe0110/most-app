@@ -3,18 +3,11 @@ package convert_test
 import (
 	"archive/zip"
 	"bytes"
-	"context"
-	"errors"
-	"image"
-	"image/png"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-pdf/fpdf"
-	"github.com/pdfcpu/pdfcpu/pkg/api"
-	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/platform/convert"
@@ -110,11 +103,11 @@ func TestInspect_office(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, convert.FileDOCX, info.Type)
-	require.Equal(t, "Ann Author", info.People.Author)
-	require.Equal(t, "Bob Editor", info.People.LastModifiedBy)
-	require.Equal(t, "Acme", info.People.Company)
-	require.Equal(t, "Microsoft Office Word", info.Capture.Software)
-	require.Equal(t, 2024, info.Dates.Created.Year())
+	require.Equal(t, "Ann Author", fieldValue(t, info, "Office:Creator"))
+	require.Equal(t, "Bob Editor", fieldValue(t, info, "Office:LastModifiedBy"))
+	require.Equal(t, "Acme", fieldValue(t, info, "Office:Company"))
+	require.Equal(t, "Microsoft Office Word", fieldValue(t, info, "Office:Application"))
+	require.Equal(t, 2024, fieldValue(t, info, "Office:Created").(convert.Moment).Time.Year())
 	require.Equal(t, []convert.MetaBlock{convert.BlockOfficeProps}, info.Blocks)
 	require.False(t, info.Clean())
 }
@@ -124,11 +117,10 @@ func TestInspect_pdf(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, convert.FilePDF, info.Type)
-	require.Equal(t, "Ann Author", info.People.Author)
-	require.NotNil(t, info.PDF)
-	require.Equal(t, 1, info.PDF.Pages)
-	require.Equal(t, "Microsoft Word", info.PDF.Creator)
-	require.False(t, info.PDF.Scanned)
+	require.Equal(t, "Ann Author", fieldValue(t, info, "PDF:Author"))
+	require.EqualValues(t, 1, fieldValue(t, info, "PDF:Pages"))
+	require.Equal(t, "Microsoft Word", fieldValue(t, info, "PDF:Creator"))
+	require.Equal(t, convert.ContentText, fieldValue(t, info, "PDF:Content"))
 	require.Contains(t, info.Blocks, convert.BlockPDFInfo)
 }
 
@@ -157,6 +149,14 @@ func TestInspectAndStrip_sizeLimit(t *testing.T) {
 }
 
 // fixture reads a file made by testdata/gen/main.go.
+// fieldValue is the value of the field with the key; the field must exist.
+func fieldValue(t testing.TB, info convert.FileInfo, key string) any {
+	t.Helper()
+	f, ok := info.Field(key)
+	require.True(t, ok, "no field %q", key)
+	return f.Value
+}
+
 func fixture(t testing.TB, name string) []byte {
 	t.Helper()
 	data, err := os.ReadFile("testdata/" + name)
@@ -164,46 +164,100 @@ func fixture(t testing.TB, name string) []byte {
 	return data
 }
 
-var fixtureNames = []string{"gps.jpg", "text.png", "exif.webp", "gps.heic", "word.pdf", "author.docx"}
+var fixtureNames = []string{
+	"gps.jpg", "text.png", "exif.webp", "gps.heic", "word.pdf", "author.docx",
+	"iphone.jpg", "iphone.heic", "pdf_scan.pdf", "pdf_ironpdf.pdf", "pdf_active.pdf",
+}
 
 func TestInspect_fixtures(t *testing.T) {
-	phone := func(info convert.FileInfo) {
-		require.Equal(t, "Apple", info.Capture.Make)
-		require.Equal(t, "iPhone 15 Pro", info.Capture.Model)
-		require.Equal(t, "17.3.1", info.Capture.Software)
+	phone := func(t testing.TB, info convert.FileInfo) {
+		require.Equal(t, "Apple", fieldValue(t, info, "EXIF:Make"))
+		require.Equal(t, "iPhone 15 Pro", fieldValue(t, info, "EXIF:Model"))
+		require.Equal(t, "17.3.1", fieldValue(t, info, "EXIF:Software"))
 		// The wall clock of the EXIF string, whatever zone the reader assumes.
-		taken := info.Capture.Taken
+		taken := fieldValue(t, info, "EXIF:DateTimeOriginal").(convert.Moment).Time
 		require.Equal(t, [5]int{2026, 2, 19, 14, 22}, [5]int{taken.Year(), int(taken.Month()), taken.Day(), taken.Hour(), taken.Minute()})
-		require.NotNil(t, info.Location)
-		require.InDelta(t, 55.7558, info.Location.Lat, 0.001)
-		require.InDelta(t, 37.6178, info.Location.Lon, 0.001)
+		place := fieldValue(t, info, "GPS:Coordinates").(convert.Coordinates)
+		require.InDelta(t, 55.7558, place.Lat, 0.001)
+		require.InDelta(t, 37.6178, place.Lon, 0.001)
+	}
+	iphone := func(t testing.TB, info convert.FileInfo) {
+		require.Equal(t, "Apple", fieldValue(t, info, "EXIF:Make"))
+		require.Equal(t, "iPhone 17", fieldValue(t, info, "EXIF:Model"))
+		require.Equal(t, "26.6", fieldValue(t, info, "EXIF:Software"))
+		require.Equal(t, "iPhone 17 back camera 6.765mm f/1.78", fieldValue(t, info, "EXIF:LensModel"))
+		require.InDelta(t, 1.78, fieldValue(t, info, "EXIF:FNumber"), 0.001)
+		require.InDelta(t, 1.0/120, fieldValue(t, info, "EXIF:ExposureTime"), 0.0001)
+		require.EqualValues(t, 64, fieldValue(t, info, "EXIF:ISO"))
+		require.InDelta(t, 6.765, fieldValue(t, info, "EXIF:FocalLength"), 0.001)
+		require.InDelta(t, 812, fieldValue(t, info, "EXIF:GPSAltitude"), 0.5)
+		require.InDelta(t, 245, fieldValue(t, info, "EXIF:GPSImgDirection"), 0.5)
+		require.Equal(t, convert.Dimensions{Width: 64, Height: 48}, fieldValue(t, info, "Image:Size"))
+		taken := fieldValue(t, info, "EXIF:DateTimeOriginal").(convert.Moment)
+		_, offset := taken.Time.Zone()
+		require.True(t, taken.HasZone)
+		require.Equal(t, 5*3600, offset, "the OffsetTimeOriginal tag gives the zone")
+		place := fieldValue(t, info, "GPS:Coordinates").(convert.Coordinates)
+		require.InDelta(t, 43.26525, place.Lat, 0.00001)
+		require.InDelta(t, 76.97681, place.Lon, 0.00001)
+	}
+	scan := func(t testing.TB, info convert.FileInfo) {
+		require.Equal(t, convert.ContentScan, fieldValue(t, info, "PDF:Content"), "no fonts: the pages are pictures")
+		require.EqualValues(t, 1, fieldValue(t, info, "PDF:Pages"))
+		require.Equal(t, "A4", fieldValue(t, info, "PDF:PageSize"))
+		require.Equal(t, "Scan Station", fieldValue(t, info, "PDF:Creator"))
+		require.Equal(t, "Scanner Firmware 3.2", fieldValue(t, info, "PDF:Producer"))
+		_, found := info.Field("PDF:IncrementalUpdates")
+		require.False(t, found, "no edits, no field")
+		require.Equal(t, false, fieldValue(t, info, "PDF:JavaScript"))
+	}
+	ironPDF := func(t testing.TB, info convert.FileInfo) {
+		require.Equal(t, "IronPdf", fieldValue(t, info, "PDF:Creator"))
+		require.Equal(t, "IronPdf v2023.1.11387", fieldValue(t, info, "PDF:Producer"))
+		require.EqualValues(t, 4, fieldValue(t, info, "PDF:Pages"))
+		require.Equal(t, convert.ContentText, fieldValue(t, info, "PDF:Content"))
+		require.EqualValues(t, 1, fieldValue(t, info, "PDF:IncrementalUpdates"), "one save after the first")
+		modified := fieldValue(t, info, "PDF:ModDate").(convert.Moment)
+		require.True(t, modified.Time.Equal(time.Date(2026, 5, 21, 17, 43, 0, 0, time.UTC)))
+		require.Equal(t, "uuid:5f2c0d7e-3a9b-4c1e-8d2f-6b7a9e0c1d42", fieldValue(t, info, "XMP:DocumentID"))
+	}
+	activePDF := func(t testing.TB, info convert.FileInfo) {
+		require.Equal(t, true, fieldValue(t, info, "PDF:JavaScript"))
+		require.Equal(t, true, fieldValue(t, info, "PDF:EmbeddedFiles"))
+		require.Equal(t, true, fieldValue(t, info, "PDF:Signature"))
+		require.EqualValues(t, 1, fieldValue(t, info, "PDF:Annotations"), "the comment, not the link-free form fields")
+		require.Equal(t, false, fieldValue(t, info, "PDF:Encrypted"))
 	}
 	tests := []struct {
 		file   string
 		typ    convert.FileType
-		check  func(info convert.FileInfo)
+		check  func(t testing.TB, info convert.FileInfo)
 		blocks []convert.MetaBlock
 	}{
+		{"iphone.jpg", convert.FileJPEG, iphone, []convert.MetaBlock{convert.BlockEXIF, convert.BlockXMP}},
+		{"iphone.heic", convert.FileHEIC, iphone, []convert.MetaBlock{convert.BlockEXIF, convert.BlockXMP}},
+		{"pdf_scan.pdf", convert.FilePDF, scan, []convert.MetaBlock{convert.BlockPDFInfo}},
+		{"pdf_ironpdf.pdf", convert.FilePDF, ironPDF, []convert.MetaBlock{convert.BlockPDFInfo, convert.BlockXMP}},
+		{"pdf_active.pdf", convert.FilePDF, activePDF, []convert.MetaBlock{convert.BlockPDFInfo}},
 		{"gps.jpg", convert.FileJPEG, phone, []convert.MetaBlock{convert.BlockEXIF, convert.BlockXMP}},
 		{"text.png", convert.FilePNG, phone, []convert.MetaBlock{convert.BlockEXIF, convert.BlockText}},
 		{"exif.webp", convert.FileWebP, phone, []convert.MetaBlock{convert.BlockEXIF, convert.BlockXMP}},
 		{"gps.heic", convert.FileHEIC, phone, []convert.MetaBlock{convert.BlockEXIF, convert.BlockXMP}},
-		{"word.pdf", convert.FilePDF, func(i convert.FileInfo) {
-			require.Equal(t, "Ann Author", i.People.Author)
-			require.NotNil(t, i.PDF)
-			require.Equal(t, "Microsoft Word 2016", i.PDF.Creator)
-			require.Equal(t, "Microsoft: Print To PDF", i.PDF.Producer)
-			require.Equal(t, 1, i.PDF.Pages)
-			require.False(t, i.PDF.Scanned)
-			require.False(t, i.PDF.Encrypted)
-			require.Equal(t, 2026, i.Dates.Created.Year())
-			require.Equal(t, time.February, i.Dates.Modified.Month())
+		{"word.pdf", convert.FilePDF, func(t testing.TB, i convert.FileInfo) {
+			require.Equal(t, "Ann Author", fieldValue(t, i, "PDF:Author"))
+			require.Equal(t, "Microsoft Word 2016", fieldValue(t, i, "PDF:Creator"))
+			require.Equal(t, "Microsoft: Print To PDF", fieldValue(t, i, "PDF:Producer"))
+			require.EqualValues(t, 1, fieldValue(t, i, "PDF:Pages"))
+			require.Equal(t, convert.ContentText, fieldValue(t, i, "PDF:Content"))
+			require.False(t, i.Encrypted)
+			require.Equal(t, 2026, fieldValue(t, i, "PDF:CreationDate").(convert.Moment).Time.Year())
+			require.Equal(t, time.February, fieldValue(t, i, "PDF:ModDate").(convert.Moment).Time.Month())
 		}, []convert.MetaBlock{convert.BlockPDFInfo, convert.BlockXMP}},
-		{"author.docx", convert.FileDOCX, func(i convert.FileInfo) {
-			require.Equal(t, "Ann Author", i.People.Author)
-			require.Equal(t, "Bob Editor", i.People.LastModifiedBy)
-			require.Equal(t, "Acme Ltd", i.People.Company)
-			require.Equal(t, 2026, i.Dates.Created.Year())
+		{"author.docx", convert.FileDOCX, func(t testing.TB, i convert.FileInfo) {
+			require.Equal(t, "Ann Author", fieldValue(t, i, "Office:Creator"))
+			require.Equal(t, "Bob Editor", fieldValue(t, i, "Office:LastModifiedBy"))
+			require.Equal(t, "Acme Ltd", fieldValue(t, i, "Office:Company"))
+			require.Equal(t, 2026, fieldValue(t, i, "Office:Created").(convert.Moment).Time.Year())
 		}, []convert.MetaBlock{convert.BlockOfficeProps}},
 	}
 	for _, tt := range tests {
@@ -216,7 +270,7 @@ func TestInspect_fixtures(t *testing.T) {
 			require.Equal(t, tt.typ, info.Type)
 			require.Equal(t, len(data), info.Size)
 			require.ElementsMatch(t, tt.blocks, info.Blocks)
-			tt.check(info)
+			tt.check(t, info)
 		})
 	}
 }
@@ -229,217 +283,56 @@ func TestInspect_authorFromXMP(t *testing.T) {
 			info, err := convert.Inspect(t.Context(), fixture(t, name))
 
 			require.NoError(t, err)
-			require.Equal(t, "Ann Author", info.People.Author)
+			require.Equal(t, "Ann Author", fieldValue(t, info, "XMP:Creator"))
 		})
 	}
 }
 
-func TestInspectAndStrip_brokenFilesAreUnreadable(t *testing.T) {
-	zeros := make([]byte, 64)
+func TestInspect_sensitiveFields(t *testing.T) {
+	appWithPath := `<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">` +
+		`<Template>C:\Users\ann\Templates\Normal.dotm</Template><Application>Word</Application></Properties>`
+	pathDocx := zipOf(t, [][2]string{{"[Content_Types].xml", "<Types/>"}, {"word/document.xml", "<w/>"}, {"docProps/app.xml", appWithPath}})
+
 	tests := []struct {
-		name string
-		data []byte
+		name      string
+		data      []byte
+		sensitive []string
+		open      []string
 	}{
-		{name: "jpeg: no scan", data: append([]byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00}, zeros...)},
-		{name: "jpeg: segment longer than file", data: []byte{0xFF, 0xD8, 0xFF, 0xE1, 0x7F, 0xFF, 'E', 'x'}},
-		{name: "png: garbage after signature", data: append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0xAB}, 40)...)},
-		{name: "png: chunk longer than file", data: append([]byte("\x89PNG\r\n\x1a\n"), 0x7F, 0xFF, 0xFF, 0xFF, 'I', 'H', 'D', 'R')},
-		{name: "webp: size past the end", data: []byte("RIFF\xFF\xFF\xFF\x7FWEBPVP8X\xFF\xFF\xFF\x7F")},
-		{name: "heic: no meta box", data: append([]byte("\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic"), zeros...)},
-		{name: "heic: box bigger than file", data: []byte("\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic\x7F\xFF\xFF\xFFmeta")},
-		{name: "pdf: garbage", data: append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte{0xAB}, 80)...)},
-		{name: "pdf: header only", data: []byte("%PDF-1.7\n")},
+		{"photo", fixture(t, "gps.jpg"),
+			[]string{"GPS:Coordinates", "EXIF:Make", "EXIF:Model", "XMP:Creator"},
+			[]string{"EXIF:Software", "EXIF:DateTimeOriginal", "EXIF:Orientation"}},
+		{"iphone photo (jpeg)", fixture(t, "iphone.jpg"),
+			[]string{"GPS:Coordinates", "EXIF:GPSAltitude", "EXIF:GPSImgDirection", "EXIF:GPSDateStamp", "EXIF:GPSTimeStamp", "EXIF:Make", "EXIF:Model"},
+			[]string{"EXIF:Software", "EXIF:LensModel", "EXIF:DateTimeOriginal", "EXIF:GPSVersionID", "XMP:ContentIdentifier"}},
+		{"iphone photo (heic)", fixture(t, "iphone.heic"),
+			[]string{"GPS:Coordinates", "EXIF:GPSAltitude", "EXIF:GPSImgDirection", "EXIF:GPSDateStamp", "EXIF:GPSTimeStamp", "EXIF:Make", "EXIF:Model"},
+			[]string{"EXIF:Software", "EXIF:LensModel", "EXIF:DateTimeOriginal", "EXIF:GPSVersionID"}},
+		{"scan has no people or places", fixture(t, "pdf_scan.pdf"), nil, []string{"PDF:Creator", "PDF:Producer"}},
+		{"edited pdf from a converter", fixture(t, "pdf_ironpdf.pdf"), nil, []string{"PDF:Creator", "PDF:Producer", "XMP:CreatorTool"}},
+		{"pdf", fixture(t, "word.pdf"),
+			[]string{"PDF:Author", "XMP:Creator"},
+			[]string{"PDF:Creator", "PDF:Producer", "PDF:Pages"}},
+		{"office: people", fixture(t, "author.docx"),
+			[]string{"Office:Creator", "Office:LastModifiedBy", "Office:Company"},
+			[]string{"Office:Application"}},
+		{"office: user name in a path", pathDocx, []string{"Office:Template"}, []string{"Office:Application"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := convert.Inspect(t.Context(), tt.data)
-			require.ErrorIs(t, err, convert.ErrUnreadable)
-			require.NotContains(t, err.Error(), "panic")
+			info, err := convert.Inspect(t.Context(), tt.data)
 
-			_, err = convert.Strip(t.Context(), tt.data)
-			require.ErrorIs(t, err, convert.ErrUnreadable)
-		})
-	}
-}
-
-func TestInspectAndStrip_truncatedFilesNeverPanic(t *testing.T) {
-	for _, name := range fixtureNames {
-		t.Run(name, func(t *testing.T) {
-			data := fixture(t, name)
-			step := max(len(data)/200, 1)
-			for cut := 0; cut < len(data); cut += step {
-				_, err := convert.Inspect(t.Context(), data[:cut])
-				requireNoCrash(t, err)
-
-				_, err = convert.Strip(t.Context(), data[:cut])
-				requireNoCrash(t, err)
+			require.NoError(t, err)
+			var got []string
+			for _, f := range info.SensitiveFields() {
+				got = append(got, f.Key)
+			}
+			require.ElementsMatch(t, tt.sensitive, got)
+			for _, key := range tt.open {
+				f, ok := info.Field(key)
+				require.True(t, ok, key)
+				require.False(t, f.Sensitive, key)
 			}
 		})
 	}
-}
-
-// requireNoCrash accepts success or a sentinel error and rejects a parser panic,
-// which run turns into ErrUnreadable with a "panic" cause.
-func requireNoCrash(t testing.TB, err error) {
-	t.Helper()
-	if err == nil {
-		return
-	}
-	require.True(t, errors.Is(err, convert.ErrUnreadable) || errors.Is(err, convert.ErrUnsupportedFormat) ||
-		errors.Is(err, convert.ErrEncrypted) || errors.Is(err, convert.ErrTimeout), "unexpected error: %v", err)
-	require.False(t, strings.Contains(err.Error(), "panic"), "parser panicked: %v", err)
-}
-
-func TestInspect_sizeLimitIsExact(t *testing.T) {
-	atLimit := append([]byte{0xFF, 0xD8, 0xFF, 0xD9}, make([]byte, convert.MaxInputBytes-4)...)
-
-	_, err := convert.Inspect(t.Context(), atLimit)
-
-	require.NotErrorIs(t, err, convert.ErrFileTooLarge, "the limit itself is allowed")
-}
-
-func TestInspectAndStrip_cancelledContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	for _, name := range fixtureNames {
-		t.Run(name, func(t *testing.T) {
-			data := fixture(t, name)
-
-			_, err := convert.Inspect(ctx, data)
-			require.ErrorIs(t, err, convert.ErrTimeout)
-
-			_, err = convert.Strip(ctx, data)
-			require.ErrorIs(t, err, convert.ErrTimeout)
-		})
-	}
-}
-
-func FuzzInspectStrip(f *testing.F) {
-	for _, name := range fixtureNames {
-		f.Add(fixture(f, name))
-	}
-	f.Add(makeJPEG(f, exifSegment(6)))
-	f.Fuzz(func(t *testing.T, data []byte) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		_, err := convert.Inspect(ctx, data)
-		requireNoCrash(t, err)
-
-		out, err := convert.Strip(ctx, data)
-		requireNoCrash(t, err)
-		if err != nil {
-			return
-		}
-		// A copy the bot would send must read back as clean.
-		after, err := convert.Inspect(ctx, out)
-		requireNoCrash(t, err)
-		if err == nil {
-			require.True(t, after.Clean(), "blocks left after Strip: %v", after.Blocks)
-		}
-	})
-}
-
-// encryptedPDF protects the info PDF with the given user password; an empty one
-// leaves only the owner password, which still marks the file as encrypted.
-func encryptedPDF(t *testing.T, userPW string) []byte {
-	t.Helper()
-	conf := model.NewDefaultConfiguration()
-	conf.UserPW, conf.OwnerPW = userPW, "owner-pw"
-	var out bytes.Buffer
-	require.NoError(t, api.Encrypt(t.Context(), bytes.NewReader(makeInfoPDF(t)), &out, conf))
-	return out.Bytes()
-}
-
-func TestInspectAndStrip_encryptedPDF(t *testing.T) {
-	for name, userPW := range map[string]string{"user password": "user-pw", "owner password only": ""} {
-		t.Run(name, func(t *testing.T) {
-			data := encryptedPDF(t, userPW)
-
-			info, err := convert.Inspect(t.Context(), data)
-
-			require.NoError(t, err, "an encrypted PDF is a fact about the file, not a failure")
-			require.Equal(t, convert.FilePDF, info.Type)
-			require.NotNil(t, info.PDF)
-			require.True(t, info.PDF.Encrypted)
-			if userPW != "" {
-				require.Empty(t, info.People.Author, "nothing can be read without the password")
-			}
-
-			_, err = convert.Strip(t.Context(), data)
-			require.ErrorIs(t, err, convert.ErrEncrypted)
-		})
-	}
-}
-
-// bombDOCX is a package whose core.xml declares a huge title but compresses to a few
-// kilobytes.
-func bombDOCX(t *testing.T, payloadBytes int) []byte {
-	t.Helper()
-	core := `<?xml version="1.0"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>` +
-		strings.Repeat("a", payloadBytes) + `</dc:title><dc:creator>Ann</dc:creator></cp:coreProperties>`
-	return zipOf(t, [][2]string{
-		{"[Content_Types].xml", `<Types/>`},
-		{"word/document.xml", `<w:document/>`},
-		{"docProps/core.xml", core},
-	})
-}
-
-func TestInspectAndStrip_officeBomb(t *testing.T) {
-	data := bombDOCX(t, 32<<20)
-	require.Less(t, len(data), 1<<20, "the package itself is small")
-
-	start := time.Now()
-	_, err := convert.Inspect(t.Context(), data)
-
-	require.ErrorIs(t, err, convert.ErrUnreadable, "a part past the read cap is refused, not read to the end")
-	require.Less(t, time.Since(start), 5*time.Second)
-
-	out, err := convert.Strip(t.Context(), data)
-	require.NoError(t, err, "stripping copies entries raw and never inflates the bomb")
-	info, err := convert.Inspect(t.Context(), out)
-	require.NoError(t, err)
-	require.True(t, info.Clean())
-}
-
-func TestInspect_officeValuesAreEscapedForDisplay(t *testing.T) {
-	core := `<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/">` +
-		`<dc:creator>&lt;b&gt;Ann&lt;/b&gt; &amp; Co&#x202E;gnp.exe</dc:creator></cp:coreProperties>`
-	data := zipOf(t, [][2]string{{"[Content_Types].xml", "<Types/>"}, {"word/document.xml", "<w/>"}, {"docProps/core.xml", core}})
-
-	info, err := convert.Inspect(t.Context(), data)
-
-	require.NoError(t, err)
-	require.Equal(t, "<b>Ann</b> & Cognp.exe", info.People.Author, "raw text, no invisible overrides; HTML escaping is the renderer's job")
-}
-
-// Editors and macOS screenshots put only an XMP packet (an iTXt chunk) into a
-// PNG; the metadata reader doesn't look there, so the chunk must be counted
-// from the container, or the file is called clean while it is not.
-func TestInspect_pngWithOnlyXMPIsNotClean(t *testing.T) {
-	var buf bytes.Buffer
-	require.NoError(t, png.Encode(&buf, image.NewGray(image.Rect(0, 0, 8, 8))))
-	b := buf.Bytes()
-	xmp := append([]byte("XML:com.adobe.xmp\x00\x00\x00\x00\x00"),
-		`<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator><rdf:Seq><rdf:li>Ann Author</rdf:li></rdf:Seq></dc:creator></rdf:Description></rdf:RDF></x:xmpmeta>`...)
-	src := append(append(append([]byte{}, b[:33]...), pngChunkBytes("iTXt", xmp)...), b[33:]...)
-
-	info, err := convert.Inspect(t.Context(), src)
-
-	require.NoError(t, err)
-	require.False(t, info.Clean(), "the XMP chunk is metadata")
-
-	out, err := convert.Strip(t.Context(), src)
-	require.NoError(t, err)
-	require.NotContains(t, string(out), "Ann Author", "and Strip does remove it")
-}
-
-func TestInspectAndStrip_pdfPageLimit(t *testing.T) {
-	src := makePDF(t, convert.MaxPDFPages+1)
-
-	_, err := convert.Inspect(t.Context(), src)
-	require.ErrorIs(t, err, convert.ErrPDFTooManyPages)
-
-	_, err = convert.Strip(t.Context(), src)
-	require.ErrorIs(t, err, convert.ErrPDFTooManyPages)
 }

@@ -30,6 +30,9 @@ type coreProps struct {
 	Subject        string `xml:"subject"`
 	Keywords       string `xml:"keywords"`
 	Description    string `xml:"description"`
+	Category       string `xml:"category"`
+	Revision       string `xml:"revision"`
+	LastPrinted    string `xml:"lastPrinted"`
 }
 
 // appProps is docProps/app.xml.
@@ -37,6 +40,8 @@ type appProps struct {
 	Company     string `xml:"Company"`
 	Manager     string `xml:"Manager"`
 	Application string `xml:"Application"`
+	AppVersion  string `xml:"AppVersion"`
+	Template    string `xml:"Template"`
 }
 
 // customProps is docProps/custom.xml: only whether it holds any property.
@@ -70,13 +75,27 @@ func inspectOffice(data []byte, info *FileInfo) error {
 		}
 	}
 
-	info.People = People{
-		Author:         sanitizeText(core.Creator),
-		LastModifiedBy: sanitizeText(core.LastModifiedBy),
-		Company:        sanitizeText(app.Company),
+	fs := newFieldSet()
+	fs.add(GroupAuthor, "Office:Creator", sanitizeText(core.Creator), true)
+	fs.add(GroupAuthor, "Office:LastModifiedBy", sanitizeText(core.LastModifiedBy), true)
+	fs.add(GroupAuthor, "Office:Company", sanitizeText(app.Company), true)
+	fs.add(GroupAuthor, "Office:Manager", sanitizeText(app.Manager), true)
+	addOfficeMoment(fs, "Office:Created", core.Created)
+	addOfficeMoment(fs, "Office:Modified", core.Modified)
+	addOfficeMoment(fs, "Office:LastPrinted", core.LastPrinted)
+	fs.add(GroupDocument, "Office:Title", sanitizeText(core.Title), false)
+	fs.add(GroupDocument, "Office:Subject", sanitizeText(core.Subject), false)
+	fs.add(GroupDocument, "Office:Keywords", sanitizeText(core.Keywords), false)
+	fs.add(GroupDocument, "Office:Description", sanitizeText(core.Description), false)
+	fs.add(GroupDocument, "Office:Category", sanitizeText(core.Category), false)
+	fs.add(GroupDocument, "Office:Revision", sanitizeText(core.Revision), false)
+	fs.add(GroupDevice, "Office:Application", sanitizeText(app.Application), false)
+	fs.add(GroupDevice, "Office:AppVersion", sanitizeText(app.AppVersion), false)
+	fs.add(GroupDocument, "Office:Template", sanitizeText(app.Template), looksLikeUserPath(app.Template))
+	if n := len(custom.Props); n > 0 {
+		fs.add(GroupOther, "Office:CustomProperties", int64(n), false)
 	}
-	info.Dates = Dates{Created: officeTime(core.Created), Modified: officeTime(core.Modified)}
-	info.Capture.Software = sanitizeText(app.Application)
+	info.Groups, info.Dropped = fs.result(), fs.dropped
 
 	if core != (coreProps{}) || app != (appProps{}) || len(custom.Props) > 0 {
 		info.Blocks = append(info.Blocks, BlockOfficeProps)
@@ -103,4 +122,11 @@ func officeTime(s string) time.Time {
 		return time.Time{}
 	}
 	return t
+}
+
+// addOfficeMoment adds a W3CDTF date; a malformed one is left out.
+func addOfficeMoment(fs *fieldSet, key, s string) {
+	if t := officeTime(s); !t.IsZero() {
+		fs.add(GroupDates, key, Moment{Time: t, HasZone: true}, false)
+	}
 }

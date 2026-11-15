@@ -96,90 +96,93 @@ const (
 )
 
 // File info ("О файле") texts. The screen is HTML: the values come from the file,
-// the labels and group titles from here.
+// the labels and group titles from here (field labels: info_labels.go).
 const (
 	textInfoTitle = "ℹ️ О файле"
 	// textInfoCompressedPhoto answers a photo sent as a photo: Telegram has
 	// already dropped the metadata of it.
 	textInfoCompressedPhoto = "Telegram уже убрал метаданные. Чтобы проверить оригинал, отправь как файл"
 	textInfoClean           = "Метаданных нет — файл чистый"
-	textInfoHidden          = "🔎 Внутри файла: %s" // %s = the kinds of metadata
+	textInfoNoValues        = "Метаданные есть, но показать нечего"
 	textInfoEncrypted       = "🔒 Файл зашифрован: метаданные не прочитать и не убрать."
 	textInfoUnsupported     = "Этот формат не поддерживаю. Могу показать, что внутри, у JPG, PNG, WEBP, HEIC, PDF, DOCX, XLSX и PPTX."
 	textInfoUnreadable      = "Не получилось прочитать файл: он повреждён."
-	textInfoTooLarge        = "Файл больше %d МБ — прочитать его не получится." // %d = the limit
+	textInfoTooLarge        = "Файл больше %d\u00A0МБ — прочитать его не получится." // %d = the limit
 	textInfoCleanFailed     = "Не получилось полностью убрать метаданные, файл остался без изменений."
-	// textInfoDocCaveat is added for documents: only their properties are read.
-	textInfoDocCaveat      = "Проверены свойства документа. Комментарии, правки и вложенные картинки не проверял."
-	textInfoNothingToClean = "Метаданных нет — убирать нечего."
+	textInfoNothingToClean  = "Метаданных нет — убирать нечего."
 
-	textInfoLocationWarn = "⚠️ Видно, где сделан снимок"
-	textInfoMapLink      = "Открыть на карте"
+	// Summary under the title. %d = the number of fields, %s = their noun form.
+	textInfoFoundSafe = "✅ <b>Найдено %d\u00A0%s, чувствительных нет</b>"
+	// textInfoFoundRisky also takes the number of sensitive fields and, in the
+	// line below, what they are.
+	textInfoFoundRisky = "⚠️ <b>Найдено %d\u00A0%s, чувствительных — %d</b>\n<i>%s</i>"
 
-	// textCleanedCaption is the caption of the cleaned copy; %s = what was removed.
-	textCleanedCaption = "🧹 Очищенная копия. Убрано: %s."
+	textInfoMapLink  = "Открыть на карте"
+	textInfoMore     = "…и ещё %d\u00A0%s" // %d = the fields left out, %s = their noun form
+	textInfoOtherSum = " · %d\u00A0%s"     // appended to the title of «Прочее»
+	textInfoBinary   = "двоичные данные, %d\u00A0%s"
+	textInfoMapPlain = "Карта: %s" // plain-text file: the link as is
 
-	groupFile     = "📄 Файл"
-	groupCapture  = "📷 Съёмка"
+	// Group titles, in the order of the screen.
 	groupLocation = "📍 Геолокация"
-	groupPeople   = "👤 Авторство"
+	groupAuthor   = "👤 Автор"
+	groupDevice   = "📱 Устройство"
 	groupDates    = "🗓 Даты"
-	groupPDF      = "📑 PDF"
+	groupShooting = "📷 Параметры съёмки"
+	groupImage    = "🖼 Изображение"
+	groupDocument = "📑 Документ"
+	groupSecurity = "🛡 Безопасность"
+	groupOther    = "🔧 Прочее"
 
-	fieldName      = "Имя"
-	fieldType      = "Тип"
-	fieldSize      = "Размер"
-	fieldTaken     = "Дата съёмки"
-	fieldCamera    = "Камера"
-	fieldSoftware  = "Программа"
-	fieldCoords    = "Координаты"
-	fieldAuthor    = "Автор"
-	fieldCompany   = "Компания"
-	fieldModifier  = "Последним изменял"
-	fieldCreated   = "Создан"
-	fieldModified  = "Изменён"
-	fieldPages     = "Страниц"
-	fieldCreator   = "Создатель"
-	fieldProducer  = "Конвертер"
-	fieldContent   = "Содержимое"
-	fieldEncrypted = "Зашифрован"
+	// Kinds of sensitive data, for the summary line and the cleaned copy's caption.
+	sensLocation  = "геолокация"
+	sensDirection = "направление съёмки"
+	sensAuthor    = "автор"
+	sensOwner     = "владелец"
+	sensDevice    = "модель устройства"
+	sensSerial    = "серийный номер"
+	sensComputer  = "имя компьютера"
+	sensUserPath  = "имя пользователя в пути"
 
-	valueScan = "скан (картинки)"
-	valueText = "текст"
+	// textCleanedCaption is the caption of the cleaned copy.
+	textCleanedCaption = "🧹 Очищенная копия"
+	// textCleanedRemoved takes the number of fields, their noun form and the
+	// kinds of sensitive data among them.
+	textCleanedRemoved        = "Убрал %d\u00A0%s"
+	textCleanedRemovedInclude = ", включая %s"
+
 	valueYes  = "да"
 	valueNo   = "нет"
+	valueScan = "скан (картинки)"
+	valueText = "текст"
 )
 
-// Names of the file types in the info screen.
+// Noun forms for the info screen.
 const (
-	typeJPEG = "JPG-изображение"
-	typePNG  = "PNG-изображение"
-	typeWebP = "WEBP-изображение"
-	typeHEIC = "HEIC-изображение"
-	typePDF  = "PDF-документ"
-	typeDOCX = "Word (DOCX)"
-	typeXLSX = "Excel (XLSX)"
-	typePPTX = "PowerPoint (PPTX)"
+	pluralFieldOne  = "поле"
+	pluralFieldFew  = "поля"
+	pluralFieldMany = "полей"
+
+	pluralByteOne  = "байт"
+	pluralByteFew  = "байта"
+	pluralByteMany = "байт"
 )
 
-// Names of the metadata blocks, for the info screen and the cleaned copy's caption.
+// Short names of the file types in the info screen.
 const (
-	blockEXIF        = "EXIF"
-	blockXMP         = "XMP"
-	blockIPTC        = "IPTC"
-	blockText        = "текстовые теги"
-	blockComment     = "комментарий"
-	blockPDFInfo     = "свойства PDF"
-	blockOfficeProps = "свойства документа"
-	blockLocation    = "геолокация"
+	typeJPEG = "JPG"
+	typePNG  = "PNG"
+	typeWebP = "WEBP"
+	typeHEIC = "HEIC"
+	typePDF  = "PDF"
+	typeDOCX = "DOCX"
+	typeXLSX = "XLSX"
+	typePPTX = "PPTX"
 )
 
-// Units of file sizes.
-const (
-	unitMB = "МБ"
-	unitKB = "КБ"
-	unitB  = "Б"
-)
+// Name of the plain-text file with the whole list of fields: the cut screen
+// sends it after the message. %s = the document's name.
+const nameMetadataFile = "metadata-%s.txt"
 
 // Inline button labels for /convert.
 const (

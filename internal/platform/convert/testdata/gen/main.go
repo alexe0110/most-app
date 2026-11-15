@@ -3,10 +3,12 @@
 // Generator of the metadata fixtures in the parent directory. Run from the
 // repository root:
 //
-//	go run internal/platform/convert/testdata/gen/main.go
+//	go run internal/platform/convert/testdata/gen/*.go
 //
 // The files are synthetic, so no real person's data is in the repository. The
-// HEIC fixture is not made here: it is converted from gps.jpg (see README.md).
+// HEIC fixtures are not made here: sips converts them from the JPEGs (see
+// README.md). The generator is split over files by meaning, so all of them are
+// passed to go run.
 package main
 
 import (
@@ -45,6 +47,10 @@ func main() {
 	write("exif.webp", exifWebP())
 	write("word.pdf", wordPDF())
 	write("author.docx", authorDOCX())
+	write("iphone.jpg", iphoneJPEG())
+	write("pdf_scan.pdf", scanPDF())
+	write("pdf_ironpdf.pdf", ironPDF())
+	write("pdf_active.pdf", activePDF())
 }
 
 func write(name string, data []byte) {

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 	"unicode"
 )
 
@@ -58,50 +57,22 @@ var (
 // and end up in a chat message.
 const maxValueRunes = 256
 
-// Capture is what the file says about the shot.
-type Capture struct {
-	Taken    time.Time
-	Make     string
-	Model    string
-	Software string
-}
-
-// GeoPoint is a place in degrees; south and west are negative.
-type GeoPoint struct {
-	Lat, Lon float64
-}
-
-// People is who made or touched the file.
-type People struct {
-	Author         string
-	Company        string
-	LastModifiedBy string
-}
-
-// Dates are the creation and modification times written in the file.
-type Dates struct {
-	Created  time.Time
-	Modified time.Time
-}
-
-// PDFFacts are the PDF specifics.
-type PDFFacts struct {
-	Pages     int
-	Creator   string
-	Producer  string
-	Scanned   bool // no fonts: the pages are pictures
-	Encrypted bool
-}
-
-// FileInfo is what Inspect found. Zero values mean "not in the file".
+// FileInfo is what Inspect found.
 type FileInfo struct {
-	Type     FileType
-	Size     int
-	Capture  Capture
-	Location *GeoPoint
-	People   People
-	Dates    Dates
-	PDF      *PDFFacts
+	Type FileType
+	Size int
+	// Encrypted marks an encrypted PDF. With a user password nothing else can be
+	// read (the Security group only); with an owner password alone the file reads
+	// in full, but Strip refuses it.
+	Encrypted bool
+	// Groups holds every field found, by group in display order; empty groups
+	// are left out.
+	Groups []GroupFields
+	// Dropped counts the fields found past maxFields; they are in no group.
+	Dropped int
+	// NeedsPassword marks a PDF whose content hides behind a user password: only
+	// the Security group is known.
+	NeedsPassword bool
 	// Blocks lists the metadata physically in the file; empty means clean.
 	Blocks []MetaBlock
 }
@@ -111,8 +82,9 @@ func (i FileInfo) Clean() bool { return len(i.Blocks) == 0 }
 
 // Inspect reads the metadata of a JPEG, PNG, WebP, HEIC, PDF, DOCX, XLSX or PPTX
 // file. The type comes from the content; an unknown one is ErrUnsupportedFormat.
-// A password-protected PDF is not an error: PDF.Encrypted is set and nothing
-// else can be known about it.
+// An encrypted PDF is not an error: Encrypted is set. With a user password
+// nothing else can be known about it; with an owner password alone it is read
+// in full.
 func Inspect(ctx context.Context, data []byte) (FileInfo, error) {
 	if len(data) > MaxInputBytes {
 		return FileInfo{}, ErrFileTooLarge
@@ -159,6 +131,7 @@ func unreadable(err error) error {
 // invisible formatting characters (a right-to-left override could reorder what
 // the reader sees), trimmed and capped.
 func sanitizeText(s string) string {
+	s = capBytes(s, maxValueRunes)
 	s = strings.Map(func(r rune) rune {
 		switch {
 		case r == '\n' || r == '\t':
@@ -171,6 +144,16 @@ func sanitizeText(s string) string {
 	s = strings.TrimSpace(s)
 	if r := []rune(s); len(r) > maxValueRunes {
 		s = string(r[:maxValueRunes])
+	}
+	return s
+}
+
+// capBytes cuts a string to at most 4 bytes per rune of the limit before it is
+// processed, so a huge value costs no more than a small one. A rune split by the
+// cut is replaced by strings.Map.
+func capBytes(s string, runes int) string {
+	if len(s) > runes*4 {
+		return s[:runes*4]
 	}
 	return s
 }
