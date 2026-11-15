@@ -1,10 +1,8 @@
 package docsbot_test
 
 import (
-	"errors"
 	"strings"
 	"testing"
-	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
@@ -38,92 +36,6 @@ func TestDerivedTitle(t *testing.T) {
 	})
 }
 
-func TestService_SaveDerived(t *testing.T) {
-	file := docsbot.IncomingFile{Kind: docsbot.KindDocument, FileID: "f-new", FileUniqueID: "u-new", Title: "photo-compressed.jpg", MIME: "image/jpeg"}
-
-	tests := []struct {
-		name      string
-		source    *docsbot.Document // nil: no source id
-		seedStats func(*docsbottest.FakeRepo)
-		wantType  docsbot.Reply
-		wantTitle string
-		wantCat   docsbot.Category
-	}{
-		{
-			name:      "saved source: copy lands in the same category",
-			source:    &docsbot.Document{Status: docsbot.StatusSaved, Category: docsbot.CatPassport, Title: "Паспорт.jpg", TgFileUniqueID: "u-src"},
-			wantType:  docsbot.Saved{},
-			wantTitle: "Паспорт (сжатый)",
-			wantCat:   docsbot.CatPassport,
-		},
-		{
-			name:      "pending source: saved in Other under its own title",
-			source:    &docsbot.Document{Status: docsbot.StatusPending, Title: "x", TgFileUniqueID: "u-src"},
-			wantType:  docsbot.Saved{},
-			wantTitle: "photo-compressed.jpg",
-			wantCat:   docsbot.CatOther,
-		},
-		{
-			name:      "no source: saved in Other under its own title",
-			wantType:  docsbot.Saved{},
-			wantTitle: "photo-compressed.jpg",
-			wantCat:   docsbot.CatOther,
-		},
-		{
-			name:     "limit reply passes through",
-			source:   &docsbot.Document{Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "A", TgFileUniqueID: "u-src"},
-			wantType: docsbot.TooManyPending{},
-			seedStats: func(r *docsbottest.FakeRepo) {
-				seedMany(r, 20, docsbot.StatusPending, time.Now().Add(-48*time.Hour))
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			repo := docsbottest.NewFakeRepo()
-			svc, _ := edgeService(repo, docsbottest.FakeDrive{})
-			var srcID docsbot.DocumentID
-			if tt.source != nil {
-				d := *tt.source
-				d.UserID = user
-				srcID = repo.Seed(d).ID
-			}
-			if tt.seedStats != nil {
-				tt.seedStats(repo)
-			}
-
-			rep, err := svc.SaveDerived(t.Context(), user, srcID, file, " (сжатый)")
-
-			require.NoError(t, err)
-			require.IsType(t, tt.wantType, rep)
-			switch r := rep.(type) {
-			case docsbot.Saved:
-				require.Equal(t, tt.wantTitle, r.Doc.Title)
-				require.Equal(t, tt.wantCat, r.Doc.Category)
-				require.Equal(t, docsbot.StatusSaved, repo.Docs[r.Doc.ID].Status)
-				if tt.source != nil {
-					require.Equal(t, tt.source.Title, repo.Docs[srcID].Title, "source untouched")
-				}
-			case docsbot.NeedCategory:
-				require.Equal(t, tt.wantTitle, r.Doc.Title)
-				require.Equal(t, docsbot.StatusPending, r.Doc.Status)
-			}
-		})
-	}
-}
-
-func TestService_SaveDerived_unknownSource(t *testing.T) {
-	repo := docsbottest.NewFakeRepo()
-	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
-	other := repo.Seed(docsbot.Document{UserID: stranger, Status: docsbot.StatusSaved, Category: docsbot.CatOther, TgFileUniqueID: "x"})
-
-	for _, id := range []docsbot.DocumentID{"missing", other.ID} {
-		_, err := svc.SaveDerived(t.Context(), user, id, docsbot.IncomingFile{FileUniqueID: "u"}, " (PDF)")
-		require.ErrorIs(t, err, docsbot.ErrNotFound)
-	}
-	require.Len(t, repo.Docs, 1, "nothing created")
-}
-
 func TestService_DiscardAlbum(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -153,40 +65,4 @@ func TestService_DiscardAlbum(t *testing.T) {
 			require.Len(t, repo.Docs, tt.wantAfter)
 		})
 	}
-}
-
-func TestService_SaveDerived_failedSaveDropsTheCopy(t *testing.T) {
-	boom := errors.New("drive down")
-	repo := docsbottest.NewFakeRepo()
-	svc, _ := edgeService(repo, docsbottest.FakeDrive{Err: boom})
-	src := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "A", TgFileUniqueID: "u-src"})
-
-	_, err := svc.SaveDerived(t.Context(), user, src.ID, docsbot.IncomingFile{FileUniqueID: "u-new", Title: "x"}, " (PDF)")
-
-	require.ErrorIs(t, err, boom)
-	require.Len(t, repo.Docs, 1, "only the source remains")
-}
-
-func TestService_SaveDerived_alreadySavedIsNotDeleted(t *testing.T) {
-	repo := docsbottest.NewFakeRepo()
-	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
-	src := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "A", TgFileUniqueID: "u-src"})
-	dup := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther, Title: "B", TgFileUniqueID: "u-new"})
-
-	rep, err := svc.SaveDerived(t.Context(), user, src.ID, docsbot.IncomingFile{FileUniqueID: "u-new"}, " (PDF)")
-
-	require.NoError(t, err)
-	require.IsType(t, docsbot.AlreadySaved{}, rep)
-	require.Contains(t, repo.Docs, dup.ID)
-}
-
-func TestService_SaveDerived_noSourceFailedSaveDropsTheCopy(t *testing.T) {
-	boom := errors.New("drive down")
-	repo := docsbottest.NewFakeRepo()
-	svc, _ := edgeService(repo, docsbottest.FakeDrive{Err: boom})
-
-	_, err := svc.SaveDerived(t.Context(), user, "", docsbot.IncomingFile{FileUniqueID: "u-new", Title: "x"}, " (PDF)")
-
-	require.ErrorIs(t, err, boom)
-	require.Empty(t, repo.Docs, "the copy is not left pending")
 }

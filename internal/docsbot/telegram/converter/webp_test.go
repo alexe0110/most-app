@@ -81,15 +81,29 @@ func TestConvertWebP_cardToJPG(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "jpeg", format)
 
-	tok := saveToken.FindStringSubmatch(h.docMarkups[0])
+	tok := resultToken.FindStringSubmatch(h.docMarkups[0])
 	require.NotNil(t, tok)
-	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok[1]))
-	require.Len(t, h.repo.Docs, 2)
-	for id, d := range h.repo.Docs {
-		if id != src.ID {
-			require.Equal(t, "Скан (JPG)", d.Title)
-		}
-	}
+	require.Contains(t, h.docMarkups[0], "Заменить оригинал", "the source is saved")
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rp:"+tok[1]))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpy:"+tok[1]))
+	require.Len(t, h.repo.Docs, 1)
+	require.Equal(t, "res-uniq-0", h.repo.Docs[src.ID].TgFileUniqueID)
+}
+
+func TestConvertWebP_pendingCardOffersToSaveJPG(t *testing.T) {
+	h := newConvHarness(t)
+	h.serve("webp-src", tinyWebP(t))
+	src := h.repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusPending, Kind: docsbot.KindDocument, MIME: "image/webp",
+		Title: "Скан.webp", TgFileID: "webp-src", TgFileUniqueID: "webp-uniq",
+	})
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":jpg"))
+
+	require.Len(t, h.docs, 1)
+	require.Contains(t, h.docMarkups[0], "Сохранить JPG")
+	require.NotContains(t, h.docMarkups[0], "Заменить")
 }
 
 func TestConvertWebP_jpgButtonOnlyForWebP(t *testing.T) {

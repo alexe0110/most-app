@@ -90,19 +90,20 @@ func (c *Converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
 	}
 
 	var out []byte
-	var name, suffix, caption string
+	var name, caption string
+	var kind resultKind
 	ictx, cancelImage := context.WithTimeout(ctx, imageTimeout)
 	switch op {
 	case opPDF:
-		suffix = suffixPDF
+		kind = resultPDF
 		out, err = convert.ImagesToPDF(ictx, [][]byte{src})
 		name = resultFileName(doc.Title, nameFallbackPhoto, nameTagPDF, "pdf")
 	case opJPG:
-		suffix = suffixJPG
+		kind = resultJPG
 		out, err = convert.ToJPEG(ictx, src)
 		name = resultFileName(doc.Title, nameFallbackPhoto, nameTagJPG, "jpg")
 	default:
-		suffix = suffixCompressed
+		kind = resultCompressed
 		out, err = convert.Compress(ictx, src, maxBytes, convert.JPEG)
 		caption = compressedCaption(len(src), len(out))
 		name = resultFileName(doc.Title, nameFallbackPhoto, nameTagCompressed, "jpg")
@@ -118,7 +119,7 @@ func (c *Converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
 	if known && len(out) > maxBytes {
 		c.out(b).Send(ctx, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
 	}
-	if !c.sendResult(ctx, b, chatID, p.tgUser, resultFile{name: name, data: out, sourceDoc: id, suffix: suffix, caption: caption}) {
+	if !c.sendResult(ctx, b, chatID, p.tgUser, resultFile{name: name, data: out, kind: kind, sourceDoc: id, caption: caption}) {
 		c.show(ctx, b, chatID, msgID, textSendFailed, menu)
 		return
 	}
@@ -126,41 +127,76 @@ func (c *Converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
 	c.finish(ctx, b, chatID, msgID)
 }
 
-// onSave stores the result as a document: conv:save:<token>.
+// onSave handles «Сохранить»: conv:sv:<token>. A result without a source document
+// becomes a new document and gets the usual category question. One made from a
+// document that still waits for its category takes that document's place, so the
+// category is chosen in the message above, as usual.
 func (c *Converter) onSave(ctx context.Context, b *bot.Bot, p press) {
-	chatID := p.chatID
-	res, ok := c.results.take(p.data.token(), p.tgUser)
+	token := p.data.token()
+	res, ok := c.results.peek(token, p.tgUser)
 	if !ok {
-		c.out(b).Send(ctx, chatID, textConvertResultOld)
+		c.out(b).Send(ctx, p.chatID, textConvertResultOld)
+		return
+	}
+	if res.sourceDoc == "" {
+		c.saveNew(ctx, b, p, token)
+		return
+	}
+
+	card, err := c.svc.Card(ctx, res.user, res.sourceDoc)
+	switch {
+	case errors.Is(err, docsbot.ErrNotFound):
+		c.results.take(token, p.tgUser) // nothing to put the result in
+		c.clearButtons(ctx, b, p)
+		c.out(b).Send(ctx, p.chatID, textGone)
+		return
+	case err != nil:
+		c.log.ErrorContext(ctx, "load result source", "err", err, "user_id", res.user, "doc_id", res.sourceDoc)
+		c.out(b).Send(ctx, p.chatID, textError)
+		return
+	case card.Doc.Status == docsbot.StatusSaved:
+		// Saved since the result was sent: replacing is the user's call.
+		c.onReplaceAsk(ctx, b, p)
+		return
+	}
+	taken, ok := c.results.take(token, p.tgUser) // a double tap swaps once
+	if !ok {
+		c.out(b).Send(ctx, p.chatID, textConvertResultOld)
+		return
+	}
+	c.replaceSource(ctx, b, p, token, taken, true)
+}
+
+// saveNew stores a result that has no source document as a new pending one and
+// asks for its category.
+func (c *Converter) saveNew(ctx context.Context, b *bot.Bot, p press, token string) {
+	res, ok := c.results.take(token, p.tgUser)
+	if !ok {
+		c.out(b).Send(ctx, p.chatID, textConvertResultOld)
 		return
 	}
 	c.clearButtons(ctx, b, p)
 
-	rep, err := c.svc.SaveDerived(ctx, res.user, res.sourceDoc, res.file, res.suffix)
-	if errors.Is(err, docsbot.ErrNotFound) {
-		c.out(b).Send(ctx, chatID, textGone)
-		return
-	}
+	file := res.file
+	file.UserID = res.user
+	rep, err := c.svc.Receive(ctx, file)
 	if err != nil {
 		c.log.ErrorContext(ctx, "save converted file", "err", err, "user_id", res.user)
-		c.out(b).Send(ctx, chatID, textError)
+		c.out(b).Send(ctx, p.chatID, textError)
 		return
 	}
-
-	switch r := rep.(type) {
-	case docsbot.Saved:
-		// The result message is a file, which can't be edited into a card: the
-		// card replaces a fresh placeholder instead.
-		id := c.out(b).Send(ctx, chatID, textConvertSaving)
-		if id == 0 {
-			return
-		}
-		c.docs.RenderSaved(ctx, b, chatID, id, res.user, r)
-	case docsbot.AlreadySaved:
-		c.docs.SendAlreadySaved(ctx, b, chatID, res.user, r.Doc.ID)
-	default:
-		c.docs.SendNotice(ctx, b, chatID, rep)
+	if r, ok := rep.(docsbot.AlreadySaved); ok {
+		c.docs.SendAlreadySaved(ctx, b, p.chatID, res.user, r.Doc.ID)
+		return
 	}
+	c.docs.SendNotice(ctx, b, p.chatID, rep)
+}
+
+// onLegacySave answers the «Сохранить» buttons of result messages sent before
+// conv:sv existed: they carry conv:save, whose result is no longer stored.
+func (c *Converter) onLegacySave(ctx context.Context, b *bot.Bot, p press) {
+	c.out(b).Send(ctx, p.chatID, textConvertResultOld)
+	c.clearButtons(ctx, b, p)
 }
 
 // onReplaceAsk turns the result's caption into a confirmation: conv:rp:<token>.
@@ -178,32 +214,52 @@ func (c *Converter) onReplaceAsk(ctx context.Context, b *bot.Bot, p press) {
 // onReplaceCancel puts the result's caption and buttons back: conv:rpn:<token>.
 func (c *Converter) onReplaceCancel(ctx context.Context, b *bot.Bot, p press) {
 	token := p.data.token()
-	if _, ok := c.results.peek(token, p.tgUser); !ok {
+	res, ok := c.results.peek(token, p.tgUser)
+	if !ok {
 		c.out(b).Send(ctx, p.chatID, textConvertResultOld)
 		return
 	}
-	c.editResultCaption(ctx, b, p, "", saveKeyboard(token, true))
+	c.editResultCaption(ctx, b, p, "", resultKeyboard(token, res.kind, true))
 }
 
 // onReplace swaps the source document's file for the result: conv:rpy:<token>.
-// The result is taken first, so a double tap replaces once. When the document
-// cannot be replaced right now the result is put back, so the user can try again.
+// The result is taken first, so a double tap replaces once.
 func (c *Converter) onReplace(ctx context.Context, b *bot.Bot, p press) {
-	chatID, token := p.chatID, p.data.token()
+	token := p.data.token()
 	res, ok := c.results.take(token, p.tgUser)
 	if !ok || res.sourceDoc == "" {
-		c.out(b).Send(ctx, chatID, textConvertResultOld)
+		c.out(b).Send(ctx, p.chatID, textConvertResultOld)
 		return
+	}
+	c.replaceSource(ctx, b, p, token, res, false)
+}
+
+// replaceSource swaps the file of the result's source document for the result,
+// which the caller has already taken, and shows the outcome. When the document
+// cannot be replaced right now the result is put back, so the user can try again.
+// pending is set for a source that still waits for its category: the message then
+// still has its own caption (no confirmation was shown) and the outcome is a
+// short note instead of a card.
+func (c *Converter) replaceSource(ctx context.Context, b *bot.Bot, p press, token string, res convResult, pending bool) {
+	chatID := p.chatID
+	end := func() {
+		if pending {
+			c.clearButtons(ctx, b, p)
+			return
+		}
+		c.editResultCaption(ctx, b, p, "", nil) // the confirmation goes with the buttons
 	}
 	retry := func(text string) {
 		c.results.put(token, p.tgUser, res)
-		c.editResultCaption(ctx, b, p, "", saveKeyboard(token, true))
+		if !pending {
+			c.editResultCaption(ctx, b, p, "", resultKeyboard(token, res.kind, true))
+		}
 		c.out(b).Send(ctx, chatID, text)
 	}
 
 	rep, err := c.svc.ReplaceContent(ctx, res.user, res.sourceDoc, res.file)
 	if errors.Is(err, docsbot.ErrNotFound) {
-		c.editResultCaption(ctx, b, p, "", nil)
+		end()
 		c.out(b).Send(ctx, chatID, textGone)
 		return
 	}
@@ -219,13 +275,17 @@ func (c *Converter) onReplace(ctx context.Context, b *bot.Bot, p press) {
 	case docsbot.ReplaceMissing:
 		retry(textReplaceMissing)
 	case docsbot.Replaced:
-		c.editResultCaption(ctx, b, p, "", nil)
+		end()
+		if pending {
+			c.out(b).Send(ctx, chatID, textResultSwapped)
+			return
+		}
 		c.docs.SendReplaced(ctx, b, chatID, res.user, r.Doc.ID)
 	case docsbot.AlreadySaved:
-		c.editResultCaption(ctx, b, p, "", nil)
+		end()
 		c.docs.SendAlreadySaved(ctx, b, chatID, res.user, r.Doc.ID)
 	default:
-		c.editResultCaption(ctx, b, p, "", nil)
+		end()
 		c.docs.SendNotice(ctx, b, chatID, rep)
 	}
 }

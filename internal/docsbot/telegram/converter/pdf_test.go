@@ -191,19 +191,19 @@ func TestConvertPDF_menuAndRotate(t *testing.T) {
 	require.Equal(t, 90, inh.Rotate)
 	require.Equal(t, "Готово: 3 страницы.", h.docs[0].caption)
 
-	// 💾 saves a new document next to the original.
-	tok := saveToken.FindStringSubmatch(h.docMarkups[0])
+	// The source is saved: the result offers to replace it, not to save a copy.
+	tok := resultToken.FindStringSubmatch(h.docMarkups[0])
 	require.NotNil(t, tok)
-	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok[1]))
-	require.Len(t, h.repo.Docs, 2)
-	for id, d := range h.repo.Docs {
-		if id != src.ID {
-			require.Equal(t, "Договор (изменён)", d.Title)
-			require.Equal(t, 3, d.PageCount, "the converter counts the pages of its PDF result")
-			require.Equal(t, docsbot.CatCertificates, d.Category)
-			require.Equal(t, docsbot.StatusSaved, d.Status)
-		}
-	}
+	require.Contains(t, h.docMarkups[0], "Заменить оригинал")
+	require.Contains(t, h.docMarkups[0], "conv:rp:"+tok[1])
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rp:"+tok[1]))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpy:"+tok[1]))
+	require.Len(t, h.repo.Docs, 1)
+	got := h.repo.Docs[src.ID]
+	require.Equal(t, "res-uniq-0", got.TgFileUniqueID)
+	require.Equal(t, 3, got.PageCount, "the converter counts the pages of its PDF result")
+	require.Equal(t, "Договор.pdf", got.Title)
+	require.Equal(t, docsbot.CatCertificates, got.Category)
 }
 
 func TestConvertPDF_keepAndDropPages(t *testing.T) {

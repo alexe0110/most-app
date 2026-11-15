@@ -28,7 +28,7 @@ func TestResultStore_take(t *testing.T) {
 	now := time.Now()
 	clock := func() time.Time { return now }
 	s := newTokenMap[convResult](clock)
-	s.put("tok", 1, convResult{suffix: "x"})
+	s.put("tok", 1, convResult{kind: resultCompressed})
 
 	_, ok := s.take("tok", 2)
 	require.False(t, ok, "another user's token is refused")
@@ -37,7 +37,7 @@ func TestResultStore_take(t *testing.T) {
 
 	r, ok := s.take("tok", 1)
 	require.True(t, ok, "foreign attempt must not burn the owner's token")
-	require.Equal(t, "x", r.suffix)
+	require.Equal(t, resultCompressed, r.kind)
 	_, ok = s.take("tok", 1)
 	require.False(t, ok, "double tap acts once")
 
@@ -512,7 +512,7 @@ func TestTokenMap_ownership(t *testing.T) {
 	s := newTokenMap[convResult](func() time.Time { return now })
 
 	t.Run("a foreign peek and take leave the token to its owner", func(t *testing.T) {
-		s.put("a", 1, convResult{suffix: "x"})
+		s.put("a", 1, convResult{kind: resultCompressed})
 		_, ok := s.peek("a", 2)
 		require.False(t, ok)
 		_, ok = s.take("a", 2)
@@ -521,7 +521,7 @@ func TestTokenMap_ownership(t *testing.T) {
 		require.False(t, ok, "the zero owner owns nothing")
 		r, ok := s.take("a", 1)
 		require.True(t, ok)
-		require.Equal(t, "x", r.suffix)
+		require.Equal(t, resultCompressed, r.kind)
 	})
 	t.Run("peek does not consume", func(t *testing.T) {
 		s.put("b", 1, convResult{})

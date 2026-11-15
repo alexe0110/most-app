@@ -54,7 +54,9 @@ func TestConvertAlbum_shuffledPhotosMakeOnePDFInOrder(t *testing.T) {
 	require.Contains(t, string(h.docs[0].data), "/Count 4")
 	require.True(t, strings.HasPrefix(h.docs[0].filename, "Скан "))
 	require.Empty(t, h.repo.Docs, "the album's pending documents are dropped")
-	require.NotNil(t, saveToken.FindStringSubmatch(h.docMarkups[0]), "the PDF can be saved")
+	require.NotNil(t, resultToken.FindStringSubmatch(h.docMarkups[0]), "the PDF can be saved")
+	require.Contains(t, h.docMarkups[0], "Сохранить PDF", "the album has no stored document to replace")
+	require.NotContains(t, h.docMarkups[0], "Заменить")
 }
 
 func TestConvertAlbum_saveOneByOneShowsGroupPicker(t *testing.T) {

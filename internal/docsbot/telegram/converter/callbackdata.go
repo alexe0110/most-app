@@ -39,7 +39,8 @@ const (
 const (
 	convActDoc        = "doc"  // conv:doc:<docID> opens the menu
 	convActQuick      = "q"    // conv:q:<docID>:<op> converts a document
-	convActSave       = "save" // conv:save:<token> saves the result
+	convActSave       = "sv"   // conv:sv:<token> saves the result
+	convActSaveLegacy = "save" // conv:save:<token>, on result messages sent before conv:sv
 	convActSkip       = "skip" // conv:skip:<token> keeps only the file
 	convActRepAsk     = "rp"   // conv:rp:<token> asks to replace the original
 	convActRepYes     = "rpy"  // conv:rpy:<token> confirms the replacement

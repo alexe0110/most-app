@@ -97,7 +97,7 @@ func (c *Converter) onAlbum(ctx context.Context, b *bot.Bot, p press) {
 	c.log.InfoContext(ctx, "album converted", "user_id", user, "pages", len(pages), "in_bytes", total, "out_bytes", len(pdf))
 
 	name := scanName(c.now())
-	if !c.sendResult(ctx, b, chatID, tgUser, resultFile{name: name, data: pdf, suffix: suffixPDF}) {
+	if !c.sendResult(ctx, b, chatID, tgUser, resultFile{name: name, data: pdf, kind: resultPDF}) {
 		c.show(ctx, b, chatID, msgID, textSendFailed, choice)
 		c.albums.put(token, tgUser, album)
 		return

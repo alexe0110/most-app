@@ -2,6 +2,7 @@ package converter
 
 import (
 	"testing"
+	"unicode/utf8"
 
 	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
@@ -26,7 +27,7 @@ func TestCallbackDataFitsTelegramLimit(t *testing.T) {
 			data = append(data, b.CallbackData)
 		}
 	}
-	for _, m := range saveKeyboard(token, false).InlineKeyboard {
+	for _, m := range resultKeyboard(token, resultCompressed, false).InlineKeyboard {
 		for _, b := range m {
 			data = append(data, b.CallbackData)
 		}
@@ -36,6 +37,36 @@ func TestCallbackDataFitsTelegramLimit(t *testing.T) {
 	for _, d := range data {
 		require.LessOrEqual(t, len(d), 64, d)
 		require.NotEmpty(t, d)
+	}
+}
+
+func TestResultKeyboard(t *testing.T) {
+	token := "abc123"
+	tests := []struct {
+		name    string
+		kind    resultKind
+		replace bool
+		want    [][]string // label and callback data per row
+	}{
+		{"compress, not replaceable", resultCompressed, false, [][]string{{"💾 Сохранить сжатый", "conv:sv:abc123"}, {"Ничего не делать", "conv:skip:abc123"}}},
+		{"compress, replaceable", resultCompressed, true, [][]string{{"♻️ Заменить сжатым", "conv:rp:abc123"}, {"Ничего не делать", "conv:skip:abc123"}}},
+		{"pdf, not replaceable", resultPDF, false, [][]string{{"💾 Сохранить PDF", "conv:sv:abc123"}, {"Ничего не делать", "conv:skip:abc123"}}},
+		{"pdf, replaceable", resultPDF, true, [][]string{{"♻️ Заменить оригинал", "conv:rp:abc123"}, {"Ничего не делать", "conv:skip:abc123"}}},
+		{"jpg, not replaceable", resultJPG, false, [][]string{{"💾 Сохранить JPG", "conv:sv:abc123"}, {"Ничего не делать", "conv:skip:abc123"}}},
+		{"jpg, replaceable", resultJPG, true, [][]string{{"♻️ Заменить оригинал", "conv:rp:abc123"}, {"Ничего не делать", "conv:skip:abc123"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kb := resultKeyboard(token, tt.kind, tt.replace)
+
+			var got [][]string
+			for _, row := range kb.InlineKeyboard {
+				require.Len(t, row, 1, "one button per row")
+				got = append(got, []string{row[0].Text, row[0].CallbackData})
+				require.LessOrEqual(t, utf8.RuneCountInString(row[0].Text), 24, row[0].Text)
+			}
+			require.Equal(t, tt.want, got)
+		})
 	}
 }
 

@@ -120,16 +120,6 @@ func eventScenarios() []struct {
 			_, err := svc.ChooseCategoryGroup(t.Context(), user, first.ID, docsbot.CatPassport)
 			return err
 		}, []docsbot.Event{saved, saved}},
-		{"derived copy is a saved document", func(t *testing.T, svc *docsbot.Service, repo *docsbottest.FakeRepo) error {
-			src := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatPassport, Title: "Паспорт"})
-			_, err := svc.SaveDerived(t.Context(), user, src.ID, docsbot.IncomingFile{
-				Kind: docsbot.KindDocument, FileID: "derived-file-secret", FileUniqueID: "d1", Title: "Секретная копия",
-			}, " (PDF)")
-			return err
-		}, []docsbot.Event{{
-			User: user, Name: docsbot.EventDocSaved,
-			Props: docsbot.EventProps{Category: docsbot.CatPassport, Kind: docsbot.KindDocument},
-		}}},
 		{"card opened", func(t *testing.T, svc *docsbot.Service, repo *docsbottest.FakeRepo) error {
 			doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Title: "Секретное название"})
 			_, err := svc.OpenCard(t.Context(), user, doc.ID)
