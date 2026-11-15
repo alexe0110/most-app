@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 	"unicode"
 )
 
@@ -58,50 +57,15 @@ var (
 // and end up in a chat message.
 const maxValueRunes = 256
 
-// Capture is what the file says about the shot.
-type Capture struct {
-	Taken    time.Time
-	Make     string
-	Model    string
-	Software string
-}
-
-// GeoPoint is a place in degrees; south and west are negative.
-type GeoPoint struct {
-	Lat, Lon float64
-}
-
-// People is who made or touched the file.
-type People struct {
-	Author         string
-	Company        string
-	LastModifiedBy string
-}
-
-// Dates are the creation and modification times written in the file.
-type Dates struct {
-	Created  time.Time
-	Modified time.Time
-}
-
-// PDFFacts are the PDF specifics.
-type PDFFacts struct {
-	Pages     int
-	Creator   string
-	Producer  string
-	Scanned   bool // no fonts: the pages are pictures
-	Encrypted bool
-}
-
-// FileInfo is what Inspect found. Zero values mean "not in the file".
+// FileInfo is what Inspect found.
 type FileInfo struct {
-	Type     FileType
-	Size     int
-	Capture  Capture
-	Location *GeoPoint
-	People   People
-	Dates    Dates
-	PDF      *PDFFacts
+	Type FileType
+	Size int
+	// Encrypted marks a password-protected PDF: nothing else can be known.
+	Encrypted bool
+	// Groups holds every field found, by group in display order; empty groups
+	// are left out.
+	Groups []GroupFields
 	// Blocks lists the metadata physically in the file; empty means clean.
 	Blocks []MetaBlock
 }
@@ -111,7 +75,7 @@ func (i FileInfo) Clean() bool { return len(i.Blocks) == 0 }
 
 // Inspect reads the metadata of a JPEG, PNG, WebP, HEIC, PDF, DOCX, XLSX or PPTX
 // file. The type comes from the content; an unknown one is ErrUnsupportedFormat.
-// A password-protected PDF is not an error: PDF.Encrypted is set and nothing
+// A password-protected PDF is not an error: Encrypted is set and nothing
 // else can be known about it.
 func Inspect(ctx context.Context, data []byte) (FileInfo, error) {
 	if len(data) > MaxInputBytes {

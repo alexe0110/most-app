@@ -38,14 +38,16 @@ func imageMetaFormat(t FileType) imagemeta.ImageFormat {
 // reads; cleaning is done by the strip_* files.
 func inspectImage(ctx context.Context, data []byte, info *FileInfo) error {
 	var tags imagemeta.Tags
+	var found []imagemeta.TagInfo
 	opts := imagemeta.Options{
 		R:            bytes.NewReader(data),
 		ImageFormat:  imageMetaFormat(info.Type),
-		Sources:      imagemeta.EXIF | imagemeta.XMP | imagemeta.IPTC,
+		Sources:      imagemeta.EXIF | imagemeta.XMP | imagemeta.IPTC | imagemeta.CONFIG,
 		LimitNumTags: maxMetaTags,
 		LimitTagSize: maxMetaTagBytes,
 		HandleTag: func(ti imagemeta.TagInfo) error {
 			tags.Add(ti)
+			found = append(found, ti)
 			return nil
 		},
 	}
@@ -54,57 +56,111 @@ func inspectImage(ctx context.Context, data []byte, info *FileInfo) error {
 	if dl, ok := ctx.Deadline(); ok {
 		opts.Timeout = max(time.Until(dl), time.Millisecond)
 	}
-	if _, err := imagemeta.Decode(opts); err != nil {
+	res, err := imagemeta.Decode(opts)
+	if err != nil {
 		return unreadable(err)
 	}
 
-	exif, xmp, iptc := tags.EXIF(), tags.XMP(), tags.IPTC()
-	info.Capture.Make = tagText(exif, "Make")
-	info.Capture.Model = tagText(exif, "Model")
-	info.Capture.Software = firstNonEmpty(tagText(exif, "Software"), tagText(xmp, "CreatorTool"))
-	info.People.Author = firstNonEmpty(tagText(exif, "Artist"), tagText(xmp, "Creator"))
-	// An unparseable date is just not shown.
-	if t, err := tags.GetDateTime(); err == nil {
-		info.Capture.Taken = t
-	}
-	if lat, lon, err := tags.GetLatLong(); err == nil && validPlace(lat, lon) {
-		info.Location = &GeoPoint{Lat: lat, Lon: lon}
+	fs := newFieldSet()
+	addImageTags(fs, &tags, found)
+	if c := res.ImageConfig; c.Width > 0 && c.Height > 0 {
+		fs.add(GroupImage, "Image:Size", Dimensions{Width: c.Width, Height: c.Height}, false)
 	}
 
-	info.Blocks = imageBlocks(exif, xmp, iptc)
-	extra, err := containerBlock(data, info.Type)
+	info.Blocks = imageBlocks(tags.EXIF(), tags.XMP(), tags.IPTC())
+	extra, err := containerBlock(data, info.Type, fs)
 	if err != nil {
 		return err
 	}
 	info.Blocks = append(info.Blocks, extra...)
+	info.Groups = fs.result()
 	return nil
 }
 
+// addImageTags puts every tag into its group. Pairs that read as one fact are
+// merged: the coordinates, the altitude with its sign, a local date with its
+// zone.
+func addImageTags(fs *fieldSet, tags *imagemeta.Tags, found []imagemeta.TagInfo) {
+	exif := tags.EXIF()
+	merged := map[string]bool{}
+	// An unparseable place is shown tag by tag instead.
+	if lat, lon, err := tags.GetLatLong(); err == nil && validPlace(lat, lon) {
+		fs.add(GroupLocation, "GPS:Coordinates", Coordinates{Lat: lat, Lon: lon}, true)
+		for _, n := range []string{"GPSLatitude", "GPSLongitude", "GPSLatitudeRef", "GPSLongitudeRef"} {
+			merged[n] = true
+		}
+	}
+	if alt, ok := exif["GPSAltitude"].Value.(interface{ Float64() float64 }); ok {
+		v := alt.Float64()
+		if ref, ok := normalize(exif["GPSAltitudeRef"].Value).(int64); ok && ref == 1 {
+			v = -v
+		}
+		fs.add(GroupLocation, "EXIF:GPSAltitude", finite(v), true)
+		merged["GPSAltitude"], merged["GPSAltitudeRef"] = true, true
+	}
+	for _, n := range []string{"GPSImgDirectionRef", "GPSDestBearingRef"} {
+		merged[n] = true // the "true or magnetic north" flag has no use apart from the value
+	}
+	// A local date takes the zone from its OffsetTime tag; the tag is then
+	// not shown on its own.
+	for _, n := range []string{"DateTime", "DateTimeOriginal", "DateTimeDigitized"} {
+		if m, ok := parseMoment(tagText(exif, n), tagText(exif, offsetOf(n))); ok && m.HasZone {
+			merged[offsetOf(n)] = true
+		}
+	}
+
+	for _, ti := range found {
+		if ti.Source == imagemeta.CONFIG || merged[ti.Tag] || isThumbnailPointer(ti.Tag) {
+			continue
+		}
+		v := normalize(ti.Value)
+		g, sensitive := tagGroup(ti.Tag)
+		if s, ok := v.(string); ok {
+			sensitive = sensitive || looksLikeUserPath(s)
+			if g == GroupDates {
+				if m, ok := parseMoment(s, tagText(exif, offsetOf(ti.Tag))); ok {
+					v = m
+				}
+			}
+		}
+		fs.add(g, sourcePrefix(ti.Source)+":"+ti.Tag, v, sensitive)
+	}
+}
+
 // containerBlock finds the metadata that sits in the container and not in EXIF,
-// XMP or IPTC: a JPEG comment, PNG text chunks. It also rejects a damaged
-// container, which the metadata reader tolerates.
-func containerBlock(data []byte, t FileType) ([]MetaBlock, error) {
+// XMP or IPTC: a JPEG comment, PNG text chunks; their text goes into fs. It also
+// rejects a damaged container, which the metadata reader tolerates.
+func containerBlock(data []byte, t FileType, fs *fieldSet) ([]MetaBlock, error) {
 	switch t {
 	case FileJPEG:
 		segs, _, err := jpegSegments(data)
 		if err != nil {
 			return nil, unreadable(err)
 		}
+		var blocks []MetaBlock
 		for _, s := range segs {
-			if s.marker == jpegCOM {
-				return []MetaBlock{BlockComment}, nil
+			if s.marker != jpegCOM {
+				continue
+			}
+			blocks = []MetaBlock{BlockComment}
+			if s.end-s.start > 4 {
+				fs.add(GroupOther, "JPEG:Comment", sanitizeText(string(data[s.start+4:s.end])), false)
 			}
 		}
+		return blocks, nil
 	case FilePNG:
 		chunks, err := pngChunks(data)
 		if err != nil {
 			return nil, unreadable(err)
 		}
+		var blocks []MetaBlock
 		for _, c := range chunks {
 			if isPNGText(c) {
-				return []MetaBlock{BlockText}, nil
+				blocks = []MetaBlock{BlockText}
+				addPNGText(fs, data, c)
 			}
 		}
+		return blocks, nil
 	case FileWebP:
 		if _, err := riffChunks(data); err != nil {
 			return nil, unreadable(err)
@@ -115,6 +171,27 @@ func containerBlock(data []byte, t FileType) ([]MetaBlock, error) {
 		}
 	}
 	return nil, nil
+}
+
+// addPNGText reads a text chunk (length, type, data, CRC): plain tEXt is shown,
+// compressed or international text and the time stamp as what they are.
+func addPNGText(fs *fieldSet, data []byte, c segment) {
+	body := data[c.start+8 : c.end-4]
+	switch c.kind {
+	case "tEXt":
+		keyword, text, _ := bytes.Cut(body, []byte{0})
+		name := sanitizeText(string(keyword))
+		g, sensitive := tagGroup(name)
+		fs.add(g, "PNG:"+name, sanitizeText(string(text)), sensitive)
+	case "tIME":
+		if len(body) == 7 {
+			t := time.Date(int(body[0])<<8|int(body[1]), time.Month(body[2]), int(body[3]), int(body[4]), int(body[5]), int(body[6]), 0, time.UTC)
+			fs.add(GroupDates, "PNG:tIME", Moment{Time: t, HasZone: true}, false)
+		}
+	default:
+		keyword, _, _ := bytes.Cut(body, []byte{0})
+		fs.add(GroupOther, "PNG:"+sanitizeText(string(keyword)), Binary{Bytes: len(body)}, false)
+	}
 }
 
 // imageBlocks lists the metadata groups an image really carries. The kept
@@ -152,15 +229,6 @@ func tagText(m map[string]imagemeta.TagInfo, name string) string {
 	case []string:
 		if len(v) > 0 {
 			return sanitizeText(v[0])
-		}
-	}
-	return ""
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
 		}
 	}
 	return ""

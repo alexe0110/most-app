@@ -70,7 +70,7 @@ func TestStrip_jpeg(t *testing.T) {
 	before, err := convert.Inspect(t.Context(), src)
 	require.NoError(t, err)
 	require.False(t, before.Clean())
-	require.Equal(t, "Foo", before.Capture.Make)
+	require.Equal(t, "Foo", fieldValue(t, before, "EXIF:Make"))
 
 	out, err := convert.Strip(t.Context(), src)
 
@@ -78,7 +78,8 @@ func TestStrip_jpeg(t *testing.T) {
 	after, err := convert.Inspect(t.Context(), out)
 	require.NoError(t, err)
 	require.True(t, after.Clean(), "got blocks %v", after.Blocks)
-	require.Empty(t, after.Capture.Make)
+	_, found := after.Field("EXIF:Make")
+	require.False(t, found)
 	require.Equal(t, scanOf(t, src), scanOf(t, out), "the picture is copied byte for byte")
 	require.NotContains(t, string(out), "secret")
 	_, _, err = image.Decode(bytes.NewReader(out))
@@ -142,9 +143,10 @@ func TestStrip_pdf(t *testing.T) {
 	after, err := convert.Inspect(t.Context(), out)
 	require.NoError(t, err)
 	require.True(t, after.Clean(), "got blocks %v", after.Blocks)
-	require.Empty(t, after.PDF.Creator)
-	require.Empty(t, after.PDF.Producer)
-	require.Equal(t, 1, after.PDF.Pages)
+	_, hasCreator := after.Field("PDF:Creator")
+	_, hasProducer := after.Field("PDF:Producer")
+	require.False(t, hasCreator || hasProducer)
+	require.EqualValues(t, 1, fieldValue(t, after, "PDF:Pages"))
 }
 
 func TestStrip_office(t *testing.T) {
@@ -275,8 +277,7 @@ func TestStrip_fixtures(t *testing.T) {
 			after, err := convert.Inspect(t.Context(), out)
 			require.NoError(t, err)
 			require.True(t, after.Clean(), "blocks left: %v", after.Blocks)
-			require.Nil(t, after.Location)
-			require.Empty(t, after.People)
+			require.Empty(t, after.SensitiveFields())
 			for _, leak := range tt.leaks {
 				require.NotContains(t, string(out), leak)
 				require.NotContains(t, utf16LE(out), leak, "UTF-16 strings of a PDF info dictionary")
@@ -447,8 +448,8 @@ func TestStrip_pdfDoesNotRestampItself(t *testing.T) {
 	}
 	after, err := convert.Inspect(t.Context(), out)
 	require.NoError(t, err)
-	require.Equal(t, 1, after.PDF.Pages)
-	require.False(t, after.PDF.Scanned, "the page content is untouched")
+	require.EqualValues(t, 1, fieldValue(t, after, "PDF:Pages"))
+	require.Equal(t, convert.ContentText, fieldValue(t, after, "PDF:Content"), "the page content is untouched")
 }
 
 func TestStrip_gpsHEICChangesOnlyMetadataItems(t *testing.T) {

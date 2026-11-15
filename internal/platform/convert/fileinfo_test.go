@@ -110,11 +110,11 @@ func TestInspect_office(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, convert.FileDOCX, info.Type)
-	require.Equal(t, "Ann Author", info.People.Author)
-	require.Equal(t, "Bob Editor", info.People.LastModifiedBy)
-	require.Equal(t, "Acme", info.People.Company)
-	require.Equal(t, "Microsoft Office Word", info.Capture.Software)
-	require.Equal(t, 2024, info.Dates.Created.Year())
+	require.Equal(t, "Ann Author", fieldValue(t, info, "Office:Creator"))
+	require.Equal(t, "Bob Editor", fieldValue(t, info, "Office:LastModifiedBy"))
+	require.Equal(t, "Acme", fieldValue(t, info, "Office:Company"))
+	require.Equal(t, "Microsoft Office Word", fieldValue(t, info, "Office:Application"))
+	require.Equal(t, 2024, fieldValue(t, info, "Office:Created").(convert.Moment).Time.Year())
 	require.Equal(t, []convert.MetaBlock{convert.BlockOfficeProps}, info.Blocks)
 	require.False(t, info.Clean())
 }
@@ -124,11 +124,10 @@ func TestInspect_pdf(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, convert.FilePDF, info.Type)
-	require.Equal(t, "Ann Author", info.People.Author)
-	require.NotNil(t, info.PDF)
-	require.Equal(t, 1, info.PDF.Pages)
-	require.Equal(t, "Microsoft Word", info.PDF.Creator)
-	require.False(t, info.PDF.Scanned)
+	require.Equal(t, "Ann Author", fieldValue(t, info, "PDF:Author"))
+	require.EqualValues(t, 1, fieldValue(t, info, "PDF:Pages"))
+	require.Equal(t, "Microsoft Word", fieldValue(t, info, "PDF:Creator"))
+	require.Equal(t, convert.ContentText, fieldValue(t, info, "PDF:Content"))
 	require.Contains(t, info.Blocks, convert.BlockPDFInfo)
 }
 
@@ -157,6 +156,14 @@ func TestInspectAndStrip_sizeLimit(t *testing.T) {
 }
 
 // fixture reads a file made by testdata/gen/main.go.
+// fieldValue is the value of the field with the key; the field must exist.
+func fieldValue(t testing.TB, info convert.FileInfo, key string) any {
+	t.Helper()
+	f, ok := info.Field(key)
+	require.True(t, ok, "no field %q", key)
+	return f.Value
+}
+
 func fixture(t testing.TB, name string) []byte {
 	t.Helper()
 	data, err := os.ReadFile("testdata/" + name)
@@ -168,15 +175,15 @@ var fixtureNames = []string{"gps.jpg", "text.png", "exif.webp", "gps.heic", "wor
 
 func TestInspect_fixtures(t *testing.T) {
 	phone := func(info convert.FileInfo) {
-		require.Equal(t, "Apple", info.Capture.Make)
-		require.Equal(t, "iPhone 15 Pro", info.Capture.Model)
-		require.Equal(t, "17.3.1", info.Capture.Software)
+		require.Equal(t, "Apple", fieldValue(t, info, "EXIF:Make"))
+		require.Equal(t, "iPhone 15 Pro", fieldValue(t, info, "EXIF:Model"))
+		require.Equal(t, "17.3.1", fieldValue(t, info, "EXIF:Software"))
 		// The wall clock of the EXIF string, whatever zone the reader assumes.
-		taken := info.Capture.Taken
+		taken := fieldValue(t, info, "EXIF:DateTimeOriginal").(convert.Moment).Time
 		require.Equal(t, [5]int{2026, 2, 19, 14, 22}, [5]int{taken.Year(), int(taken.Month()), taken.Day(), taken.Hour(), taken.Minute()})
-		require.NotNil(t, info.Location)
-		require.InDelta(t, 55.7558, info.Location.Lat, 0.001)
-		require.InDelta(t, 37.6178, info.Location.Lon, 0.001)
+		place := fieldValue(t, info, "GPS:Coordinates").(convert.Coordinates)
+		require.InDelta(t, 55.7558, place.Lat, 0.001)
+		require.InDelta(t, 37.6178, place.Lon, 0.001)
 	}
 	tests := []struct {
 		file   string
@@ -189,21 +196,20 @@ func TestInspect_fixtures(t *testing.T) {
 		{"exif.webp", convert.FileWebP, phone, []convert.MetaBlock{convert.BlockEXIF, convert.BlockXMP}},
 		{"gps.heic", convert.FileHEIC, phone, []convert.MetaBlock{convert.BlockEXIF, convert.BlockXMP}},
 		{"word.pdf", convert.FilePDF, func(i convert.FileInfo) {
-			require.Equal(t, "Ann Author", i.People.Author)
-			require.NotNil(t, i.PDF)
-			require.Equal(t, "Microsoft Word 2016", i.PDF.Creator)
-			require.Equal(t, "Microsoft: Print To PDF", i.PDF.Producer)
-			require.Equal(t, 1, i.PDF.Pages)
-			require.False(t, i.PDF.Scanned)
-			require.False(t, i.PDF.Encrypted)
-			require.Equal(t, 2026, i.Dates.Created.Year())
-			require.Equal(t, time.February, i.Dates.Modified.Month())
+			require.Equal(t, "Ann Author", fieldValue(t, i, "PDF:Author"))
+			require.Equal(t, "Microsoft Word 2016", fieldValue(t, i, "PDF:Creator"))
+			require.Equal(t, "Microsoft: Print To PDF", fieldValue(t, i, "PDF:Producer"))
+			require.EqualValues(t, 1, fieldValue(t, i, "PDF:Pages"))
+			require.Equal(t, convert.ContentText, fieldValue(t, i, "PDF:Content"))
+			require.False(t, i.Encrypted)
+			require.Equal(t, 2026, fieldValue(t, i, "PDF:CreationDate").(convert.Moment).Time.Year())
+			require.Equal(t, time.February, fieldValue(t, i, "PDF:ModDate").(convert.Moment).Time.Month())
 		}, []convert.MetaBlock{convert.BlockPDFInfo, convert.BlockXMP}},
 		{"author.docx", convert.FileDOCX, func(i convert.FileInfo) {
-			require.Equal(t, "Ann Author", i.People.Author)
-			require.Equal(t, "Bob Editor", i.People.LastModifiedBy)
-			require.Equal(t, "Acme Ltd", i.People.Company)
-			require.Equal(t, 2026, i.Dates.Created.Year())
+			require.Equal(t, "Ann Author", fieldValue(t, i, "Office:Creator"))
+			require.Equal(t, "Bob Editor", fieldValue(t, i, "Office:LastModifiedBy"))
+			require.Equal(t, "Acme Ltd", fieldValue(t, i, "Office:Company"))
+			require.Equal(t, 2026, fieldValue(t, i, "Office:Created").(convert.Moment).Time.Year())
 		}, []convert.MetaBlock{convert.BlockOfficeProps}},
 	}
 	for _, tt := range tests {
@@ -229,7 +235,7 @@ func TestInspect_authorFromXMP(t *testing.T) {
 			info, err := convert.Inspect(t.Context(), fixture(t, name))
 
 			require.NoError(t, err)
-			require.Equal(t, "Ann Author", info.People.Author)
+			require.Equal(t, "Ann Author", fieldValue(t, info, "XMP:Creator"))
 		})
 	}
 }
@@ -360,10 +366,10 @@ func TestInspectAndStrip_encryptedPDF(t *testing.T) {
 
 			require.NoError(t, err, "an encrypted PDF is a fact about the file, not a failure")
 			require.Equal(t, convert.FilePDF, info.Type)
-			require.NotNil(t, info.PDF)
-			require.True(t, info.PDF.Encrypted)
+			require.True(t, info.Encrypted)
 			if userPW != "" {
-				require.Empty(t, info.People.Author, "nothing can be read without the password")
+				_, found := info.Field("PDF:Author")
+				require.False(t, found, "nothing can be read without the password")
 			}
 
 			_, err = convert.Strip(t.Context(), data)
@@ -410,7 +416,7 @@ func TestInspect_officeValuesAreEscapedForDisplay(t *testing.T) {
 	info, err := convert.Inspect(t.Context(), data)
 
 	require.NoError(t, err)
-	require.Equal(t, "<b>Ann</b> & Cognp.exe", info.People.Author, "raw text, no invisible overrides; HTML escaping is the renderer's job")
+	require.Equal(t, "<b>Ann</b> & Cognp.exe", fieldValue(t, info, "Office:Creator"), "raw text, no invisible overrides; HTML escaping is the renderer's job")
 }
 
 // Editors and macOS screenshots put only an XMP packet (an iTXt chunk) into a
