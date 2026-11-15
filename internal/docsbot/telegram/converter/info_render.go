@@ -6,14 +6,18 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/alexe0110/most-app/internal/platform/convert"
 )
 
-// maxMessageRunes is Telegram's limit for a message. The HTML markup is counted
+// maxMessageUnits is Telegram's limit for a message, counted in UTF-16 units as
+// Telegram does (a character outside the BMP is two). The HTML markup is counted
 // too, which is stricter than Telegram: the text can only come out shorter.
-const maxMessageRunes = 4096
+const maxMessageUnits = 4096
+
+func utf16Len(s string) int { return len(utf16.Encode([]rune(s))) }
 
 // renderInfo is the HTML of the info screen. Every value from the file goes
 // through html.EscapeString; the labels and group titles come from texts.go and
@@ -21,9 +25,9 @@ const maxMessageRunes = 4096
 // replaced by «…и ещё N полей»: the caller sends the whole list as a file.
 func renderInfo(title string, info convert.FileInfo) (text string, cut bool) {
 	head := infoHeader(title, info)
-	// Only the encryption flag was read: a user password hides the rest. With an
-	// owner password alone the file reads in full and is shown like any other.
-	if info.Encrypted && info.FieldCount() <= 1 {
+	// A user password hides the rest; with an owner password alone the file reads
+	// in full and is shown like any other.
+	if info.NeedsPassword {
 		return head + "\n\n" + textInfoEncrypted, false
 	}
 	head += "\n\n" + infoSummary(info)
@@ -39,7 +43,7 @@ func renderInfo(title string, info convert.FileInfo) (text string, cut bool) {
 		}
 		return strings.Join(blocks, "\n\n")
 	}
-	fits := func() bool { return utf8.RuneCountInString(render()) <= maxMessageRunes }
+	fits := func() bool { return utf16Len(render()) <= maxMessageUnits }
 	if fits() {
 		return render(), false
 	}

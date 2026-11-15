@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -41,6 +42,9 @@ func plainInfo(title string, info convert.FileInfo) string {
 			}
 		}
 	}
+	if info.Dropped > 0 {
+		fmt.Fprintf(&sb, "\n"+textInfoMore+"\n", info.Dropped, plural(info.Dropped, pluralFieldOne, pluralFieldFew, pluralFieldMany))
+	}
 	return sb.String()
 }
 
@@ -53,9 +57,14 @@ func metadataFileName(title string) string {
 	return fmt.Sprintf(nameMetadataFile, strings.NewReplacer("/", "_", "\\", "_").Replace(base))
 }
 
+// sendFileTimeout bounds the upload of the field list.
+const sendFileTimeout = 30 * time.Second
+
 // sendFieldList sends the whole list of fields as a text file. The list is a
 // courtesy to the message above, so a failure is logged and nothing more.
 func (c *Converter) sendFieldList(ctx context.Context, b *bot.Bot, chatID int64, title string, info convert.FileInfo) {
+	ctx, cancel := context.WithTimeout(ctx, sendFileTimeout)
+	defer cancel()
 	_, err := b.SendDocument(ctx, &bot.SendDocumentParams{
 		ChatID: chatID,
 		Document: &models.InputFileUpload{

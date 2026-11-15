@@ -30,7 +30,7 @@ func TestRenderInfo_overflowCutsOtherAndPlainTextKeepsAll(t *testing.T) {
 	got, cut := renderInfo("IMG_8092.HEIC", info)
 
 	require.True(t, cut)
-	require.LessOrEqual(t, utf8.RuneCountInString(got), maxMessageRunes)
+	require.LessOrEqual(t, utf8.RuneCountInString(got), maxMessageUnits)
 	require.Contains(t, got, "🔧 <b>Прочее</b> · 100\u00a0полей")
 	require.Regexp(t, "…и ещё \\d+\u00a0пол", got)
 	require.Contains(t, got, "<b>Координаты:</b>", "the groups that matter stay whole")
@@ -57,8 +57,8 @@ func TestRenderInfo_worstCaseFitsOneMessage(t *testing.T) {
 	got, cut := renderInfo(strings.Repeat("Ж<", 3000), info)
 
 	require.True(t, cut)
-	require.LessOrEqual(t, utf8.RuneCountInString(got), maxMessageRunes)
-	require.LessOrEqual(t, telegramLength(got), maxMessageRunes, "Telegram counts the text without tags, in UTF-16 units")
+	require.LessOrEqual(t, utf8.RuneCountInString(got), maxMessageUnits)
+	require.LessOrEqual(t, telegramLength(got), maxMessageUnits, "Telegram counts the text without tags, in UTF-16 units")
 	require.NotContains(t, got, "Ж<", "the name is escaped")
 	assertTelegramHTML(t, got)
 }
@@ -202,3 +202,27 @@ func TestRenderInfo_onlyShootingImageAndOtherAreFolded(t *testing.T) {
 // telegramLength is the length Telegram counts: the text without tags and with
 
 // entities decoded, in UTF-16 units.
+
+// Telegram counts UTF-16 units: a character outside the BMP is two, so a text
+// of astral characters can be under 4096 runes and still too long.
+func TestRenderInfo_limitIsCountedInUTF16Units(t *testing.T) {
+	t.Parallel()
+	fields := make([]convert.Field, 30)
+	for i := range fields {
+		fields[i] = fld(fmt.Sprintf("XMP:Tag%02d", i), strings.Repeat("😀", 150))
+	}
+	info := convert.FileInfo{Type: convert.FilePNG, Size: 100, Blocks: []convert.MetaBlock{convert.BlockText},
+		Groups: []convert.GroupFields{group(convert.GroupOther, fields...)}}
+
+	got, cut := renderInfo("a.png", info)
+
+	require.True(t, cut)
+	require.LessOrEqual(t, utf16Len(got), maxMessageUnits)
+}
+
+func TestPlainInfo_tellsHowManyFieldsWereNotKept(t *testing.T) {
+	t.Parallel()
+	info := convert.FileInfo{Type: convert.FilePNG, Dropped: 4000}
+
+	require.Contains(t, plainInfo("a.png", info), "…и ещё 4000\u00a0полей")
+}

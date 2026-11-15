@@ -180,7 +180,7 @@ func TestRenderInfo_cleanFile(t *testing.T) {
 
 func TestRenderInfo_encryptedPDFIsNotCalledClean(t *testing.T) {
 	t.Parallel()
-	info := convert.FileInfo{Type: convert.FilePDF, Encrypted: true}
+	info := convert.FileInfo{Type: convert.FilePDF, Encrypted: true, NeedsPassword: true}
 
 	got, _ := renderInfo("a.pdf", info)
 

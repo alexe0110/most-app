@@ -62,7 +62,7 @@ func TestRenderInfo_htmlIsWellFormed(t *testing.T) {
 		{"values with markup", "f", hostile},
 		{"a long list", strings.Repeat("Ж<", 3000), convert.FileInfo{Type: convert.FilePDF, Blocks: []convert.MetaBlock{convert.BlockPDFInfo},
 			Groups: []convert.GroupFields{group(convert.GroupOther, otherFields(120)...)}}},
-		{"encrypted", "a.pdf", convert.FileInfo{Type: convert.FilePDF, Encrypted: true}},
+		{"encrypted", "a.pdf", convert.FileInfo{Type: convert.FilePDF, Encrypted: true, NeedsPassword: true}},
 		{"clean", "a.png", convert.FileInfo{Type: convert.FilePNG, Size: 100}},
 	}
 	for _, tt := range tests {
@@ -71,7 +71,7 @@ func TestRenderInfo_htmlIsWellFormed(t *testing.T) {
 			got, _ := renderInfo(tt.title, tt.info)
 
 			assertTelegramHTML(t, got)
-			require.LessOrEqual(t, telegramLength(got), maxMessageRunes)
+			require.LessOrEqual(t, telegramLength(got), maxMessageUnits)
 		})
 	}
 }

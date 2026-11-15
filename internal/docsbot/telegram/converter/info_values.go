@@ -156,7 +156,7 @@ func number(f float64) string {
 	if s == "-0" {
 		s = "0"
 	}
-	return strings.ReplaceAll(s, ".", ",")
+	return cleanText(strings.ReplaceAll(s, ".", ",")) // a huge float has hundreds of digits
 }
 
 // compass names the side of the horizon for a bearing in degrees.
@@ -229,8 +229,13 @@ func formatMoment(m convert.Moment) (text, zone string) {
 // cleanText makes a value from a file safe for a message: no control or
 // invisible formatting characters (a right-to-left override could reorder what
 // the reader sees), one line, cut to maxShownRunes. It does not trust the
-// reader of the file to have done it.
+// reader of the file to have done it. It repeats platform/convert's
+// sanitizeText on purpose: that one is unexported, and the screen must hold its
+// own limits whatever the reader returns.
 func cleanText(s string) string {
+	if len(s) > maxShownRunes*4 {
+		s = s[:maxShownRunes*4] // work on a bounded prefix; a split rune is mapped away below
+	}
 	s = strings.Map(func(r rune) rune {
 		switch {
 		case r == '\n' || r == '\r' || r == '\t':
