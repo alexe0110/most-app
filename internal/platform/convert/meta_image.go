@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/bep/imagemeta"
@@ -103,7 +104,7 @@ func addImageTags(fs *fieldSet, tags *imagemeta.Tags, found []imagemeta.TagInfo)
 	}
 	// A local date takes the zone from its OffsetTime tag; the tag is then
 	// not shown on its own.
-	for _, n := range []string{"DateTime", "DateTimeOriginal", "DateTimeDigitized"} {
+	for _, n := range []string{"DateTime", "ModifyDate", "DateTimeOriginal", "DateTimeDigitized", "CreateDate"} {
 		if m, ok := parseMoment(tagText(exif, n), tagText(exif, offsetOf(n))); ok && m.HasZone {
 			merged[offsetOf(n)] = true
 		}
@@ -113,7 +114,11 @@ func addImageTags(fs *fieldSet, tags *imagemeta.Tags, found []imagemeta.TagInfo)
 		if ti.Source == imagemeta.CONFIG || merged[ti.Tag] || isThumbnailPointer(ti.Tag) {
 			continue
 		}
-		addValue(fs, sourcePrefix(ti.Source)+":"+ti.Tag, ti.Tag, normalize(ti.Value), tagText(exif, offsetOf(ti.Tag)))
+		v := normalize(ti.Value)
+		if s, ok := v.(string); ok && strings.HasPrefix(ti.Tag, "MakerNote") {
+			v = Binary{Bytes: len(s)} // vendor data is not text even when it happens to decode
+		}
+		addValue(fs, sourcePrefix(ti.Source)+":"+ti.Tag, ti.Tag, v, tagText(exif, offsetOf(ti.Tag)))
 	}
 }
 

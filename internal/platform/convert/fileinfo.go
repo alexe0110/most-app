@@ -61,7 +61,9 @@ const maxValueRunes = 256
 type FileInfo struct {
 	Type FileType
 	Size int
-	// Encrypted marks a password-protected PDF: nothing else can be known.
+	// Encrypted marks an encrypted PDF. With a user password nothing else can be
+	// read (the Security group only); with an owner password alone the file reads
+	// in full, but Strip refuses it.
 	Encrypted bool
 	// Groups holds every field found, by group in display order; empty groups
 	// are left out.
@@ -75,8 +77,9 @@ func (i FileInfo) Clean() bool { return len(i.Blocks) == 0 }
 
 // Inspect reads the metadata of a JPEG, PNG, WebP, HEIC, PDF, DOCX, XLSX or PPTX
 // file. The type comes from the content; an unknown one is ErrUnsupportedFormat.
-// A password-protected PDF is not an error: Encrypted is set and nothing
-// else can be known about it.
+// An encrypted PDF is not an error: Encrypted is set. With a user password
+// nothing else can be known about it; with an owner password alone it is read
+// in full.
 func Inspect(ctx context.Context, data []byte) (FileInfo, error) {
 	if len(data) > MaxInputBytes {
 		return FileInfo{}, ErrFileTooLarge

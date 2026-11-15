@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bep/imagemeta"
 )
@@ -63,11 +64,11 @@ func isThumbnailPointer(name string) bool {
 // offsetOf names the zone tag that goes with a local EXIF date.
 func offsetOf(name string) string {
 	switch name {
-	case "DateTime":
+	case "DateTime", "ModifyDate":
 		return "OffsetTime"
 	case "DateTimeOriginal":
 		return "OffsetTimeOriginal"
-	case "DateTimeDigitized":
+	case "DateTimeDigitized", "CreateDate": // the reader names EXIF 0x9004 CreateDate
 		return "OffsetTimeDigitized"
 	}
 	return ""
@@ -95,6 +96,9 @@ func normalize(v any) any {
 	case string:
 		if x == "undef" {
 			return nil
+		}
+		if !utf8.ValidString(x) { // raw bytes the reader returned as a string
+			return Binary{Bytes: len(x)}
 		}
 		return sanitizeText(x)
 	case []string:

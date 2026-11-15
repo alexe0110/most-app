@@ -1,9 +1,9 @@
 package convert
 
 import (
-	"bytes"
 	"context"
 	"math"
+	"regexp"
 
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
@@ -59,10 +59,14 @@ func scanPDFObjects(pctx *model.Context) pdfRisks {
 	return r
 }
 
+// startxrefLine is a real trailer: the keyword alone on its line, then the offset.
+// The same word inside a title or a stream sits mid-line.
+var startxrefLine = regexp.MustCompile(`(?m)^startxref[ \t]*\r?\n[ \t]*\d+`)
+
 // incrementalUpdates counts the saves appended to the original file: every
 // update adds a startxref, and a linearized file has a second one by design.
 func incrementalUpdates(data []byte, pctx *model.Context) int64 {
-	n := bytes.Count(data, []byte("startxref")) - 1
+	n := len(startxrefLine.FindAll(data, -1)) - 1
 	if pctx.Read != nil && pctx.Read.Linearized {
 		n--
 	}
