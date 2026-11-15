@@ -93,3 +93,22 @@ func TestFileFormat_coversEveryType(t *testing.T) {
 		require.Equal(t, string(ft), string(fileFormat(ft)), "the event value matches the detected type")
 	}
 }
+
+func TestRenderInfo_worstCaseFitsOneMessage(t *testing.T) {
+	long := strings.Repeat("<&>я", 200) // the reader caps a value at 256 runes
+	info := convert.FileInfo{
+		Type: convert.FilePDF, Size: convert.MaxInputBytes,
+		Capture:  convert.Capture{Make: long, Model: long, Software: long},
+		Location: &convert.GeoPoint{Lat: -89.999999, Lon: -179.999999},
+		People:   convert.People{Author: long, Company: long, LastModifiedBy: long},
+		PDF:      &convert.PDFFacts{Pages: 1 << 30, Creator: long, Producer: long},
+		Blocks: []convert.MetaBlock{convert.BlockEXIF, convert.BlockXMP, convert.BlockIPTC, convert.BlockText,
+			convert.BlockComment, convert.BlockPDFInfo, convert.BlockOfficeProps},
+	}
+
+	got := renderInfo(strings.Repeat("Ж<", 3000), info)
+
+	require.LessOrEqual(t, len([]rune(got)), 4096)
+	require.NotContains(t, got, "<&>", "every value is escaped")
+	require.Contains(t, got, "?q=-89.999999,-179.999999", "the map link holds numbers only")
+}
