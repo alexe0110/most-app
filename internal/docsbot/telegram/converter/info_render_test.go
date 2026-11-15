@@ -1,8 +1,10 @@
 package converter
 
 import (
-	"errors"
 	"fmt"
+	"os"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +38,15 @@ func TestInspectable(t *testing.T) {
 	}
 }
 
+// convertFixture reads a metadata fixture of platform/convert.
+
+func convertFixture(t testing.TB, name string) []byte {
+	t.Helper()
+	data, err := os.ReadFile("../../../platform/convert/testdata/" + name)
+	require.NoError(t, err)
+	return data
+}
+
 func fld(key string, v any) convert.Field { return convert.Field{Key: key, Value: v} }
 
 func sens(key string, v any) convert.Field {
@@ -47,6 +58,7 @@ func group(g convert.Group, fields ...convert.Field) convert.GroupFields {
 }
 
 // phoneInfo is an iPhone photo with a place, a direction, a device and a long tail.
+
 func phoneInfo() convert.FileInfo {
 	return convert.FileInfo{
 		Type: convert.FileHEIC, Size: 1700 << 10,
@@ -181,7 +193,24 @@ func TestRenderInfo_encryptedPDFIsNotCalledClean(t *testing.T) {
 	require.False(t, canClean(info))
 }
 
+// An owner password alone does not hide the metadata: the reader gets the author
+// and the rest, and the screen must show them.
+func TestRenderInfo_ownerPasswordOnlyShowsWhatWasRead(t *testing.T) {
+	t.Parallel()
+	info := convert.FileInfo{Type: convert.FilePDF, Encrypted: true, Blocks: []convert.MetaBlock{convert.BlockPDFInfo},
+		Groups: []convert.GroupFields{
+			group(convert.GroupAuthor, sens("PDF:Author", "Ann Author")),
+			group(convert.GroupSecurity, fld("PDF:Encrypted", true)),
+		}}
+
+	got, _ := renderInfo("a.pdf", info)
+
+	require.Contains(t, got, "<b>Автор:</b> Ann Author")
+	require.NotContains(t, got, "метаданные не прочитать", "they were read")
+}
+
 // otherFields makes n raw tags with long values.
+
 func otherFields(n int) []convert.Field {
 	fields := make([]convert.Field, n)
 	for i := range fields {
@@ -226,7 +255,9 @@ func TestRenderInfo_worstCaseFitsOneMessage(t *testing.T) {
 
 	require.True(t, cut)
 	require.LessOrEqual(t, utf8.RuneCountInString(got), maxMessageRunes)
+	require.LessOrEqual(t, telegramLength(got), maxMessageRunes, "Telegram counts the text without tags, in UTF-16 units")
 	require.NotContains(t, got, "Ж<", "the name is escaped")
+	assertTelegramHTML(t, got)
 }
 
 func TestCleanedCaption(t *testing.T) {
@@ -245,6 +276,12 @@ func TestCleanedCaption(t *testing.T) {
 		{"nothing sensitive", convert.FileInfo{Groups: []convert.GroupFields{group(convert.GroupDates, fld("EXIF:CreateDate", "x"))}},
 			convert.FileInfo{}, "🧹 Очищенная копия\nУбрал 1\u00a0поле"},
 		{"nothing counted", convert.FileInfo{}, convert.FileInfo{}, "🧹 Очищенная копия"},
+		{"names at most three kinds", convert.FileInfo{Groups: []convert.GroupFields{
+			group(convert.GroupLocation, sens("GPS:Coordinates", convert.Coordinates{Lat: 1, Lon: 2})),
+			group(convert.GroupAuthor, sens("PDF:Author", "Ann")),
+			group(convert.GroupDevice, sens("EXIF:Make", "Apple")),
+			group(convert.GroupOther, sens("PDF:Path", "/Users/ann")),
+		}}, convert.FileInfo{}, "🧹 Очищенная копия\nУбрал 4\u00a0поля, включая геолокация, автор, модель устройства"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -253,44 +290,115 @@ func TestCleanedCaption(t *testing.T) {
 	}
 }
 
-func TestFormatValue(t *testing.T) {
+func TestRenderInfo_hiddenMetadataIsNotCalledClean(t *testing.T) {
 	t.Parallel()
+	// A text chunk with an empty value: the file has metadata, but no value to show.
+	info := convert.FileInfo{Type: convert.FilePNG, Size: 100, Blocks: []convert.MetaBlock{convert.BlockText}}
+
+	got, _ := renderInfo("a.png", info)
+
+	require.NotContains(t, got, textInfoClean, "the file is not clean, so the screen must not say it is")
+	require.True(t, canClean(info), "and the copy can be made")
+}
+
+// countFieldLines counts the field lines inside the quotes of a rendered screen:
+
+// a labelled one starts with <b>, a raw tag with <code>. Map links and the «…и ещё»
+
+// line are not fields.
+
+func countFieldLines(s string) int {
+	n, inQuote := 0, false
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, "<blockquote") {
+			inQuote = true
+		}
+		body := blockquoteOpen.ReplaceAllString(line, "")
+		if inQuote && (strings.HasPrefix(body, "<b>") || strings.HasPrefix(body, "<code>")) {
+			n++
+		}
+		if strings.Contains(line, "</blockquote>") {
+			inQuote = false
+		}
+	}
+	return n
+}
+
+var blockquoteOpen = regexp.MustCompile(`^<blockquote[^>]*>`)
+
+// The count in the summary is the number of lines on the screen: a field found
+
+// twice (PDF Info and XMP say the same author) is still a line of its own.
+
+func TestRenderInfo_everyFieldIsOneLine(t *testing.T) {
+	t.Parallel()
+	pdf, err := convert.Inspect(t.Context(), convertFixture(t, "word.pdf"))
+	require.NoError(t, err)
 	tests := []struct {
-		name  string
-		key   string
-		value any
-		want  string
-		zone  string
+		name string
+		info convert.FileInfo
 	}{
-		{"exposure as a fraction", "EXIF:ExposureTime", 0.008, "1/125\u00a0с", ""},
-		{"long exposure", "EXIF:ExposureTime", 2.5, "2,5\u00a0с", ""},
-		{"aperture", "EXIF:FNumber", 1.78, "f/1.78", ""},
-		{"focal length", "EXIF:FocalLength", 6.765, "6,765\u00a0мм", ""},
-		{"direction, north", "EXIF:GPSImgDirection", 359.0, "359° (север)", ""},
-		{"direction, east", "EXIF:GPSImgDirection", 90.0, "90° (восток)", ""},
-		{"altitude below the sea", "EXIF:GPSAltitude", -12.0, "-12\u00a0м", ""},
-		{"orientation", "EXIF:Orientation", int64(6), "поворот на 90° по часовой", ""},
-		{"orientation, unknown code", "EXIF:Orientation", int64(42), "42", ""},
-		{"flash fired", "EXIF:Flash", int64(9), "сработала", ""},
-		{"bias", "EXIF:ExposureBiasValue", 0.5, "+0,5\u00a0EV", ""},
-		{"yes", "PDF:JavaScript", true, "да", ""},
-		{"no", "PDF:Encrypted", false, "нет", ""},
-		{"scan", "PDF:Content", convert.ContentScan, valueScan, ""},
-		{"page size", "PDF:PageSize", convert.Dimensions{Width: 210, Height: 297}, "210\u00a0×\u00a0297\u00a0мм", ""},
-		{"list", "EXIF:LensInfo", []any{1.5, 6.0}, "1,5, 6", ""},
-		{"date with zone", "PDF:CreationDate", convert.Moment{Time: time.Date(2026, 5, 20, 6, 20, 0, 0, time.FixedZone("", -(3*3600+30*60))), HasZone: true},
-			"20.05.2026 06:20", "UTC-03:30"},
-		{"date without zone", "EXIF:CreateDate", convert.Moment{Time: time.Date(2026, 5, 20, 6, 20, 0, 0, time.UTC)}, "20.05.2026 06:20", ""},
-		{"binary", "EXIF:MakerNote", convert.Binary{Bytes: 3}, "двоичные данные, 3\u00a0байта", ""},
+		{"photo", phoneInfo()},
+		{"the same author in PDF Info and XMP", pdf},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			text, zone := formatValue(tt.key, tt.value)
-			require.Equal(t, tt.want, text)
-			require.Equal(t, tt.zone, zone)
+			t.Parallel()
+			got, cut := renderInfo("f", tt.info)
+
+			require.False(t, cut)
+			require.Equal(t, tt.info.FieldCount(), countFieldLines(got))
 		})
 	}
 }
+
+func TestRenderInfo_onlyShootingImageAndOtherAreFolded(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		group  convert.Group
+		title  string
+		folded bool
+	}{
+		{convert.GroupLocation, groupLocation, false},
+		{convert.GroupAuthor, groupAuthor, false},
+		{convert.GroupDevice, groupDevice, false},
+		{convert.GroupDates, groupDates, false},
+		{convert.GroupShooting, groupShooting, true},
+		{convert.GroupImage, groupImage, true},
+		{convert.GroupDocument, groupDocument, false},
+		{convert.GroupSecurity, groupSecurity, false},
+		{convert.GroupOther, groupOther, true},
+	}
+	for _, tt := range tests {
+		t.Run(titleText(tt.title), func(t *testing.T) {
+			t.Parallel()
+			info := convert.FileInfo{Type: convert.FilePDF, Blocks: []convert.MetaBlock{convert.BlockPDFInfo},
+				Groups: []convert.GroupFields{group(tt.group, fld("XMP:Tag", "v"))}}
+			tag := "<blockquote>"
+			if tt.folded {
+				tag = "<blockquote expandable>"
+			}
+
+			got, _ := renderInfo("f", info)
+
+			lines := strings.Split(got, "\n")
+			i := slices.IndexFunc(lines, func(l string) bool { return strings.Contains(l, boldTitle(tt.title)) })
+			require.NotEqual(t, -1, i, "the group has a title")
+			require.True(t, i+1 < len(lines) && strings.HasPrefix(lines[i+1], tag), "the quote follows its title")
+			require.Equal(t, 1, strings.Count(got, "<blockquote"), "one group, one quote")
+		})
+	}
+}
+
+// telegramTags are the tags Telegram's HTML parse mode accepts.
+
+// assertTelegramHTML checks what Telegram would reject: a tag it does not know,
+
+// a tag left open or closed in the wrong order, and a bare < > or &.
+
+// telegramLength is the length Telegram counts: the text without tags and with
+
+// entities decoded, in UTF-16 units.
 
 func TestInfoKeyboard_cleanButtonOnlyWhenThereIsSomethingToClean(t *testing.T) {
 	t.Parallel()
@@ -318,74 +426,3 @@ func TestNotInspectableText(t *testing.T) {
 }
 
 // wrapped is an error as the handlers pass it on: with context around it.
-func wrapped(err error) error { return fmt.Errorf("operation: %w", err) }
-
-func TestMetaFailure_namesTheClassOfTheError(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		err  error
-		want string
-	}{
-		{"unsupported", wrapped(convert.ErrUnsupportedFormat), "unsupported"},
-		{"too large", wrapped(convert.ErrFileTooLarge), "too_large"},
-		{"too many pages", wrapped(convert.ErrPDFTooManyPages), "too_many_pages"},
-		{"encrypted", wrapped(convert.ErrEncrypted), "encrypted"},
-		{"timeout", wrapped(convert.ErrTimeout), "timeout"},
-		{"unreadable", wrapped(convert.ErrUnreadable), "unreadable"},
-		{"still dirty", wrapped(errStillDirty), "still_dirty"},
-		{"anything else", errors.New("boom"), "other"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, tt.want, metaFailure(tt.err))
-		})
-	}
-}
-
-func TestInfoErrorText_mapsEachErrorToItsText(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		err  error
-		want string
-	}{
-		{"download", wrapped(errDownload), textConvertDownloadFailed},
-		{"unsupported", wrapped(convert.ErrUnsupportedFormat), textInfoUnsupported},
-		{"too large", wrapped(convert.ErrFileTooLarge), infoTooLargeText()},
-		{"too many pages", wrapped(convert.ErrPDFTooManyPages), fmt.Sprintf(textPDFTooMany, convert.MaxPDFPages)},
-		{"encrypted", wrapped(convert.ErrEncrypted), textInfoEncrypted},
-		{"timeout", wrapped(convert.ErrTimeout), textPDFTimeout},
-		{"still dirty", wrapped(errStillDirty), textInfoCleanFailed},
-		{"unreadable", wrapped(convert.ErrUnreadable), textInfoUnreadable},
-		{"anything else", errors.New("boom"), textInfoUnreadable},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, tt.want, infoErrorText(tt.err))
-		})
-	}
-}
-
-func TestPDFErrorText_mapsEachErrorToItsText(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		err  error
-		want string
-	}{
-		{"too large", wrapped(convert.ErrPDFTooLarge), pdfTooLargeText()},
-		{"too many pages", wrapped(convert.ErrPDFTooManyPages), fmt.Sprintf(textPDFTooMany, convert.MaxPDFPages)},
-		{"timeout", wrapped(convert.ErrTimeout), textPDFTimeout},
-		{"bad page range", wrapped(convert.ErrBadPageRange), textPDFBadRange},
-		{"anything else", errors.New("boom"), textPDFInvalid},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, tt.want, pdfErrorText(tt.err))
-		})
-	}
-}

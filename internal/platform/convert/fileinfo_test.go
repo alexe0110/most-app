@@ -171,10 +171,13 @@ func fixture(t testing.TB, name string) []byte {
 	return data
 }
 
-var fixtureNames = []string{"gps.jpg", "text.png", "exif.webp", "gps.heic", "word.pdf", "author.docx"}
+var fixtureNames = []string{
+	"gps.jpg", "text.png", "exif.webp", "gps.heic", "word.pdf", "author.docx",
+	"iphone.jpg", "iphone.heic", "pdf_scan.pdf", "pdf_ironpdf.pdf", "pdf_active.pdf",
+}
 
 func TestInspect_fixtures(t *testing.T) {
-	phone := func(info convert.FileInfo) {
+	phone := func(t testing.TB, info convert.FileInfo) {
 		require.Equal(t, "Apple", fieldValue(t, info, "EXIF:Make"))
 		require.Equal(t, "iPhone 15 Pro", fieldValue(t, info, "EXIF:Model"))
 		require.Equal(t, "17.3.1", fieldValue(t, info, "EXIF:Software"))
@@ -185,17 +188,68 @@ func TestInspect_fixtures(t *testing.T) {
 		require.InDelta(t, 55.7558, place.Lat, 0.001)
 		require.InDelta(t, 37.6178, place.Lon, 0.001)
 	}
+	iphone := func(t testing.TB, info convert.FileInfo) {
+		require.Equal(t, "Apple", fieldValue(t, info, "EXIF:Make"))
+		require.Equal(t, "iPhone 17", fieldValue(t, info, "EXIF:Model"))
+		require.Equal(t, "26.6", fieldValue(t, info, "EXIF:Software"))
+		require.Equal(t, "iPhone 17 back camera 6.765mm f/1.78", fieldValue(t, info, "EXIF:LensModel"))
+		require.InDelta(t, 1.78, fieldValue(t, info, "EXIF:FNumber"), 0.001)
+		require.InDelta(t, 1.0/120, fieldValue(t, info, "EXIF:ExposureTime"), 0.0001)
+		require.EqualValues(t, 64, fieldValue(t, info, "EXIF:ISO"))
+		require.InDelta(t, 6.765, fieldValue(t, info, "EXIF:FocalLength"), 0.001)
+		require.InDelta(t, 812, fieldValue(t, info, "EXIF:GPSAltitude"), 0.5)
+		require.InDelta(t, 245, fieldValue(t, info, "EXIF:GPSImgDirection"), 0.5)
+		require.Equal(t, convert.Dimensions{Width: 64, Height: 48}, fieldValue(t, info, "Image:Size"))
+		taken := fieldValue(t, info, "EXIF:DateTimeOriginal").(convert.Moment)
+		_, offset := taken.Time.Zone()
+		require.True(t, taken.HasZone)
+		require.Equal(t, 5*3600, offset, "the OffsetTimeOriginal tag gives the zone")
+		place := fieldValue(t, info, "GPS:Coordinates").(convert.Coordinates)
+		require.InDelta(t, 43.26525, place.Lat, 0.00001)
+		require.InDelta(t, 76.97681, place.Lon, 0.00001)
+	}
+	scan := func(t testing.TB, info convert.FileInfo) {
+		require.Equal(t, convert.ContentScan, fieldValue(t, info, "PDF:Content"), "no fonts: the pages are pictures")
+		require.EqualValues(t, 1, fieldValue(t, info, "PDF:Pages"))
+		require.Equal(t, "A4", fieldValue(t, info, "PDF:PageSize"))
+		require.Equal(t, "Scan Station", fieldValue(t, info, "PDF:Creator"))
+		require.Equal(t, "Scanner Firmware 3.2", fieldValue(t, info, "PDF:Producer"))
+		require.EqualValues(t, 0, fieldValue(t, info, "PDF:IncrementalUpdates"))
+		require.Equal(t, false, fieldValue(t, info, "PDF:JavaScript"))
+	}
+	ironPDF := func(t testing.TB, info convert.FileInfo) {
+		require.Equal(t, "IronPdf", fieldValue(t, info, "PDF:Creator"))
+		require.Equal(t, "IronPdf v2023.1.11387", fieldValue(t, info, "PDF:Producer"))
+		require.EqualValues(t, 4, fieldValue(t, info, "PDF:Pages"))
+		require.Equal(t, convert.ContentText, fieldValue(t, info, "PDF:Content"))
+		require.EqualValues(t, 1, fieldValue(t, info, "PDF:IncrementalUpdates"), "one save after the first")
+		modified := fieldValue(t, info, "PDF:ModDate").(convert.Moment)
+		require.True(t, modified.Time.Equal(time.Date(2026, 5, 21, 17, 43, 0, 0, time.UTC)))
+		require.Equal(t, "uuid:5f2c0d7e-3a9b-4c1e-8d2f-6b7a9e0c1d42", fieldValue(t, info, "XMP:DocumentID"))
+	}
+	activePDF := func(t testing.TB, info convert.FileInfo) {
+		require.Equal(t, true, fieldValue(t, info, "PDF:JavaScript"))
+		require.Equal(t, true, fieldValue(t, info, "PDF:EmbeddedFiles"))
+		require.Equal(t, true, fieldValue(t, info, "PDF:Signature"))
+		require.EqualValues(t, 1, fieldValue(t, info, "PDF:Annotations"), "the comment, not the link-free form fields")
+		require.Equal(t, false, fieldValue(t, info, "PDF:Encrypted"))
+	}
 	tests := []struct {
 		file   string
 		typ    convert.FileType
-		check  func(info convert.FileInfo)
+		check  func(t testing.TB, info convert.FileInfo)
 		blocks []convert.MetaBlock
 	}{
+		{"iphone.jpg", convert.FileJPEG, iphone, []convert.MetaBlock{convert.BlockEXIF, convert.BlockXMP}},
+		{"iphone.heic", convert.FileHEIC, iphone, []convert.MetaBlock{convert.BlockEXIF, convert.BlockXMP}},
+		{"pdf_scan.pdf", convert.FilePDF, scan, []convert.MetaBlock{convert.BlockPDFInfo}},
+		{"pdf_ironpdf.pdf", convert.FilePDF, ironPDF, []convert.MetaBlock{convert.BlockPDFInfo, convert.BlockXMP}},
+		{"pdf_active.pdf", convert.FilePDF, activePDF, []convert.MetaBlock{convert.BlockPDFInfo}},
 		{"gps.jpg", convert.FileJPEG, phone, []convert.MetaBlock{convert.BlockEXIF, convert.BlockXMP}},
 		{"text.png", convert.FilePNG, phone, []convert.MetaBlock{convert.BlockEXIF, convert.BlockText}},
 		{"exif.webp", convert.FileWebP, phone, []convert.MetaBlock{convert.BlockEXIF, convert.BlockXMP}},
 		{"gps.heic", convert.FileHEIC, phone, []convert.MetaBlock{convert.BlockEXIF, convert.BlockXMP}},
-		{"word.pdf", convert.FilePDF, func(i convert.FileInfo) {
+		{"word.pdf", convert.FilePDF, func(t testing.TB, i convert.FileInfo) {
 			require.Equal(t, "Ann Author", fieldValue(t, i, "PDF:Author"))
 			require.Equal(t, "Microsoft Word 2016", fieldValue(t, i, "PDF:Creator"))
 			require.Equal(t, "Microsoft: Print To PDF", fieldValue(t, i, "PDF:Producer"))
@@ -205,7 +259,7 @@ func TestInspect_fixtures(t *testing.T) {
 			require.Equal(t, 2026, fieldValue(t, i, "PDF:CreationDate").(convert.Moment).Time.Year())
 			require.Equal(t, time.February, fieldValue(t, i, "PDF:ModDate").(convert.Moment).Time.Month())
 		}, []convert.MetaBlock{convert.BlockPDFInfo, convert.BlockXMP}},
-		{"author.docx", convert.FileDOCX, func(i convert.FileInfo) {
+		{"author.docx", convert.FileDOCX, func(t testing.TB, i convert.FileInfo) {
 			require.Equal(t, "Ann Author", fieldValue(t, i, "Office:Creator"))
 			require.Equal(t, "Bob Editor", fieldValue(t, i, "Office:LastModifiedBy"))
 			require.Equal(t, "Acme Ltd", fieldValue(t, i, "Office:Company"))
@@ -222,7 +276,7 @@ func TestInspect_fixtures(t *testing.T) {
 			require.Equal(t, tt.typ, info.Type)
 			require.Equal(t, len(data), info.Size)
 			require.ElementsMatch(t, tt.blocks, info.Blocks)
-			tt.check(info)
+			tt.check(t, info)
 		})
 	}
 }
@@ -464,6 +518,14 @@ func TestInspect_sensitiveFields(t *testing.T) {
 		{"photo", fixture(t, "gps.jpg"),
 			[]string{"GPS:Coordinates", "EXIF:Make", "EXIF:Model", "XMP:Creator"},
 			[]string{"EXIF:Software", "EXIF:DateTimeOriginal", "EXIF:Orientation"}},
+		{"iphone photo (jpeg)", fixture(t, "iphone.jpg"),
+			[]string{"GPS:Coordinates", "EXIF:GPSAltitude", "EXIF:GPSImgDirection", "EXIF:GPSDateStamp", "EXIF:GPSTimeStamp", "EXIF:Make", "EXIF:Model"},
+			[]string{"EXIF:Software", "EXIF:LensModel", "EXIF:DateTimeOriginal", "EXIF:GPSVersionID", "XMP:ContentIdentifier"}},
+		{"iphone photo (heic)", fixture(t, "iphone.heic"),
+			[]string{"GPS:Coordinates", "EXIF:GPSAltitude", "EXIF:GPSImgDirection", "EXIF:GPSDateStamp", "EXIF:GPSTimeStamp", "EXIF:Make", "EXIF:Model"},
+			[]string{"EXIF:Software", "EXIF:LensModel", "EXIF:DateTimeOriginal", "EXIF:GPSVersionID"}},
+		{"scan has no people or places", fixture(t, "pdf_scan.pdf"), nil, []string{"PDF:Creator", "PDF:Producer"}},
+		{"edited pdf from a converter", fixture(t, "pdf_ironpdf.pdf"), nil, []string{"PDF:Creator", "PDF:Producer", "XMP:CreatorTool"}},
 		{"pdf", fixture(t, "word.pdf"),
 			[]string{"PDF:Author", "XMP:Creator"},
 			[]string{"PDF:Creator", "PDF:Producer", "PDF:Pages"}},

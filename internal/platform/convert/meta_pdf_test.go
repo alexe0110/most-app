@@ -68,6 +68,9 @@ func TestInspect_pdfFacts(t *testing.T) {
 		{"not signed", pdfWith(t, true, nil), "PDF:Signature", false},
 		{"original save", pdfWith(t, true, nil), "PDF:IncrementalUpdates", int64(0)},
 		{"one edit after creation", appendUpdate(t, pdfWith(t, true, nil)), "PDF:IncrementalUpdates", int64(1)},
+		{"a title that spells startxref is not an edit", pdfWith(t, true, func(p *fpdf.Fpdf) {
+			p.SetTitle("startxref", false)
+		}), "PDF:IncrementalUpdates", int64(0)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
