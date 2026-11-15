@@ -52,7 +52,7 @@ Reference: `docsbot.Service.Receive` and `internal/docsbot/telegram/docs_intake.
 ## Commands
 
 ```bash
-make test         # unit tests
+make test         # unit tests, race + shuffle
 make test-int     # integration tests (needs Docker)
 make lint         # golangci-lint + depguard
 make migrate      # goose up ($DATABASE_URL)
