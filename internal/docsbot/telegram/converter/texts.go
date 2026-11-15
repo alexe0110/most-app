@@ -103,6 +103,7 @@ const (
 	// already dropped the metadata of it.
 	textInfoCompressedPhoto = "Telegram уже убрал метаданные. Чтобы проверить оригинал, отправь как файл"
 	textInfoClean           = "Метаданных нет — файл чистый"
+	textInfoNoValues        = "Метаданные есть, но показать нечего"
 	textInfoEncrypted       = "🔒 Файл зашифрован: метаданные не прочитать и не убрать."
 	textInfoUnsupported     = "Этот формат не поддерживаю. Могу показать, что внутри, у JPG, PNG, WEBP, HEIC, PDF, DOCX, XLSX и PPTX."
 	textInfoUnreadable      = "Не получилось прочитать файл: он повреждён."

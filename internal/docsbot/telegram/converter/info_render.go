@@ -21,7 +21,9 @@ const maxMessageRunes = 4096
 // replaced by «…и ещё N полей»: the caller sends the whole list as a file.
 func renderInfo(title string, info convert.FileInfo) (text string, cut bool) {
 	head := infoHeader(title, info)
-	if info.Encrypted {
+	// Only the encryption flag was read: a user password hides the rest. With an
+	// owner password alone the file reads in full and is shown like any other.
+	if info.Encrypted && info.FieldCount() <= 1 {
 		return head + "\n\n" + textInfoEncrypted, false
 	}
 	head += "\n\n" + infoSummary(info)
@@ -42,7 +44,10 @@ func renderInfo(title string, info convert.FileInfo) (text string, cut bool) {
 		return render(), false
 	}
 
-	// Cut the least interesting group first, to the most fields that still fit.
+	// Cut the least interesting group first, to the most fields that still fit;
+	// when even none of it helps, the next group in cutOrder is cut as well:
+	// Прочее, Параметры съёмки, Изображение, Документ, Даты, Устройство, Автор,
+	// Геолокация, Безопасность. Each keeps its title and the «…и ещё N» line.
 	for _, gi := range cutOrder(info.Groups) {
 		lo, hi := 0, shown[gi]-1
 		for lo < hi {
@@ -87,8 +92,11 @@ func infoHeader(title string, info convert.FileInfo) string {
 // infoSummary says how many fields were found and which of them are sensitive.
 func infoSummary(info convert.FileInfo) string {
 	n := info.FieldCount()
-	if info.Clean() || n == 0 {
+	switch {
+	case info.Clean():
 		return "✅ <b>" + textInfoClean + "</b>"
+	case n == 0:
+		return "⚠️ <b>" + textInfoNoValues + "</b>" // metadata is there, but none of it can be shown
 	}
 	noun := plural(n, pluralFieldOne, pluralFieldFew, pluralFieldMany)
 	sensitive := info.SensitiveFields()
@@ -195,12 +203,7 @@ func groupBlock(gf convert.GroupFields, limit int) string {
 
 	var lines []string
 	for _, f := range gf.Fields[:limit] {
-		for _, l := range fieldLines(showField(gf.Group, f)) {
-			// The same fact in EXIF and XMP is told once.
-			if !slices.Contains(lines, l) {
-				lines = append(lines, l)
-			}
-		}
+		lines = append(lines, fieldLines(showField(gf.Group, f))...)
 	}
 	if rest := len(gf.Fields) - limit; rest > 0 {
 		lines = append(lines, fmt.Sprintf(textInfoMore, rest, plural(rest, pluralFieldOne, pluralFieldFew, pluralFieldMany)))

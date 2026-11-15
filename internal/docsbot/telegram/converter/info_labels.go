@@ -20,6 +20,9 @@ func fieldLabel(key string) string {
 	case "JPEG":
 		return "Комментарий"
 	}
+	if key == "EXIF:CreateDate" {
+		return "Оцифровано" // EXIF's DateTimeDigitized, which the reader calls CreateDate
+	}
 	return tagLabel(name)
 }
 

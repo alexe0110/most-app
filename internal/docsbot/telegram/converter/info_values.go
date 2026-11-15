@@ -5,6 +5,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/alexe0110/most-app/internal/platform/convert"
@@ -12,8 +13,8 @@ import (
 
 // Limits of the screen.
 const (
-	// maxShownRunes cuts one value: it is a stranger's text and must not fill the
-	// message.
+	// maxShownRunes cuts one value, «…» included: it is a stranger's text and
+	// must not fill the message.
 	maxShownRunes = 200
 	nbsp          = " "
 )
@@ -90,6 +91,11 @@ func formatValue(key string, v any) (text, zone string) {
 }
 
 func formatString(key, s string) string {
+	if strings.HasSuffix(key, ":GPSDateStamp") {
+		if t, err := time.Parse("2006:01:02", s); err == nil {
+			return t.Format("02.01.2006")
+		}
+	}
 	if key == "PDF:Content" {
 		if s == convert.ContentScan {
 			return valueScan
@@ -187,7 +193,7 @@ func enumText(name string, n int64) string {
 			return "sRGB"
 		}
 	case "ResolutionUnit":
-		return map1(n, "", "", "дюйм", "сантиметр")
+		return map1(n, "", "дюйм", "сантиметр")
 	}
 	return ""
 }
@@ -236,7 +242,7 @@ func cleanText(s string) string {
 	}, s)
 	s = strings.TrimSpace(s)
 	if r := []rune(s); len(r) > maxShownRunes {
-		s = string(r[:maxShownRunes]) + "…"
+		s = string(r[:maxShownRunes-1]) + "…" // the mark counts toward the limit
 	}
 	return s
 }
