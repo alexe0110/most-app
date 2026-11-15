@@ -113,68 +113,6 @@ func TestSetCategory_editsCardInPlace(t *testing.T) {
 	require.Empty(t, sent.texts, "no new card is sent")
 }
 
-func TestDeleteYes_returnsToOrigin(t *testing.T) {
-	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
-	seed := func(title, uid string) docsbot.Document {
-		return repo.Seed(docsbot.Document{
-			UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
-			Category: docsbot.CatPassport, Title: title, TgFileID: uid, TgFileUniqueID: uid,
-		})
-	}
-	first, second := seed("Первый", "u1"), seed("Второй", "u2")
-	open := func(id docsbot.DocumentID) {
-		b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(id)+":l:"+string(docsbot.CatPassport)+":1"))
-	}
-
-	open(first.ID)
-	b.ProcessUpdate(ctx, dataCallback("d:del:"+string(first.ID)))
-	require.True(t, has(sent.edits, "Удалить этот документ"), "edits %q", sent.edits)
-	b.ProcessUpdate(ctx, dataCallback("d:dy:"+string(first.ID)))
-	require.True(t, has(sent.edits, docsbot.CatPassport.Label()+" — 1"), "category page: %q", sent.edits)
-
-	open(second.ID)
-	b.ProcessUpdate(ctx, dataCallback("d:dy:"+string(second.ID)))
-	require.True(t, has(sent.edits, "Пока пусто"), "catalog when empty: %q", sent.edits)
-	require.Empty(t, sent.texts, "everything is edited in place")
-}
-
-func TestDeleteYes_withoutOriginClearsKeyboard(t *testing.T) {
-	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
-	doc := repo.Seed(docsbot.Document{
-		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
-		Category: docsbot.CatPassport, Title: "Паспорт РК", TgFileID: "f", TgFileUniqueID: "u",
-	})
-
-	b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(doc.ID)))
-	b.ProcessUpdate(ctx, dataCallback("d:dy:"+string(doc.ID)))
-
-	require.True(t, has(sent.edits, "Документ удалён"), "edits %q", sent.edits)
-	last := sent.editMarkups[len(sent.editMarkups)-1]
-	require.NotEmpty(t, last, "reply_markup must be sent to clear the old keyboard")
-	require.Contains(t, last, "Мои документы")
-	require.Contains(t, last, `"d:lb"`)
-	for _, cbData := range []string{"d:snd", "d:rn", "d:sc", "d:del", "d:oc"} {
-		require.NotContains(t, last, cbData, "no card buttons remain")
-	}
-}
-
-func TestDeleteYes_fromSearchReturnsToSearch(t *testing.T) {
-	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
-	keep := seedPassport(repo, "Паспорт один", "u1")
-	gone := seedPassport(repo, "Паспорт два", "u2")
-	b.ProcessUpdate(ctx, textUpdate("паспорт"))
-
-	b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(gone.ID)+":s"))
-	b.ProcessUpdate(ctx, dataCallback("d:dy:"+string(gone.ID)))
-
-	require.Equal(t, "Нашёл (1):", sent.edits[len(sent.edits)-1])
-	require.NotContains(t, repo.Docs, gone.ID)
-	require.Contains(t, repo.Docs, keep.ID)
-}
-
 func TestSend_sendsFileWithCaptionAndStaleIsGone(t *testing.T) {
 	b, sent, repo := newBot(t)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
@@ -187,18 +125,6 @@ func TestSend_sendsFileWithCaptionAndStaleIsGone(t *testing.T) {
 	require.True(t, has(sent.texts, "Этого документа уже нет"), "texts %q", sent.texts)
 }
 
-func TestDeleteNo_restoresCardAndStaleIsGone(t *testing.T) {
-	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
-	doc := seedPassport(repo, "Паспорт РК", "u1")
-
-	b.ProcessUpdate(ctx, dataCallback("d:dn:"+string(doc.ID)))
-	require.Contains(t, sent.edits[0], "🗂 ")
-
-	b.ProcessUpdate(ctx, dataCallback("d:dn:missing"))
-	require.True(t, has(sent.edits, "Этого документа уже нет"), "edits %q", sent.edits)
-}
-
 func TestOpenCard_detectsFileDeletedInDrive(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -207,7 +133,7 @@ func TestOpenCard_detectsFileDeletedInDrive(t *testing.T) {
 		wantRetry bool
 		wantOpen  bool
 	}{
-		{"file deleted", true, "Файл удалён в Google Диске, копия осталась в Telegram", true, false},
+		{"file deleted", true, "На Google Диске файла нет, копия осталась в Telegram", true, false},
 		{"file there", false, "Google Диск · копия в Telegram", false, true},
 	}
 	for _, tt := range tests {
@@ -257,23 +183,6 @@ func TestCard_isAlwaysSentAsHTML(t *testing.T) {
 	require.Equal(t, []string{"HTML"}, sent.sendModes, "the already-saved card")
 }
 
-func TestDeleteYes_forgetsTheOriginOfTheMessage(t *testing.T) {
-	b, sent, repo := newBot(t)
-	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
-	gone := seedPassport(repo, "Первый", "u1")
-	kept := seedPassport(repo, "Второй", "u2")
-	b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(gone.ID)+":l:"+string(docsbot.CatPassport)+":1"))
-	b.ProcessUpdate(ctx, dataCallback("d:dy:"+string(gone.ID)))
-
-	// The same message shows another card later (a stale card button pressed on
-	// it): it must not inherit the way back of the card that was deleted.
-	b.ProcessUpdate(ctx, dataCallback("d:dn:"+string(kept.ID)))
-
-	last := sent.editMarkups[len(sent.editMarkups)-1]
-	require.Contains(t, last, "d:snd:"+string(kept.ID), "the card is drawn")
-	require.NotContains(t, last, "⬅️ Назад", "no way back to a list the deleted card came from")
-}
-
 func TestCard_convertRowOnlyForConvertible(t *testing.T) {
 	tests := []struct {
 		name string
@@ -313,4 +222,118 @@ func TestCard_noConvertRowForHEIC(t *testing.T) {
 
 	require.Len(t, sent.editMarkups, 1)
 	require.NotContains(t, sent.editMarkups[0], "conv:doc:")
+}
+
+func TestChangeCategory_pickerAndBack(t *testing.T) {
+	tests := []struct {
+		name     string
+		suffix   string // origin token the card was opened with
+		wantBack string // callback of the card's own "Назад", "" for none
+	}{
+		{"opened from a list", ":l:" + string(docsbot.CatPassport) + ":2", "d:lc:" + string(docsbot.CatPassport) + ":2"},
+		{"opened from a search", ":s", "d:sb"},
+		{"no origin", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, sent, repo := newBot(t)
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+			doc := seedPassport(repo, "Паспорт <РК> & Ко", "u1")
+			id := string(doc.ID)
+
+			b.ProcessUpdate(ctx, dataCallback("d:oc:"+id+tt.suffix))
+			card := sent.edits[len(sent.edits)-1]
+			b.ProcessUpdate(ctx, dataCallback("d:chc:"+id))
+
+			picker := sent.edits[len(sent.edits)-1]
+			require.Equal(t, "Новая категория для «Паспорт <РК> & Ко»:", picker, "the picker names the document")
+			require.Empty(t, sent.editModes[len(sent.editModes)-1], "plain text: the title needs no escaping")
+			pickerKB := sent.editMarkups[len(sent.editMarkups)-1]
+			for _, cat := range docsbot.AllCategories {
+				require.Contains(t, pickerKB, "d:sc:"+id+":"+string(cat))
+			}
+			require.Contains(t, pickerKB, "d:cb:"+id, "a way back")
+			require.Contains(t, pickerKB, "⬅️ Назад")
+
+			b.ProcessUpdate(ctx, dataCallback("d:cb:"+id))
+
+			require.Equal(t, card, sent.edits[len(sent.edits)-1], "the card comes back as it was")
+			require.Equal(t, "HTML", sent.editModes[len(sent.editModes)-1])
+			cardKB := sent.editMarkups[len(sent.editMarkups)-1]
+			require.Contains(t, cardKB, "d:chc:"+id)
+			require.NotContains(t, cardKB, "d:sc:", "the category buttons are gone")
+			if tt.wantBack != "" {
+				require.Contains(t, cardKB, tt.wantBack, "the card keeps where it was opened from")
+			}
+			require.Equal(t, docsbot.CatPassport, repo.Docs[doc.ID].Category, "going back changes nothing")
+			require.Empty(t, sent.texts, "everything is edited in place")
+		})
+	}
+}
+
+func TestChangeCategory_staleButtons(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		msg  func(*models.Update) *models.Update
+		want string // text of the last edit, "" for none
+	}{
+		{"picker for a deleted document", "d:chc:missing", nil, "Этого документа уже нет."},
+		{"back to a deleted document", "d:cb:missing", nil, "Этого документа уже нет."},
+		{"back without a document id", "d:cb", nil, ""},
+		{"picker without a document id", "d:chc", nil, ""},
+		{"back on a message Telegram no longer gives", "d:cb:missing", inaccessible, ""},
+		{"picker on a message Telegram no longer gives", "d:chc:missing", inaccessible, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, sent, _ := newBot(t)
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+			u := dataCallback(tt.data)
+			if tt.msg != nil {
+				u = tt.msg(u)
+			}
+
+			b.ProcessUpdate(ctx, u)
+
+			if tt.want == "" {
+				require.Empty(t, sent.edits)
+				require.Empty(t, sent.texts)
+				return
+			}
+			require.Equal(t, tt.want, sent.edits[len(sent.edits)-1])
+			require.Contains(t, sent.editMarkups[len(sent.editMarkups)-1], "Мои документы")
+		})
+	}
+}
+
+func TestChangeCategory_backOnLiveStatusMessageKeepsStatus(t *testing.T) {
+	b, sent, repo := newBotWith(t, slog.New(slog.DiscardHandler), docsbottest.FakeDrive{IsConnected: true, ExistsRes: true})
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	id := seedPending(repo, 1)[0]
+	pick(ctx, b, id, 11)
+	b.ProcessUpdate(ctx, dataCallbackMsg(11, "d:chc:"+string(id)))
+
+	b.ProcessUpdate(ctx, dataCallbackMsg(11, "d:cb:"+string(id)))
+
+	require.Contains(t, sent.edits[len(sent.edits)-1], "Загружаю на Google Диск", "the live upload card is restored, not a plain card")
+}
+
+func TestChangeCategory_anotherUsersDocumentIsGone(t *testing.T) {
+	for _, data := range []string{"d:chc:", "d:cb:"} {
+		t.Run(data, func(t *testing.T) {
+			b, sent, repo := newBot(t)
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+			foreign := repo.Seed(docsbot.Document{
+				UserID: "22222222-2222-2222-2222-222222222222", Status: docsbot.StatusSaved, Kind: docsbot.KindDocument,
+				Category: docsbot.CatPassport, Title: "Чужой паспорт", TgFileID: "f", TgFileUniqueID: "u",
+			})
+
+			b.ProcessUpdate(ctx, dataCallback(data+string(foreign.ID)))
+
+			require.Equal(t, "Этого документа уже нет.", sent.edits[len(sent.edits)-1])
+			require.NotContains(t, strings.Join(sent.snapshot(&sent.edits), "\n"), "Чужой паспорт")
+			require.Equal(t, docsbot.CatPassport, repo.Docs[foreign.ID].Category)
+		})
+	}
 }

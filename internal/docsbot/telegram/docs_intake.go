@@ -163,12 +163,23 @@ func (d *docs) RenderSaved(ctx context.Context, b *bot.Bot, chatID int64, msgID 
 	if saved.Doc.BackupStatus == docsbot.BackupPending {
 		// Drive is connected: the upload is queued and tracked in a status message.
 		d.trackUpload(ctx, b, chatID, user, saved.Doc, msgID)
+		if saved.First {
+			d.hintFirstDoc(ctx, b, chatID)
+		}
 		return
 	}
 	d.editCard(ctx, b, chatID, msgID, saved.Doc, "", "")
-	if saved.OfferDrive {
-		d.offerDrive(ctx, b, chatID, user)
+	if saved.First {
+		d.hintFirstDoc(ctx, b, chatID)
 	}
+	if saved.OfferDrive {
+		d.offerDrive(ctx, b, chatID)
+	}
+}
+
+// hintFirstDoc tells a user who just saved the first document how to find it.
+func (d *docs) hintFirstDoc(ctx context.Context, b *bot.Bot, chatID int64) {
+	d.out(b).Send(ctx, chatID, textFirstDoc)
 }
 
 // onCategoryGroup saves a whole album under the chosen category. The picker
@@ -220,14 +231,17 @@ func (d *docs) onCategoryGroup(ctx context.Context, b *bot.Bot, p press) {
 	case len(group.Docs) == 1:
 		d.editCard(ctx, b, chatID, msgID, group.Docs[0], "", "")
 	default:
-		text := fmt.Sprintf(textGroupSaved, len(group.Docs), plural(len(group.Docs), pluralFileOne, pluralFileFew, pluralFileMany), cat.Label())
+		text := fmt.Sprintf(textGroupSaved, len(group.Docs), plural(len(group.Docs), pluralDocumentOne, pluralDocumentFew, pluralDocumentMany), cat.Label())
 		if tooLarge > 0 {
-			text += "\n" + fmt.Sprintf(textGroupTooLarge, tooLarge)
+			text += "\n" + fmt.Sprintf(textGroupTooLarge, docsbot.MaxDriveBytes>>20, tooLarge)
 		}
 		d.out(b).Edit(ctx, chatID, msgID, text, tg.WithKeyboard(nil))
 	}
+	if group.First {
+		d.hintFirstDoc(ctx, b, chatID)
+	}
 	if group.OfferDrive {
-		d.offerDrive(ctx, b, chatID, user)
+		d.offerDrive(ctx, b, chatID)
 	}
 }
 

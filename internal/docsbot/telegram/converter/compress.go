@@ -66,7 +66,7 @@ func (c *Converter) finishPDF(ctx context.Context, b *bot.Bot, p press) {
 	}
 
 	name := scanName(c.now())
-	if !c.sendResult(ctx, b, chatID, user, name, pdf, "", suffixPDF) {
+	if !c.sendResult(ctx, b, chatID, user, resultFile{name: name, data: pdf, suffix: suffixPDF}) {
 		c.retry(ctx, b, chatID, user, sess, msgID, textSendFailed, pdfKeyboard())
 		return
 	}
@@ -126,7 +126,7 @@ func (c *Converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64
 		c.out(b).Send(ctx, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
 	}
 	name := resultFileName(sess.sourceTitle, nameFallbackPhoto, nameTagCompressed, formatExt(format))
-	if !c.sendResult(ctx, b, chatID, user, name, out, "", suffixCompressed) {
+	if !c.sendResult(ctx, b, chatID, user, resultFile{name: name, data: out, suffix: suffixCompressed, caption: compressedCaption(len(src), len(out))}) {
 		c.retry(ctx, b, chatID, user, sess, msgID, textSendFailed, retryKB)
 		return true
 	}

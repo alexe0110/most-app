@@ -143,10 +143,14 @@ func errorBlock(st statusTally) string {
 			single = r.text
 		}
 	}
-	if len(lines) == 1 {
-		return fmt.Sprintf(textStatusNotDone, n, single)
+	block := fmt.Sprintf(textStatusNotDone, n, single)
+	if len(lines) > 1 {
+		block = fmt.Sprintf(textStatusNotDoneList, n) + "\n" + strings.Join(lines, "\n")
 	}
-	return fmt.Sprintf(textStatusNotDoneList, n) + "\n" + strings.Join(lines, "\n")
+	if st.notDone[string(docsbot.BackupReasonQuota)] > 0 {
+		block += "\n" + textStatusQuotaHint
+	}
+	return block
 }
 
 // categoryBlock is «📁 Label · K» (the label links to the Drive folder when it

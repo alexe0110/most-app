@@ -147,6 +147,6 @@ func TestCleanedCaption(t *testing.T) {
 func TestNotInspectableText(t *testing.T) {
 	big := docsbot.Document{Kind: docsbot.KindDocument, MIME: mimePDF, FileSize: 21 << 20}
 	require.Equal(t, infoTooLargeText(), notInspectableText(big), "a stale button on a file over the limit")
-	require.Contains(t, infoTooLargeText(), "20 МБ", "the limit is taken from convert.MaxInputBytes")
+	require.Contains(t, infoTooLargeText(), "20\u00a0МБ", "the limit is taken from convert.MaxInputBytes")
 	require.Equal(t, textInfoUnsupported, notInspectableText(docsbot.Document{Kind: docsbot.KindDocument, MIME: "video/mp4"}))
 }

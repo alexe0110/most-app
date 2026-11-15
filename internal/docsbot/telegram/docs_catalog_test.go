@@ -20,7 +20,7 @@ func TestSearch_blankQueryShowsHint(t *testing.T) {
 	b.ProcessUpdate(ctx, textUpdate("   "))
 
 	require.True(t, has(sent.texts, "Напиши, что искать"), "sent %q", sent.texts)
-	require.False(t, has(sent.texts, "Ничего не нашёл"))
+	require.False(t, has(sent.texts, "ничего нет"))
 }
 
 func TestSearch_findsSavedDocument(t *testing.T) {
@@ -76,7 +76,7 @@ func TestSearchBack_rerunsLastSearch(t *testing.T) {
 	}
 
 	require.Len(t, sent.edits, 2)
-	require.True(t, has(sent.edits, "Нашёл (1):"), "edits %q", sent.edits)
+	require.True(t, has(sent.edits, "Нашёл 1 документ:"), "edits %q", sent.edits)
 	require.Equal(t, []docsbot.EventName{docsbot.EventSearch}, repo.EventNames(), "redrawing the results is not a new search")
 }
 

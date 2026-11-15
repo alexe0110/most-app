@@ -55,16 +55,8 @@ func (d *docs) onInlineSwitch(ctx context.Context, b *bot.Bot, p press) {
 		d.fail(ctx, b, chatID, "set inline enabled", err)
 		return
 	}
-	view, err := d.svc.Settings(ctx, user)
-	if err != nil {
-		d.fail(ctx, b, chatID, "settings", err)
-		return
-	}
 	d.log.InfoContext(ctx, "inline mode switched", "user_id", user, "enabled", on)
-	url, haveURL := d.connectURL(ctx, user)
-	text, kb := renderSettings(view, url, haveURL)
-	d.out(b).Edit(ctx, chatID, msgID, text, tg.WithHTML(), tg.WithKeyboard(kb))
-	d.settingsMsgs.Set(chatID, msgID)
+	d.editSettings(ctx, b, user, chatID, msgID)
 }
 
 // myDocsKeyboard is a single "Мои документы" button back to the catalog.

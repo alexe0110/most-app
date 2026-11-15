@@ -29,8 +29,8 @@ import (
 // sentDocument is a document the bot uploaded.
 type sentDocument struct {
 	filename string
-	caption  string
 	data     []byte
+	caption  string
 }
 
 // logBuffer is a slog sink the tests can read while handlers still write.
@@ -276,7 +276,7 @@ func (h *convHarness) captureDocument(t *testing.T, r *http.Request) int {
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.docs = append(h.docs, sentDocument{filename: header.Filename, caption: r.FormValue("caption"), data: data})
+	h.docs = append(h.docs, sentDocument{filename: header.Filename, data: data, caption: r.FormValue("caption")})
 	h.docMarkups = append(h.docMarkups, r.FormValue("reply_markup"))
 	return len(h.docs) - 1
 }

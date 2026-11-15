@@ -71,7 +71,7 @@ func (d *docs) export(ctx context.Context, b *bot.Bot, chatID int64, user docsbo
 		d.out(b).Send(ctx, chatID, fmt.Sprintf(textExportTruncated, sent, exp.Total))
 		return
 	}
-	d.out(b).Send(ctx, chatID, fmt.Sprintf(textExportDone, sent))
+	d.out(b).Send(ctx, chatID, fmt.Sprintf(textExportDone, sent, plural(sent, pluralDocumentOne, pluralDocumentFew, pluralDocumentMany)))
 }
 
 // exportGap is the pause after a batch of n files. Telegram lets a bot send about

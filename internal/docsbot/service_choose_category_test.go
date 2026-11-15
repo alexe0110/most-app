@@ -123,6 +123,7 @@ func TestService_ChooseCategory(t *testing.T) {
 		wantErr     error
 		wantOffer   bool
 		wantBackup  docsbot.BackupStatus
+		countErr    error // CountSaved fails after the save
 	}{
 		{name: "first document offers Drive", cat: docsbot.CatPassport, wantOffer: true},
 		{name: "second document does not offer", savedBefore: 1, cat: docsbot.CatPassport},
@@ -130,6 +131,9 @@ func TestService_ChooseCategory(t *testing.T) {
 		{name: "connected queues backup, never offers", connected: true, cat: docsbot.CatPassport, wantBackup: docsbot.BackupPending},
 		{name: "connected, file above the Drive limit: too large, no upload", connected: true, size: docsbot.MaxDriveBytes + 1,
 			cat: docsbot.CatPassport, wantBackup: docsbot.BackupTooLarge},
+		{name: "connected, count fails: still saved, no error", connected: true, countErr: errors.New("db down"),
+			cat: docsbot.CatPassport, wantBackup: docsbot.BackupPending},
+		{name: "not connected, count fails: still saved, no nudge", countErr: errors.New("db down"), cat: docsbot.CatPassport},
 		{name: "unknown category rejected", cat: docsbot.Category("bogus"), wantErr: docsbot.ErrUnknownCategory},
 	}
 	for _, tt := range tests {
@@ -139,6 +143,7 @@ func TestService_ChooseCategory(t *testing.T) {
 				repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, Category: docsbot.CatOther})
 			}
 			doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, Title: "Паспорт", TgFileUniqueID: "u", FileSize: tt.size})
+			repo.CountSavedErr = tt.countErr
 			uploads := &docsbottest.FakeUploads{Repo: repo}
 			svc := docsbottest.NewService(repo, docsbottest.FakeDrive{IsConnected: tt.connected}, docsbottest.FakeFiles{}, uploads, repo, docsbottest.NewFakeStatus(repo), &docsbottest.FakeSyncs{Repo: repo})
 
@@ -149,6 +154,7 @@ func TestService_ChooseCategory(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Equal(t, tt.wantOffer, got.OfferDrive)
+			require.False(t, got.First && tt.countErr != nil, "no hint without a count")
 			require.Equal(t, docsbot.StatusSaved, repo.Docs[doc.ID].Status)
 			require.Equal(t, tt.cat, repo.Docs[doc.ID].Category)
 			wantBackup := cmp.Or(tt.wantBackup, docsbot.BackupNone)
@@ -270,4 +276,94 @@ func TestService_ChooseCategory_enqueueFailureLeavesPendingThenRetry(t *testing.
 	require.False(t, got.Already)
 	require.Equal(t, docsbot.BackupPending, got.Doc.BackupStatus)
 	require.Equal(t, []docsbot.DocumentID{doc.ID}, uploads.Calls)
+}
+
+func TestService_ChooseCategory_firstFlag(t *testing.T) {
+	tests := []struct {
+		name      string
+		connected bool
+		saved     int // documents the user saved before
+		want      bool
+	}{
+		{"first document, drive off", false, 0, true},
+		{"first document, drive on", true, 0, true},
+		{"second document", false, 1, false},
+		{"second document, drive on", true, 1, false},
+		{"fifth document", false, 4, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := docsbottest.NewFakeRepo()
+			for i := range tt.saved {
+				repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, TgFileUniqueID: "old" + string(rune('a'+i))})
+			}
+			doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "new"})
+			svc, _ := edgeService(repo, docsbottest.FakeDrive{IsConnected: tt.connected})
+
+			got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got.First)
+
+			// A repeated tap saves nothing, so it must not announce a first document again.
+			again, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
+			require.NoError(t, err)
+			require.True(t, again.Already)
+			require.False(t, again.First)
+		})
+	}
+}
+
+func TestService_ChooseCategory_firstFlagOtherUsersDoNotCount(t *testing.T) {
+	repo := docsbottest.NewFakeRepo()
+	repo.Seed(docsbot.Document{UserID: stranger, Status: docsbot.StatusSaved, TgFileUniqueID: "theirs"})
+	doc := repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusPending, TgFileUniqueID: "mine"})
+	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
+
+	got, err := svc.ChooseCategory(t.Context(), user, doc.ID, docsbot.CatPassport)
+
+	require.NoError(t, err)
+	require.True(t, got.First)
+}
+
+func TestService_ChooseCategoryGroup_firstFlag(t *testing.T) {
+	tests := []struct {
+		name      string
+		connected bool
+		saved     int
+		want      bool
+	}{
+		{"album is the first documents, drive off", false, 0, true},
+		{"album is the first documents, drive on", true, 0, true},
+		{"album after an existing document", false, 1, false},
+		{"album after an existing document, drive on", true, 1, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := docsbottest.NewFakeRepo()
+			for i := range tt.saved {
+				repo.Seed(docsbot.Document{UserID: user, Status: docsbot.StatusSaved, TgFileUniqueID: "old" + string(rune('a'+i))})
+			}
+			svc, _ := edgeService(repo, docsbottest.FakeDrive{IsConnected: tt.connected})
+			var first docsbot.DocumentID
+			for _, uid := range []string{"p1", "p2", "p3"} {
+				in := intakeFile(uid)
+				in.MediaGroupID = "album-1"
+				rep, err := svc.Receive(t.Context(), in)
+				require.NoError(t, err)
+				if first == "" {
+					first = rep.(docsbot.NeedCategory).Doc.ID
+				}
+			}
+
+			got, err := svc.ChooseCategoryGroup(t.Context(), user, first, docsbot.CatReceipts)
+			require.NoError(t, err)
+			require.Len(t, got.Docs, 3)
+			require.Equal(t, tt.want, got.First)
+
+			again, err := svc.ChooseCategoryGroup(t.Context(), user, first, docsbot.CatReceipts)
+			require.NoError(t, err)
+			require.True(t, again.Already)
+			require.False(t, again.First, "a repeated tap must not announce a first document")
+		})
+	}
 }

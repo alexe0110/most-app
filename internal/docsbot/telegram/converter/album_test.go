@@ -90,7 +90,7 @@ func TestConvertAlbum_tooBigRefused(t *testing.T) {
 
 	require.Empty(t, h.docs)
 	require.Empty(t, h.downloads, "limits are checked before downloading")
-	require.Contains(t, h.lastText(), "20 МБ")
+	require.Contains(t, h.lastText(), "20\u00a0МБ")
 	require.Len(t, h.repo.Docs, 2, "photos stay pending to save one by one")
 }
 
@@ -104,7 +104,7 @@ func TestConvertAlbum_tooManyPhotosKeepsOldPicker(t *testing.T) {
 
 	require.Empty(t, h.docs)
 	require.NotContains(t, h.albumMarkup(), "conv:alb:")
-	require.Contains(t, h.allTexts(), "Сначала выбери категорию", "the pending limit is reported")
+	require.Contains(t, h.allTexts(), "Этот файл я не сохранил: сначала выбери категорию", "the pending limit is reported")
 }
 
 func TestConvertAlbum_mixedAlbumKeepsOldPicker(t *testing.T) {
@@ -146,7 +146,7 @@ func TestConvertAlbum_tokenBelongsToTheTelegramUserWhoSentIt(t *testing.T) {
 	stranger.CallbackQuery.From.ID = testUser + 1
 	h.bot.ProcessUpdate(ctx, stranger)
 
-	require.Contains(t, h.lastText(), "устарела", "a stranger's press is a stale one")
+	require.Contains(t, h.lastText(), "уже не работает", "a stranger's press is a stale one")
 	require.Empty(t, h.downloads, "nothing was fetched for a stranger")
 	require.Empty(t, h.docs)
 

@@ -39,7 +39,7 @@ func TestConvertReplace_keyboard(t *testing.T) {
 
 	require.Contains(t, h.docMarkups[0], "Сохранить как новый")
 	require.Contains(t, h.docMarkups[0], "Заменить оригинал")
-	require.Contains(t, h.docMarkups[0], "Только файл")
+	require.Contains(t, h.docMarkups[0], "Не сохранять")
 	require.Contains(t, h.docMarkups[0], "conv:save:")
 	require.Contains(t, h.docMarkups[0], "conv:skip:")
 }
@@ -56,7 +56,7 @@ func TestConvertReplace_commandResultKeyboardUnchanged(t *testing.T) {
 
 	require.Len(t, h.docMarkups, 1)
 	require.Contains(t, h.docMarkups[0], "Сохранить в документы")
-	require.Contains(t, h.docMarkups[0], "Только файл")
+	require.Contains(t, h.docMarkups[0], "Не сохранять")
 	require.NotContains(t, h.docMarkups[0], "conv:rp:")
 	require.NotContains(t, h.docMarkups[0], "Заменить")
 }
@@ -69,7 +69,7 @@ func TestConvertReplace_askThenConfirm(t *testing.T) {
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rp:"+tok))
 
-	require.Contains(t, lastCaption(h), "Исходный файл будет заменён")
+	require.Contains(t, lastCaption(h), "Заменить оригинал этим файлом?")
 	require.Contains(t, lastCaption(h), "conv:rpy:"+tok)
 	require.Contains(t, lastCaption(h), "conv:rpn:"+tok)
 	require.Equal(t, src, h.repo.Docs[src.ID], "asking changes nothing")
@@ -84,7 +84,7 @@ func TestConvertReplace_askThenConfirm(t *testing.T) {
 	require.Equal(t, src.Title, got.Title)
 	require.Equal(t, src.Category, got.Category)
 	require.Equal(t, src.MetaVersion+1, got.MetaVersion, "replaced once, however many taps")
-	require.Contains(t, h.lastText(), "Эта кнопка устарела", "the second tap is stale")
+	require.Contains(t, h.lastText(), "Эта кнопка уже не работает", "the second tap is stale")
 }
 
 func TestConvertReplace_cancelRestoresButtons(t *testing.T) {
@@ -115,7 +115,7 @@ func TestConvertReplace_staleToken(t *testing.T) {
 
 			h.bot.ProcessUpdate(ctx, callbackUpdate(data+"deadbeef"))
 
-			require.Contains(t, h.lastText(), "Эта кнопка устарела")
+			require.Contains(t, h.lastText(), "Эта кнопка уже не работает")
 			require.Equal(t, src, h.repo.Docs[src.ID])
 		})
 	}
@@ -130,7 +130,7 @@ func TestConvertReplace_afterSkipIsStale(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:skip:"+tok))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpy:"+tok))
 
-	require.Contains(t, h.lastText(), "Эта кнопка устарела")
+	require.Contains(t, h.lastText(), "Эта кнопка уже не работает")
 	require.Equal(t, src, h.repo.Docs[src.ID])
 }
 
@@ -146,7 +146,7 @@ func TestConvertReplace_refusals(t *testing.T) {
 		}, "ещё сохраняется"},
 		{"drive file missing", func(d *docsbot.Document) {
 			d.BackupStatus, d.SyncStatus = docsbot.BackupBackedUp, docsbot.SyncMissing
-		}, "Выгрузить заново"},
+		}, "Загрузить заново"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -28,6 +28,7 @@ func TestConvert_compressPreset(t *testing.T) {
 	require.Len(t, h.docs, 1)
 	require.Equal(t, "фото-сжатый.jpg", h.docs[0].filename)
 	require.LessOrEqual(t, len(h.docs[0].data), 2<<20)
+	require.Regexp(t, `^Готово: [\d,]+\x{00A0}(КБ|МБ) \(было [\d,]+\x{00A0}(КБ|МБ)\)\.$`, h.docs[0].caption)
 	_, _, err := image.Decode(bytes.NewReader(h.docs[0].data))
 	require.NoError(t, err)
 	require.Empty(t, h.repo.Docs, "a result is not saved unless asked")

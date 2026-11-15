@@ -84,14 +84,39 @@ func convertRow(id docsbot.DocumentID, label string) []models.InlineKeyboardButt
 // renameCancelKeyboard is the single "Отмена" button under the rename prompt.
 func renameCancelKeyboard(id docsbot.DocumentID) *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: btnRenameCancel, CallbackData: docCB(actRenameCancel, id)},
+		{Text: btnCancel, CallbackData: docCB(actRenameCancel, id)},
 	}}}
 }
 
-func connectKeyboard(url string) *models.InlineKeyboardMarkup {
+// connectAskKeyboard opens the screen before Google's consent page; the consent
+// URL is built only when the user asks for it.
+func connectAskKeyboard() *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: btnConnectDrive, URL: url},
+		{Text: btnConnectDrive, CallbackData: docCB(actConnectAsk, "")},
 	}}}
+}
+
+// connectIntroKeyboard is the screen before Google's consent page: go on or step back.
+func connectIntroKeyboard(url string) *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: btnContinue, URL: url},
+		{Text: btnCancel, CallbackData: docCB(actConnectNo, "")},
+	}}}
+}
+
+// disconnectConfirmKeyboard confirms disconnecting Google Drive.
+func disconnectConfirmKeyboard() *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: btnDisconnectYes, CallbackData: docCB(actDisconnect, "")},
+		{Text: btnCancel, CallbackData: docCB(actDisconnectNo, "")},
+	}}}
+}
+
+// categoryPickerKeyboard is the category grid of a card with a way back to the card.
+func categoryPickerKeyboard(id docsbot.DocumentID) *models.InlineKeyboardMarkup {
+	kb := categoryKeyboard(actSetCategory, id)
+	kb.InlineKeyboard = append(kb.InlineKeyboard, []models.InlineKeyboardButton{{Text: btnBack, CallbackData: docCB(actCardBack, id)}})
+	return kb
 }
 
 func transferOfferKeyboard() *models.InlineKeyboardMarkup {
@@ -119,12 +144,13 @@ func reconnectKeyboard(url string) *models.InlineKeyboardMarkup {
 	}}}
 }
 
-// exportFirstKeyboard is the button under the delete-data prompt: get everything
-// back first, then confirm.
-func exportFirstKeyboard() *models.InlineKeyboardMarkup {
-	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: btnExportAll, CallbackData: docCB(actExport, "")},
-	}}}
+// deleteDataKeyboard is under the delete-data prompt: get everything back first,
+// or cancel.
+func deleteDataKeyboard() *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{{Text: btnExportAll, CallbackData: docCB(actExport, "")}},
+		{{Text: btnCancel, CallbackData: docCB(actDeleteDataNo, "")}},
+	}}
 }
 
 // inlineToggleRow is the «send from any chat» switch: it shows the current state,

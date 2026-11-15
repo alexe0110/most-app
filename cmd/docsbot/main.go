@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 	_ "time/tzdata" // zone database for images without /usr/share/zoneinfo
@@ -88,6 +89,9 @@ func run() error {
 		return err
 	}
 
+	// Same path the web package serves; it keeps its path constants private.
+	privacyURL := strings.TrimRight(cfg.PublicURL, "/") + "/privacy"
+
 	renames := telegram.NewRenames()               // shared by the bot handlers and the notifier
 	settingsMsgs := telegram.NewSettingsMessages() // shared by the /settings handlers and the connect callback
 	// oauth.Service and docsbot.Service need each other: the service checks the
@@ -106,7 +110,7 @@ func run() error {
 		BotURL:       botURL(cfg.TelegramBotUsername),
 	}, oauthStore, func(ctx context.Context, userID string) error {
 		return telegram.NotifyConnected(tgbot, users, svc, log,
-			telegram.WithConnectSettings(settingsMsgs, svc, oauthSvc))(ctx, userID)
+			telegram.WithConnectSettings(settingsMsgs, svc, oauthSvc), telegram.WithConnectBot(cfg.TelegramBotUsername, privacyURL, cfg.DriveRootFolder))(ctx, userID)
 	}, log)
 	if err != nil {
 		return fmt.Errorf("new oauth service: %w", err)
@@ -120,7 +124,7 @@ func run() error {
 	}, docsbot.WithPageCounter(pageCounter{}), docsbot.WithLogger(log))
 
 	telegram.Register(tgbot.Client(), telegram.Deps{Log: log, Svc: svc, Auth: oauthSvc, Files: tgbot},
-		telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder))
+		telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder), telegram.WithBotUsername(cfg.TelegramBotUsername), telegram.WithPrivacyURL(privacyURL))
 	notifier := telegram.NewNotifier(tgbot, users, oauthSvc, svc, log, telegram.WithNotifierRenames(renames))
 
 	workers := river.NewWorkers()

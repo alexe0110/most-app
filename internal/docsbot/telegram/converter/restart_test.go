@@ -16,7 +16,7 @@ func TestRestart_convertCallbackWithoutSession(t *testing.T) {
 
 			h.bot.ProcessUpdate(t.Context(), callbackUpdate(data))
 
-			require.Equal(t, "Кнопка устарела, открой заново.", h.lastText())
+			require.Equal(t, "Эта кнопка уже не работает. Открой документ заново.", h.lastText())
 		})
 	}
 }
@@ -28,9 +28,9 @@ func TestRestart_infoCallbacksWithoutState(t *testing.T) {
 		data string
 		want string
 	}{
-		{"conv:kc:x", "Эта кнопка устарела. Преобразуй файл ещё раз."},
-		{"conv:ko:x", "Эта кнопка устарела. Преобразуй файл ещё раз."},
-		{"conv:kc:", "Эта кнопка устарела. Преобразуй файл ещё раз."},
+		{"conv:kc:x", "Эта кнопка уже не работает. Преобразуй файл ещё раз."},
+		{"conv:ko:x", "Эта кнопка уже не работает. Преобразуй файл ещё раз."},
+		{"conv:kc:", "Эта кнопка уже не работает. Преобразуй файл ещё раз."},
 		{"conv:i:0b9f0c6e-4c1f-4f0e-9d3a-6c1d2f5a7b11", "Этого документа уже нет."},
 		{"conv:cl:0b9f0c6e-4c1f-4f0e-9d3a-6c1d2f5a7b11", "Этого документа уже нет."},
 	}

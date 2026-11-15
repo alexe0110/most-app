@@ -81,7 +81,7 @@ func TestInfoFlow_showsWhatIsInsideEachFormat(t *testing.T) {
 		format     docsbot.FileFormat
 		want       []string
 	}{
-		{"gps.jpg", "image/jpeg", docsbot.FormatJPEG, append([]string{"JPEG", "EXIF, XMP"}, phone...)},
+		{"gps.jpg", "image/jpeg", docsbot.FormatJPEG, append([]string{"JPG-изображение", "EXIF, XMP"}, phone...)},
 		{"text.png", "image/png", docsbot.FormatPNG, append([]string{"PNG"}, phone...)},
 		{"exif.webp", "image/webp", docsbot.FormatWebP, append([]string{"WEBP"}, phone...)},
 		{"gps.heic", "image/heic", docsbot.FormatHEIC, append([]string{"HEIC"}, phone...)},
@@ -205,13 +205,13 @@ func TestInfoFlow_keepCleanedReplacesTheFileThenCategorySavesIt(t *testing.T) {
 	require.Equal(t, "res-uniq-0", got.TgFileUniqueID)
 	require.Equal(t, docsbot.StatusPending, got.Status)
 	require.Equal(t, version+1, got.MetaVersion)
-	require.Equal(t, "Выбери категорию:", h.lastText())
+	require.Equal(t, "В какую категорию сохранить?", h.lastText())
 	require.Contains(t, h.lastMarkup(), "d:cat:"+string(infoDocID))
 
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:kc:"+tok, 60)) // double tap
 
 	require.Equal(t, version+1, h.repo.Docs[infoDocID].MetaVersion, "replaced once")
-	require.Equal(t, "Эта кнопка устарела. Преобразуй файл ещё раз.", h.lastText())
+	require.Equal(t, "Эта кнопка уже не работает. Преобразуй файл ещё раз.", h.lastText())
 
 	h.bot.ProcessUpdate(ctx, callbackOn("d:cat:"+string(infoDocID)+":"+string(docsbot.CatPassport), 61))
 
@@ -233,12 +233,12 @@ func TestInfoFlow_keepOriginalLeavesTheFile(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:ko:"+tok, 60))
 
 	require.Equal(t, "file-Квартира", h.repo.Docs[infoDocID].TgFileID)
-	require.Equal(t, "Выбери категорию:", h.lastShown())
+	require.Equal(t, "В какую категорию сохранить?", h.lastShown())
 
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:kc:"+tok, 60))
 
 	require.Equal(t, "file-Квартира", h.repo.Docs[infoDocID].TgFileID, "the choice is made once")
-	require.Equal(t, "Эта кнопка устарела. Преобразуй файл ещё раз.", h.lastText())
+	require.Equal(t, "Эта кнопка уже не работает. Преобразуй файл ещё раз.", h.lastText())
 }
 
 func TestInfoFlow_keepCleanedOfADeletedDocument(t *testing.T) {
@@ -270,7 +270,7 @@ func TestInfoFlow_someoneElsesDocumentAndTokens(t *testing.T) {
 	press("conv:cl:"+string(infoDocID), 71)
 	require.Equal(t, "Этого документа уже нет.", h.lastText())
 	press("conv:kc:"+tok, 72)
-	require.Equal(t, "Эта кнопка устарела. Преобразуй файл ещё раз.", h.lastText(), "a token belongs to the user it was made for")
+	require.Equal(t, "Эта кнопка уже не работает. Преобразуй файл ещё раз.", h.lastText(), "a token belongs to the user it was made for")
 	press("conv:ko:"+tok, 73)
 
 	require.Equal(t, downloads, len(h.downloads), "a stranger can't make the bot read the file")
@@ -346,7 +346,7 @@ func TestInfoFlow_tooLargeAndUnsupportedDocuments(t *testing.T) {
 		doc  docsbot.Document
 		want string
 	}{
-		{"over 20 MB", docsbot.Document{Kind: docsbot.KindDocument, MIME: "application/pdf", FileSize: 21 << 20}, "Файл больше 20 МБ"},
+		{"over 20 MB", docsbot.Document{Kind: docsbot.KindDocument, MIME: "application/pdf", FileSize: 21 << 20}, "Файл больше 20\u00a0МБ"},
 		{"video", docsbot.Document{Kind: docsbot.KindDocument, MIME: "video/mp4", FileSize: 1 << 20}, "Этот формат не поддерживаю"},
 	}
 	for _, tt := range tests {
@@ -491,7 +491,7 @@ func TestInfoFlow_concurrentTapsOnTheKeepButtons(t *testing.T) {
 	defer h.mu.Unlock()
 	pickers := 0
 	for _, text := range h.texts {
-		if text == "Выбери категорию:" {
+		if text == "В какую категорию сохранить?" {
 			pickers++
 		}
 	}

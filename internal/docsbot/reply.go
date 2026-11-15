@@ -19,6 +19,9 @@ type Saved struct {
 	// Already is true when the document was saved before this call (double tap,
 	// parallel tap): nothing new happened and callers must not track or redraw it.
 	Already bool
+	// First is true when this is the user's only saved document: the channel tells
+	// how to find it. Deleting everything and saving again repeats it.
+	First bool
 }
 
 // Replaced means the document's file was swapped for a new one (id, title and
@@ -56,11 +59,13 @@ func (QuotaExceeded) isReply()  {}
 // SavedGroup is the outcome of saving a whole album: every document with its
 // own Saved result. OfferDrive is true if any of them asked for the Drive nudge.
 // Docs holds only the documents this call saved; Already is true when there were
-// none (the album was saved by an earlier or parallel tap).
+// none (the album was saved by an earlier or parallel tap). First is true if any
+// of them was the user's first document.
 type SavedGroup struct {
 	Docs       []Document
 	OfferDrive bool
 	Already    bool
+	First      bool
 }
 
 // Deleted is the outcome of deleting a document. RemoteKept is true when the
@@ -101,10 +106,13 @@ type CategoryPage struct {
 
 // Found holds search results for a query. BlankQuery is set when the query was
 // empty after trimming: nothing was searched and the channel shows a hint.
+// DriveConnected tells whether the user's Google Drive is linked, so the channel
+// marks only Telegram-only documents with a storage icon when it matters.
 type Found struct {
-	Query      string
-	Docs       []Document
-	BlankQuery bool
+	Query          string
+	Docs           []Document
+	BlankQuery     bool
+	DriveConnected bool
 }
 
 // SettingsView is the /settings screen: Drive state and document counts.

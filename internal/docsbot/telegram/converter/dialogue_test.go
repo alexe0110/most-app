@@ -43,7 +43,7 @@ func TestConvertDialogue_editFallback(t *testing.T) {
 	// The old message is dead; the new one drives the session and is edited again.
 	h.failEdits = false
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:done", start))
-	require.Equal(t, "Кнопка устарела, открой заново.", h.lastText())
+	require.Equal(t, "Эта кнопка уже не работает. Открой документ заново.", h.lastText())
 	h.bot.ProcessUpdate(ctx, photoUpdate(1)) // the dialogue moves down: the prompt is replaced by a new message
 	accepted := h.lastMsg()
 	require.Contains(t, h.deleted, moved)
@@ -131,9 +131,9 @@ func TestConvertDialogue_errorStaysInDialogue(t *testing.T) {
 
 	require.Empty(t, h.docs)
 	require.Equal(t, sends, h.sends(), "the error is an edit of the dialogue message")
-	require.Contains(t, h.lastShown(), "Так я пока не умею")
+	require.Contains(t, h.lastShown(), "С таким файлом не справлюсь")
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:cancel", dialogue))
-	require.Contains(t, h.lastText(), "Режим конвертера выключен", "the session survived for a retry")
+	require.Contains(t, h.lastText(), "Вышел из конвертера", "the session survived for a retry")
 }
 
 func TestConvertDialogue_editAndSendBothFailKeepsMessage(t *testing.T) {
@@ -147,7 +147,7 @@ func TestConvertDialogue_editAndSendBothFailKeepsMessage(t *testing.T) {
 	h.failEdits, h.failSends = false, false
 
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:cancel", start))
-	require.Contains(t, h.lastText(), "Режим конвертера выключен", "the session still owns its dialogue message")
+	require.Contains(t, h.lastText(), "Вышел из конвертера", "the session still owns its dialogue message")
 }
 
 func TestConvert_newCommandStripsPreviousDialogue(t *testing.T) {
@@ -254,7 +254,7 @@ func TestConvertDialogue_resultSendFailureKeepsDialogue(t *testing.T) {
 			if tt.wantSession {
 				h.failDocs = false
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:cancel", dialogue))
-				require.Contains(t, h.lastText(), "Режим конвертера выключен", "the session is back for a retry")
+				require.Contains(t, h.lastText(), "Вышел из конвертера", "the session is back for a retry")
 			}
 		})
 	}
@@ -311,7 +311,7 @@ func TestConvertMenu_doubleTap(t *testing.T) {
 
 		h.bot.ProcessUpdate(ctx, callbackOn("conv:q:"+string(src.ID)+":c1", 55))
 
-		require.Equal(t, "Кнопка устарела, открой заново.", h.lastText())
+		require.Equal(t, "Эта кнопка уже не работает. Открой документ заново.", h.lastText())
 		require.Equal(t, edits, h.edits, "the keyboard is not cleared")
 		release()
 		require.Len(t, h.docs, 1, "the first tap ran once")
@@ -352,10 +352,10 @@ func TestConvert_cancelStripsDialogueKeyboard(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, commandUpdate("cancel"))
 
 	require.Equal(t, edits+1, h.edits, "the dialogue loses its buttons")
-	require.Contains(t, h.lastText(), "Режим конвертера выключен")
+	require.Contains(t, h.lastText(), "Вышел из конвертера")
 }
 
-const staleReply = "Кнопка устарела, открой заново."
+const staleReply = "Эта кнопка уже не работает. Открой документ заново."
 
 // liveMessages lists the sent messages (ids above the harness start) that were
 // not deleted.
@@ -393,7 +393,7 @@ func TestConvertPDF_parallelAlbumLeavesOneDialogue(t *testing.T) {
 	live := h.liveMessages()
 	require.Len(t, live, 1, "exactly one live dialogue message")
 	require.Equal(t, h.lastMsg(), live[0])
-	require.Contains(t, h.lastText(), "страниц: 8", "the live message shows the total")
+	require.Contains(t, h.lastText(), "В PDF уже 8 страниц", "the live message shows the total")
 
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:done", live[0]))
 	require.Len(t, h.docs, 1)

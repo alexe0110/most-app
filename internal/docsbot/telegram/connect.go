@@ -36,6 +36,7 @@ type connectSettings struct {
 	msgs *SettingsMessages
 	svc  settingsReader
 	auth Authorizer
+	info screenInfo
 }
 
 // ConnectOption tunes NotifyConnected.
@@ -45,6 +46,15 @@ type ConnectOption func(*connectSettings)
 // user came from (remembered in msgs by the docs handlers) as the connected screen.
 func WithConnectSettings(msgs *SettingsMessages, svc settingsReader, auth Authorizer) ConnectOption {
 	return func(c *connectSettings) { c.msgs, c.svc, c.auth = msgs, svc, auth }
+}
+
+// WithConnectBot sets what the redrawn settings screen names: the bot's @username,
+// the privacy page URL and the Drive root folder. An empty username or URL leaves
+// its line out.
+func WithConnectBot(username, privacyURL, driveFolder string) ConnectOption {
+	return func(c *connectSettings) {
+		c.info = screenInfo{botUsername: username, privacyURL: privacyURL, driveFolder: driveFolder}
+	}
 }
 
 // NotifyConnected builds the OnConnected callback: after Drive is linked it tells
@@ -77,7 +87,7 @@ func NotifyConnected(b *tg.Bot, users userLookup, counter driveCounter, log *slo
 		if n == 0 {
 			return nil
 		}
-		_, err = out.TrySend(ctx, chatID, fmt.Sprintf(textTransferOffer, n), tg.WithKeyboard(transferOfferKeyboard()))
+		_, err = out.TrySend(ctx, chatID, fmt.Sprintf(textTransferOffer, n, plural(n, pluralDocumentOne, pluralDocumentFew, pluralDocumentMany)), tg.WithKeyboard(transferOfferKeyboard()))
 		return out.IgnoreBlocked(ctx, err)
 	}
 }
@@ -109,7 +119,7 @@ func (c connectSettings) refresh(ctx context.Context, out tg.Sender, chatID int6
 			url, haveURL = u, true
 		}
 	}
-	text, kb := renderSettings(view, url, haveURL)
+	text, kb := renderSettings(view, url, haveURL, c.info)
 	err = out.TryEdit(ctx, chatID, msgID, text, tg.WithHTML(), tg.WithKeyboard(kb))
 	out.LogFailure(ctx, slog.LevelWarn, "edit settings after connect", err, "user_id", user)
 }
