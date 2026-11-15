@@ -8,8 +8,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/alexe0110/most-app/internal/platform/convert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/alexe0110/most-app/internal/platform/convert"
 )
 
 // otherFields makes n raw tags with long values.

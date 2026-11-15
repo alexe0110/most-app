@@ -15,15 +15,15 @@ import (
 	"github.com/alexe0110/most-app/internal/platform/convert"
 )
 
-// pngWithChunk is a small PNG with one extra chunk right after IHDR.
-func pngWithChunk(t *testing.T, kind string, body []byte) []byte {
+// pngWithChunk is a small PNG with one extra tEXt chunk right after IHDR.
+func pngWithChunk(t *testing.T, body []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	require.NoError(t, png.Encode(&buf, image.NewGray(image.Rect(0, 0, 8, 8))))
 	b := buf.Bytes()
 	const ihdrEnd = 8 + 25
 	out := append([]byte{}, b[:ihdrEnd]...)
-	out = append(out, pngChunkBytes(kind, body)...)
+	out = append(out, pngChunkBytes("tEXt", body)...)
 	return append(out, b[ihdrEnd:]...)
 }
 
@@ -49,19 +49,19 @@ func TestInspect_hostileImages(t *testing.T) {
 		data  []byte
 		check func(t *testing.T, info convert.FileInfo)
 	}{
-		{"right-to-left override is removed from a value", pngWithChunk(t, "tEXt", []byte("Author\x00Ann‮gnp.exe")),
+		{"right-to-left override is removed from a value", pngWithChunk(t, []byte("Author\x00Ann\u202egnp.exe")),
 			func(t *testing.T, info convert.FileInfo) {
 				require.Equal(t, "Anngnp.exe", fieldValue(t, info, "PNG:Author"))
 			}},
-		{"control characters are dropped", pngWithChunk(t, "tEXt", []byte("Author\x00a\x01b\x7fc")),
+		{"control characters are dropped", pngWithChunk(t, []byte("Author\x00a\x01b\x7fc")),
 			func(t *testing.T, info convert.FileInfo) {
 				require.Equal(t, "abc", fieldValue(t, info, "PNG:Author"))
 			}},
-		{"a long value is capped", pngWithChunk(t, "tEXt", []byte("Note\x00"+strings.Repeat("я", 1000))),
+		{"a long value is capped", pngWithChunk(t, []byte("Note\x00"+strings.Repeat("я", 1000))),
 			func(t *testing.T, info convert.FileInfo) {
 				require.Len(t, []rune(fieldValue(t, info, "PNG:Note").(string)), 256)
 			}},
-		{"a text chunk with an empty value is metadata, not a field", pngWithChunk(t, "tEXt", []byte("Comment\x00")),
+		{"a text chunk with an empty value is metadata, not a field", pngWithChunk(t, []byte("Comment\x00")),
 			func(t *testing.T, info convert.FileInfo) {
 				require.False(t, info.Clean(), "the chunk is there, so the file is not clean")
 				_, found := info.Field("PNG:Comment")
@@ -73,7 +73,7 @@ func TestInspect_hostileImages(t *testing.T) {
 				require.Greater(t, info.FieldCount(), 0)
 			}},
 		{"a count far beyond the entries is read without a crash", exifWithTags(t, 2, 0xFFFF),
-			func(t *testing.T, info convert.FileInfo) {}},
+			func(_ *testing.T, _ convert.FileInfo) {}},
 		{"a vendor blob is binary, not text", fixture(t, "iphone.jpg"),
 			func(t *testing.T, info convert.FileInfo) {
 				_, ok := fieldValue(t, info, "EXIF:MakerNoteApple").(convert.Binary)
