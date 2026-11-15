@@ -1,6 +1,7 @@
 package converter_test
 
 import (
+	"bytes"
 	"fmt"
 	"slices"
 	"strings"
@@ -70,6 +71,7 @@ func TestConvertCompress_formatQuestionOnlyForPNG(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newConvHarness(t)
+			h.serveBig("large")
 			if tt.png {
 				h.servePNG()
 			}
@@ -182,12 +184,14 @@ func TestConvertCompress_resultNameFollowsTheSentFile(t *testing.T) {
 	}{
 		{"compressed photo has no name", func(h *convHarness) { h.bot.ProcessUpdate(t.Context(), photoUpdate(1)) }, "фото-сжатый.jpg"},
 		{"file keeps its name", func(h *convHarness) {
+			h.serveBig("doc")
 			h.bot.ProcessUpdate(t.Context(), namedDocumentUpdate("doc", "image/jpeg", "Паспорт.jpg"))
 		}, "Паспорт-сжатый.jpg"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newConvHarness(t)
+			h.serveBig("large")
 			ctx := t.Context()
 			h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:compress", h.lastMsg()))
@@ -216,8 +220,9 @@ func TestConvertMenu_progressThenResult(t *testing.T) {
 
 func TestConvertMenu_errorBringsMenuBack(t *testing.T) {
 	h := newConvHarness(t)
+	h.serveBig("large")
 	src := seedSource(h, docsbot.StatusSaved)
-	h.serve("src", []byte("not an image"))
+	h.serve("src", bytes.Repeat([]byte("x"), bigPhotoSize)) // not an image, but big enough to be worth compressing
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(src.ID)))
 	menu := h.lastMsg()

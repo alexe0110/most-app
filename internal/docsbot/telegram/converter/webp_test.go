@@ -3,6 +3,7 @@ package converter_test
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"image"
 	"strings"
 	"testing"
@@ -23,6 +24,17 @@ func tinyWebP(t *testing.T) []byte {
 	return data
 }
 
+// padWebP grows a WebP to at least size bytes with a trailing JUNK chunk, which
+// decoders skip.
+func padWebP(data []byte, size int) []byte {
+	pad := size - len(data) - 8
+	out := append(bytes.Clone(data), []byte("JUNK")...)
+	out = binary.LittleEndian.AppendUint32(out, uint32(pad))
+	out = append(out, make([]byte, pad)...)
+	binary.LittleEndian.PutUint32(out[4:8], uint32(len(out)-8)) // RIFF size
+	return out
+}
+
 func namedDocumentUpdate(fileID, mime, name string) *models.Update {
 	return &models.Update{Message: &models.Message{
 		ID: 1, From: &models.User{ID: testUser}, Chat: models.Chat{ID: testChat, Type: models.ChatTypePrivate},
@@ -32,7 +44,7 @@ func namedDocumentUpdate(fileID, mime, name string) *models.Update {
 
 func TestConvertWebP_compressInCommand(t *testing.T) {
 	h := newConvHarness(t)
-	h.serve("webp-in", tinyWebP(t))
+	h.serve("webp-in", padWebP(tinyWebP(t), bigPhotoSize))
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))

@@ -88,6 +88,9 @@ const (
 	textResultCompressed = "Готово: %s (было %s)."
 	textResultPages      = "Готово: %d %s."
 
+	// textCompressNothing takes the target size (humanSize).
+	textCompressNothing = "Фото уже меньше %s — сжимать нечего."
+
 	// textConvertBestEffort takes the reached size in KB (target was out of reach).
 	textConvertBestEffort = "Меньше не вышло — сжал до %d\u00A0КБ."
 )

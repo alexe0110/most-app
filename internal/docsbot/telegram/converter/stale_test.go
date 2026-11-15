@@ -190,14 +190,15 @@ func pngDocumentUpdate() *models.Update {
 	return namedDocumentUpdate("large", "image/png", "фото.png")
 }
 
-// servePNG makes file "large" download as a small PNG.
+// servePNG makes file "large" download as a PNG that is small to decode and big
+// to send, so that compressing it shrinks it.
 func (h *convHarness) servePNG() {
 	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		panic(err)
 	}
-	h.serve("large", buf.Bytes())
+	h.serve("large", padPNG(buf.Bytes(), bigPhotoSize))
 }
 
 // /convert again replaces the session: buttons of the old dialogue are stale.

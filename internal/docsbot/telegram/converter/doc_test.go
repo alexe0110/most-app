@@ -72,8 +72,10 @@ func TestConvertQA_quickOnMalformedData(t *testing.T) {
 // resultToken finds the token of a result's first button: save or replace.
 var resultToken = regexp.MustCompile(`conv:(?:sv|rp):([0-9a-f]+)`)
 
-// seedSource stores the photo the converter downloads in these tests.
+// seedSource stores the photo the converter downloads in these tests; it is big
+// enough for every compression preset to shrink it.
 func seedSource(h *convHarness, status docsbot.Status) docsbot.Document {
+	h.serveBig("src")
 	return h.repo.Seed(docsbot.Document{
 		UserID: docsbottest.TestUserID, Status: status, Kind: docsbot.KindPhoto, Category: docsbot.CatPassport,
 		Title: "Паспорт", TgFileID: "src", TgFileUniqueID: "src-uniq",
@@ -98,6 +100,7 @@ func compressFromMenu(t *testing.T, h *convHarness, id docsbot.DocumentID) strin
 // returns the result's token.
 func compressFromCommand(t *testing.T, h *convHarness) string {
 	t.Helper()
+	h.serveBig("large")
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))

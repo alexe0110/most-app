@@ -89,42 +89,53 @@ func (c *Converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 
-	var out []byte
-	var name, caption string
-	var kind resultKind
-	ictx, cancelImage := context.WithTimeout(ctx, imageTimeout)
-	switch op {
-	case opPDF:
-		kind = resultPDF
-		out, err = convert.ImagesToPDF(ictx, [][]byte{src})
-		name = resultFileName(doc.Title, nameFallbackPhoto, nameTagPDF, "pdf")
-	case opJPG:
-		kind = resultJPG
-		out, err = convert.ToJPEG(ictx, src)
-		name = resultFileName(doc.Title, nameFallbackPhoto, nameTagJPG, "jpg")
-	default:
-		kind = resultCompressed
-		out, err = convert.Compress(ictx, src, maxBytes, convert.JPEG)
-		caption = compressedCaption(len(src), len(out))
-		name = resultFileName(doc.Title, nameFallbackPhoto, nameTagCompressed, "jpg")
+	if known && compressUseless(len(src), maxBytes, 0) {
+		c.show(ctx, b, chatID, msgID, compressNothingText(maxBytes), menu)
+		return
 	}
-	cancelImage()
+	res, err := quickConvert(ctx, doc, src, op, maxBytes)
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert document", "err", err, "user_id", user, "doc_id", id, "op", op)
 		c.show(ctx, b, chatID, msgID, convertErrorText(err), menu)
 		return
 	}
-	c.log.InfoContext(ctx, "document converted", "user_id", user, "doc_id", id, "op", op,
-		"in_bytes", len(src), "out_bytes", len(out))
-	if known && len(out) > maxBytes {
-		c.out(b).Send(ctx, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
+	if known && compressUseless(len(src), maxBytes, len(res.data)) {
+		c.log.InfoContext(ctx, "compression did not help", "user_id", user, "doc_id", id, "in_bytes", len(src), "out_bytes", len(res.data))
+		c.show(ctx, b, chatID, msgID, compressNothingText(maxBytes), menu)
+		return
 	}
-	if !c.sendResult(ctx, b, chatID, p.tgUser, resultFile{name: name, data: out, kind: kind, sourceDoc: id, caption: caption}) {
+	c.log.InfoContext(ctx, "document converted", "user_id", user, "doc_id", id, "op", op,
+		"in_bytes", len(src), "out_bytes", len(res.data))
+	if known && len(res.data) > maxBytes {
+		c.out(b).Send(ctx, chatID, fmt.Sprintf(textConvertBestEffort, len(res.data)/1_024))
+	}
+	res.sourceDoc = id
+	if !c.sendResult(ctx, b, chatID, p.tgUser, res) {
 		c.show(ctx, b, chatID, msgID, textSendFailed, menu)
 		return
 	}
 	c.done(ctx, quickConvertOp(op))
 	c.finish(ctx, b, chatID, msgID)
+}
+
+// quickConvert runs a quick operation of the menu on the downloaded source.
+func quickConvert(ctx context.Context, doc docsbot.Document, src []byte, op string, maxBytes int) (resultFile, error) {
+	ictx, cancel := context.WithTimeout(ctx, imageTimeout)
+	defer cancel()
+	switch op {
+	case opPDF:
+		out, err := convert.ImagesToPDF(ictx, [][]byte{src})
+		return resultFile{name: resultFileName(doc.Title, nameFallbackPhoto, nameTagPDF, "pdf"), data: out, kind: resultPDF}, err
+	case opJPG:
+		out, err := convert.ToJPEG(ictx, src)
+		return resultFile{name: resultFileName(doc.Title, nameFallbackPhoto, nameTagJPG, "jpg"), data: out, kind: resultJPG}, err
+	default:
+		out, err := convert.Compress(ictx, src, maxBytes, convert.JPEG)
+		return resultFile{
+			name: resultFileName(doc.Title, nameFallbackPhoto, nameTagCompressed, "jpg"), data: out, kind: resultCompressed,
+			caption: compressedCaption(len(src), len(out)),
+		}, err
+	}
 }
 
 // onSave handles «Сохранить»: conv:sv:<token>. A result without a source document

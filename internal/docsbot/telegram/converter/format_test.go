@@ -100,3 +100,29 @@ func TestCompressedCaption(t *testing.T) {
 		})
 	}
 }
+
+func TestCompressUseless(t *testing.T) {
+	tests := []struct {
+		name                 string
+		before, limit, after int
+		want                 bool
+	}{
+		{"source already under the limit", 61 << 10, 1 << 20, 0, true},
+		{"source exactly at the limit", 1 << 20, 1 << 20, 0, true},
+		{"result bigger than a source under the limit", 61 << 10, 1 << 20, 122 << 10, true},
+		{"source over the limit, result unknown yet", 3 << 20, 1 << 20, 0, false},
+		{"result smaller", 3 << 20, 1 << 20, 900 << 10, false},
+		{"result as big as the source", 3 << 20, 1 << 20, 3 << 20, true},
+		{"result bigger than a source over the limit", 3 << 20, 1 << 20, 4 << 20, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, compressUseless(tt.before, tt.limit, tt.after))
+		})
+	}
+}
+
+func TestCompressNothingText(t *testing.T) {
+	require.Equal(t, "Фото уже меньше 1,0\u00A0МБ — сжимать нечего.", compressNothingText(1<<20))
+	require.Equal(t, "Фото уже меньше 300\u00A0КБ — сжимать нечего.", compressNothingText(300<<10))
+}

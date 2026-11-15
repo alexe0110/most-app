@@ -55,6 +55,7 @@ func TestConvert_recordsConvertDone(t *testing.T) {
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
 		}, docsbot.ConvertPhotoPDF},
 		{"compress in the dialogue", func(t *testing.T, h *convHarness, _ *docsbottest.FakeTimer) {
+			h.serveBig("large")
 			ctx := user(t)
 			h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:compress"))

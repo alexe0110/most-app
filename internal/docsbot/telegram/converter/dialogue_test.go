@@ -244,6 +244,7 @@ func TestConvertDialogue_resultSendFailureKeepsDialogue(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newConvHarness(t)
+			h.serveBig("large")
 			h.bot.ProcessUpdate(t.Context(), commandUpdate("convert"))
 			tt.run(h)
 			dialogue := h.lastMsg()
@@ -425,6 +426,7 @@ func TestConvertDialogue_everythingRefusedStillFinishes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newConvHarness(t)
+			h.serveBig("large")
 			h.bot.ProcessUpdate(t.Context(), commandUpdate("convert"))
 			start := h.lastMsg()
 			h.failEdits, h.failDeletes = true, true
@@ -442,6 +444,7 @@ func TestConvertCompress_badCustomLimitKeepsStep(t *testing.T) {
 	for _, text := range []string{"0", "-5", "abc", "", "  ", "20481", "99999999999999999999", "1e3", "1.5", "١٢٣"} {
 		t.Run(text, func(t *testing.T) {
 			h := newConvHarness(t)
+			h.serveBig("large")
 			ctx := t.Context()
 			h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:compress", h.lastMsg()))
