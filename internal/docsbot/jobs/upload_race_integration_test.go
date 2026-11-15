@@ -31,7 +31,7 @@ func discardLog() *slog.Logger { return slog.New(slog.DiscardHandler) }
 // Many simultaneous taps / duplicate updates for one document give one upload.
 func TestUploadJob_concurrentSameDocumentUploadsOnce(t *testing.T) {
 	drive := &countingDrive{}
-	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, discardLog())
+	pool, user, id, spy, enq, queue := setupUpload(t, drive, discardLog())
 
 	const taps = 10
 	var wg sync.WaitGroup
@@ -58,7 +58,7 @@ func TestUploadJob_concurrentSameDocumentUploadsOnce(t *testing.T) {
 // "Retry" after a failed upload: the earlier job is finished, so a new one is created.
 func TestUploadJob_retryAfterFailedRuns(t *testing.T) {
 	drive := &countingDrive{}
-	pool, user, id, _, enq, queue := setupUpload(t, fakeFiles{}, drive, discardLog())
+	pool, user, id, _, enq, queue := setupUpload(t, drive, discardLog())
 	startQueue(t, queue)
 
 	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
@@ -84,7 +84,7 @@ func TestUploadJob_retryAfterFailedRuns(t *testing.T) {
 
 // Requeueing while a job is live inserts nothing and leaves the document status as it was.
 func TestRequeueUpload_duplicateKeepsStatus(t *testing.T) {
-	pool, user, id, _, enq, _ := setupUpload(t, fakeFiles{}, &countingDrive{}, discardLog())
+	pool, user, id, _, enq, _ := setupUpload(t, &countingDrive{}, discardLog())
 
 	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 	_, err := pool.Exec(t.Context(), `update documents set backup_status = 'uploading' where id = $1::uuid`, string(id))
@@ -242,7 +242,7 @@ func TestUploadDocument_batchCreatesFoldersOnce(t *testing.T) {
 	require.NoError(t, err)
 	jq := jobs.NewQueue(inserter)
 	enq := postgres.NewDocuments(pool, jq)
-	svc := newService(pool, enq, jq, raceDrive{gd: gd}, fakeFiles{})
+	svc := newService(pool, enq, jq, raceDrive{gd: gd})
 	workers := river.NewWorkers()
 	jobs.RegisterUploadDocument(workers, log, svc, &spyNotifier{})
 	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})

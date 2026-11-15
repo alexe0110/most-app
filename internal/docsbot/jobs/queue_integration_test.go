@@ -53,7 +53,7 @@ func (e txEnv) docs(ji postgres.JobInserter) *postgres.Documents {
 
 // service is a Service whose Documents insert jobs through ji; Drive is connected or not.
 func (e txEnv) service(ji postgres.JobInserter, connected bool) *docsbot.Service {
-	return newService(e.pool, e.docs(ji), e.jq, driveStatus{connected: connected}, fakeFiles{})
+	return newService(e.pool, e.docs(ji), e.jq, driveStatus{connected: connected})
 }
 
 // seed inserts a document with the given states and returns its id.

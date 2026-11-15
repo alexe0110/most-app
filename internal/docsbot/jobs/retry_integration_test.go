@@ -18,8 +18,8 @@ import (
 // once, queue one job and upload the file once.
 func TestRetryBackup_simultaneousTapsUploadOnce(t *testing.T) {
 	drive := &countingDrive{}
-	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, slog.New(slog.DiscardHandler))
-	svc := newService(pool, enq, jobs.NewQueue(queue.Inserter), drive, fakeFiles{})
+	pool, user, id, spy, enq, queue := setupUpload(t, drive, slog.New(slog.DiscardHandler))
+	svc := newService(pool, enq, jobs.NewQueue(queue.Inserter), drive)
 	_, err := pool.Exec(t.Context(), `update documents set backup_status = 'failed' where id = $1::uuid`, string(id))
 	require.NoError(t, err)
 

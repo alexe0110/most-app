@@ -5,13 +5,16 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
+	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 )
 
 // savedDoc creates a saved document for user.
@@ -60,6 +63,48 @@ func TestBackups_excludesTooLarge(t *testing.T) {
 	ids, err := repo.ClaimTransferable(ctx, user)
 	require.NoError(t, err)
 	require.Equal(t, []docsbot.DocumentID{failed.ID}, ids)
+}
+
+// The sweeper only recovers uploads that are old, still in flight and belong to
+// a user whose Drive is connected; anything else it must leave alone.
+func TestBackups_stuckUploadsListsOnlyOldInFlightOfActiveIntegrations(t *testing.T) {
+	pool := dbtest.New(t)
+	repo := newAdapters(pool, noJobs{})
+	ctx := t.Context()
+	seed := func(tgID int64, integration, backup, age string) docsbot.DocumentID {
+		t.Helper()
+		user := docsbot.UserID(makeUser(t, repo, tgID).ID.String())
+		if integration != "" {
+			_, err := pool.Exec(ctx, `insert into integrations (user_id, bot, provider, status) values ($1::uuid, 'docs', 'google', $2)`, string(user), integration)
+			require.NoError(t, err)
+		}
+		doc := savedDoc(t, repo, user, strconv.FormatInt(tgID, 10))
+		_, err := pool.Exec(ctx, `update documents set backup_status = $2, updated_at = now() - $3::interval where id = $1::uuid`, string(doc.ID), backup, age)
+		require.NoError(t, err)
+		return doc.ID
+	}
+	pending := seed(940, "active", "pending", "31 minutes")
+	uploading := seed(941, "active", "uploading", "2 hours")
+	seed(942, "active", "uploading", "1 minute")
+	seed(943, "active", "backed_up", "2 hours")
+	seed(944, "active", "none", "2 hours")
+	seed(945, "revoked", "uploading", "2 hours")
+	seed(946, "", "uploading", "2 hours")
+	olderThan := time.Now().Add(-30 * time.Minute)
+
+	got, err := repo.StuckUploads(ctx, olderThan, 10)
+
+	require.NoError(t, err)
+	ids := make([]docsbot.DocumentID, 0, len(got))
+	for _, s := range got {
+		ids = append(ids, s.ID)
+	}
+	require.Equal(t, []docsbot.DocumentID{uploading, pending}, ids, "oldest first")
+
+	limited, err := repo.StuckUploads(ctx, olderThan, 1)
+	require.NoError(t, err)
+	require.Len(t, limited, 1)
+	require.Equal(t, uploading, limited[0].ID)
 }
 
 func TestBackups_folderCache(t *testing.T) {

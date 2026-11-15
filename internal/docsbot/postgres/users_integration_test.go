@@ -23,6 +23,14 @@ func TestRepo_Ensure(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, id1)
 
+	// The user is found by Telegram id under that id, which is a UUID v7; an unknown id is not found.
+	created, err := repo.q.GetUserByTgID(ctx, 500)
+	require.NoError(t, err)
+	require.Equal(t, id1, created.ID.String())
+	require.EqualValues(t, 7, created.ID.Bytes[6]>>4, "id must be a UUID v7")
+	_, err = repo.q.GetUserByTgID(ctx, 999)
+	require.ErrorIs(t, err, pgx.ErrNoRows)
+
 	// A repeat /start upserts in place: same id, no duplicate row.
 	id2, err := repo.Ensure(ctx, 500, "en")
 	require.NoError(t, err)

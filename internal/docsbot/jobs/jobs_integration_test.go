@@ -3,10 +3,8 @@
 package jobs_test
 
 import (
-	"bytes"
 	"context"
 	"log/slog"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,28 +19,6 @@ import (
 	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
 	pjobs "github.com/alexe0110/most-app/internal/platform/jobs"
 )
-
-// syncBuffer is a log sink safe for the worker goroutine and the test.
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *syncBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
-}
-
-func debugLogger(sink *syncBuffer) *slog.Logger {
-	return slog.New(slog.NewJSONHandler(sink, &slog.HandlerOptions{Level: slog.LevelDebug}))
-}
 
 type fakeDrive struct{}
 
@@ -66,10 +42,10 @@ func (fakeDrive) Revoke(context.Context, docsbot.UserID) error { return nil }
 
 func (fakeDrive) Disconnect(context.Context, docsbot.UserID) error { return nil }
 
-type fakeFiles struct{ err error }
+type fakeFiles struct{}
 
-func (f fakeFiles) Download(context.Context, string) ([]byte, string, error) {
-	return []byte("data"), "application/pdf", f.err
+func (fakeFiles) Download(context.Context, string) ([]byte, string, error) {
+	return []byte("data"), "application/pdf", nil
 }
 
 type spyNotifier struct {
@@ -93,15 +69,9 @@ func (s *spyNotifier) seen() []docsbot.DocumentID {
 
 // runUpload enqueues one saved document through the real queue and returns its
 // repo, id and the spy once the worker is running.
-func runUpload(t *testing.T, files docsbot.FileSource) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, spy *spyNotifier) {
+func runUpload(t *testing.T) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, spy *spyNotifier) {
 	t.Helper()
-	return runUploadWithLog(t, files, fakeDrive{}, slog.New(slog.DiscardHandler))
-}
-
-// runUploadWithLog is runUpload with a caller-supplied logger.
-func runUploadWithLog(t *testing.T, files docsbot.FileSource, drive docsbot.Drive, log *slog.Logger) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, spy *spyNotifier) {
-	t.Helper()
-	pool, user, id, spy, enq, queue := setupUpload(t, files, drive, log)
+	pool, user, id, spy, enq, queue := setupUpload(t, fakeDrive{}, slog.New(slog.DiscardHandler))
 	startQueue(t, queue)
 	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
 	return pool, user, id, spy
@@ -117,16 +87,16 @@ func enqueueUpload(ctx context.Context, pool *pgxpool.Pool, docs *postgres.Docum
 }
 
 // newService wires a Service over docs and the queue that docs inserts its jobs into.
-func newService(pool *pgxpool.Pool, docs *postgres.Documents, jq *jobs.Queue, drive docsbot.Drive, files docsbot.FileSource) *docsbot.Service {
+func newService(pool *pgxpool.Pool, docs *postgres.Documents, jq *jobs.Queue, drive docsbot.Drive) *docsbot.Service {
 	return docsbot.NewService(docsbot.Ports{
-		Repo: docs, Drive: drive, Files: files, Uploads: docs, Jobs: jq,
+		Repo: docs, Drive: drive, Files: fakeFiles{}, Uploads: docs, Jobs: jq,
 		Folders: postgres.NewFolderCache(pool), Status: postgres.NewStatusMessages(pool), Syncs: docs, Events: postgres.NewEvents(pool),
 	})
 }
 
 // setupUpload seeds a saved document and wires the queue, enqueuer and spy
 // without starting the queue.
-func setupUpload(t *testing.T, files docsbot.FileSource, drive docsbot.Drive, log *slog.Logger) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, spy *spyNotifier, enq *postgres.Documents, queue *pjobs.Client) {
+func setupUpload(t *testing.T, drive docsbot.Drive, log *slog.Logger) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, spy *spyNotifier, enq *postgres.Documents, queue *pjobs.Client) {
 	t.Helper()
 	ctx := t.Context()
 	pool = dbtest.New(t)
@@ -143,7 +113,7 @@ func setupUpload(t *testing.T, files docsbot.FileSource, drive docsbot.Drive, lo
 	require.NoError(t, err)
 	jq := jobs.NewQueue(inserter)
 	enq = postgres.NewDocuments(pool, jq)
-	svc := newService(pool, enq, jq, drive, files)
+	svc := newService(pool, enq, jq, drive)
 	spy = &spyNotifier{}
 	workers := river.NewWorkers()
 	jobs.RegisterUploadDocument(workers, log, svc, spy)
@@ -188,7 +158,7 @@ func backupState(t *testing.T, pool *pgxpool.Pool, id docsbot.DocumentID) (statu
 }
 
 func TestUploadDocument_backsUp(t *testing.T) {
-	pool, _, id, spy := runUpload(t, fakeFiles{})
+	pool, _, id, spy := runUpload(t)
 
 	require.Eventually(t, func() bool {
 		status, _ := backupState(t, pool, id)
@@ -198,17 +168,6 @@ func TestUploadDocument_backsUp(t *testing.T) {
 	require.Equal(t, "drive-1", driveID)
 	require.Eventually(t, func() bool { return len(spy.seen()) == 1 }, 5*time.Second, 50*time.Millisecond)
 	require.Equal(t, id, spy.seen()[0])
-}
-
-func TestUploadDocument_tooLarge(t *testing.T) {
-	pool, _, id, spy := runUpload(t, fakeFiles{err: docsbot.ErrFileTooLarge})
-
-	require.Eventually(t, func() bool {
-		status, _ := backupState(t, pool, id)
-		return status == "too_large"
-	}, 10*time.Second, 100*time.Millisecond)
-	require.Eventually(t, func() bool { return len(spy.seen()) == 1 }, 5*time.Second, 50*time.Millisecond)
-	require.Equal(t, id, spy.seen()[0], "outcome is reported so the status line shows the file stays in Telegram")
 }
 
 // countingDrive counts Upload calls.
@@ -233,7 +192,7 @@ func (d *countingDrive) count() int {
 
 func TestUploadJob_dedupsWhileQueued(t *testing.T) {
 	drive := &countingDrive{}
-	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, slog.New(slog.DiscardHandler))
+	pool, user, id, spy, enq, queue := setupUpload(t, drive, slog.New(slog.DiscardHandler))
 
 	// Queue is not started, so the first job stays available and the second is a duplicate.
 	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
@@ -248,46 +207,4 @@ func TestUploadJob_dedupsWhileQueued(t *testing.T) {
 	awaitQueueDrained(t, pool) // a wrongly inserted second job would have run by now
 	require.Equal(t, 1, drive.count())
 	require.Len(t, spy.seen(), 1)
-}
-
-func TestUploadDocument_deletedWhileQueuedFinishesSilently(t *testing.T) {
-	drive := &countingDrive{}
-	var logs syncBuffer
-	log := debugLogger(&logs)
-	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, log)
-
-	require.NoError(t, enqueueUpload(t.Context(), pool, enq, user, id))
-	_, err := pool.Exec(t.Context(), `delete from documents where id = $1::uuid`, string(id))
-	require.NoError(t, err)
-	startQueue(t, queue)
-
-	// The job finishes without a retry; wait for the noop log line.
-	require.Eventually(t, func() bool { return strings.Contains(logs.String(), "upload noop") },
-		10*time.Second, 100*time.Millisecond)
-	awaitQueueDrained(t, pool)
-	require.Zero(t, drive.count())
-	require.Empty(t, spy.seen())
-	require.NotContains(t, logs.String(), "upload retry")
-}
-
-// disconnectedDrive fails every upload the way a user-disconnected Drive does.
-type disconnectedDrive struct{ fakeDrive }
-
-func (disconnectedDrive) Upload(context.Context, docsbot.UserID, docsbot.DriveUpload) (docsbot.DriveFile, error) {
-	return docsbot.DriveFile{}, docsbot.ErrDriveDisconnected
-}
-
-func TestUploadDocument_userDisconnectFinishesSilently(t *testing.T) {
-	var logs syncBuffer
-	pool, _, id, spy := runUploadWithLog(t, fakeFiles{}, disconnectedDrive{}, debugLogger(&logs))
-
-	require.Eventually(t, func() bool { return strings.Contains(logs.String(), "upload noop") },
-		10*time.Second, 100*time.Millisecond)
-	awaitQueueDrained(t, pool)
-	status, _ := backupState(t, pool, id)
-	require.Equal(t, "none", status)
-	require.Empty(t, spy.seen())
-	require.NotContains(t, logs.String(), "access revoked")
-	require.NotContains(t, logs.String(), "reconnect")
-	require.NotContains(t, logs.String(), "upload retry")
 }

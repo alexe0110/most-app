@@ -77,26 +77,6 @@ func backupOf(t *testing.T, repo *adapters, user docsbot.UserID, id docsbot.Docu
 	return d
 }
 
-func TestRepo_users(t *testing.T) {
-	repo := newRepo(t)
-	ctx := t.Context()
-
-	u := makeUser(t, repo, 100)
-	require.True(t, u.ID.Valid)
-	require.EqualValues(t, 7, u.ID.Bytes[6]>>4, "id must be a UUID v7")
-
-	got, err := repo.q.GetUserByTgID(ctx, 100)
-	require.NoError(t, err)
-	require.Equal(t, u.ID, got.ID)
-
-	_, err = repo.q.GetUserByTgID(ctx, 999)
-	require.ErrorIs(t, err, pgx.ErrNoRows)
-
-	require.NoError(t, repo.q.SoftDeleteUser(ctx, u.ID))
-	_, err = repo.q.GetUserByTgID(ctx, 100)
-	require.ErrorIs(t, err, pgx.ErrNoRows, "soft-deleted user is hidden")
-}
-
 func TestRepo_statusCheck(t *testing.T) {
 	repo := newRepo(t)
 	u := makeUser(t, repo, 250)

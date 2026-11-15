@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -173,29 +174,38 @@ func keys(m map[string]string) []string {
 	return out
 }
 
+// Without a new user's start event no metric invents rows or divides by zero.
 // A start that is not the user's first (a user who existed before tracking, or whose
 // first start has expired) is no new user, even when it is the only start event left.
-func TestMetrics_startThatIsNotNewIsNoNewUser(t *testing.T) {
-	pool := dbtest.New(t)
-	ctx := t.Context()
-	var user string
-	require.NoError(t, pool.QueryRow(ctx, `insert into users (tg_user_id) values (1) returning id::text`).Scan(&user))
-	_, err := pool.Exec(ctx,
-		`insert into events (user_id, bot, name, props) values ($1::uuid, 'docs', 'start', '{"new":false}')`, user)
-	require.NoError(t, err)
-
-	for name, query := range metricQueries(t) {
-		if name == "sources_daily" || name == "sources_weekly" || name == "activation" || name == "retention" {
-			require.Empty(t, runMetric(t, pool, query), name)
-		}
+func TestMetrics_noNewUsersMeansNoRows(t *testing.T) {
+	notNewStart := func(t *testing.T, pool *pgxpool.Pool) {
+		ctx := t.Context()
+		var user string
+		require.NoError(t, pool.QueryRow(ctx, `insert into users (tg_user_id) values (1) returning id::text`).Scan(&user))
+		_, err := pool.Exec(ctx,
+			`insert into events (user_id, bot, name, props) values ($1::uuid, 'docs', 'start', '{"new":false}')`, user)
+		require.NoError(t, err)
 	}
-}
-
-func TestMetrics_emptyTables(t *testing.T) {
-	pool := dbtest.New(t)
-	for name, query := range metricQueries(t) {
-		t.Run(name, func(t *testing.T) {
-			require.Empty(t, runMetric(t, pool, query), "no data: no rows, and no division by zero")
+	tests := []struct {
+		name    string
+		seed    func(*testing.T, *pgxpool.Pool)
+		metrics []string // nil means every metric
+	}{
+		{"empty tables", func(*testing.T, *pgxpool.Pool) {}, nil},
+		{"a start that is not new", notNewStart, []string{"sources_daily", "sources_weekly", "activation", "retention"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pool := dbtest.New(t)
+			tt.seed(t, pool)
+			for name, query := range metricQueries(t) {
+				if tt.metrics != nil && !slices.Contains(tt.metrics, name) {
+					continue
+				}
+				t.Run(name, func(t *testing.T) {
+					require.Empty(t, runMetric(t, pool, query))
+				})
+			}
 		})
 	}
 }

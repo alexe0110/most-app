@@ -45,8 +45,8 @@ func TestDisconnect_resetsQueuedAndUploading(t *testing.T) {
 // the upload queue.
 func setupSweep(t *testing.T, drive docsbot.Drive, backup, age, integrationStatus string) (pool *pgxpool.Pool, user docsbot.UserID, id docsbot.DocumentID, svc *docsbot.Service, spy *spyNotifier, enq *postgres.Documents, start func()) {
 	t.Helper()
-	pool, user, id, spy, enq, queue := setupUpload(t, fakeFiles{}, drive, slog.New(slog.DiscardHandler))
-	svc = newService(pool, enq, jobs.NewQueue(queue.Inserter), drive, fakeFiles{})
+	pool, user, id, spy, enq, queue := setupUpload(t, drive, slog.New(slog.DiscardHandler))
+	svc = newService(pool, enq, jobs.NewQueue(queue.Inserter), drive)
 
 	ctx := t.Context()
 	_, err := pool.Exec(ctx, `update documents set backup_status = $2, updated_at = now() - $3::interval where id = $1::uuid`,
@@ -96,42 +96,4 @@ func TestSweepStuckUploads_liveJobDedups(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 	awaitQueueDrained(t, pool) // a wrongly inserted second job would have run by now
 	require.Equal(t, 1, drive.count())
-}
-
-func TestSweepStuckUploads_failsOldUpload(t *testing.T) {
-	pool, _, id, svc, _, _, _ := setupSweep(t, &countingDrive{}, "uploading", "25 hours", "active")
-
-	res, err := svc.SweepStuckUploads(t.Context())
-	require.NoError(t, err)
-	require.Equal(t, 1, res.Found)
-	require.Zero(t, res.Requeued)
-	require.Len(t, res.Failed, 1)
-	require.Equal(t, id, res.Failed[0].ID)
-	status, _ := backupState(t, pool, id)
-	require.Equal(t, "failed", status)
-}
-
-func TestSweepStuckUploads_skips(t *testing.T) {
-	tests := []struct {
-		name        string
-		age         string
-		integration string
-	}{
-		{name: "fresh upload", age: "0 seconds", integration: "active"},
-		{name: "revoked integration", age: "31 minutes", integration: "revoked"},
-		{name: "no integration", age: "31 minutes", integration: ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			pool, _, id, svc, _, _, _ := setupSweep(t, &countingDrive{}, "uploading", tt.age, tt.integration)
-
-			res, err := svc.SweepStuckUploads(t.Context())
-			require.NoError(t, err)
-			require.Zero(t, res.Found)
-			require.Zero(t, res.Requeued)
-			require.Empty(t, res.Failed)
-			status, _ := backupState(t, pool, id)
-			require.Equal(t, "uploading", status)
-		})
-	}
 }

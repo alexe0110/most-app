@@ -86,7 +86,7 @@ func setupSync(t *testing.T, drive docsbot.Drive) syncEnv {
 	inserter, err := pjobs.NewInserter(pool, log)
 	require.NoError(t, err)
 	jq := jobs.NewQueue(inserter)
-	svc := newService(pool, postgres.NewDocuments(pool, jq), jq, drive, fakeFiles{})
+	svc := newService(pool, postgres.NewDocuments(pool, jq), jq, drive)
 	workers := river.NewWorkers()
 	jobs.RegisterStorageSync(workers, log, svc, quietSyncNotifier{})
 	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
