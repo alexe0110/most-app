@@ -88,7 +88,7 @@ func (c *Converter) pdfOperation(ctx context.Context, b *bot.Bot, chatID, tgUser
 		}
 		c.log.InfoContext(ctx, "pdf converted", "user_id", user, "doc_id", src.docID, "op", op, "in_bytes", len(data), "out_bytes", len(out))
 		name := resultFileName(src.title, nameFallbackDocument, nameTagEdited, "pdf")
-		if !c.sendResult(ctx, b, chatID, tgUser, resultFile{name: name, data: out, sourceDoc: src.docID, suffix: suffixEdited}) {
+		if !c.sendResult(ctx, b, chatID, tgUser, resultFile{name: name, data: out, sourceDoc: src.docID, kind: resultPDF}) {
 			fail(msgID, textSendFailed)
 			return
 		}
@@ -212,7 +212,7 @@ func (c *Converter) onRange(ctx context.Context, b *bot.Bot, update *models.Upda
 	}
 	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", sess.sourceDoc, "op", sess.pdfOp, "in_bytes", len(src), "out_bytes", len(out))
 	name := resultFileName(sess.sourceTitle, nameFallbackDocument, nameTagEdited, "pdf")
-	if !c.sendResult(ctx, b, chatID, tgUser, resultFile{name: name, data: out, sourceDoc: sess.sourceDoc, suffix: suffixEdited}) {
+	if !c.sendResult(ctx, b, chatID, tgUser, resultFile{name: name, data: out, sourceDoc: sess.sourceDoc, kind: resultPDF}) {
 		again(textSendFailed)
 		return
 	}
@@ -332,7 +332,7 @@ func (c *Converter) finishMerge(ctx context.Context, b *bot.Bot, p press) {
 	}
 	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", sess.sourceDoc, "op", opMerge, "files", len(files), "out_bytes", len(out))
 	name := resultFileName(sess.sourceTitle, nameFallbackDocument, nameTagEdited, "pdf")
-	if !c.sendResult(ctx, b, chatID, tgUser, resultFile{name: name, data: out, sourceDoc: sess.sourceDoc, suffix: suffixEdited}) {
+	if !c.sendResult(ctx, b, chatID, tgUser, resultFile{name: name, data: out, sourceDoc: sess.sourceDoc, kind: resultPDF}) {
 		c.retry(ctx, b, chatID, tgUser, sess, msgID, textSendFailed, pdfKeyboard())
 		return
 	}

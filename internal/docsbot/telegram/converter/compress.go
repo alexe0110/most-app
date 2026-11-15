@@ -66,7 +66,7 @@ func (c *Converter) finishPDF(ctx context.Context, b *bot.Bot, p press) {
 	}
 
 	name := scanName(c.now())
-	if !c.sendResult(ctx, b, chatID, user, resultFile{name: name, data: pdf, suffix: suffixPDF}) {
+	if !c.sendResult(ctx, b, chatID, user, resultFile{name: name, data: pdf, kind: resultPDF}) {
 		c.retry(ctx, b, chatID, user, sess, msgID, textSendFailed, pdfKeyboard())
 		return
 	}
@@ -113,6 +113,10 @@ func (c *Converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64
 		c.retry(ctx, b, chatID, user, sess, msgID, textConvertDownloadFailed, retryKB)
 		return true
 	}
+	if compressUseless(len(src), maxBytes, 0) {
+		c.retry(ctx, b, chatID, user, sess, msgID, compressNothingText(maxBytes), retryKB)
+		return true
+	}
 	ictx, cancelImage := context.WithTimeout(ctx, imageTimeout)
 	out, err := convert.Compress(ictx, src, maxBytes, format)
 	cancelImage()
@@ -122,17 +126,34 @@ func (c *Converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64
 		return true
 	}
 
+	if compressUseless(len(src), maxBytes, len(out)) {
+		c.log.InfoContext(ctx, "compression did not help", "user_id", user, "in_bytes", len(src), "out_bytes", len(out))
+		c.retry(ctx, b, chatID, user, sess, msgID, compressNothingText(maxBytes), retryKB)
+		return true
+	}
 	if len(out) > maxBytes {
 		c.out(b).Send(ctx, chatID, fmt.Sprintf(textConvertBestEffort, len(out)/1_024))
 	}
 	name := resultFileName(sess.sourceTitle, nameFallbackPhoto, nameTagCompressed, formatExt(format))
-	if !c.sendResult(ctx, b, chatID, user, resultFile{name: name, data: out, suffix: suffixCompressed, caption: compressedCaption(len(src), len(out))}) {
+	if !c.sendResult(ctx, b, chatID, user, resultFile{name: name, data: out, kind: resultCompressed, caption: compressedCaption(len(src), len(out))}) {
 		c.retry(ctx, b, chatID, user, sess, msgID, textSendFailed, retryKB)
 		return true
 	}
 	c.done(ctx, docsbot.ConvertCompress)
 	c.finish(ctx, b, chatID, msgID)
 	return true
+}
+
+// compressUseless reports whether compressing an image of before bytes to limit
+// cannot help: it already fits, or, once the result is known (after > 0), it is
+// not smaller. Both compress paths use it, so neither sends a bigger file.
+func compressUseless(before, limit, after int) bool {
+	return before <= limit || (after > 0 && after >= before)
+}
+
+// compressNothingText tells the user that compressing to limit changes nothing.
+func compressNothingText(limit int) string {
+	return fmt.Sprintf(textCompressNothing, humanSize(int64(limit)))
 }
 
 // scanName is the file name of a PDF made from photos: "Скан 10.11.2026.pdf".

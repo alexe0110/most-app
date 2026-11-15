@@ -3,6 +3,7 @@ package converter_test
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"image"
 	"strings"
 	"testing"
@@ -24,6 +25,17 @@ func tinyWebP(t *testing.T) []byte {
 	return data
 }
 
+// padWebP grows a WebP to at least size bytes with a trailing JUNK chunk, which
+// decoders skip.
+func padWebP(data []byte, size int) []byte {
+	pad := size - len(data) - 8
+	out := append(bytes.Clone(data), []byte("JUNK")...)
+	out = binary.LittleEndian.AppendUint32(out, uint32(pad))
+	out = append(out, make([]byte, pad)...)
+	binary.LittleEndian.PutUint32(out[4:8], uint32(len(out)-8)) // RIFF size
+	return out
+}
+
 func namedDocumentUpdate(fileID, mime, name string) *models.Update {
 	return &models.Update{Message: &models.Message{
 		ID: 1, From: &models.User{ID: testUser}, Chat: models.Chat{ID: testChat, Type: models.ChatTypePrivate},
@@ -34,7 +46,7 @@ func namedDocumentUpdate(fileID, mime, name string) *models.Update {
 func TestConvertWebP_compressInCommand(t *testing.T) {
 	t.Parallel()
 	h := newConvHarness(t)
-	h.serve("webp-in", tinyWebP(t))
+	h.serve("webp-in", padWebP(tinyWebP(t), bigPhotoSize))
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
@@ -85,15 +97,30 @@ func TestConvertWebP_cardToJPG(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "jpeg", format)
 
-	tok := saveToken.FindStringSubmatch(h.docMarkups[0])
+	tok := resultToken.FindStringSubmatch(h.docMarkups[0])
 	require.NotNil(t, tok)
-	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok[1]))
-	require.Len(t, h.repo.Docs, 2)
-	for id, d := range h.repo.Docs {
-		if id != src.ID {
-			require.Equal(t, "Скан (JPG)", d.Title)
-		}
-	}
+	require.Contains(t, h.docMarkups[0], converter.BtnReplaceOriginal, "the source is saved")
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rp:"+tok[1]))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpy:"+tok[1]))
+	require.Len(t, h.repo.Docs, 1)
+	require.Equal(t, "res-uniq-0", h.repo.Docs[src.ID].TgFileUniqueID)
+}
+
+func TestConvertWebP_pendingCardOffersToSaveJPG(t *testing.T) {
+	t.Parallel()
+	h := newConvHarness(t)
+	h.serve("webp-src", tinyWebP(t))
+	src := h.repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Status: docsbot.StatusPending, Kind: docsbot.KindDocument, MIME: "image/webp",
+		Title: "Скан.webp", TgFileID: "webp-src", TgFileUniqueID: "webp-uniq",
+	})
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":jpg"))
+
+	require.Len(t, h.docs, 1)
+	require.Contains(t, h.docMarkups[0], converter.BtnSaveJPG)
+	require.NotContains(t, h.docMarkups[0], "Заменить")
 }
 
 func TestConvertWebP_jpgButtonOnlyForWebP(t *testing.T) {

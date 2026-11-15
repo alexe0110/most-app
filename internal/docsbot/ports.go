@@ -19,6 +19,9 @@ type Repo interface {
 	DocumentByID(ctx context.Context, user UserID, id DocumentID) (Document, error)
 	// PendingByMediaGroup lists the user's still-pending documents of one album, oldest first.
 	PendingByMediaGroup(ctx context.Context, user UserID, group string) ([]Document, error)
+	// NumberPendingAlbum retitles the user's still-pending documents of one album to
+	// "base (1)", "base (2)", ... in arrival order, in one statement.
+	NumberPendingAlbum(ctx context.Context, user UserID, group, base string) error
 	// IntakeStats reports the user's pending count, files created after since, and total, in one query.
 	IntakeStats(ctx context.Context, user UserID, since time.Time) (IntakeStats, error)
 	// PurgeStalePending deletes every user's pending documents created before

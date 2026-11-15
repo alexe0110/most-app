@@ -56,6 +56,34 @@ func TestDocuments_mediaGroupListsOnlyOwnPendingOfAlbum(t *testing.T) {
 	require.Len(t, foreign, 1, "another user's album is untouched")
 }
 
+func TestDocuments_numberPendingAlbum(t *testing.T) {
+	repo, a, b := twoUsers(t)
+	ctx := t.Context()
+	p1 := albumDoc(t, repo, a, "g1", "p1")
+	p2 := albumDoc(t, repo, a, "g1", "p2")
+	saved := albumDoc(t, repo, a, "g1", "p3")
+	mustSave(t, repo, a, saved.ID, docsbot.CatOther)
+	p4 := albumDoc(t, repo, a, "g1", "p4")
+	other := albumDoc(t, repo, a, "g2", "q1")
+	foreign := albumDoc(t, repo, b, "g1", "foreign")
+	titleOf := func(user docsbot.UserID, id docsbot.DocumentID) string {
+		t.Helper()
+		doc, err := repo.DocumentByID(ctx, user, id)
+		require.NoError(t, err)
+		return doc.Title
+	}
+	savedTitle := titleOf(a, saved.ID)
+
+	require.NoError(t, repo.NumberPendingAlbum(ctx, a, "g1", "Отпуск"))
+
+	require.Equal(t, "Отпуск (1)", titleOf(a, p1.ID), "arrival order")
+	require.Equal(t, "Отпуск (2)", titleOf(a, p2.ID))
+	require.Equal(t, "Отпуск (3)", titleOf(a, p4.ID), "numbers skip the saved document")
+	require.Equal(t, savedTitle, titleOf(a, saved.ID), "a saved document is untouched")
+	require.Empty(t, titleOf(a, other.ID), "another album is untouched")
+	require.Empty(t, titleOf(b, foreign.ID), "another user's album is untouched")
+}
+
 func TestDocuments_intakeStats(t *testing.T) {
 	pool := dbtest.New(t)
 	repo := newAdapters(pool, noJobs{})

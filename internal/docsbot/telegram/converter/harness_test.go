@@ -3,8 +3,10 @@ package converter_test
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -25,6 +27,39 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 )
+
+// bigPhotoSize is the size of a photo worth compressing: above the 2 MB preset.
+const bigPhotoSize = 2<<20 + 1<<10
+
+// padJPEG grows a JPEG to at least size bytes with comment segments, which
+// decoders skip: the picture stays small and cheap to re-encode.
+func padJPEG(jpg []byte, size int) []byte {
+	const chunk = 65_000
+	out := append(make([]byte, 0, size+chunk), jpg[:2]...) // SOI
+	for len(out)+len(jpg) < size {
+		n := chunk + 2 // the length field counts itself
+		out = append(out, 0xFF, 0xFE, byte(n>>8), byte(n))
+		out = append(out, make([]byte, chunk)...)
+	}
+	return append(out, jpg[2:]...)
+}
+
+// padPNG grows a PNG to at least size bytes with ancillary text chunks, which
+// decoders skip.
+func padPNG(data []byte, size int) []byte {
+	const (
+		sigAndIHDR = 8 + 25
+		chunk      = 1 << 20
+	)
+	out := append(make([]byte, 0, size+chunk), data[:sigAndIHDR]...)
+	for len(out)+len(data) < size {
+		body := append([]byte("tEXt"), make([]byte, chunk)...)
+		out = binary.BigEndian.AppendUint32(out, uint32(chunk))
+		out = append(out, body...)
+		out = binary.BigEndian.AppendUint32(out, crc32.ChecksumIEEE(body))
+	}
+	return append(out, data[sigAndIHDR:]...)
+}
 
 // sentDocument is a document the bot uploaded.
 type sentDocument struct {
@@ -130,6 +165,12 @@ func (h *convHarness) Download(_ context.Context, fileID string) ([]byte, string
 		data = h.photo
 	}
 	return data, "", nil
+}
+
+// serveBig makes fileID download as the default photo grown above every preset
+// limit, so that compressing it really shrinks it.
+func (h *convHarness) serveBig(fileID string) {
+	h.serve(fileID, padJPEG(h.photo, bigPhotoSize))
 }
 
 // serve makes fileID download as data.

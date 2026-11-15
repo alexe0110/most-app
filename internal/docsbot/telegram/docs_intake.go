@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -34,18 +35,33 @@ func incomingFile(m *models.Message, user docsbot.UserID) (docsbot.IncomingFile,
 	}
 }
 
-// documentTitle is the file name without its extension, or the caption; "" when neither exists (the domain
-// then assigns a default name).
+// documentTitle is the first line of the caption, else the file name without its
+// extension; "" when neither exists (the domain then assigns a default name).
 func documentTitle(m *models.Message) string {
+	if t := captionTitle(m.Caption); t != "" {
+		return t
+	}
 	if m.Document.FileName != "" {
 		return docsbot.TrimExt(m.Document.FileName)
 	}
-	return m.Caption
+	return ""
 }
 
-// photoTitle is the caption, "" when absent.
+// photoTitle is the first line of the caption, "" when absent.
 func photoTitle(m *models.Message) string {
-	return m.Caption
+	return captionTitle(m.Caption)
+}
+
+// captionTitle is the first line of a caption that is visible after the domain's
+// own normalization; "" when there is none. Checking with NormalizeTitle, not
+// TrimSpace, keeps a line of zero-width characters from hiding the file name.
+func captionTitle(caption string) string {
+	for line := range strings.SplitSeq(caption, "\n") {
+		if title := docsbot.NormalizeTitle(line); title != "" {
+			return title
+		}
+	}
+	return ""
 }
 
 // receive stores an incoming file and asks for a category (or reports a dup).

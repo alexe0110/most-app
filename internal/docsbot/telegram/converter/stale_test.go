@@ -191,14 +191,15 @@ func pngDocumentUpdate() *models.Update {
 	return namedDocumentUpdate("large", "image/png", "фото.png")
 }
 
-// servePNG makes file "large" download as a small PNG.
+// servePNG makes file "large" download as a PNG that is small to decode and big
+// to send, so that compressing it shrinks it.
 func (h *convHarness) servePNG() {
 	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		panic(err)
 	}
-	h.serve("large", buf.Bytes())
+	h.serve("large", padPNG(buf.Bytes(), bigPhotoSize))
 }
 
 // /convert again replaces the session: buttons of the old dialogue are stale.
@@ -241,7 +242,7 @@ func TestConvert_inaccessibleMessageDoesNothing(t *testing.T) {
 
 	for _, data := range []string{
 		"conv:doc:" + string(src.ID), "conv:q:" + string(src.ID) + ":c1", "conv:x",
-		"conv:save:" + tok, "conv:skip:" + tok, "conv:rp:" + tok, "conv:rpy:" + tok, "conv:rpn:" + tok, "conv:alb:" + tok,
+		"conv:sv:" + tok, "conv:save:" + tok, "conv:skip:" + tok, "conv:rp:" + tok, "conv:rpy:" + tok, "conv:rpn:" + tok, "conv:alb:" + tok,
 		"conv:pdf", "conv:pdfops", "conv:p:rot", "conv:compress", "conv:done", "conv:cancel",
 		"conv:limit1", "conv:limitcustom", "conv:fmtjpeg", "conv:fmtpng", "conv:zzz", "conv:",
 	} {
@@ -255,9 +256,10 @@ func TestConvert_inaccessibleMessageDoesNothing(t *testing.T) {
 		})
 	}
 
-	// None of it burned the result: the token still saves from a real message.
-	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok))
-	require.Len(t, h.repo.Docs, stored+1)
+	// None of it burned the result: the token still replaces from a real message.
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rp:"+tok))
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:rpy:"+tok))
+	require.Equal(t, "res-uniq-0", h.repo.Docs[src.ID].TgFileUniqueID)
 }
 
 func TestConvert_unknownActionsAreStale(t *testing.T) {

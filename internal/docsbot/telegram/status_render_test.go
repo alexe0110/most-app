@@ -45,7 +45,7 @@ func TestRenderStatusMessage_tooLargeOnly(t *testing.T) {
 		batchDoc("a", docsbot.CatWork, docsbot.BackupTooLarge, ""),
 		batchDoc("b", docsbot.CatWork, docsbot.BackupTooLarge, ""),
 	}, nil)
-	require.Equal(t, fmt.Sprintf(textStatusNotDone, 2, fmt.Sprintf(textReasonTooLarge, 20)), text)
+	require.Equal(t, fmt.Sprintf(textStatusPartial, 0, 2)+"\n\n📁 Работа · 2\n• ⚠️ a — больше 20\u00a0МБ\n• ⚠️ b — больше 20\u00a0МБ", text)
 	require.NotNil(t, kb)
 	require.Equal(t, [][]string{{btnMyDocs}}, buttonTexts(kb.InlineKeyboard), "nothing to retry")
 }
@@ -80,7 +80,7 @@ func TestStatusDonePlural(t *testing.T) {
 }
 
 // Worst case: every category full of long escaped titles, every error reason,
-// a long folder id, still running. Header, error block and buttons must survive.
+// a long folder id, still running. Header, quota hint and buttons must survive.
 func TestRenderStatusMessage_worstCaseKeepsEssentials(t *testing.T) {
 	folders := map[docsbot.Category]string{}
 	var lines []docsbot.Document
@@ -99,7 +99,8 @@ func TestRenderStatusMessage_worstCaseKeepsEssentials(t *testing.T) {
 
 	require.LessOrEqual(t, utf16Len(text), statusTextLimit)
 	require.True(t, strings.HasPrefix(text, fmt.Sprintf(textStatusProgress+"\n", len(lines)-1, len(lines))))
-	require.Contains(t, text, fmt.Sprintf(textStatusNotDoneList, 4))
+	require.Contains(t, text, textStatusQuotaHint)
+	require.Contains(t, text, "и ещё")
 	require.NotNil(t, kb)
 	require.Equal(t, [][]string{{"🔁 Повторить (3)"}}, buttonTexts(kb.InlineKeyboard))
 }
@@ -155,13 +156,13 @@ func TestRenderStatusMessage_done(t *testing.T) {
 			lines:   []docsbot.Document{batchDoc("ВНЖ", docsbot.CatPassport, docsbot.BackupBackedUp, ""), batchDoc("Паспорт", docsbot.CatPassport, docsbot.BackupBackedUp, "")},
 			folders: folders,
 			want: "✅ Загрузил на Google Диск 2 документа\n\n" +
-				`📁 <a href="https://drive.google.com/drive/folders/FOLD">Паспорт и ID</a> · 2` + "\nВНЖ, Паспорт",
+				`📁 <a href="https://drive.google.com/drive/folders/FOLD">Паспорт и ID</a> · 2` + "\n• ✅ ВНЖ\n• ✅ Паспорт",
 		},
 		{
 			name:  "transfer renders the same, folder unknown means no link",
 			kind:  docsbot.StatusTransfer,
 			lines: []docsbot.Document{batchDoc("Полис", docsbot.CatInsurance, docsbot.BackupBackedUp, "")},
-			want:  "✅ Загрузил на Google Диск 1 документ\n\n📁 Страховки · 1\nПолис",
+			want:  "✅ Загрузил на Google Диск 1 документ\n\n📁 Страховки · 1\n• ✅ Полис",
 		},
 		{
 			name: "categories follow the menu order, not the upload order",
@@ -173,15 +174,15 @@ func TestRenderStatusMessage_done(t *testing.T) {
 			},
 			folders: map[docsbot.Category]string{docsbot.CatAuto: "AUTO"},
 			want: "✅ Загрузил на Google Диск 3 документа\n\n" +
-				"📁 Паспорт и ID · 1\na\n\n" +
-				`📁 <a href="https://drive.google.com/drive/folders/AUTO">Авто</a> · 1` + "\nb\n\n" +
-				"📁 Другое · 1\nc",
+				"📁 Паспорт и ID · 1\n• ✅ a\n\n" +
+				`📁 <a href="https://drive.google.com/drive/folders/AUTO">Авто</a> · 1` + "\n• ✅ b\n\n" +
+				"📁 Другое · 1\n• ✅ c",
 		},
 		{
 			name:  "a retired category folds into Другое",
 			kind:  docsbot.StatusBatch,
 			lines: []docsbot.Document{batchDoc("x", "gone", docsbot.BackupBackedUp, "")},
-			want:  "✅ Загрузил на Google Диск 1 документ\n\n📁 Другое · 1\nx",
+			want:  "✅ Загрузил на Google Диск 1 документ\n\n📁 Другое · 1\n• ✅ x",
 		},
 	}
 	for _, tt := range tests {
@@ -205,18 +206,18 @@ func TestRenderStatusMessage_failures(t *testing.T) {
 		wantRetry bool
 	}{
 		{
-			name:     "partial failure: error block on top, failed one excluded from blocks",
+			name:     "partial failure: counted in the header, the line says why",
 			lines:    []docsbot.Document{ok, batchDoc("bad", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonQuota)},
-			want:     "✅ Загрузил на Google Диск 1 документ\n\n⚠️ Не загрузил 1: нет места на Google Диске\nОсвободи место на Google Диске и нажми «Повторить».\n\n📁 Работа · 1\nok",
+			want:     fmt.Sprintf(textStatusPartial, 1, 2) + "\n\n" + textStatusQuotaHint + "\n\n📁 Работа · 2\n• ✅ ok\n• ⚠️ bad — нет места на Google Диске",
 			wantRows: [][]string{{"🔁 Повторить (1)", btnMyDocs}},
 		},
 		{
-			name: "all failed: no success header, retry and my documents",
+			name: "all failed: retry and my documents",
 			lines: []docsbot.Document{
 				batchDoc("a", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonRevoked),
 				batchDoc("b", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonRevoked),
 			},
-			want:     "⚠️ Не загрузил 2: доступ отозван",
+			want:     fmt.Sprintf(textStatusPartial, 0, 2) + "\n\n📁 Работа · 2\n• ⚠️ a — доступ отозван\n• ⚠️ b — доступ отозван",
 			wantRows: [][]string{{"🔁 Повторить (2)", btnMyDocs}},
 		},
 		{
@@ -225,31 +226,38 @@ func TestRenderStatusMessage_failures(t *testing.T) {
 				batchDoc("a", docsbot.CatWork, docsbot.BackupFailed, ""),
 				batchDoc("b", docsbot.CatWork, docsbot.BackupFailed, "weird"),
 			},
-			want:     "⚠️ Не загрузил 2: Google Диск не отвечает",
+			want:     fmt.Sprintf(textStatusPartial, 0, 2) + "\n\n📁 Работа · 2\n• ⚠️ a — Google Диск не отвечает\n• ⚠️ b — Google Диск не отвечает",
 			wantRows: [][]string{{"🔁 Повторить (2)", btnMyDocs}},
 		},
 		{
-			name: "mixed reasons are listed with counts, in a fixed order",
+			name: "every line has its own reason; the quota hint shows once",
 			lines: []docsbot.Document{
 				batchDoc("a", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonUnavailable),
 				batchDoc("b", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonQuota),
 				batchDoc("c", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonQuota),
 				batchDoc("d", docsbot.CatWork, docsbot.BackupTooLarge, ""),
 			},
-			want:     "⚠️ Не загрузил 4:\n• нет места на Google Диске — 2\n• Google Диск не отвечает — 1\n• больше 20\u00a0МБ — 1\nОсвободи место на Google Диске и нажми «Повторить».",
+			want: fmt.Sprintf(textStatusPartial, 0, 4) + "\n\n" + textStatusQuotaHint + "\n\n📁 Работа · 4\n" +
+				"• ⚠️ a — Google Диск не отвечает\n• ⚠️ b — нет места на Google Диске\n• ⚠️ c — нет места на Google Диске\n• ⚠️ d — больше 20\u00a0МБ",
 			wantRows: [][]string{{"🔁 Повторить (3)", btnMyDocs}},
 		},
 		{
-			name:     "too large only: counted as not transferred, no retry",
+			name:     "too large only: no quota hint, no retry",
 			lines:    []docsbot.Document{ok, batchDoc("big", docsbot.CatWork, docsbot.BackupTooLarge, "")},
-			want:     "✅ Загрузил на Google Диск 1 документ\n\n⚠️ Не загрузил 1: больше 20\u00a0МБ\n\n📁 Работа · 1\nok",
+			want:     fmt.Sprintf(textStatusPartial, 1, 2) + "\n\n📁 Работа · 2\n• ✅ ok\n• ⚠️ big — больше 20\u00a0МБ",
 			wantRows: [][]string{{btnMyDocs}},
 		},
 		{
-			name:     "failures while others still run: retry only, no my documents yet",
+			name:     "failures while others still run: progress header, retry only",
 			lines:    []docsbot.Document{batchDoc("bad", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonQuota), batchDoc("x", docsbot.CatWork, docsbot.BackupPending, "")},
-			want:     "⏳ Загружаю на Google Диск · 1 из 2\n▰▰▰▱▱▱▱\n\n⚠️ Не загрузил 1: нет места на Google Диске\nОсвободи место на Google Диске и нажми «Повторить».",
+			want:     fmt.Sprintf(textStatusProgress, 1, 2) + "\n▰▰▰▱▱▱▱\n\n" + textStatusQuotaHint + "\n\n📁 Работа · 2\n• ⚠️ bad — нет места на Google Диске\n• ⏳ x",
 			wantRows: [][]string{{"🔁 Повторить (1)"}},
+		},
+		{
+			name:     "no quota failure, no hint",
+			lines:    []docsbot.Document{batchDoc("bad", docsbot.CatWork, docsbot.BackupFailed, docsbot.BackupReasonRevoked)},
+			want:     fmt.Sprintf(textStatusPartial, 0, 1) + "\n\n📁 Работа · 1\n• ⚠️ bad — доступ отозван",
+			wantRows: [][]string{{"🔁 Повторить (1)", btnMyDocs}},
 		},
 	}
 	for _, tt := range tests {
@@ -265,6 +273,19 @@ func TestRenderStatusMessage_failures(t *testing.T) {
 	}
 }
 
+func TestRenderStatusMessage_mixedStatesPerDocument(t *testing.T) {
+	text, _ := renderStatusMessage(batchMsg, []docsbot.Document{
+		batchDoc("Анализ крови", docsbot.CatMedical, docsbot.BackupBackedUp, ""),
+		batchDoc("Снимок", docsbot.CatMedical, docsbot.BackupUploading, ""),
+		batchDoc("Рецепт", docsbot.CatMedical, docsbot.BackupPending, ""),
+		batchDoc("Выписка", docsbot.CatMedical, docsbot.BackupFailed, docsbot.BackupReasonQuota),
+	}, nil)
+
+	require.Equal(t, fmt.Sprintf(textStatusProgress, 2, 4)+"\n▰▰▰▱▱▱▱\n\n"+
+		textStatusQuotaHint+"\n\n"+
+		"📁 Медицина · 4\n• ✅ Анализ крови\n• ⏳ Снимок\n• ⏳ Рецепт\n• ⚠️ Выписка — нет места на Google Диске", text)
+}
+
 // A redraw after the retry must not keep the stale retry button: the
 // requeued documents are pending again, so the keyboard comes back nil, which
 // the send paths turn into an explicit "clear keyboard".
@@ -276,14 +297,38 @@ func TestRenderStatusMessage_afterRetryNoStaleButton(t *testing.T) {
 	require.Nil(t, kb)
 }
 
-func TestRenderStatusMessage_manyTitlesAreCut(t *testing.T) {
-	var lines []docsbot.Document
-	for i := 1; i <= 13; i++ {
-		lines = append(lines, batchDoc(fmt.Sprintf("n%d", i), docsbot.CatWork, docsbot.BackupBackedUp, ""))
+func TestRenderStatusMessage_manyLinesAreCut(t *testing.T) {
+	tests := []struct {
+		n    int
+		more string // last line, "" when everything is shown
+	}{
+		{10, ""},
+		{11, "и ещё 1 документ"},
+		{12, "и ещё 2 документа"},
+		{15, "и ещё 5 документов"},
+		{31, "и ещё 21 документ"},
 	}
-	text, _ := renderStatusMessage(batchMsg, lines, nil)
-	require.Contains(t, text, fmt.Sprintf(textStatusCategory, docsbot.CatWork.Label(), 13)+"\nn1, n2, n3, n4, n5, n6, n7, n8, n9, n10, "+fmt.Sprintf(textStatusMore, 3))
-	require.NotContains(t, text, "n11")
+	for _, tt := range tests {
+		t.Run(fmt.Sprint(tt.n), func(t *testing.T) {
+			var lines []docsbot.Document
+			for i := 1; i <= tt.n; i++ {
+				lines = append(lines, batchDoc(fmt.Sprintf("n%d", i), docsbot.CatWork, docsbot.BackupBackedUp, ""))
+			}
+
+			text, _ := renderStatusMessage(batchMsg, lines, nil)
+
+			block := strings.Split(strings.SplitN(text, "\n\n", 2)[1], "\n")
+			require.Equal(t, fmt.Sprintf("📁 Работа · %d", tt.n), block[0])
+			require.Equal(t, "• ✅ n10", block[min(tt.n, 10)])
+			if tt.more == "" {
+				require.Len(t, block, 1+tt.n)
+				return
+			}
+			require.Len(t, block, 12, "header, ten lines and the rest")
+			require.Equal(t, tt.more, block[11])
+			require.NotContains(t, text, "n11")
+		})
+	}
 }
 
 func TestRenderStatusMessage_escapesAndTruncatesTitles(t *testing.T) {
@@ -292,14 +337,14 @@ func TestRenderStatusMessage_escapesAndTruncatesTitles(t *testing.T) {
 		batchDoc(`<b>x</b> & "q"`, docsbot.CatWork, docsbot.BackupBackedUp, ""),
 		batchDoc(long, docsbot.CatWork, docsbot.BackupBackedUp, ""),
 	}, nil)
-	require.Contains(t, text, "&lt;b&gt;x&lt;/b&gt; &amp; &#34;q&#34;")
+	require.Contains(t, text, "• ✅ &lt;b&gt;x&lt;/b&gt; &amp; &#34;q&#34;")
 	require.NotContains(t, text, "<b>")
 	require.NotContains(t, text, long)
 	require.Contains(t, text, truncateMiddle(long, listTitleRunes))
 }
 
-// A huge batch shrinks the title lists until it fits Telegram's limit, and
-// keeps the header, the error block and the buttons.
+// A huge batch shrinks the document lists until it fits Telegram's limit, and
+// keeps the header, the quota hint and the buttons.
 func TestRenderStatusMessage_fitsTelegramLimit(t *testing.T) {
 	folders := map[docsbot.Category]string{}
 	var lines []docsbot.Document
@@ -314,9 +359,9 @@ func TestRenderStatusMessage_fitsTelegramLimit(t *testing.T) {
 	text, kb := renderStatusMessage(batchMsg, lines, folders)
 
 	require.LessOrEqual(t, utf16Len(text), statusTextLimit)
-	require.True(t, strings.HasPrefix(text, fmt.Sprintf(textStatusDone, 440, pluralDocumentMany)))
-	require.Contains(t, text, fmt.Sprintf(textStatusNotDone, 1, textReasonQuota))
-	require.Contains(t, text, "…и ещё")
+	require.True(t, strings.HasPrefix(text, fmt.Sprintf(textStatusPartial, 440, 441)+"\n"), text[:60])
+	require.Contains(t, text, textStatusQuotaHint)
+	require.Contains(t, text, "и ещё")
 	require.NotNil(t, kb)
 	require.Equal(t, [][]string{{"🔁 Повторить (1)", btnMyDocs}}, buttonTexts(kb.InlineKeyboard))
 }
