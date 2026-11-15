@@ -594,6 +594,24 @@ func TestSyncs_deleteDecidesOnTheDeletedRow(t *testing.T) {
 	}
 }
 
+// The failed state keeps its reason (the card picks the button by it) until the
+// next status change clears it.
+func TestSyncs_setSyncStatusStoresAndClearsReason(t *testing.T) {
+	e := newSyncEnv(t)
+	ctx := t.Context()
+	id := e.seed(t, e.user, "a", "backed_up", "pending")
+
+	require.NoError(t, e.repo.SetSyncStatus(ctx, e.user, id, docsbot.SyncFailed, docsbot.SyncReasonRevoked))
+	got := backupOf(t, e.repo, e.user, id)
+	require.Equal(t, docsbot.SyncFailed, got.SyncStatus)
+	require.Equal(t, docsbot.SyncReasonRevoked, got.SyncReason)
+
+	require.NoError(t, e.repo.SetSyncStatus(ctx, e.user, id, docsbot.SyncPending, ""))
+	got = backupOf(t, e.repo, e.user, id)
+	require.Equal(t, docsbot.SyncPending, got.SyncStatus)
+	require.Empty(t, got.SyncReason)
+}
+
 func TestSyncs_enqueueSyncBumpsVersionAndClock(t *testing.T) {
 	e := newSyncEnv(t)
 	id := e.seed(t, e.user, "a", "backed_up", "ok")

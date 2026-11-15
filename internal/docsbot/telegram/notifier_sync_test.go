@@ -44,6 +44,18 @@ func TestNotifier_SyncOutcome(t *testing.T) {
 	}
 }
 
+// A blocked bot is routine: the failed send is not an error the worker would log.
+func TestNotifier_SyncOutcome_blockedBotIsNotAnError(t *testing.T) {
+	e := newNotifierEnv(t)
+	e.api.blocked = true
+	doc := e.repo.Seed(docsbot.Document{
+		UserID: docsbottest.TestUserID, Title: "Doc", Category: docsbot.CatPassport,
+		BackupStatus: docsbot.BackupBackedUp, DriveFileID: "F1", SyncStatus: docsbot.SyncFailed,
+	})
+
+	require.NoError(t, e.n.SyncOutcome(t.Context(), docsbottest.TestUserID, doc.ID))
+}
+
 func TestNotifier_SyncOutcome_unknownDocumentSendsNothing(t *testing.T) {
 	e := newNotifierEnv(t)
 

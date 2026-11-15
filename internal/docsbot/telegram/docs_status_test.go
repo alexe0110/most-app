@@ -141,6 +141,7 @@ func TestRetrySync(t *testing.T) {
 
 			require.Equal(t, []string{tt.wantToast}, sent.answers)
 			require.Equal(t, tt.wantSync, repo.Docs[doc.ID].SyncStatus)
+			require.Empty(t, sent.texts, "no error message is sent")
 			if !tt.wantRedraw {
 				require.Empty(t, sent.edits, "the card must not be rewritten")
 				return

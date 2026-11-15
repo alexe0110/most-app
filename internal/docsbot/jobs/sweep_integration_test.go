@@ -3,16 +3,20 @@
 package jobs_test
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/jobs"
 	"github.com/alexe0110/most-app/internal/docsbot/postgres"
+	"github.com/alexe0110/most-app/internal/platform/db/dbtest"
+	pjobs "github.com/alexe0110/most-app/internal/platform/jobs"
 )
 
 // Disconnect with a queued job and documents in pending/uploading: the job is
@@ -96,4 +100,39 @@ func TestSweepStuckUploads_liveJobDedups(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 	awaitQueueDrained(t, pool) // a wrongly inserted second job would have run by now
 	require.Equal(t, 1, drive.count())
+}
+
+type idleSweeper struct{}
+
+func (idleSweeper) SweepStuckUploads(context.Context) (docsbot.SweepResult, error) {
+	return docsbot.SweepResult{}, nil
+}
+
+type idlePurger struct{}
+
+func (idlePurger) PurgeStalePending(context.Context) (docsbot.PurgeResult, error) {
+	return docsbot.PurgeResult{}, nil
+}
+
+// The sweep and the purge are periodic: without the registered worker and the
+// run-on-start flag nothing would ever recover a stuck upload or delete a stale
+// pending document.
+func TestPeriodicJobs_runOnStart(t *testing.T) {
+	pool := dbtest.New(t)
+	log := slog.New(slog.DiscardHandler)
+	workers := river.NewWorkers()
+	sweep := jobs.RegisterSweepUploads(workers, log, idleSweeper{}, &spyNotifier{})
+	purge := jobs.RegisterPurgePending(workers, log, idlePurger{})
+	queue, err := pjobs.New(pool, log, workers, nil, sweep, purge)
+	require.NoError(t, err)
+
+	startQueue(t, queue)
+
+	for _, kind := range []string{jobs.SweepUploadsArgs{}.Kind(), jobs.PurgePendingArgs{}.Kind()} {
+		require.Eventually(t, func() bool {
+			var n int
+			err := pool.QueryRow(t.Context(), `select count(*) from river_job where kind = $1 and state = 'completed'`, kind).Scan(&n)
+			return err == nil && n == 1
+		}, 10*time.Second, 50*time.Millisecond, kind)
+	}
 }
