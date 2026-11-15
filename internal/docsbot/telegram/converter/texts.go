@@ -81,6 +81,90 @@ const (
 	textConvertBestEffort = "Меньше не вышло — сжал до %d КБ."
 )
 
+// File info ("О файле") texts. The screen is HTML: the values come from the file,
+// the labels and group titles from here.
+const (
+	textInfoTitle = "ℹ️ О файле"
+	// textInfoCompressedPhoto answers a photo sent as a photo: Telegram has
+	// already dropped the metadata of it.
+	textInfoCompressedPhoto = "Telegram уже убрал метаданные. Чтобы проверить оригинал, отправь как файл"
+	textInfoClean           = "Метаданных нет — файл чистый"
+	textInfoHidden          = "🗂 Внутри файла: %s" // %s = the kinds of metadata
+	textInfoEncrypted       = "🔒 Файл зашифрован: метаданные не прочитать и не убрать."
+	textInfoUnsupported     = "Этот формат не поддерживаю. Могу показать, что внутри, у JPEG, PNG, WEBP, HEIC, PDF, DOCX, XLSX и PPTX."
+	textInfoUnreadable      = "Не получилось прочитать файл: он повреждён."
+	textInfoTooLarge        = "Файл больше 20 МБ — прочитать его не получится."
+	textInfoCleanFailed     = "Не получилось полностью убрать метаданные, файл остался без изменений."
+	textInfoNothingToClean  = "Метаданных нет — убирать нечего."
+
+	textInfoLocationWarn = "⚠️ Видно, где сделан снимок"
+	textInfoMapLink      = "Открыть на карте"
+
+	// textCleanedCaption is the caption of the cleaned copy; %s = what was removed.
+	textCleanedCaption = "🧹 Очищенная копия. Убрано: %s."
+
+	groupFile     = "📄 Файл"
+	groupCapture  = "📷 Съёмка"
+	groupLocation = "📍 Геолокация"
+	groupPeople   = "👤 Авторство"
+	groupDates    = "🗓 Даты"
+	groupPDF      = "📑 PDF"
+
+	fieldName      = "Имя"
+	fieldType      = "Тип"
+	fieldSize      = "Размер"
+	fieldTaken     = "Дата съёмки"
+	fieldCamera    = "Камера"
+	fieldSoftware  = "Программа"
+	fieldCoords    = "Координаты"
+	fieldAuthor    = "Автор"
+	fieldCompany   = "Компания"
+	fieldModifier  = "Последним изменял"
+	fieldCreated   = "Создан"
+	fieldModified  = "Изменён"
+	fieldPages     = "Страниц"
+	fieldCreator   = "Создатель"
+	fieldProducer  = "Конвертер"
+	fieldContent   = "Содержимое"
+	fieldEncrypted = "Зашифрован"
+
+	valueScan = "скан (картинки)"
+	valueText = "текст"
+	valueYes  = "да"
+	valueNo   = "нет"
+)
+
+// Names of the file types in the info screen.
+const (
+	typeJPEG = "JPEG-изображение"
+	typePNG  = "PNG-изображение"
+	typeWebP = "WEBP-изображение"
+	typeHEIC = "HEIC-изображение"
+	typePDF  = "PDF-документ"
+	typeDOCX = "Word (DOCX)"
+	typeXLSX = "Excel (XLSX)"
+	typePPTX = "PowerPoint (PPTX)"
+)
+
+// Names of the metadata blocks, for the info screen and the cleaned copy's caption.
+const (
+	blockEXIF        = "EXIF"
+	blockXMP         = "XMP"
+	blockIPTC        = "IPTC"
+	blockText        = "текстовые теги"
+	blockComment     = "комментарий"
+	blockPDFInfo     = "свойства PDF"
+	blockOfficeProps = "свойства документа"
+	blockLocation    = "геолокация"
+)
+
+// Units of file sizes.
+const (
+	unitMB = "МБ"
+	unitKB = "КБ"
+	unitB  = "Б"
+)
+
 // Inline button labels for /convert.
 const (
 	btnPDF         = "📄 Фото → PDF"
@@ -114,6 +198,13 @@ const (
 	btnReplaceOriginal = "♻️ Заменить оригинал"
 	btnReplaceYes      = "Заменить"
 	btnReplaceNo       = "Отмена"
+
+	// btnInfo is the picker's «О файле» button; the docs adapter shows it.
+	btnInfo         = "ℹ️ О файле"
+	btnClean        = "🧹 Очистить"
+	btnInfoBack     = "← Назад"
+	btnKeepClean    = "✅ Сохранить очищенный"
+	btnKeepOriginal = "Сохранить оригинал"
 )
 
 // Names of files made by the converter: "<name>-<tag>.<ext>".
@@ -122,6 +213,7 @@ const (
 	nameTagPDF        = "PDF"
 	nameTagJPG        = "JPG"
 	nameTagEdited     = "изменён"
+	nameTagClean      = "очищен"
 
 	nameFallbackPhoto    = "фото"
 	nameFallbackDocument = "документ"

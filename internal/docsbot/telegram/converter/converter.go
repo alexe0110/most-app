@@ -80,6 +80,7 @@ type Converter struct {
 	sessions *sessionStore
 	results  *tokenMap[convResult]
 	albums   *tokenMap[convAlbum]
+	cleaned  *tokenMap[cleanedCopy]
 	now      func() time.Time
 	files    FileDownloader
 
@@ -106,6 +107,7 @@ func New(deps Deps) *Converter {
 		sessions: newSessionStore(time.Now),
 		results:  newTokenMap[convResult](time.Now),
 		albums:   newTokenMap[convAlbum](time.Now),
+		cleaned:  newTokenMap[cleanedCopy](time.Now),
 		now:      time.Now,
 		files:    deps.Files,
 		inflight: map[string]struct{}{},

@@ -57,18 +57,7 @@ func (c *Converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 		c.removeKeyboard(ctx, b, chatID, msg)
 		return true
 	}
-	pages, width, height := 0, 0, 0
-	if w, h, ok := convert.ImageSize(data); ok { // header only; other formats stay unknown
-		width, height = w, h
-	}
-	if msg.Document.MimeType == "application/pdf" || strings.EqualFold(filepath.Ext(filename), ".pdf") {
-		// The result is already in memory; a failed count only leaves the page count unknown.
-		pctx, cancel := context.WithTimeout(ctx, pdfTimeout)
-		defer cancel()
-		if n, err := convert.PageCount(pctx, data); err == nil {
-			pages = n
-		}
-	}
+	pages, width, height := c.fileFacts(ctx, data, filename, msg.Document.MimeType)
 	c.results.put(token, tgUser, convResult{
 		user: user, sourceDoc: sourceDoc, suffix: suffix,
 		file: docsbot.IncomingFile{
@@ -78,6 +67,23 @@ func (c *Converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 		},
 	})
 	return true
+}
+
+// fileFacts reads what a stored copy of data should record: the page count of a
+// PDF and the pixel size of an image; zero when unknown.
+func (c *Converter) fileFacts(ctx context.Context, data []byte, filename, mime string) (pages, width, height int) {
+	if w, h, ok := convert.ImageSize(data); ok { // header only; other formats stay unknown
+		width, height = w, h
+	}
+	if mime == mimePDF || strings.EqualFold(filepath.Ext(filename), ".pdf") {
+		// The result is already in memory; a failed count only leaves the page count unknown.
+		pctx, cancel := context.WithTimeout(ctx, pdfTimeout)
+		defer cancel()
+		if n, err := convert.PageCount(pctx, data); err == nil {
+			pages = n
+		}
+	}
+	return pages, width, height
 }
 
 // done records a finished conversion. Call it once Telegram accepted the result,

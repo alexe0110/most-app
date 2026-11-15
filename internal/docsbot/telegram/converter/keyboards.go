@@ -107,3 +107,22 @@ func quickLimit(op string) (int, bool) {
 		return 0, false
 	}
 }
+
+// infoKeyboard is the buttons of the info screen. «Назад» removes the screen: the
+// message it was opened from (the picker) stays and is still live.
+func infoKeyboard(id docsbot.DocumentID, canClean bool) *models.InlineKeyboardMarkup {
+	var row []models.InlineKeyboardButton
+	if canClean {
+		row = append(row, models.InlineKeyboardButton{Text: btnClean, CallbackData: convDocCB(convActClean, id)})
+	}
+	row = append(row, models.InlineKeyboardButton{Text: btnInfoBack, CallbackData: cbMenuCancel})
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{row}}
+}
+
+// cleanedKeyboard asks which of the two files to keep.
+func cleanedKeyboard(token string) *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{{Text: btnKeepClean, CallbackData: convCB(convActKeepClean, token)}},
+		{{Text: btnKeepOriginal, CallbackData: convCB(convActKeepOrig, token)}},
+	}}
+}

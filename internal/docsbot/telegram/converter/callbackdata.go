@@ -45,7 +45,11 @@ const (
 	convActRepYes     = "rpy"  // conv:rpy:<token> confirms the replacement
 	convActRepNo      = "rpn"  // conv:rpn:<token> cancels it
 	convActAlbum      = "alb"  // conv:alb:<token> merges an album into a PDF
-	convActMenuCancel = "x"    // closes the convert menu
+	convActInfo       = "i"    // conv:i:<docID> shows what is hidden in a document
+	convActClean      = "cl"   // conv:cl:<docID> sends a copy without metadata
+	convActKeepClean  = "kc"   // conv:kc:<token> keeps the cleaned copy as the document
+	convActKeepOrig   = "ko"   // conv:ko:<token> keeps the original
+	convActMenuCancel = "x"    // closes the convert menu (and the info screen)
 	convActPDFOp      = "p"    // conv:p:<op> is a PDF operation of the session
 
 	// Buttons of a /convert session, valid on the dialogue message at their step.
@@ -74,7 +78,11 @@ type callbackData struct {
 // carriesDocID reports whether the third segment of the action's data is a
 // document id; for every other action it is the first argument.
 func carriesDocID(action string) bool {
-	return action == convActDoc || action == convActQuick
+	switch action {
+	case convActDoc, convActQuick, convActInfo, convActClean:
+		return true
+	}
+	return false
 }
 
 // parseCallback splits button data of the converter; false when it is not its own.
@@ -164,6 +172,15 @@ func convDocCB(action string, id docsbot.DocumentID, args ...string) string {
 // MenuCB is the data of the button that opens the convert menu of a stored
 // document. The docs adapter puts it on its cards and pickers.
 func MenuCB(id docsbot.DocumentID) string { return convDocCB(convActDoc, id) }
+
+// InfoCB is the data of the «О файле» button of a stored document.
+func InfoCB(id docsbot.DocumentID) string { return convDocCB(convActInfo, id) }
+
+// InfoButton is the «О файле» button of a stored document. The docs adapter puts
+// it on its pickers.
+func InfoButton(id docsbot.DocumentID) models.InlineKeyboardButton {
+	return models.InlineKeyboardButton{Text: btnInfo, CallbackData: InfoCB(id)}
+}
 
 // AlbumCB is the data of the "one PDF" button of an album; token comes from
 // RegisterAlbum.

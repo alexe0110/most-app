@@ -46,15 +46,24 @@ func categoryKeyboard(action string, id docsbot.DocumentID) *models.InlineKeyboa
 }
 
 // pickerKeyboard is the category picker of a single new file. A file the
-// converter can handle gets an extra row opening the convert menu.
+// converter can handle gets an extra last row opening the convert menu, and one
+// whose metadata can be shown gets «О файле» in that row (alone, if it can't be
+// converted).
 func pickerKeyboard(doc docsbot.Document) *models.InlineKeyboardMarkup {
 	kb := categoryKeyboard(actCategory, doc.ID)
+	var row []models.InlineKeyboardButton
 	if converter.Convertible(doc) {
 		label := btnConvertPicker
 		if converter.IsPDF(doc) {
 			label = btnConvertPickerPDF
 		}
-		kb.InlineKeyboard = append(kb.InlineKeyboard, convertRow(doc.ID, label))
+		row = convertRow(doc.ID, label)
+	}
+	if converter.Inspectable(doc) {
+		row = append(row, converter.InfoButton(doc.ID))
+	}
+	if len(row) > 0 {
+		kb.InlineKeyboard = append(kb.InlineKeyboard, row)
 	}
 	return kb
 }

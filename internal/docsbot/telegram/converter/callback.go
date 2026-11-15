@@ -30,6 +30,18 @@ func (c *Converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 	case convActQuick:
 		c.onQuick(ctx, b, p)
 		return
+	case convActInfo:
+		c.onInfo(ctx, b, p)
+		return
+	case convActClean:
+		c.onClean(ctx, b, p)
+		return
+	case convActKeepClean:
+		c.onKeepClean(ctx, b, p)
+		return
+	case convActKeepOrig:
+		c.onKeepOriginal(ctx, b, p)
+		return
 	case convActSave:
 		c.onSave(ctx, b, p)
 		return
