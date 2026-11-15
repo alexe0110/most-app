@@ -449,3 +449,44 @@ func TestInspectAndStrip_pdfPageLimit(t *testing.T) {
 	_, err = convert.Strip(t.Context(), src)
 	require.ErrorIs(t, err, convert.ErrPDFTooManyPages)
 }
+
+func TestInspect_sensitiveFields(t *testing.T) {
+	appWithPath := `<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">` +
+		`<Template>C:\Users\ann\Templates\Normal.dotm</Template><Application>Word</Application></Properties>`
+	pathDocx := zipOf(t, [][2]string{{"[Content_Types].xml", "<Types/>"}, {"word/document.xml", "<w/>"}, {"docProps/app.xml", appWithPath}})
+
+	tests := []struct {
+		name      string
+		data      []byte
+		sensitive []string
+		open      []string
+	}{
+		{"photo", fixture(t, "gps.jpg"),
+			[]string{"GPS:Coordinates", "EXIF:Make", "EXIF:Model", "XMP:Creator"},
+			[]string{"EXIF:Software", "EXIF:DateTimeOriginal", "EXIF:Orientation"}},
+		{"pdf", fixture(t, "word.pdf"),
+			[]string{"PDF:Author", "XMP:Creator"},
+			[]string{"PDF:Creator", "PDF:Producer", "PDF:Pages"}},
+		{"office: people", fixture(t, "author.docx"),
+			[]string{"Office:Creator", "Office:LastModifiedBy", "Office:Company"},
+			[]string{"Office:Application"}},
+		{"office: user name in a path", pathDocx, []string{"Office:Template"}, []string{"Office:Application"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info, err := convert.Inspect(t.Context(), tt.data)
+
+			require.NoError(t, err)
+			var got []string
+			for _, f := range info.SensitiveFields() {
+				got = append(got, f.Key)
+			}
+			require.ElementsMatch(t, tt.sensitive, got)
+			for _, key := range tt.open {
+				f, ok := info.Field(key)
+				require.True(t, ok, key)
+				require.False(t, f.Sensitive, key)
+			}
+		})
+	}
+}
