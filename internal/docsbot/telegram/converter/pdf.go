@@ -141,7 +141,7 @@ func (c *Converter) onPDFSource(ctx context.Context, b *bot.Bot, update *models.
 	tgUser, _ := messageUser(update)
 	chatID := update.Message.Chat.ID
 	file := update.Message.Document
-	if file.FileSize > convert.MaxPDFBytes {
+	if file.FileSize > convert.MaxInputBytes {
 		c.out(b).Send(ctx, chatID, pdfTooLargeText())
 		return
 	}
@@ -241,7 +241,7 @@ func (c *Converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 		return
 	}
 	file := update.Message.Document
-	if int64(sess.pdfBytes)+file.FileSize > convert.MaxPDFBytes {
+	if int64(sess.pdfBytes)+file.FileSize > convert.MaxInputBytes {
 		c.out(b).Send(ctx, chatID, pdfTooLargeText())
 		return
 	}
@@ -267,7 +267,7 @@ func (c *Converter) onPDFPart(ctx context.Context, b *bot.Bot, update *models.Up
 		if s.step != stepMergePDF {
 			return
 		}
-		if s.pdfBytes+len(data) > convert.MaxPDFBytes {
+		if s.pdfBytes+len(data) > convert.MaxInputBytes {
 			tooLarge = true
 			return
 		}
@@ -315,7 +315,7 @@ func (c *Converter) finishMerge(ctx context.Context, b *bot.Bot, p press) {
 			c.retry(ctx, b, chatID, tgUser, sess, msgID, textConvertDownloadFailed, pdfKeyboard())
 			return
 		}
-		if total += len(data); total > convert.MaxPDFBytes {
+		if total += len(data); total > convert.MaxInputBytes {
 			c.show(ctx, b, chatID, msgID, pdfTooLargeText(), nil)
 			return
 		}
@@ -340,7 +340,7 @@ func (c *Converter) finishMerge(ctx context.Context, b *bot.Bot, p press) {
 	c.finish(ctx, b, chatID, msgID)
 }
 
-func pdfTooLargeText() string { return fmt.Sprintf(textPDFTooLarge, convert.MaxPDFBytes>>20) }
+func pdfTooLargeText() string { return fmt.Sprintf(textPDFTooLarge, convert.MaxInputBytes>>20) }
 
 // pdfErrorText maps a PDF error to a user message.
 func pdfErrorText(err error) string {

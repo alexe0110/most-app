@@ -15,6 +15,8 @@ const (
 	EventDriveConnected    EventName = "drive_connected"
 	EventDriveDisconnected EventName = "drive_disconnected"
 	EventConvertDone       EventName = "convert_done"
+	EventFileInfo          EventName = "file_info"
+	EventFileCleaned       EventName = "file_cleaned"
 	EventExport            EventName = "export"
 	EventDataDeleted       EventName = "data_deleted"
 )
@@ -35,6 +37,24 @@ const (
 	ConvertPDFMerge  ConvertOp = "pdf_merge"  // several PDFs merged
 )
 
+// FileFormat names the type of a file in a file_info or file_cleaned event. It
+// is the type found from the content, never the name or the declared MIME type.
+// It mirrors convert.FileType: the domain does not import platform/convert, so
+// the converter adapter maps one to the other.
+type FileFormat string
+
+// File formats of the «О файле» screen.
+const (
+	FormatJPEG FileFormat = "jpeg"
+	FormatPNG  FileFormat = "png"
+	FormatWebP FileFormat = "webp"
+	FormatHEIC FileFormat = "heic"
+	FormatPDF  FileFormat = "pdf"
+	FormatDOCX FileFormat = "docx"
+	FormatXLSX FileFormat = "xlsx"
+	FormatPPTX FileFormat = "pptx"
+)
+
 // EventProps are the details of an event. The fields are enumerated values; Source
 // is the only text that comes from the user, and ParseSource validates it. Titles,
 // captions, search text and file ids never belong here. Empty fields are omitted.
@@ -44,6 +64,7 @@ type EventProps struct {
 	Category  Category
 	Kind      Kind
 	Operation ConvertOp
+	Format    FileFormat
 }
 
 // Event is one product event of a user. An empty User is an anonymous event, kept

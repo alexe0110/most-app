@@ -34,6 +34,7 @@ type eventProps struct {
 	Category  string `json:"category,omitempty"`
 	Kind      string `json:"kind,omitempty"`
 	Operation string `json:"operation,omitempty"`
+	Format    string `json:"format,omitempty"`
 }
 
 // Record stores one event; an empty user id stores it anonymously.
@@ -91,6 +92,7 @@ func storeEvent(ctx context.Context, q *Queries, e docsbot.Event) error {
 	props, err := json.Marshal(eventProps{
 		Source: e.Props.Source, New: e.Props.New, Category: string(e.Props.Category),
 		Kind: string(e.Props.Kind), Operation: string(e.Props.Operation),
+		Format: string(e.Props.Format),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal event props: %w", err)

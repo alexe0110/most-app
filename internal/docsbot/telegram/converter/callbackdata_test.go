@@ -42,6 +42,10 @@ func callbackCases() []struct {
 		{"conv quick keep", "conv:q:" + string(uuidDoc) + ":" + opKeep, conv(convActQuick, uuidDoc, opKeep)},
 		{"conv quick drop", "conv:q:" + string(uuidDoc) + ":" + opDrop, conv(convActQuick, uuidDoc, opDrop)},
 		{"conv quick merge", "conv:q:" + string(uuidDoc) + ":" + opMerge, conv(convActQuick, uuidDoc, opMerge)},
+		{"conv info", "conv:i:" + string(uuidDoc), conv(convActInfo, uuidDoc)},
+		{"conv clean", "conv:cl:" + string(uuidDoc), conv(convActClean, uuidDoc)},
+		{"conv keep clean", "conv:kc:" + hexToken, conv(convActKeepClean, "", hexToken)},
+		{"conv keep original", "conv:ko:" + hexToken, conv(convActKeepOrig, "", hexToken)},
 		{"conv save", "conv:save:" + hexToken, conv(convActSave, "", hexToken)},
 		{"conv skip", "conv:skip:" + hexToken, conv(convActSkip, "", hexToken)},
 		{"conv rp", "conv:rp:" + hexToken, conv(convActRepAsk, "", hexToken)},
@@ -214,6 +218,7 @@ func builtButtons() []string {
 		actionKeyboard(), pdfKeyboard(), limitKeyboard(), formatKeyboard(), cancelKeyboard(),
 		quickKeyboard(uuidDoc, true), quickKeyboard(uuidDoc, false), pdfMenuKeyboard(uuidDoc), pdfActionsKeyboard(),
 		saveKeyboard(token, true), saveKeyboard(token, false), replaceKeyboard(token),
+		infoKeyboard(uuidDoc, true), infoKeyboard(uuidDoc, false), cleanedKeyboard(token),
 	} {
 		for _, row := range kb.InlineKeyboard {
 			for _, b := range row {
@@ -221,7 +226,7 @@ func builtButtons() []string {
 			}
 		}
 	}
-	return append(data, MenuCB(uuidDoc), AlbumCB(token))
+	return append(data, MenuCB(uuidDoc), AlbumCB(token), infoCB(uuidDoc))
 }
 
 func TestBuiltButtons_everyOneParsesFitsAndIsKnown(t *testing.T) {

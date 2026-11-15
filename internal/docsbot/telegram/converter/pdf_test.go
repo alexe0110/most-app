@@ -282,7 +282,7 @@ func TestConvertPDF_mergeRefusesOversizeAndGarbage(t *testing.T) {
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":merge"))
 
-	h.bot.ProcessUpdate(ctx, pdfUpdate("big", convert.MaxPDFBytes))
+	h.bot.ProcessUpdate(ctx, pdfUpdate("big", convert.MaxInputBytes))
 	require.Contains(t, h.lastShown(), "20\u00a0МБ")
 	require.Empty(t, h.downloads[1:], "the declared size is checked before downloading")
 

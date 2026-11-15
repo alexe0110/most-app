@@ -33,6 +33,24 @@ type sentDocument struct {
 	caption  string
 }
 
+// logBuffer is a slog sink the tests can read while handlers still write.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *logBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *logBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
+
 // convHarness is a fake Bot API wired to a docsbot client. It serves file
 // downloads and records what the bot sends back.
 type convHarness struct {
@@ -85,6 +103,8 @@ type convHarness struct {
 	// downloadErr, when set, is the error every file download fails with (after
 	// recording it); it takes precedence over failDownloads.
 	downloadErr error
+	// logs is everything the bot logged, at any level.
+	logs logBuffer
 }
 
 // Download makes the harness the converter's file source: it records the file id,
@@ -213,7 +233,8 @@ func newConvHarness(t *testing.T, opts ...telegram.Option) *convHarness {
 	b, err := bot.New("123:ABC", bot.WithServerURL(ts.URL), bot.WithSkipGetMe(), bot.WithNotAsyncHandlers())
 	require.NoError(t, err)
 	svc, repo := docsbottest.NewDeps(docsbottest.FakeDrive{})
-	telegram.Register(b, telegram.Deps{Log: slog.New(slog.DiscardHandler), Svc: svc, Auth: docsbottest.FakeAuth{}, Files: h}, opts...)
+	log := slog.New(slog.NewTextHandler(&h.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	telegram.Register(b, telegram.Deps{Log: log, Svc: svc, Auth: docsbottest.FakeAuth{}, Files: h}, opts...)
 
 	h.bot = b
 	h.repo = repo

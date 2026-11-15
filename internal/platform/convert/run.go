@@ -79,3 +79,21 @@ func run(ctx context.Context, fn func(ctx context.Context) error) error {
 		return ErrTimeout
 	}
 }
+
+// metaOp runs a metadata operation under the shared cap and reduces its failures
+// to the sentinels of fileinfo.go: a timeout stays ErrTimeout, and a panic or any
+// parser error that is not already one of them means the file is unreadable.
+func metaOp(ctx context.Context, fn func(ctx context.Context) error) error {
+	err := run(ctx, fn)
+	switch {
+	case err == nil,
+		errors.Is(err, ErrTimeout),
+		errors.Is(err, ErrUnsupportedFormat),
+		errors.Is(err, ErrUnreadable),
+		errors.Is(err, ErrEncrypted),
+		errors.Is(err, ErrPDFTooManyPages):
+		return err
+	default:
+		return unreadable(err)
+	}
+}

@@ -2,6 +2,7 @@ package convert
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -32,6 +33,33 @@ func TestRun_panicIsRecoveredAndSlotFreed(t *testing.T) {
 
 	require.ErrorIs(t, err, ErrPDFInvalid)
 	require.Empty(t, slots, "the slot is free once the call returned")
+}
+
+func TestMetaOp_panicIsUnreadableAndSlotFreed(t *testing.T) {
+	err := metaOp(t.Context(), func(context.Context) error { panic("boom") })
+
+	require.ErrorIs(t, err, ErrUnreadable)
+	require.Empty(t, slots, "the slot is free once the call returned")
+}
+
+func TestMetaOp_errorMapping(t *testing.T) {
+	tests := []struct {
+		name string
+		in   error
+		want error
+	}{
+		{"parser failure", errors.New("zip: bad header"), ErrUnreadable},
+		{"unsupported stays", ErrUnsupportedFormat, ErrUnsupportedFormat},
+		{"encrypted stays", ErrEncrypted, ErrEncrypted},
+		{"deadline", context.DeadlineExceeded, ErrTimeout},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := metaOp(t.Context(), func(context.Context) error { return tt.in })
+
+			require.ErrorIs(t, err, tt.want)
+		})
+	}
 }
 
 func TestRun_slotHeldUntilWorkReturnsAfterTimeout(t *testing.T) {

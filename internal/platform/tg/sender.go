@@ -35,15 +35,29 @@ func NewSender(api *bot.Bot, log *slog.Logger) Sender {
 type MsgOpt func(*msgOpts)
 
 type msgOpts struct {
-	html    bool
-	caption bool
-	toast   string
-	hasKB   bool // WithKeyboard was given, even with a nil keyboard
-	kb      *models.InlineKeyboardMarkup
+	html      bool
+	noPreview bool
+	caption   bool
+	toast     string
+	hasKB     bool // WithKeyboard was given, even with a nil keyboard
+	kb        *models.InlineKeyboardMarkup
 }
 
 // WithHTML sends the text with HTML parse mode.
 func WithHTML() MsgOpt { return func(o *msgOpts) { o.html = true } }
+
+// WithoutPreview turns off the link preview of the message. Without it Telegram
+// fetches every URL in the text itself, which hands the address to a third party.
+func WithoutPreview() MsgOpt { return func(o *msgOpts) { o.noPreview = true } }
+
+// linkPreview is the link_preview_options of a message: nil unless the preview
+// is off.
+func (o msgOpts) linkPreview() *models.LinkPreviewOptions {
+	if !o.noPreview {
+		return nil
+	}
+	return &models.LinkPreviewOptions{IsDisabled: bot.True()}
+}
 
 // WithKeyboard sets the inline keyboard. A nil kb sends no keyboard with Send,
 // and removes the keyboard with Edit (an omitted reply_markup keeps the old one).
@@ -87,7 +101,7 @@ func (s Sender) Send(ctx context.Context, chatID int64, text string, opts ...Msg
 // TrySend is Send that returns the error instead of logging it.
 func (s Sender) TrySend(ctx context.Context, chatID int64, text string, opts ...MsgOpt) (int, error) {
 	o := collect(opts)
-	params := &bot.SendMessageParams{ChatID: chatID, Text: text}
+	params := &bot.SendMessageParams{ChatID: chatID, Text: text, LinkPreviewOptions: o.linkPreview()}
 	if o.html {
 		params.ParseMode = models.ParseModeHTML
 	}
@@ -134,7 +148,7 @@ func (s Sender) TryEdit(ctx context.Context, chatID int64, msgID int, text strin
 		_, err = s.api.EditMessageCaption(ctx, params)
 	} else {
 		op = "editMessageText"
-		params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text, ReplyMarkup: o.editMarkup()}
+		params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msgID, Text: text, ReplyMarkup: o.editMarkup(), LinkPreviewOptions: o.linkPreview()}
 		if o.html {
 			params.ParseMode = models.ParseModeHTML
 		}

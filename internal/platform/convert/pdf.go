@@ -16,10 +16,10 @@ import (
 
 // Limits that keep a hostile or huge PDF from exhausting memory or CPU.
 const (
-	// MaxPDFBytes caps one input PDF, and the total of a merge. It equals the Bot
-	// API download limit tg.MaxFileBytes, not imported to keep this package free
-	// of the Telegram SDK.
-	MaxPDFBytes = 20 << 20
+	// MaxInputBytes caps one input file of any operation, and the total of a PDF
+	// merge. It equals the Bot API download limit tg.MaxFileBytes, not imported
+	// to keep this package free of the Telegram SDK.
+	MaxInputBytes = 20 << 20
 	// MaxPDFPages caps the pages of an input (and of a merge result).
 	MaxPDFPages = 500
 )
@@ -49,7 +49,7 @@ func MergePDF(ctx context.Context, pdfs [][]byte) ([]byte, error) {
 	}
 	total := 0
 	for _, p := range pdfs {
-		if total += len(p); total > MaxPDFBytes {
+		if total += len(p); total > MaxInputBytes {
 			return nil, ErrPDFTooLarge
 		}
 	}
@@ -224,7 +224,7 @@ func checkPDFSize(pdf []byte) error {
 	switch {
 	case len(pdf) == 0:
 		return ErrPDFInvalid
-	case len(pdf) > MaxPDFBytes:
+	case len(pdf) > MaxInputBytes:
 		return ErrPDFTooLarge
 	}
 	return nil

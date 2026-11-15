@@ -209,6 +209,15 @@ func TestSender_sendsTextOptions(t *testing.T) {
 	require.Equal(t, "editMessageCaption", got.method)
 	require.Equal(t, models.ParseModeHTML, models.ParseMode(got.form["parse_mode"]))
 
+	s.Send(t.Context(), 42, "https://example.com")
+	require.Empty(t, srv.last(t).form["link_preview_options"], "the preview is on unless asked")
+
+	s.Send(t.Context(), 42, "https://example.com", WithoutPreview())
+	require.JSONEq(t, `{"is_disabled":true}`, srv.last(t).form["link_preview_options"])
+
+	s.Edit(t.Context(), 42, 7, "https://example.com", WithoutPreview())
+	require.JSONEq(t, `{"is_disabled":true}`, srv.last(t).form["link_preview_options"])
+
 	s.Answer(t.Context(), "cb1", WithToast("Готово"))
 	got = srv.last(t)
 	require.Equal(t, "answerCallbackQuery", got.method)

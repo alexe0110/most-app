@@ -39,14 +39,19 @@ func TestEvents_Record(t *testing.T) {
 		User: user, Name: docsbot.EventDocSaved,
 		Props: docsbot.EventProps{Category: docsbot.CatPassport, Kind: docsbot.KindPhoto},
 	}))
+	require.NoError(t, events.Record(ctx, docsbot.Event{User: user, Name: docsbot.EventFileInfo, Props: docsbot.EventProps{Format: docsbot.FormatHEIC}}))
 	require.NoError(t, events.Record(ctx, docsbot.Event{Name: docsbot.EventDataDeleted}))
 
 	var bot, name, props string
 	require.NoError(t, pool.QueryRow(ctx,
-		"select bot, name, props::text from events where user_id = $1", string(user)).Scan(&bot, &name, &props))
+		"select bot, name, props::text from events where user_id = $1 and name = 'doc_saved'", string(user)).Scan(&bot, &name, &props))
 	require.Equal(t, docsbot.BotName, bot)
 	require.Equal(t, "doc_saved", name)
 	require.JSONEq(t, `{"category":"passport","kind":"photo"}`, props, "empty props are omitted")
+
+	require.NoError(t, pool.QueryRow(ctx,
+		"select props::text from events where user_id = $1 and name = 'file_info'", string(user)).Scan(&props))
+	require.JSONEq(t, `{"format":"heic"}`, props)
 
 	var anonymous int
 	require.NoError(t, pool.QueryRow(ctx,

@@ -50,7 +50,7 @@ func TestMergePDF_limits(t *testing.T) {
 	_, err := convert.MergePDF(t.Context(), nil)
 	require.ErrorIs(t, err, convert.ErrPDFInvalid)
 
-	big := make([]byte, convert.MaxPDFBytes/2+1)
+	big := make([]byte, convert.MaxInputBytes/2+1)
 	_, err = convert.MergePDF(t.Context(), [][]byte{big, big})
 	require.ErrorIs(t, err, convert.ErrPDFTooLarge, "the total counts, not each file")
 
@@ -137,7 +137,7 @@ func TestPDF_tooManyPages(t *testing.T) {
 }
 
 func TestPDF_tooLarge(t *testing.T) {
-	_, err := convert.PageCount(t.Context(), make([]byte, convert.MaxPDFBytes+1))
+	_, err := convert.PageCount(t.Context(), make([]byte, convert.MaxInputBytes+1))
 	require.ErrorIs(t, err, convert.ErrPDFTooLarge)
 }
 

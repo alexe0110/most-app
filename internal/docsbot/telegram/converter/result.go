@@ -100,6 +100,23 @@ func compressedCaption(before, after int) string {
 	return fmt.Sprintf(textResultCompressed, humanSize(int64(after)), humanSize(int64(before)))
 }
 
+// fileFacts reads what a stored copy of data should record: the page count of a
+// PDF and the pixel size of an image; zero when unknown.
+func (c *Converter) fileFacts(ctx context.Context, data []byte, filename, mime string) (pages, width, height int) {
+	if w, h, ok := convert.ImageSize(data); ok { // header only; other formats stay unknown
+		width, height = w, h
+	}
+	if mime == mimePDF || strings.EqualFold(filepath.Ext(filename), ".pdf") {
+		// The result is already in memory; a failed count only leaves the page count unknown.
+		pctx, cancel := context.WithTimeout(ctx, pdfTimeout)
+		defer cancel()
+		if n, err := convert.PageCount(pctx, data); err == nil {
+			pages = n
+		}
+	}
+	return pages, width, height
+}
+
 // done records a finished conversion. Call it once Telegram accepted the result,
 // so a failed send, which the user retries, is not counted twice. The operation is
 // one of the fixed docsbot.ConvertOp values, never anything the user typed.

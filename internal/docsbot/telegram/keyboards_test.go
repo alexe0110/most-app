@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -102,5 +103,32 @@ func TestBuiltButtons_everyOneParsesFitsAndIsKnown(t *testing.T) {
 		require.True(t, ok, d)
 		require.True(t, known[cd.action], "%s: an action with no round-trip case", d)
 		require.Equal(t, d, cd.String(), "String inverts parse")
+	}
+}
+
+func TestPickerKeyboard_infoButtonJoinsTheLastRow(t *testing.T) {
+	base := len(categoryKeyboard(actCategory, uuidDoc).InlineKeyboard)
+	tests := []struct {
+		name string
+		doc  docsbot.Document
+		want int // buttons in the last row, 0 when there is no extra row
+	}{
+		{"jpeg: convert and info", docsbot.Document{ID: uuidDoc, Kind: docsbot.KindDocument, MIME: "image/jpeg"}, 2},
+		{"heic: info alone", docsbot.Document{ID: uuidDoc, Kind: docsbot.KindDocument, MIME: "image/heic"}, 1},
+		{"video: neither", docsbot.Document{ID: uuidDoc, Kind: docsbot.KindDocument, MIME: "video/mp4"}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows := pickerKeyboard(tt.doc).InlineKeyboard
+
+			if tt.want == 0 {
+				require.Len(t, rows, base)
+				return
+			}
+			require.Len(t, rows, base+1)
+			last := rows[len(rows)-1]
+			require.Len(t, last, tt.want)
+			require.Equal(t, converter.InfoButton(uuidDoc).CallbackData, last[len(last)-1].CallbackData)
+		})
 	}
 }
