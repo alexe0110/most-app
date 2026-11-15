@@ -10,10 +10,12 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 func TestConvertPDF_photosShowOneAcceptedMessage(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
@@ -22,7 +24,7 @@ func TestConvertPDF_photosShowOneAcceptedMessage(t *testing.T) {
 	var live []int // dialogue messages that were not deleted
 	for i := 1; i <= 3; i++ {
 		h.bot.ProcessUpdate(ctx, photoUpdate(i))
-		require.Contains(t, h.lastText(), fmt.Sprintf("В PDF уже %d %s", i, []string{"страница", "страницы", "страницы"}[i-1]))
+		require.Contains(t, h.lastText(), fmt.Sprintf(converter.TextConvertPDFAccepted, i, []string{converter.PluralPageOne, converter.PluralPageFew, converter.PluralPageFew}[i-1]))
 		require.Contains(t, h.lastMarkup(), "conv:done", "Готово is on the same message")
 		require.Contains(t, h.lastMarkup(), "conv:cancel")
 	}
@@ -35,6 +37,7 @@ func TestConvertPDF_photosShowOneAcceptedMessage(t *testing.T) {
 }
 
 func TestConvertPDF_fileTipOncePerUser(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
@@ -55,6 +58,7 @@ func TestConvertPDF_fileTipOncePerUser(t *testing.T) {
 }
 
 func TestConvertCompress_formatQuestionOnlyForPNG(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		png      bool
@@ -100,6 +104,7 @@ func TestConvertCompress_formatQuestionOnlyForPNG(t *testing.T) {
 }
 
 func TestConvertPDFActions_fromCommand(t *testing.T) {
+	t.Parallel()
 	setup := func(t *testing.T) (*convHarness, int) {
 		h := newConvHarness(t)
 		h.serve("pdf-in", testPDF(t, 3))
@@ -139,7 +144,7 @@ func TestConvertPDFActions_fromCommand(t *testing.T) {
 		h.bot.ProcessUpdate(ctx, callbackOn("conv:p:keep", menu))
 		require.Contains(t, h.lastShown(), "Какие страницы")
 		h.bot.ProcessUpdate(ctx, callbackOn("conv:p:rot", menu))
-		require.Equal(t, "Эта кнопка уже не работает. Открой документ заново.", h.lastText(), "the menu step is over")
+		require.Equal(t, converter.TextStale, h.lastText(), "the menu step is over")
 
 		h.bot.ProcessUpdate(ctx, convText("1-2"))
 
@@ -151,7 +156,7 @@ func TestConvertPDFActions_fromCommand(t *testing.T) {
 		h, menu := setup(t)
 		ctx := t.Context()
 		h.bot.ProcessUpdate(ctx, callbackOn("conv:p:rot", menu+50))
-		require.Equal(t, "Эта кнопка уже не работает. Открой документ заново.", h.lastText())
+		require.Equal(t, converter.TextStale, h.lastText())
 		require.Empty(t, h.docs)
 	})
 
@@ -173,6 +178,7 @@ func TestConvertPDFActions_fromCommand(t *testing.T) {
 }
 
 func TestConvertCompress_resultNameFollowsTheSentFile(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		send func(h *convHarness)
@@ -199,6 +205,7 @@ func TestConvertCompress_resultNameFollowsTheSentFile(t *testing.T) {
 }
 
 func TestConvertMenu_progressThenResult(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
@@ -208,11 +215,12 @@ func TestConvertMenu_progressThenResult(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:q:"+string(src.ID)+":c1", menu))
 
 	require.Len(t, h.docs, 1)
-	require.Contains(t, h.editTexts, fmt.Sprintf("%d:⏳ Обрабатываю…", menu), "the menu turns into a progress note")
+	require.Contains(t, h.editTexts, fmt.Sprintf("%d:%s", menu, converter.TextConvertProgress), "the menu turns into a progress note")
 	require.Contains(t, h.deleted, menu, "and is removed with the result")
 }
 
 func TestConvertMenu_errorBringsMenuBack(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	h.serve("src", []byte("not an image"))

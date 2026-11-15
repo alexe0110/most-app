@@ -12,6 +12,7 @@ import (
 )
 
 func TestInspectable(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		doc  docsbot.Document
@@ -33,6 +34,7 @@ func TestInspectable(t *testing.T) {
 }
 
 func TestRenderInfo_groupsEscapesAndHidesEmpty(t *testing.T) {
+	t.Parallel()
 	info := convert.FileInfo{
 		Type: convert.FileJPEG, Size: 2 << 20,
 		Capture:  convert.Capture{Taken: time.Date(2026, 2, 19, 14, 22, 0, 0, time.UTC), Make: "Apple", Model: "iPhone <15>"},
@@ -54,6 +56,7 @@ func TestRenderInfo_groupsEscapesAndHidesEmpty(t *testing.T) {
 }
 
 func TestRenderInfo_cleanFile(t *testing.T) {
+	t.Parallel()
 	got := renderInfo("a.png", convert.FileInfo{Type: convert.FilePNG, Size: 100})
 
 	require.Contains(t, got, textInfoClean)
@@ -61,6 +64,7 @@ func TestRenderInfo_cleanFile(t *testing.T) {
 }
 
 func TestRenderInfo_cutsLongValues(t *testing.T) {
+	t.Parallel()
 	info := convert.FileInfo{Type: convert.FileDOCX, People: convert.People{Author: strings.Repeat("я", 500)}}
 
 	got := renderInfo("d", info)
@@ -70,6 +74,7 @@ func TestRenderInfo_cutsLongValues(t *testing.T) {
 }
 
 func TestRenderInfo_encryptedPDFIsNotCalledClean(t *testing.T) {
+	t.Parallel()
 	info := convert.FileInfo{Type: convert.FilePDF, PDF: &convert.PDFFacts{Encrypted: true}}
 
 	got := renderInfo("a.pdf", info)
@@ -80,12 +85,14 @@ func TestRenderInfo_encryptedPDFIsNotCalledClean(t *testing.T) {
 }
 
 func TestInfoKeyboard_cleanButtonOnlyWhenThereIsSomethingToClean(t *testing.T) {
+	t.Parallel()
 	require.Len(t, infoKeyboard("d1", true).InlineKeyboard[0], 2)
 	require.Len(t, infoKeyboard("d1", false).InlineKeyboard[0], 1)
 	require.Equal(t, cbMenuCancel, infoKeyboard("d1", false).InlineKeyboard[0][0].CallbackData, "back removes the screen")
 }
 
 func TestFileFormat_coversEveryType(t *testing.T) {
+	t.Parallel()
 	for _, ft := range []convert.FileType{
 		convert.FileJPEG, convert.FilePNG, convert.FileWebP, convert.FileHEIC,
 		convert.FilePDF, convert.FileDOCX, convert.FileXLSX, convert.FilePPTX,
@@ -95,6 +102,7 @@ func TestFileFormat_coversEveryType(t *testing.T) {
 }
 
 func TestRenderInfo_worstCaseFitsOneMessage(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("<&>я", 200) // the reader caps a value at 256 runes
 	info := convert.FileInfo{
 		Type: convert.FilePDF, Size: convert.MaxInputBytes,
@@ -114,6 +122,7 @@ func TestRenderInfo_worstCaseFitsOneMessage(t *testing.T) {
 }
 
 func TestRenderInfo_documentsCarryTheCaveat(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		info convert.FileInfo
@@ -135,16 +144,18 @@ func TestRenderInfo_documentsCarryTheCaveat(t *testing.T) {
 }
 
 func TestCleanedCaption(t *testing.T) {
+	t.Parallel()
 	photo := cleanedCaption(convert.FileInfo{Type: convert.FileJPEG, Blocks: []convert.MetaBlock{convert.BlockEXIF}, Location: &convert.GeoPoint{Lat: 1, Lon: 2}})
 	require.Contains(t, photo, "геолокация, EXIF")
 	require.NotContains(t, photo, textInfoDocCaveat)
 
 	doc := cleanedCaption(convert.FileInfo{Type: convert.FileDOCX, Blocks: []convert.MetaBlock{convert.BlockOfficeProps}})
-	require.Contains(t, doc, "свойства документа")
+	require.Contains(t, doc, blockOfficeProps)
 	require.Contains(t, doc, textInfoDocCaveat)
 }
 
 func TestNotInspectableText(t *testing.T) {
+	t.Parallel()
 	big := docsbot.Document{Kind: docsbot.KindDocument, MIME: mimePDF, FileSize: 21 << 20}
 	require.Equal(t, infoTooLargeText(), notInspectableText(big), "a stale button on a file over the limit")
 	require.Contains(t, infoTooLargeText(), "20\u00a0МБ", "the limit is taken from convert.MaxInputBytes")

@@ -2,6 +2,7 @@ package telegram_test
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/go-telegram/bot/models"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -76,7 +78,7 @@ func TestSearchBack_rerunsLastSearch(t *testing.T) {
 	}
 
 	require.Len(t, sent.edits, 2)
-	require.True(t, has(sent.edits, "Нашёл 1 документ:"), "edits %q", sent.edits)
+	require.True(t, has(sent.edits, fmt.Sprintf(telegram.TextFoundTitle, 1, telegram.PluralDocumentOne)), "edits %q", sent.edits)
 	require.Equal(t, []docsbot.EventName{docsbot.EventSearch}, repo.EventNames(), "redrawing the results is not a new search")
 }
 

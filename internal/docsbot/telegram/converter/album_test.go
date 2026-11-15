@@ -35,6 +35,7 @@ func albumHarness(t *testing.T) (*convHarness, *docsbottest.FakeTimer) {
 }
 
 func TestConvertAlbum_shuffledPhotosMakeOnePDFInOrder(t *testing.T) {
+	t.Parallel()
 	h, ft := albumHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	for _, n := range []int{3, 1, 4, 2} {
@@ -58,6 +59,7 @@ func TestConvertAlbum_shuffledPhotosMakeOnePDFInOrder(t *testing.T) {
 }
 
 func TestConvertAlbum_saveOneByOneShowsGroupPicker(t *testing.T) {
+	t.Parallel()
 	h, ft := albumHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	for n := 1; n <= 2; n++ {
@@ -77,6 +79,7 @@ func TestConvertAlbum_saveOneByOneShowsGroupPicker(t *testing.T) {
 }
 
 func TestConvertAlbum_tooBigRefused(t *testing.T) {
+	t.Parallel()
 	h, ft := albumHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	for n := 1; n <= 2; n++ {
@@ -95,6 +98,7 @@ func TestConvertAlbum_tooBigRefused(t *testing.T) {
 }
 
 func TestConvertAlbum_tooManyPhotosKeepsOldPicker(t *testing.T) {
+	t.Parallel()
 	h, ft := albumHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	for n := 1; n <= 21; n++ {
@@ -108,6 +112,7 @@ func TestConvertAlbum_tooManyPhotosKeepsOldPicker(t *testing.T) {
 }
 
 func TestConvertAlbum_mixedAlbumKeepsOldPicker(t *testing.T) {
+	t.Parallel()
 	h, ft := albumHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, albumImageUpdate(1, 1000))
@@ -123,6 +128,7 @@ func TestConvertAlbum_mixedAlbumKeepsOldPicker(t *testing.T) {
 }
 
 func TestConvertAlbum_singlePhotoKeepsPicker(t *testing.T) {
+	t.Parallel()
 	h, ft := albumHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, photoUpdate(1))
@@ -133,6 +139,7 @@ func TestConvertAlbum_singlePhotoKeepsPicker(t *testing.T) {
 }
 
 func TestConvertAlbum_tokenBelongsToTheTelegramUserWhoSentIt(t *testing.T) {
+	t.Parallel()
 	h, ft := albumHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	for n := 1; n <= 2; n++ {
@@ -155,6 +162,7 @@ func TestConvertAlbum_tokenBelongsToTheTelegramUserWhoSentIt(t *testing.T) {
 }
 
 func TestConvertAlbum_unknownTokenAndNoUser(t *testing.T) {
+	t.Parallel()
 	h, ft := albumHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	for n := 1; n <= 2; n++ {

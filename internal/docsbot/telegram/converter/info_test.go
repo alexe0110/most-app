@@ -16,6 +16,7 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
 	"github.com/alexe0110/most-app/internal/platform/convert"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
@@ -74,6 +75,7 @@ func cleanFile(t *testing.T, h *convHarness) string {
 }
 
 func TestInfoFlow_showsWhatIsInsideEachFormat(t *testing.T) {
+	t.Parallel()
 	phone := []string{"Apple", "iPhone 15 Pro", "17.3.1", "19.02.2026 14:22", "55.75583, 37.61778",
 		"maps.google.com/?q=55.755833,37.617778", "Открыть на карте", "Видно, где сделан снимок"}
 	tests := []struct {
@@ -109,6 +111,7 @@ func TestInfoFlow_showsWhatIsInsideEachFormat(t *testing.T) {
 }
 
 func TestInfoFlow_compressedPhotoIsNotDownloaded(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	h.repo.Seed(docsbot.Document{
 		ID: infoDocID, UserID: docsbottest.TestUserID, Status: docsbot.StatusPending, Kind: docsbot.KindPhoto,
@@ -117,13 +120,14 @@ func TestInfoFlow_compressedPhotoIsNotDownloaded(t *testing.T) {
 
 	openInfo(t, h)
 
-	require.Equal(t, "Telegram уже убрал метаданные. Чтобы проверить оригинал, отправь как файл", h.lastText())
+	require.Equal(t, converter.TextInfoCompressedPhoto, h.lastText())
 	require.NotContains(t, h.lastMarkup(), "conv:cl:")
 	require.Empty(t, h.downloads)
 	require.Empty(t, h.repo.Events)
 }
 
 func TestInfoFlow_cleanFileOffersNothingToClean(t *testing.T) {
+	t.Parallel()
 	clean, err := convert.Strip(t.Context(), fixtureFile(t, "gps.jpg"))
 	require.NoError(t, err)
 	h := newConvHarness(t)
@@ -131,13 +135,14 @@ func TestInfoFlow_cleanFileOffersNothingToClean(t *testing.T) {
 
 	openInfo(t, h)
 
-	require.Contains(t, h.lastText(), "Метаданных нет — файл чистый")
+	require.Contains(t, h.lastText(), converter.TextInfoClean)
 	require.NotContains(t, h.lastText(), "Очистить")
 	require.NotContains(t, h.lastMarkup(), "conv:cl:")
 	require.Contains(t, h.lastMarkup(), "conv:x")
 }
 
 func TestInfoFlow_cleanSendsACopyWithKeepButtons(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := fixtureFile(t, "gps.jpg")
 	seedFile(h, "image/jpeg", "Квартира", src)
@@ -152,7 +157,7 @@ func TestInfoFlow_cleanSendsACopyWithKeepButtons(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, after.Clean())
 	require.Contains(t, h.docMarkups[0], "Сохранить очищенный")
-	require.Contains(t, h.docMarkups[0], "Сохранить оригинал")
+	require.Contains(t, h.docMarkups[0], converter.BtnKeepOriginal)
 	require.Contains(t, h.editTexts[0], "Обрабатываю", "the info screen becomes the progress message")
 	require.NotContains(t, h.editMarkups[0], "conv:", "with no buttons while it works")
 	require.Contains(t, h.deleted, infoMsg, "and is removed at the end")
@@ -163,6 +168,7 @@ func TestInfoFlow_cleanSendsACopyWithKeepButtons(t *testing.T) {
 }
 
 func TestInfoFlow_everyButtonFitsTelegramLimit(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	seedFile(h, "image/jpeg", "a", fixtureFile(t, "gps.jpg"))
 	openInfo(t, h)
@@ -192,6 +198,7 @@ func TestInfoFlow_everyButtonFitsTelegramLimit(t *testing.T) {
 }
 
 func TestInfoFlow_keepCleanedReplacesTheFileThenCategorySavesIt(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	seedFile(h, "image/jpeg", "Квартира", fixtureFile(t, "gps.jpg"))
 	tok := cleanFile(t, h)
@@ -211,7 +218,7 @@ func TestInfoFlow_keepCleanedReplacesTheFileThenCategorySavesIt(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:kc:"+tok, 60)) // double tap
 
 	require.Equal(t, version+1, h.repo.Docs[infoDocID].MetaVersion, "replaced once")
-	require.Equal(t, "Эта кнопка уже не работает. Преобразуй файл ещё раз.", h.lastText())
+	require.Equal(t, converter.TextConvertResultOld, h.lastText())
 
 	h.bot.ProcessUpdate(ctx, callbackOn("d:cat:"+string(infoDocID)+":"+string(docsbot.CatPassport), 61))
 
@@ -222,6 +229,7 @@ func TestInfoFlow_keepCleanedReplacesTheFileThenCategorySavesIt(t *testing.T) {
 }
 
 func TestInfoFlow_keepOriginalLeavesTheFile(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	seedFile(h, "image/jpeg", "Квартира", fixtureFile(t, "gps.jpg"))
 	tok := cleanFile(t, h)
@@ -238,10 +246,11 @@ func TestInfoFlow_keepOriginalLeavesTheFile(t *testing.T) {
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:kc:"+tok, 60))
 
 	require.Equal(t, "file-Квартира", h.repo.Docs[infoDocID].TgFileID, "the choice is made once")
-	require.Equal(t, "Эта кнопка уже не работает. Преобразуй файл ещё раз.", h.lastText())
+	require.Equal(t, converter.TextConvertResultOld, h.lastText())
 }
 
 func TestInfoFlow_keepCleanedOfADeletedDocument(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	seedFile(h, "image/jpeg", "a", fixtureFile(t, "gps.jpg"))
 	tok := cleanFile(t, h)
@@ -249,11 +258,12 @@ func TestInfoFlow_keepCleanedOfADeletedDocument(t *testing.T) {
 
 	h.bot.ProcessUpdate(infoCtx(t), callbackOn("conv:kc:"+tok, 60))
 
-	require.Equal(t, "Этого документа уже нет.", h.lastText())
+	require.Equal(t, converter.TextGone, h.lastText())
 	require.Empty(t, h.repo.Docs, "nothing is resurrected")
 }
 
 func TestInfoFlow_someoneElsesDocumentAndTokens(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	seedFile(h, "image/jpeg", "a", fixtureFile(t, "gps.jpg"))
 	tok := cleanFile(t, h)
@@ -266,11 +276,11 @@ func TestInfoFlow_someoneElsesDocumentAndTokens(t *testing.T) {
 	}
 
 	press("conv:i:"+string(infoDocID), 70)
-	require.Equal(t, "Этого документа уже нет.", h.lastText())
+	require.Equal(t, converter.TextGone, h.lastText())
 	press("conv:cl:"+string(infoDocID), 71)
-	require.Equal(t, "Этого документа уже нет.", h.lastText())
+	require.Equal(t, converter.TextGone, h.lastText())
 	press("conv:kc:"+tok, 72)
-	require.Equal(t, "Эта кнопка уже не работает. Преобразуй файл ещё раз.", h.lastText(), "a token belongs to the user it was made for")
+	require.Equal(t, converter.TextConvertResultOld, h.lastText(), "a token belongs to the user it was made for")
 	press("conv:ko:"+tok, 73)
 
 	require.Equal(t, downloads, len(h.downloads), "a stranger can't make the bot read the file")
@@ -282,6 +292,7 @@ func TestInfoFlow_someoneElsesDocumentAndTokens(t *testing.T) {
 }
 
 func TestInfoFlow_brokenFile(t *testing.T) {
+	t.Parallel()
 	broken := append([]byte{0xFF, 0xD8, 0xFF, 0xE1, 0x7F, 0xFF}, []byte("PRIVATE-MARKER")...)
 	tests := []struct {
 		name, mime string
@@ -314,12 +325,13 @@ func TestInfoFlow_brokenFile(t *testing.T) {
 }
 
 func TestInfoFlow_downloadFailures(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	seedFile(h, "image/jpeg", "a", fixtureFile(t, "gps.jpg"))
 	h.failDownloads = true
 
 	openInfo(t, h)
-	require.Equal(t, "Не удалось получить файл. Попробуй ещё раз.", h.lastText())
+	require.Equal(t, converter.TextConvertDownloadFailed, h.lastText())
 	require.Contains(t, h.lastMarkup(), "conv:x")
 
 	h.bot.ProcessUpdate(infoCtx(t), callbackOn("conv:cl:"+string(infoDocID), infoMsg))
@@ -329,6 +341,7 @@ func TestInfoFlow_downloadFailures(t *testing.T) {
 }
 
 func TestInfoFlow_sendFailureKeepsTheCleanButton(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	seedFile(h, "image/jpeg", "a", fixtureFile(t, "gps.jpg"))
 	h.failDocs = true
@@ -341,6 +354,7 @@ func TestInfoFlow_sendFailureKeepsTheCleanButton(t *testing.T) {
 }
 
 func TestInfoFlow_tooLargeAndUnsupportedDocuments(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		doc  docsbot.Document
@@ -387,6 +401,7 @@ func customDOCX(t *testing.T, author string) []byte {
 }
 
 func TestInfoFlow_valuesFromTheFileAreEscapedAndBounded(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	author := `&lt;b&gt;Ann&lt;/b&gt; &amp; &lt;a href="x"&gt;` + strings.Repeat("я", 400000)
 	seedFile(h, docxMIME, strings.Repeat("Ж", 5000)+"<i>.docx", customDOCX(t, author))
@@ -401,6 +416,7 @@ func TestInfoFlow_valuesFromTheFileAreEscapedAndBounded(t *testing.T) {
 }
 
 func TestInfoFlow_logsAndEventsCarryNoMetadata(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	seedFile(h, "image/jpeg", "Квартира-Иванова", fixtureFile(t, "gps.jpg"))
 
@@ -420,6 +436,7 @@ func TestInfoFlow_logsAndEventsCarryNoMetadata(t *testing.T) {
 }
 
 func TestInfoFlow_logsOfOtherFormatsCarryNoMetadata(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct{ file, mime string }{
 		{"word.pdf", "application/pdf"},
 		{"author.docx", docxMIME},
@@ -441,6 +458,7 @@ func TestInfoFlow_logsOfOtherFormatsCarryNoMetadata(t *testing.T) {
 }
 
 func TestInfoFlow_doubleTapOnCleanSendsOneCopy(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	seedFile(h, "image/jpeg", "a", fixtureFile(t, "gps.jpg"))
 	h.mu.Lock()
@@ -468,6 +486,7 @@ func TestInfoFlow_doubleTapOnCleanSendsOneCopy(t *testing.T) {
 }
 
 func TestInfoFlow_concurrentTapsOnTheKeepButtons(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	seedFile(h, "image/jpeg", "a", fixtureFile(t, "gps.jpg"))
 	tok := cleanFile(t, h)

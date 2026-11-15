@@ -8,6 +8,7 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -19,7 +20,7 @@ func TestRetry_failedDocumentIsRequeued(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallback("d:rt:"+string(doc.ID)))
 
 	require.Equal(t, docsbot.BackupPending, repo.Docs[doc.ID].BackupStatus)
-	require.True(t, has(sent.edits, "Повторяю загрузку"), "edits %q", sent.edits)
+	require.True(t, has(sent.edits, telegram.TextRetryQueued), "edits %q", sent.edits)
 	require.Equal(t, []string{""}, sent.answers, "no toast for a successful retry")
 }
 
@@ -32,7 +33,7 @@ func TestRetry_notFailedShowsQuietToast(t *testing.T) {
 
 			b.ProcessUpdate(ctx, dataCallback("d:rt:"+string(doc.ID)))
 
-			require.Equal(t, []string{"Уже в работе или готово"}, sent.answers)
+			require.Equal(t, []string{telegram.ToastNotRetryable}, sent.answers)
 			require.Empty(t, sent.edits, "the card must not be rewritten")
 			require.Empty(t, sent.texts, "and no extra message is sent")
 			require.Equal(t, st, repo.Docs[doc.ID].BackupStatus)
@@ -48,7 +49,7 @@ func TestRetry_foreignDocumentIsIgnored(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallback("d:rt:"+string(doc.ID)))
 
 	require.Equal(t, docsbot.BackupFailed, repo.Docs[doc.ID].BackupStatus)
-	require.Equal(t, []string{"Уже в работе или готово"}, sent.answers)
+	require.Equal(t, []string{telegram.ToastNotRetryable}, sent.answers)
 }
 
 func TestRetry_earlyExitsStillAnswerCallback(t *testing.T) {

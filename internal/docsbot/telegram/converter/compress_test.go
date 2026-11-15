@@ -12,10 +12,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 func TestConvert_compressPreset(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 
@@ -35,6 +37,7 @@ func TestConvert_compressPreset(t *testing.T) {
 }
 
 func TestConvert_compressCustomLimit(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	h.servePNG()
 	ctx := t.Context()
@@ -51,6 +54,7 @@ func TestConvert_compressCustomLimit(t *testing.T) {
 }
 
 func TestConvert_customLimitRejectsJunk(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 
@@ -66,6 +70,7 @@ func TestConvert_customLimitRejectsJunk(t *testing.T) {
 
 // Two images sent in a row in compress mode: only the first moves the dialogue.
 func TestConvert_compressTwoImagesAskLimitOnce(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
@@ -82,12 +87,13 @@ func TestConvert_compressTwoImagesAskLimitOnce(t *testing.T) {
 	wg.Wait()
 
 	require.Empty(t, h.downloads, "the image is downloaded when the compression runs")
-	require.Equal(t, 1, strings.Count(h.allTexts(), "До какого размера сжать?"))
+	require.Equal(t, 1, strings.Count(h.allTexts(), converter.TextConvertChooseLimit))
 }
 
 // The session keeps the file id: the image is fetched when the compression runs,
 // and a failed fetch leaves the buttons so the user can try again.
 func TestConvert_compressDownloadsWhenItRuns(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
@@ -117,6 +123,7 @@ func TestConvert_compressDownloadsWhenItRuns(t *testing.T) {
 // gone, it grew past the Bot API limit, Telegram is slow), the user is told once,
 // nothing is sent, and the session stays so the same tap can be retried.
 func TestConvert_compressDownloadFailureKeepsTheSession(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		err  error
@@ -156,6 +163,7 @@ func TestConvert_compressDownloadFailureKeepsTheSession(t *testing.T) {
 // A stale tap after a failed fetch must not run the compression twice or on a
 // session that is not at the format step.
 func TestConvert_compressTapAfterFailureOnOldMessageIsStale(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
@@ -174,6 +182,7 @@ func TestConvert_compressTapAfterFailureOnOldMessageIsStale(t *testing.T) {
 // declared larger is refused at once and the session keeps waiting for an image.
 // An undeclared size (0) is let through: the fetch decides later.
 func TestConvert_compressImageSizeAtIntake(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		size      int64
@@ -197,14 +206,14 @@ func TestConvert_compressImageSizeAtIntake(t *testing.T) {
 
 			require.Empty(t, h.downloads)
 			if tt.wantLimit {
-				require.Contains(t, h.allTexts(), "До какого размера сжать?")
+				require.Contains(t, h.allTexts(), converter.TextConvertChooseLimit)
 				return
 			}
-			require.NotContains(t, h.allTexts(), "До какого размера сжать?")
+			require.NotContains(t, h.allTexts(), converter.TextConvertChooseLimit)
 			require.Contains(t, h.lastText(), "Не удалось получить файл")
 
 			h.bot.ProcessUpdate(ctx, photoUpdate(2))
-			require.Contains(t, h.allTexts(), "До какого размера сжать?", "the session still waits for an image")
+			require.Contains(t, h.allTexts(), converter.TextConvertChooseLimit, "the session still waits for an image")
 		})
 	}
 }

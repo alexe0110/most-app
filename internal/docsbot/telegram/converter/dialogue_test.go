@@ -13,6 +13,7 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -24,6 +25,7 @@ func (h *convHarness) sends() int {
 }
 
 func TestConvertDialogue_editFallback(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 
@@ -43,7 +45,7 @@ func TestConvertDialogue_editFallback(t *testing.T) {
 	// The old message is dead; the new one drives the session and is edited again.
 	h.failEdits = false
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:done", start))
-	require.Equal(t, "Эта кнопка уже не работает. Открой документ заново.", h.lastText())
+	require.Equal(t, converter.TextStale, h.lastText())
 	h.bot.ProcessUpdate(ctx, photoUpdate(1)) // the dialogue moves down: the prompt is replaced by a new message
 	accepted := h.lastMsg()
 	require.Contains(t, h.deleted, moved)
@@ -52,10 +54,11 @@ func TestConvertDialogue_editFallback(t *testing.T) {
 
 	require.Len(t, h.docs, 1)
 	require.Equal(t, sendsBefore, h.sends(), "the progress is an edit of the live message")
-	require.Contains(t, h.editTexts, fmt.Sprintf("%d:⏳ Обрабатываю…", accepted))
+	require.Contains(t, h.editTexts, fmt.Sprintf("%d:%s", accepted, converter.TextConvertProgress))
 }
 
 func TestConvertDialogue_notModifiedIsSuccess(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
@@ -69,6 +72,7 @@ func TestConvertDialogue_notModifiedIsSuccess(t *testing.T) {
 }
 
 func TestConvertDialogue_resultReplacesProgress(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		failDeletes bool
@@ -92,18 +96,19 @@ func TestConvertDialogue_resultReplacesProgress(t *testing.T) {
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:done", dialogue))
 
 			require.Len(t, h.docs, 1)
-			require.Contains(t, h.editTexts, fmt.Sprintf("%d:⏳ Обрабатываю…", dialogue))
+			require.Contains(t, h.editTexts, fmt.Sprintf("%d:%s", dialogue, converter.TextConvertProgress))
 			require.Equal(t, tt.wantDeleted, slices.Contains(h.deleted, dialogue))
-			require.Equal(t, tt.wantDone, slices.Contains(h.editTexts, fmt.Sprintf("%d:Готово ✅", dialogue)))
+			require.Equal(t, tt.wantDone, slices.Contains(h.editTexts, fmt.Sprintf("%d:%s", dialogue, converter.TextConvertDone)))
 			if tt.wantDone {
 				// An omitted reply_markup is how show keeps the old keyboard.
-				require.Contains(t, h.editMarkups, fmt.Sprintf("%d:Готово ✅|", dialogue), "no reply_markup field")
+				require.Contains(t, h.editMarkups, fmt.Sprintf("%d:%s|", dialogue, converter.TextConvertDone), "no reply_markup field")
 			}
 		})
 	}
 }
 
 func TestConvertDialogue_photoMovesDialogueDown(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
@@ -117,6 +122,7 @@ func TestConvertDialogue_photoMovesDialogueDown(t *testing.T) {
 }
 
 func TestConvertDialogue_errorStaysInDialogue(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	h.serve("large", []byte("not an image"))
 	ctx := t.Context()
@@ -137,6 +143,7 @@ func TestConvertDialogue_errorStaysInDialogue(t *testing.T) {
 }
 
 func TestConvertDialogue_editAndSendBothFailKeepsMessage(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
@@ -151,6 +158,7 @@ func TestConvertDialogue_editAndSendBothFailKeepsMessage(t *testing.T) {
 }
 
 func TestConvert_newCommandStripsPreviousDialogue(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
@@ -162,6 +170,7 @@ func TestConvert_newCommandStripsPreviousDialogue(t *testing.T) {
 }
 
 func TestConvertPDFActions_offStepInputAtMenu(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	h.serve("pdf-in", testPDF(t, 2))
 	ctx := t.Context()
@@ -182,6 +191,7 @@ func TestConvertPDFActions_offStepInputAtMenu(t *testing.T) {
 // A result Telegram refused is not "done": the progress note turns into an error
 // (the dialogue is not deleted) and the user can retry where the step allows it.
 func TestConvertDialogue_resultSendFailureKeepsDialogue(t *testing.T) {
+	t.Parallel()
 	const failed = "Не удалось отправить файл"
 	tests := []struct {
 		name        string
@@ -250,7 +260,7 @@ func TestConvertDialogue_resultSendFailureKeepsDialogue(t *testing.T) {
 
 			require.Contains(t, h.lastShown(), failed)
 			require.NotContains(t, h.deleted, dialogue, "the dialogue message is not removed")
-			require.NotContains(t, h.editTexts, fmt.Sprintf("%d:Готово ✅", dialogue))
+			require.NotContains(t, h.editTexts, fmt.Sprintf("%d:%s", dialogue, converter.TextConvertDone))
 			if tt.wantSession {
 				h.failDocs = false
 				h.bot.ProcessUpdate(t.Context(), callbackOn("conv:cancel", dialogue))
@@ -261,6 +271,7 @@ func TestConvertDialogue_resultSendFailureKeepsDialogue(t *testing.T) {
 }
 
 func TestConvertDialogue_moveDownSendFailureKeepsDialogue(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
@@ -302,6 +313,7 @@ func holdQuick(t *testing.T, h *convHarness, id docsbot.DocumentID, msgID int) (
 }
 
 func TestConvertMenu_doubleTap(t *testing.T) {
+	t.Parallel()
 	t.Run("quick op: refused tap only answers stale and keeps buttons", func(t *testing.T) {
 		h := newConvHarness(t)
 		src := seedSource(h, docsbot.StatusSaved)
@@ -311,7 +323,7 @@ func TestConvertMenu_doubleTap(t *testing.T) {
 
 		h.bot.ProcessUpdate(ctx, callbackOn("conv:q:"+string(src.ID)+":c1", 55))
 
-		require.Equal(t, "Эта кнопка уже не работает. Открой документ заново.", h.lastText())
+		require.Equal(t, converter.TextStale, h.lastText())
 		require.Equal(t, edits, h.edits, "the keyboard is not cleared")
 		release()
 		require.Len(t, h.docs, 1, "the first tap ran once")
@@ -344,6 +356,7 @@ func TestConvertMenu_doubleTap(t *testing.T) {
 }
 
 func TestConvert_cancelStripsDialogueKeyboard(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
@@ -355,7 +368,7 @@ func TestConvert_cancelStripsDialogueKeyboard(t *testing.T) {
 	require.Contains(t, h.lastText(), "Вышел из конвертера")
 }
 
-const staleReply = "Эта кнопка уже не работает. Открой документ заново."
+const staleReply = converter.TextStale
 
 // liveMessages lists the sent messages (ids above the harness start) that were
 // not deleted.
@@ -374,6 +387,7 @@ func (h *convHarness) liveMessages() []int {
 // An album sent in PDF mode arrives as parallel updates: the chat must end with
 // exactly one live dialogue message that counts every page, and one PDF.
 func TestConvertPDF_parallelAlbumLeavesOneDialogue(t *testing.T) {
+	t.Parallel()
 	const photos = 8
 	h := newConvHarness(t)
 	ctx := t.Context()
@@ -404,6 +418,7 @@ func TestConvertPDF_parallelAlbumLeavesOneDialogue(t *testing.T) {
 // Every edit and delete is refused (messages too old): the dialogue still
 // finishes, one new message per step, and the stale ones stay dead.
 func TestConvertDialogue_everythingRefusedStillFinishes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		run  func(h *convHarness)
@@ -439,6 +454,7 @@ func TestConvertDialogue_everythingRefusedStillFinishes(t *testing.T) {
 }
 
 func TestConvertCompress_badCustomLimitKeepsStep(t *testing.T) {
+	t.Parallel()
 	for _, text := range []string{"0", "-5", "abc", "", "  ", "20481", "99999999999999999999", "1e3", "1.5", "١٢٣"} {
 		t.Run(text, func(t *testing.T) {
 			h := newConvHarness(t)
@@ -464,6 +480,7 @@ func TestConvertCompress_badCustomLimitKeepsStep(t *testing.T) {
 // A second PDF at the operation menu, a photo at the range prompt and other
 // off-step input change nothing: the menu still works afterwards.
 func TestConvertPDFActions_offStepInputKeepsMenu(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	h.serve("pdf-in", testPDF(t, 2))
 	ctx := t.Context()
@@ -485,6 +502,7 @@ func TestConvertPDFActions_offStepInputKeepsMenu(t *testing.T) {
 // A cancelled context (shutdown mid-dialogue) must not panic or leave the
 // session claimed forever.
 func TestConvertDialogue_cancelledContextDoesNotPanic(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	h.bot.ProcessUpdate(t.Context(), commandUpdate("convert"))
 	h.bot.ProcessUpdate(t.Context(), callbackOn("conv:compress", h.lastMsg()))

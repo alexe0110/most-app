@@ -11,6 +11,7 @@ import (
 )
 
 func TestCallbackDataFitsTelegramLimit(t *testing.T) {
+	t.Parallel()
 	// A UUID doc id is the longest id we use (36 bytes).
 	id := docsbot.DocumentID("123e4567-e89b-12d3-a456-426614174000")
 	token := tg.NewToken()
@@ -40,6 +41,7 @@ func TestCallbackDataFitsTelegramLimit(t *testing.T) {
 }
 
 func TestPDFKeyboards_layout(t *testing.T) {
+	t.Parallel()
 	id := docsbot.DocumentID("123e4567-e89b-12d3-a456-426614174000")
 	tests := []struct {
 		name string

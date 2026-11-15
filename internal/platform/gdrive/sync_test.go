@@ -107,6 +107,7 @@ func syncOps() []syncOp {
 // Every sync operation maps HTTP statuses the same way: 401 is a revoked
 // access, 404 a missing file, anything else a plain retryable error.
 func TestSyncOps_statusMapping(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		status      int
 		revoked     bool
@@ -134,6 +135,7 @@ func TestSyncOps_statusMapping(t *testing.T) {
 }
 
 func TestSyncOps_revokedOAuth(t *testing.T) {
+	t.Parallel()
 	for _, op := range syncOps() {
 		t.Run(op.name, func(t *testing.T) {
 			d := &syncDrive{}
@@ -145,6 +147,7 @@ func TestSyncOps_revokedOAuth(t *testing.T) {
 }
 
 func TestSyncOps_cancelledContext(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	d := &syncDrive{name: "old.pdf", parents: []string{"p1"}}
@@ -155,6 +158,7 @@ func TestSyncOps_cancelledContext(t *testing.T) {
 	require.Empty(t, d.patches)
 }
 func TestTrash(t *testing.T) {
+	t.Parallel()
 	d := &syncDrive{}
 	require.NoError(t, newSyncSvc(t, d, fakeClients{}).Trash(context.Background(), "u1", "f1"))
 	require.Len(t, d.patches, 1)
@@ -171,6 +175,7 @@ func TestTrash(t *testing.T) {
 }
 
 func TestReplace(t *testing.T) {
+	t.Parallel()
 	d := &syncDrive{}
 	require.NoError(t, newSyncSvc(t, d, fakeClients{}).Replace(context.Background(), "u1", "f1", "application/pdf", []byte("PDFDATA")))
 	require.Len(t, d.patches, 1)
@@ -189,6 +194,7 @@ func TestReplace(t *testing.T) {
 }
 
 func TestExists(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		drive   *syncDrive
@@ -224,6 +230,7 @@ func TestExists(t *testing.T) {
 }
 
 func TestReplace_targetsSameFileAndKeepsMetadata(t *testing.T) {
+	t.Parallel()
 	d := &syncDrive{}
 	require.NoError(t, newSyncSvc(t, d, fakeClients{}).Replace(context.Background(), "u1", "f/1", "image/png", []byte("PNG")))
 	require.Len(t, d.patches, 1)
@@ -238,6 +245,7 @@ func TestReplace_targetsSameFileAndKeepsMetadata(t *testing.T) {
 // files.get still answers 200. The sync must report it as gone (ErrFileNotFound)
 // instead of renaming or replacing a trashed file and calling it a success.
 func TestSyncOps_userTrashedFileIsMissing(t *testing.T) {
+	t.Parallel()
 	for _, op := range syncOps() {
 		if op.name == "trash" {
 			continue

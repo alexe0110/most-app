@@ -25,6 +25,7 @@ func requireDriveLogClean(t *testing.T, out string) {
 }
 
 func TestUpload_logsDriveAPIWithoutLeaks(t *testing.T) {
+	t.Parallel()
 	t.Run("transport error", func(t *testing.T) {
 		srv := httptest.NewServer(http.NotFoundHandler())
 		url := srv.URL
@@ -110,6 +111,7 @@ type clientFunc func() *http.Client
 func (f clientFunc) Client(context.Context, string) (*http.Client, error) { return f(), nil }
 
 func TestUpload_storageQuotaIsErrStorageFull(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		status  int

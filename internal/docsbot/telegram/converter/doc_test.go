@@ -12,10 +12,12 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 func TestConvertQA_saveAfterSourceDeleted(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := compressFromMenu(t, h, src.ID)
@@ -29,6 +31,7 @@ func TestConvertQA_saveAfterSourceDeleted(t *testing.T) {
 }
 
 func TestConvertQA_unknownOrGarbageTokens(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
@@ -41,6 +44,7 @@ func TestConvertQA_unknownOrGarbageTokens(t *testing.T) {
 }
 
 func TestConvertQA_saveHitsPendingLimit(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := compressFromMenu(t, h, src.ID)
@@ -60,6 +64,7 @@ func TestConvertQA_saveHitsPendingLimit(t *testing.T) {
 }
 
 func TestConvertQA_quickOnMalformedData(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
@@ -95,6 +100,7 @@ func compressFromMenu(t *testing.T, h *convHarness, id docsbot.DocumentID) strin
 }
 
 func TestConvertDoc_cardCompressThenSave(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := compressFromMenu(t, h, src.ID)
@@ -122,6 +128,7 @@ func TestConvertDoc_cardCompressThenSave(t *testing.T) {
 }
 
 func TestConvertDoc_skipSavesNothing(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := compressFromMenu(t, h, src.ID)
@@ -135,6 +142,7 @@ func TestConvertDoc_skipSavesNothing(t *testing.T) {
 }
 
 func TestConvertDoc_pdfFromCard(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
@@ -144,10 +152,11 @@ func TestConvertDoc_pdfFromCard(t *testing.T) {
 	require.Len(t, h.docs, 1)
 	require.Equal(t, "Паспорт-PDF.pdf", h.docs[0].filename)
 	require.True(t, strings.HasPrefix(string(h.docs[0].data), "%PDF"))
-	require.Equal(t, "Готово: 1 страница.", h.docs[0].caption)
+	require.Equal(t, fmt.Sprintf(converter.TextResultPages, 1, converter.PluralPageOne), h.docs[0].caption)
 }
 
 func TestConvertDoc_webpToJPGHasNoCaption(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	h.serve("webp-src", tinyWebP(t))
 	src := h.repo.Seed(docsbot.Document{
@@ -163,6 +172,7 @@ func TestConvertDoc_webpToJPGHasNoCaption(t *testing.T) {
 }
 
 func TestConvertDoc_pendingSourceSavedInOther(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusPending)
 	tok := compressFromMenu(t, h, src.ID)
@@ -181,6 +191,7 @@ func TestConvertDoc_pendingSourceSavedInOther(t *testing.T) {
 }
 
 func TestConvertDoc_foreignDocumentRefused(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	other := h.repo.Seed(docsbot.Document{
 		UserID: "someone-else", Status: docsbot.StatusSaved, Kind: docsbot.KindPhoto,
@@ -195,6 +206,7 @@ func TestConvertDoc_foreignDocumentRefused(t *testing.T) {
 }
 
 func TestConvertDoc_nonImageRefused(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	pdf := h.repo.Seed(docsbot.Document{
 		UserID: docsbottest.TestUserID, Status: docsbot.StatusSaved, Kind: docsbot.KindDocument, MIME: "application/msword",
@@ -208,6 +220,7 @@ func TestConvertDoc_nonImageRefused(t *testing.T) {
 }
 
 func TestConvertDoc_menuCancelDeletesMenu(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
@@ -217,6 +230,7 @@ func TestConvertDoc_menuCancelDeletesMenu(t *testing.T) {
 }
 
 func TestConvert_commandResultSavedOnlyOnTap(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
@@ -240,6 +254,7 @@ func TestConvert_commandResultSavedOnlyOnTap(t *testing.T) {
 }
 
 func TestConvertDoc_strangerCannotSpendTheResult(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := compressFromMenu(t, h, src.ID)
@@ -263,6 +278,7 @@ func TestConvertDoc_strangerCannotSpendTheResult(t *testing.T) {
 // from Telegram, over the limit, timeout) the user sees the failure on the menu
 // and can pick another operation.
 func TestConvertDoc_quickDownloadFailureKeepsTheMenu(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		err  error

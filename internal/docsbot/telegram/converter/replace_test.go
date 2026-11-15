@@ -8,6 +8,7 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -33,18 +34,20 @@ func lastCaption(h *convHarness) string {
 }
 
 func TestConvertReplace_keyboard(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	resultFromCard(t, h, src.ID)
 
 	require.Contains(t, h.docMarkups[0], "Сохранить как новый")
 	require.Contains(t, h.docMarkups[0], "Заменить оригинал")
-	require.Contains(t, h.docMarkups[0], "Не сохранять")
+	require.Contains(t, h.docMarkups[0], converter.BtnSkipResult)
 	require.Contains(t, h.docMarkups[0], "conv:save:")
 	require.Contains(t, h.docMarkups[0], "conv:skip:")
 }
 
 func TestConvertReplace_commandResultKeyboardUnchanged(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
@@ -56,12 +59,13 @@ func TestConvertReplace_commandResultKeyboardUnchanged(t *testing.T) {
 
 	require.Len(t, h.docMarkups, 1)
 	require.Contains(t, h.docMarkups[0], "Сохранить в документы")
-	require.Contains(t, h.docMarkups[0], "Не сохранять")
+	require.Contains(t, h.docMarkups[0], converter.BtnSkipResult)
 	require.NotContains(t, h.docMarkups[0], "conv:rp:")
 	require.NotContains(t, h.docMarkups[0], "Заменить")
 }
 
 func TestConvertReplace_askThenConfirm(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := resultFromCard(t, h, src.ID)
@@ -88,6 +92,7 @@ func TestConvertReplace_askThenConfirm(t *testing.T) {
 }
 
 func TestConvertReplace_cancelRestoresButtons(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := resultFromCard(t, h, src.ID)
@@ -106,6 +111,7 @@ func TestConvertReplace_cancelRestoresButtons(t *testing.T) {
 }
 
 func TestConvertReplace_staleToken(t *testing.T) {
+	t.Parallel()
 	for _, data := range []string{"conv:rp:", "conv:rpy:", "conv:rpn:"} {
 		t.Run(data, func(t *testing.T) {
 			h := newConvHarness(t)
@@ -122,6 +128,7 @@ func TestConvertReplace_staleToken(t *testing.T) {
 }
 
 func TestConvertReplace_afterSkipIsStale(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := resultFromCard(t, h, src.ID)
@@ -135,6 +142,7 @@ func TestConvertReplace_afterSkipIsStale(t *testing.T) {
 }
 
 func TestConvertReplace_refusals(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		mod  func(d *docsbot.Document)
@@ -174,6 +182,7 @@ func TestConvertReplace_refusals(t *testing.T) {
 }
 
 func TestConvertReplace_duplicateFileShowsExistingCard(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := resultFromCard(t, h, src.ID)
@@ -190,6 +199,7 @@ func TestConvertReplace_duplicateFileShowsExistingCard(t *testing.T) {
 }
 
 func TestConvertReplace_goneDocument(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedSource(h, docsbot.StatusSaved)
 	tok := resultFromCard(t, h, src.ID)

@@ -1,12 +1,14 @@
 package telegram_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -28,7 +30,7 @@ func TestDeleteYes_returnsToOrigin(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallback("d:del:"+string(first.ID)))
 	require.True(t, has(sent.edits, "Удалить «Первый»?"), "edits %q", sent.edits)
 	b.ProcessUpdate(ctx, dataCallback("d:dy:"+string(first.ID)))
-	require.True(t, has(sent.edits, docsbot.CatPassport.Label()+" · 1 документ"), "category page: %q", sent.edits)
+	require.True(t, has(sent.edits, fmt.Sprintf(telegram.TextCategoryTitle, docsbot.CatPassport.Label(), 1, telegram.PluralDocumentOne)), "category page: %q", sent.edits)
 
 	open(second.ID)
 	b.ProcessUpdate(ctx, dataCallback("d:dy:"+string(second.ID)))
@@ -50,7 +52,7 @@ func TestDeleteYes_withoutOriginClearsKeyboard(t *testing.T) {
 	require.True(t, has(sent.edits, "Документ удалён"), "edits %q", sent.edits)
 	last := sent.editMarkups[len(sent.editMarkups)-1]
 	require.NotEmpty(t, last, "reply_markup must be sent to clear the old keyboard")
-	require.Contains(t, last, "Мои документы")
+	require.Contains(t, last, telegram.BtnMyDocs)
 	require.Contains(t, last, `"d:lb"`)
 	for _, cbData := range []string{"d:snd", "d:rn", "d:sc", "d:del", "d:oc"} {
 		require.NotContains(t, last, cbData, "no card buttons remain")
@@ -67,7 +69,7 @@ func TestDeleteYes_fromSearchReturnsToSearch(t *testing.T) {
 	b.ProcessUpdate(ctx, dataCallback("d:oc:"+string(gone.ID)+":s"))
 	b.ProcessUpdate(ctx, dataCallback("d:dy:"+string(gone.ID)))
 
-	require.Equal(t, "Нашёл 1 документ:", sent.edits[len(sent.edits)-1])
+	require.Equal(t, fmt.Sprintf(telegram.TextFoundTitle, 1, telegram.PluralDocumentOne), sent.edits[len(sent.edits)-1])
 	require.NotContains(t, repo.Docs, gone.ID)
 	require.Contains(t, repo.Docs, keep.ID)
 }
@@ -81,7 +83,7 @@ func TestDeleteNo_restoresCardAndStaleIsGone(t *testing.T) {
 	require.Contains(t, sent.edits[0], "🗂 ")
 
 	b.ProcessUpdate(ctx, dataCallback("d:dn:missing"))
-	require.True(t, has(sent.edits, "Этого документа уже нет"), "edits %q", sent.edits)
+	require.True(t, has(sent.edits, telegram.TextGone), "edits %q", sent.edits)
 }
 
 func TestDeleteYes_forgetsTheOriginOfTheMessage(t *testing.T) {
@@ -98,5 +100,5 @@ func TestDeleteYes_forgetsTheOriginOfTheMessage(t *testing.T) {
 
 	last := sent.editMarkups[len(sent.editMarkups)-1]
 	require.Contains(t, last, "d:snd:"+string(kept.ID), "the card is drawn")
-	require.NotContains(t, last, "⬅️ Назад", "no way back to a list the deleted card came from")
+	require.NotContains(t, last, telegram.BtnBack, "no way back to a list the deleted card came from")
 }

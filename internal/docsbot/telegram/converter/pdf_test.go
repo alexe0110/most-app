@@ -16,11 +16,13 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
 	"github.com/alexe0110/most-app/internal/platform/convert"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
 func TestConvert_photosToPDF(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 
@@ -37,11 +39,12 @@ func TestConvert_photosToPDF(t *testing.T) {
 	require.True(t, strings.HasSuffix(doc.filename, ".pdf"))
 	require.True(t, bytes.HasPrefix(doc.data, []byte("%PDF")))
 	require.Contains(t, string(doc.data), "/Count 3", "one page per photo")
-	require.Equal(t, "Готово: 3 страницы.", doc.caption)
+	require.Equal(t, fmt.Sprintf(converter.TextResultPages, 3, converter.PluralPageFew), doc.caption)
 	require.Empty(t, h.repo.Docs, "a result is not saved unless asked")
 }
 
 func TestConvert_photosToPDF_captionAgreesWithThePageCount(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		photos int
 		want   string
@@ -73,6 +76,7 @@ func TestConvert_photosToPDF_captionAgreesWithThePageCount(t *testing.T) {
 // The 21st photo is refused with a clear text; the session stays alive and the
 // first twenty still become a PDF. Photos are not downloaded while collecting.
 func TestConvert_photosToPDF_pageLimit(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 
@@ -93,6 +97,7 @@ func TestConvert_photosToPDF_pageLimit(t *testing.T) {
 }
 
 func TestConvert_photosToPDF_sizeLimit(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 
@@ -112,6 +117,7 @@ func TestConvert_photosToPDF_sizeLimit(t *testing.T) {
 // Real sizes can differ from the declared ones: the PDF is refused after the
 // download and the session ends instead of looping on the same photos.
 func TestConvert_photosToPDF_realSizeOverLimitEndsSession(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := t.Context()
 	h.serve("large", make([]byte, 11<<20))
@@ -127,7 +133,7 @@ func TestConvert_photosToPDF_realSizeOverLimitEndsSession(t *testing.T) {
 
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:done"))
 	require.Empty(t, h.docs, "the session is gone")
-	require.Equal(t, "Эта кнопка уже не работает. Открой документ заново.", h.lastText())
+	require.Equal(t, converter.TextStale, h.lastText())
 }
 
 func testPDF(t *testing.T, pages int) []byte {
@@ -170,6 +176,7 @@ func pdfUpdate(fileID string, size int64) *models.Update {
 }
 
 func TestConvertPDF_menuAndRotate(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
@@ -189,7 +196,7 @@ func TestConvertPDF_menuAndRotate(t *testing.T) {
 	_, _, inh, err := rc.PageDict(t.Context(), 1, false)
 	require.NoError(t, err)
 	require.Equal(t, 90, inh.Rotate)
-	require.Equal(t, "Готово: 3 страницы.", h.docs[0].caption)
+	require.Equal(t, fmt.Sprintf(converter.TextResultPages, 3, converter.PluralPageFew), h.docs[0].caption)
 
 	// 💾 saves a new document next to the original.
 	tok := saveToken.FindStringSubmatch(h.docMarkups[0])
@@ -207,6 +214,7 @@ func TestConvertPDF_menuAndRotate(t *testing.T) {
 }
 
 func TestConvertPDF_keepAndDropPages(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		op, sel string
 		prompt  string
@@ -242,6 +250,7 @@ func TestConvertPDF_keepAndDropPages(t *testing.T) {
 }
 
 func TestConvertPDF_dropAllPagesRefused(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
@@ -254,6 +263,7 @@ func TestConvertPDF_dropAllPagesRefused(t *testing.T) {
 }
 
 func TestConvertPDF_merge(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
 	h.serve("pdf-add", testPDF(t, 2))
@@ -271,11 +281,12 @@ func TestConvertPDF_merge(t *testing.T) {
 
 	require.Len(t, h.docs, 1)
 	require.Equal(t, 5, pdfPages(t, h.docs[0].data))
-	require.Equal(t, "Готово: 5 страниц.", h.docs[0].caption)
+	require.Equal(t, fmt.Sprintf(converter.TextResultPages, 5, converter.PluralPageMany), h.docs[0].caption)
 	require.Equal(t, "Договор-изменён.pdf", h.docs[0].filename)
 }
 
 func TestConvertPDF_mergeRefusesOversizeAndGarbage(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
 	h.serve("junk", []byte("not a pdf"))
@@ -291,6 +302,7 @@ func TestConvertPDF_mergeRefusesOversizeAndGarbage(t *testing.T) {
 }
 
 func TestConvert_commandRefusesPDF(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 
@@ -303,6 +315,7 @@ func TestConvert_commandRefusesPDF(t *testing.T) {
 }
 
 func TestConvertPDF_doubleDoneMergesOnce(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
 	h.serve("pdf-add", testPDF(t, 1))
@@ -317,6 +330,7 @@ func TestConvertPDF_doubleDoneMergesOnce(t *testing.T) {
 }
 
 func TestConvertPDF_secondRangeTextRunsOnce(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
@@ -329,6 +343,7 @@ func TestConvertPDF_secondRangeTextRunsOnce(t *testing.T) {
 }
 
 func TestConvertPDF_mergeRefusesNonPDF(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
@@ -343,6 +358,7 @@ func TestConvertPDF_mergeRefusesNonPDF(t *testing.T) {
 }
 
 func TestConvertPDF_newOperationCancelsLiveSession(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	src := seedPDF(t, h)
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
@@ -366,6 +382,7 @@ func TestConvertPDF_newOperationCancelsLiveSession(t *testing.T) {
 }
 
 func TestConvert_resultWithoutStoredFileLosesButtons(t *testing.T) {
+	t.Parallel()
 	h := newConvHarness(t)
 	h.noDocument = true
 	src := seedPDF(t, h)
@@ -381,6 +398,7 @@ func TestConvert_resultWithoutStoredFileLosesButtons(t *testing.T) {
 // too large for the Bot API, slow) keeps the collected pages so "done" can be
 // tapped again.
 func TestConvert_photosToPDF_downloadFailureKeepsThePages(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		err  error

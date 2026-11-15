@@ -9,6 +9,7 @@ import (
 )
 
 func TestMove(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		drive       *syncDrive
@@ -39,6 +40,7 @@ func TestMove(t *testing.T) {
 }
 
 func TestMove_rootFolder(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		opts     []Option
@@ -66,6 +68,7 @@ func TestMove_rootFolder(t *testing.T) {
 }
 
 func TestMove_twiceIsIdempotent(t *testing.T) {
+	t.Parallel()
 	d := &syncDrive{parents: []string{"target"}, folderID: "target"}
 	svc := newSyncSvc(t, d, fakeClients{})
 	require.NoError(t, svc.Move(context.Background(), "u1", "f1", "passport", "Паспорт"))
@@ -74,6 +77,7 @@ func TestMove_twiceIsIdempotent(t *testing.T) {
 }
 
 func TestMove_staleCachedFolderIsRecreated(t *testing.T) {
+	t.Parallel()
 	// The cache points at a folder Drive no longer has: Move drops it, resolves a
 	// fresh one and moves the file there.
 	d := &syncDrive{parents: []string{"old"}, folderID: "fresh", goneFolders: map[string]bool{"stale": true}}

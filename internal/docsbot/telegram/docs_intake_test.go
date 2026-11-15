@@ -11,6 +11,7 @@ import (
 
 	"github.com/alexe0110/most-app/internal/docsbot"
 	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
+	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
 
@@ -20,7 +21,7 @@ func TestCategory_missingDocumentSaysGone(t *testing.T) {
 
 	b.ProcessUpdate(ctx, dataCallback("d:cat:missing:"+string(docsbot.CatOther)))
 
-	require.Contains(t, sent.edits[len(sent.edits)-1], "Этого документа уже нет")
+	require.Contains(t, sent.edits[len(sent.edits)-1], telegram.TextGone)
 }
 
 func TestReceive_asksCategory(t *testing.T) {

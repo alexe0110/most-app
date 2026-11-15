@@ -21,13 +21,13 @@ func TestRenderStatusMessage_single(t *testing.T) {
 	text, kb := renderStatusMessage(sm, []docsbot.Document{statusDoc("<a>.pdf", docsbot.BackupPending)}, nil)
 	require.Contains(t, text, "📄 <b>&lt;a&gt;.pdf</b>")
 	require.Contains(t, text, "🗂 Паспорт и ID")
-	require.Contains(t, text, "⏳ Загружаю на Google Диск…")
+	require.Contains(t, text, textStoragePending)
 	require.Equal(t, docCB(actSend, "d"), kb.InlineKeyboard[0][0].CallbackData)
 	require.Len(t, kb.InlineKeyboard, 3, "card buttons only")
 
 	text, kb = renderStatusMessage(sm, []docsbot.Document{statusDoc("a.pdf", docsbot.BackupBackedUp)},
 		map[docsbot.Category]string{docsbot.CatPassport: "FOLD"})
-	require.Contains(t, text, "☁️ Google Диск · копия в Telegram")
+	require.Contains(t, text, textStorageInDrive)
 	require.Equal(t, btnCardOpen, kb.InlineKeyboard[0][1].Text)
 	require.Equal(t, btnOpenFolder, kb.InlineKeyboard[1][0].Text)
 
@@ -37,7 +37,7 @@ func TestRenderStatusMessage_single(t *testing.T) {
 	require.Equal(t, "d:rsm:sm", last[0].CallbackData)
 
 	text, _ = renderStatusMessage(sm, []docsbot.Document{statusDoc("a", docsbot.BackupPending), statusDoc("b", docsbot.BackupPending)}, nil)
-	require.True(t, strings.HasPrefix(text, "⏳ Загружаю на Google Диск · 0 из 2"), "more than one line falls back to a batch")
+	require.True(t, strings.HasPrefix(text, fmt.Sprintf(textStatusProgress, 0, 2)), "more than one line falls back to a batch")
 }
 
 func TestRenderStatusMessage_tooLargeOnly(t *testing.T) {
@@ -45,7 +45,7 @@ func TestRenderStatusMessage_tooLargeOnly(t *testing.T) {
 		batchDoc("a", docsbot.CatWork, docsbot.BackupTooLarge, ""),
 		batchDoc("b", docsbot.CatWork, docsbot.BackupTooLarge, ""),
 	}, nil)
-	require.Equal(t, "⚠️ Не загрузил 2: больше 20\u00a0МБ", text)
+	require.Equal(t, fmt.Sprintf(textStatusNotDone, 2, fmt.Sprintf(textReasonTooLarge, 20)), text)
 	require.NotNil(t, kb)
 	require.Equal(t, [][]string{{btnMyDocs}}, buttonTexts(kb.InlineKeyboard), "nothing to retry")
 }
@@ -74,7 +74,7 @@ func TestStatusDonePlural(t *testing.T) {
 				lines[i] = batchDoc("d", docsbot.CatWork, docsbot.BackupBackedUp, "")
 			}
 			text, _ := renderStatusMessage(batchMsg, lines, nil)
-			require.True(t, strings.HasPrefix(text, "✅ Загрузил на Google Диск "+tt.want+"\n"), text)
+			require.True(t, strings.HasPrefix(text, strings.Replace(textStatusDone, "%d %s", tt.want, 1)+"\n"), text)
 		})
 	}
 }
@@ -98,8 +98,8 @@ func TestRenderStatusMessage_worstCaseKeepsEssentials(t *testing.T) {
 	text, kb := renderStatusMessage(batchMsg, lines, folders)
 
 	require.LessOrEqual(t, utf16Len(text), statusTextLimit)
-	require.True(t, strings.HasPrefix(text, fmt.Sprintf("⏳ Загружаю на Google Диск · %d из %d\n", len(lines)-1, len(lines))))
-	require.Contains(t, text, "⚠️ Не загрузил 4:")
+	require.True(t, strings.HasPrefix(text, fmt.Sprintf(textStatusProgress+"\n", len(lines)-1, len(lines))))
+	require.Contains(t, text, fmt.Sprintf(textStatusNotDoneList, 4))
 	require.NotNil(t, kb)
 	require.Equal(t, [][]string{{"🔁 Повторить (3)"}}, buttonTexts(kb.InlineKeyboard))
 }
@@ -134,7 +134,7 @@ func TestRenderStatusMessage_progressBar(t *testing.T) {
 				lines = append(lines, batchDoc("d", docsbot.CatPassport, st, ""))
 			}
 			text, kb := renderStatusMessage(batchMsg, lines, nil)
-			require.True(t, strings.HasPrefix(text, fmt.Sprintf("⏳ Загружаю на Google Диск · %d из %d\n%s", tt.done, tt.all, tt.wantBar)), text)
+			require.True(t, strings.HasPrefix(text, fmt.Sprintf(textStatusProgress+"\n%s", tt.done, tt.all, tt.wantBar)), text)
 			require.Nil(t, kb, "nothing to press while uploads run")
 		})
 	}
@@ -282,7 +282,7 @@ func TestRenderStatusMessage_manyTitlesAreCut(t *testing.T) {
 		lines = append(lines, batchDoc(fmt.Sprintf("n%d", i), docsbot.CatWork, docsbot.BackupBackedUp, ""))
 	}
 	text, _ := renderStatusMessage(batchMsg, lines, nil)
-	require.Contains(t, text, "📁 Работа · 13\nn1, n2, n3, n4, n5, n6, n7, n8, n9, n10, …и ещё 3")
+	require.Contains(t, text, fmt.Sprintf(textStatusCategory, docsbot.CatWork.Label(), 13)+"\nn1, n2, n3, n4, n5, n6, n7, n8, n9, n10, "+fmt.Sprintf(textStatusMore, 3))
 	require.NotContains(t, text, "n11")
 }
 
@@ -314,8 +314,8 @@ func TestRenderStatusMessage_fitsTelegramLimit(t *testing.T) {
 	text, kb := renderStatusMessage(batchMsg, lines, folders)
 
 	require.LessOrEqual(t, utf16Len(text), statusTextLimit)
-	require.True(t, strings.HasPrefix(text, "✅ Загрузил на Google Диск 440 документов"))
-	require.Contains(t, text, "⚠️ Не загрузил 1: нет места на Google Диске")
+	require.True(t, strings.HasPrefix(text, fmt.Sprintf(textStatusDone, 440, pluralDocumentMany)))
+	require.Contains(t, text, fmt.Sprintf(textStatusNotDone, 1, textReasonQuota))
 	require.Contains(t, text, "…и ещё")
 	require.NotNil(t, kb)
 	require.Equal(t, [][]string{{"🔁 Повторить (1)", btnMyDocs}}, buttonTexts(kb.InlineKeyboard))
@@ -323,14 +323,14 @@ func TestRenderStatusMessage_fitsTelegramLimit(t *testing.T) {
 
 func TestRenderStatusMessage_emptyDoesNotPanic(t *testing.T) {
 	text, kb := renderStatusMessage(batchMsg, nil, nil)
-	require.Equal(t, "⏳ Загружаю на Google Диск · 0 из 0\n▱▱▱▱▱▱▱", text)
+	require.Equal(t, fmt.Sprintf(textStatusProgress, 0, 0)+"\n▱▱▱▱▱▱▱", text)
 	require.Nil(t, kb)
 }
 
 func TestRenderStatusMessage_singleKeepsCard(t *testing.T) {
 	sm := docsbot.StatusMessage{ID: "sm", Kind: docsbot.StatusSingle}
 	text, kb := renderStatusMessage(sm, []docsbot.Document{statusDoc("a.pdf", docsbot.BackupBackedUp)}, nil)
-	require.Contains(t, text, "☁️ Google Диск · копия в Telegram")
+	require.Contains(t, text, textStorageInDrive)
 	require.NotNil(t, kb)
 	require.NotContains(t, text, "Загружаю")
 }

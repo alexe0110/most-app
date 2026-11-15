@@ -72,6 +72,7 @@ func callbackCases() []struct {
 }
 
 func TestParseCallback_roundTripsEveryButton(t *testing.T) {
+	t.Parallel()
 	for _, tt := range callbackCases() {
 		t.Run(tt.name, func(t *testing.T) {
 			got, ok := parseCallback(tt.data)
@@ -84,6 +85,7 @@ func TestParseCallback_roundTripsEveryButton(t *testing.T) {
 }
 
 func TestCallbackConstructors_matchWireFormat(t *testing.T) {
+	t.Parallel()
 	require.Equal(t, "conv:save:"+hexToken, convCB(convActSave, hexToken))
 	require.Equal(t, "conv:q:"+string(uuidDoc)+":c1", convDocCB(convActQuick, uuidDoc, opCompress1))
 	require.Equal(t, cbMenuCancel, convCB(convActMenuCancel))
@@ -93,6 +95,7 @@ func TestCallbackConstructors_matchWireFormat(t *testing.T) {
 }
 
 func TestCallbackData_worstCaseFitsTheLimit(t *testing.T) {
+	t.Parallel()
 	for _, data := range []string{
 		convDocCB(convActQuick, uuidDoc, opCompress5),
 		convCB(convActRepYes, hexToken),
@@ -105,6 +108,7 @@ func TestCallbackData_worstCaseFitsTheLimit(t *testing.T) {
 }
 
 func TestParseCallback_edges(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		data   string
@@ -144,6 +148,7 @@ func TestParseCallback_edges(t *testing.T) {
 }
 
 func TestNewPress(t *testing.T) {
+	t.Parallel()
 	ctx := tg.ContextWithUserID(t.Context(), "u1")
 	msg := &models.Message{ID: 7, Chat: models.Chat{ID: 100}}
 
@@ -164,6 +169,7 @@ func TestNewPress(t *testing.T) {
 }
 
 func TestParseCallback_wellFormedDataRoundTrips(t *testing.T) {
+	t.Parallel()
 	// Every shape of up to four non-empty segments after the prefix, with an
 	// action that carries a document id and one that does not.
 	segments := []string{"q", "doc", "save", "p", "zzz", "1", "a"}
@@ -192,6 +198,7 @@ func TestParseCallback_wellFormedDataRoundTrips(t *testing.T) {
 }
 
 func TestCallbackData_tokenIsEverythingAfterTheAction(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		data string
 		want string
@@ -230,6 +237,7 @@ func builtButtons() []string {
 }
 
 func TestBuiltButtons_everyOneParsesFitsAndIsKnown(t *testing.T) {
+	t.Parallel()
 	known := map[string]bool{}
 	for _, tt := range callbackCases() {
 		known[tt.want.action] = true

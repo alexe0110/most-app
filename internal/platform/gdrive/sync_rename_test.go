@@ -11,6 +11,7 @@ import (
 )
 
 func TestRename(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		drive       *syncDrive
@@ -86,6 +87,7 @@ func TestRename(t *testing.T) {
 }
 
 func TestRename_ServerErrorAndOAuth(t *testing.T) {
+	t.Parallel()
 	d := &syncDrive{fileStatus: http.StatusServiceUnavailable}
 	err := newSyncSvc(t, d, fakeClients{}).Rename(context.Background(), "u1", "f1", "x")
 	require.Error(t, err)
