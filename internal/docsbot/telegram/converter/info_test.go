@@ -4,7 +4,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"fmt"
+	"hash/crc32"
 	"os"
 	"regexp"
 	"strings"
@@ -77,13 +80,13 @@ func cleanFile(t *testing.T, h *convHarness) string {
 func TestInfoFlow_showsWhatIsInsideEachFormat(t *testing.T) {
 	t.Parallel()
 	phone := []string{"Apple", "iPhone 15 Pro", "17.3.1", "19.02.2026 14:22", "55.75583, 37.61778",
-		"maps.google.com/?q=55.755833,37.617778", "Открыть на карте", "Видно, где сделан снимок"}
+		"maps.google.com/?q=55.755833,37.617778", "Открыть на карте", "Геолокация", "чувствительных"}
 	tests := []struct {
 		file, mime string
 		format     docsbot.FileFormat
 		want       []string
 	}{
-		{"gps.jpg", "image/jpeg", docsbot.FormatJPEG, append([]string{"JPG-изображение", "EXIF, XMP"}, phone...)},
+		{"gps.jpg", "image/jpeg", docsbot.FormatJPEG, append([]string{"JPG"}, phone...)},
 		{"text.png", "image/png", docsbot.FormatPNG, append([]string{"PNG"}, phone...)},
 		{"exif.webp", "image/webp", docsbot.FormatWebP, append([]string{"WEBP"}, phone...)},
 		{"gps.heic", "image/heic", docsbot.FormatHEIC, append([]string{"HEIC"}, phone...)},
@@ -152,7 +155,8 @@ func TestInfoFlow_cleanSendsACopyWithKeepButtons(t *testing.T) {
 	sent := h.docs[0]
 	require.Equal(t, "Квартира-очищен.jpg", sent.filename)
 	require.Contains(t, sent.caption, "Очищенная копия")
-	require.Contains(t, sent.caption, "EXIF")
+	require.Contains(t, sent.caption, "Убрал")
+	require.Contains(t, sent.caption, "включая геолокация")
 	after, err := convert.Inspect(t.Context(), sent.data)
 	require.NoError(t, err)
 	require.True(t, after.Clean())
@@ -411,8 +415,39 @@ func TestInfoFlow_valuesFromTheFileAreEscapedAndBounded(t *testing.T) {
 	text := h.lastText()
 	require.Contains(t, text, "&lt;b&gt;Ann&lt;/b&gt; &amp; &lt;a href=")
 	require.NotContains(t, text, "<b>Ann")
-	require.NotContains(t, text, "<i>")
+	require.NotContains(t, text, "<i>.docx")
+	require.NotContains(t, text, `<a href="x"`)
 	require.LessOrEqual(t, len([]rune(text)), 4096, "one Telegram message")
+}
+
+// pngWithText is text.png with n more tEXt chunks of long values after IHDR.
+func pngWithText(t *testing.T, n int) []byte {
+	t.Helper()
+	src := fixtureFile(t, "text.png")
+	const afterIHDR = 8 + 4 + 4 + 13 + 4
+	out := bytes.Clone(src[:afterIHDR])
+	for i := range n {
+		body := []byte(fmt.Sprintf("Tag%03d\x00%s", i, strings.Repeat("v", 150)))
+		chunk := append([]byte("tEXt"), body...)
+		out = binary.BigEndian.AppendUint32(out, uint32(len(body)))
+		out = append(out, chunk...)
+		out = binary.BigEndian.AppendUint32(out, crc32.ChecksumIEEE(chunk))
+	}
+	return append(out, src[afterIHDR:]...)
+}
+
+func TestInfoFlow_longListIsCutAndSentAsFile(t *testing.T) {
+	t.Parallel()
+	h := newConvHarness(t)
+	seedFile(h, "image/png", "Скан/паспорта.png", pngWithText(t, 60))
+
+	openInfo(t, h)
+
+	require.LessOrEqual(t, len([]rune(h.lastText())), 4096)
+	require.Contains(t, h.lastText(), "…и ещё")
+	require.Len(t, h.docs, 1, "the whole list goes as a file")
+	require.Equal(t, "metadata-Скан_паспорта.txt", h.docs[0].filename)
+	require.Contains(t, string(h.docs[0].data), "PNG:Tag059: "+strings.Repeat("v", 150))
 }
 
 func TestInfoFlow_logsAndEventsCarryNoMetadata(t *testing.T) {

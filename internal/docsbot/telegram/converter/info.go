@@ -87,7 +87,7 @@ const metaTimeout = imageTimeout
 
 // canClean reports whether cleaning would change anything and can be done.
 func canClean(info convert.FileInfo) bool {
-	return !info.Clean() && (info.PDF == nil || !info.PDF.Encrypted)
+	return !info.Clean() && !info.Encrypted
 }
 
 // onInfo shows what is hidden in a stored document: conv:i:<docID>. The message
@@ -123,11 +123,16 @@ func (c *Converter) onInfo(ctx context.Context, b *bot.Bot, p press) {
 		return
 	}
 	c.log.InfoContext(ctx, "file inspected", "user_id", p.user, "doc_id", id, "format", info.Type,
-		"bytes", info.Size, "clean", info.Clean())
-	shown := out.Send(ctx, chatID, renderInfo(doc.Title, info),
+		"bytes", info.Size, "clean", info.Clean(), "fields", info.FieldCount())
+	text, cut := renderInfo(doc.Title, info)
+	shown := out.Send(ctx, chatID, text,
 		tg.WithHTML(), tg.WithoutPreview(), tg.WithKeyboard(infoKeyboard(id, canClean(info))))
-	if shown != 0 {
-		c.track(ctx, docsbot.EventFileInfo, info.Type)
+	if shown == 0 {
+		return
+	}
+	c.track(ctx, docsbot.EventFileInfo, info.Type)
+	if cut {
+		c.sendFieldList(ctx, b, chatID, doc.Title, info)
 	}
 }
 
@@ -211,7 +216,7 @@ func (c *Converter) onClean(ctx context.Context, b *bot.Bot, p press) {
 		c.show(ctx, b, chatID, msgID, textInfoNothingToClean, back)
 		return
 	}
-	cleaned, err := c.strip(ctx, data)
+	cleaned, after, err := c.strip(ctx, data)
 	if err != nil {
 		c.logMetaFailure(ctx, "clean file", err, "user_id", p.user, "doc_id", id, "format", before.Type)
 		c.show(ctx, b, chatID, msgID, infoErrorText(err), infoKeyboard(id, true))
@@ -219,7 +224,7 @@ func (c *Converter) onClean(ctx context.Context, b *bot.Bot, p press) {
 	}
 
 	name := resultFileName(doc.Title, nameFallbackDocument, nameTagClean, fileExt(before.Type))
-	file := cleanedFile{name: name, caption: cleanedCaption(before), data: cleaned, sourceDoc: id}
+	file := cleanedFile{name: name, caption: cleanedCaption(before, after), data: cleaned, sourceDoc: id}
 	if !c.sendCleaned(ctx, b, chatID, p.tgUser, file) {
 		c.show(ctx, b, chatID, msgID, textSendFailed, infoKeyboard(id, true))
 		return
@@ -232,24 +237,25 @@ func (c *Converter) onClean(ctx context.Context, b *bot.Bot, p press) {
 
 // strip removes the metadata of a file and checks the result: a copy
 // that still reads as dirty is never offered, so «чистый» is never a promise the
-// file does not keep. Cleaning and the check each get their own timeout.
-func (c *Converter) strip(ctx context.Context, data []byte) ([]byte, error) {
+// file does not keep. Cleaning and the check each get their own timeout. The
+// second result is what the check found in the copy.
+func (c *Converter) strip(ctx context.Context, data []byte) ([]byte, convert.FileInfo, error) {
 	sctx, cancel := context.WithTimeout(ctx, metaTimeout)
 	defer cancel()
 	cleaned, err := convert.Strip(sctx, data)
 	if err != nil {
-		return nil, err
+		return nil, convert.FileInfo{}, err
 	}
 	cctx, cancelCheck := context.WithTimeout(ctx, metaTimeout)
 	defer cancelCheck()
 	after, err := convert.Inspect(cctx, cleaned)
 	if err != nil {
-		return nil, err
+		return nil, convert.FileInfo{}, err
 	}
 	if !after.Clean() {
-		return nil, errStillDirty
+		return nil, convert.FileInfo{}, errStillDirty
 	}
-	return cleaned, nil
+	return cleaned, after, nil
 }
 
 // cleanedFile is a cleaned copy ready to be sent.
@@ -257,15 +263,6 @@ type cleanedFile struct {
 	name, caption string
 	data          []byte
 	sourceDoc     docsbot.DocumentID
-}
-
-// cleanedCaption says what was removed, and for documents what was not looked at.
-func cleanedCaption(before convert.FileInfo) string {
-	caption := fmt.Sprintf(textCleanedCaption, blockNames(before, true))
-	if isDocumentType(before.Type) {
-		caption += "\n" + textInfoDocCaveat
-	}
-	return caption
 }
 
 // sendCleaned uploads the cleaned copy with the keep-which buttons and reports
