@@ -84,3 +84,12 @@ func TestInfoKeyboard_cleanButtonOnlyWhenThereIsSomethingToClean(t *testing.T) {
 	require.Len(t, infoKeyboard("d1", false).InlineKeyboard[0], 1)
 	require.Equal(t, cbMenuCancel, infoKeyboard("d1", false).InlineKeyboard[0][0].CallbackData, "back removes the screen")
 }
+
+func TestFileFormat_coversEveryType(t *testing.T) {
+	for _, ft := range []convert.FileType{
+		convert.FileJPEG, convert.FilePNG, convert.FileWebP, convert.FileHEIC,
+		convert.FilePDF, convert.FileDOCX, convert.FileXLSX, convert.FilePPTX,
+	} {
+		require.Equal(t, string(ft), string(fileFormat(ft)), "the event value matches the detected type")
+	}
+}

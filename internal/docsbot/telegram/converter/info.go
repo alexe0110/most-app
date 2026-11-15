@@ -102,8 +102,42 @@ func (c *Converter) onInfo(ctx context.Context, b *bot.Bot, p press) {
 	}
 	c.log.InfoContext(ctx, "file inspected", "user_id", p.user, "doc_id", id, "format", info.Type,
 		"bytes", info.Size, "clean", info.Clean())
-	out.Send(ctx, chatID, renderInfo(doc.Title, info),
+	shown := out.Send(ctx, chatID, renderInfo(doc.Title, info),
 		tg.WithHTML(), tg.WithoutPreview(), tg.WithKeyboard(infoKeyboard(id, canClean(info))))
+	if shown != 0 {
+		c.track(ctx, docsbot.EventFileInfo, info.Type)
+	}
+}
+
+// track records a file_info or file_cleaned event. The format is the only prop:
+// no metadata value or file name ever reaches an event.
+func (c *Converter) track(ctx context.Context, name docsbot.EventName, t convert.FileType) {
+	if user, ok := userID(ctx); ok {
+		c.svc.Track(ctx, user, name, docsbot.EventProps{Format: fileFormat(t)})
+	}
+}
+
+// fileFormat maps a detected file type to its event value.
+func fileFormat(t convert.FileType) docsbot.FileFormat {
+	switch t {
+	case convert.FileJPEG:
+		return docsbot.FormatJPEG
+	case convert.FilePNG:
+		return docsbot.FormatPNG
+	case convert.FileWebP:
+		return docsbot.FormatWebP
+	case convert.FileHEIC:
+		return docsbot.FormatHEIC
+	case convert.FilePDF:
+		return docsbot.FormatPDF
+	case convert.FileDOCX:
+		return docsbot.FormatDOCX
+	case convert.FileXLSX:
+		return docsbot.FormatXLSX
+	case convert.FilePPTX:
+		return docsbot.FormatPPTX
+	}
+	return ""
 }
 
 // loadInfo downloads the document and reads its metadata, under imageTimeout.
@@ -170,6 +204,7 @@ func (c *Converter) onClean(ctx context.Context, b *bot.Bot, p press) {
 	}
 	c.log.InfoContext(ctx, "file cleaned", "user_id", p.user, "doc_id", id, "format", before.Type,
 		"in_bytes", len(data), "out_bytes", len(cleaned))
+	c.track(ctx, docsbot.EventFileCleaned, before.Type)
 	c.finish(ctx, b, chatID, msgID)
 }
 
