@@ -109,17 +109,16 @@ func syncOps() []syncOp {
 func TestSyncOps_statusMapping(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		status      int
-		revoked     bool
-		notFound    bool
-		wantPlainEr bool
+		status   int
+		revoked  bool
+		notFound bool
 	}{
 		{status: http.StatusUnauthorized, revoked: true},
 		{status: http.StatusNotFound, notFound: true},
-		{status: http.StatusTooManyRequests, wantPlainEr: true},
-		{status: http.StatusInternalServerError, wantPlainEr: true},
-		{status: http.StatusBadGateway, wantPlainEr: true},
-		{status: http.StatusForbidden, wantPlainEr: true},
+		{status: http.StatusTooManyRequests},
+		{status: http.StatusInternalServerError},
+		{status: http.StatusBadGateway},
+		{status: http.StatusForbidden},
 	}
 	for _, op := range syncOps() {
 		for _, tt := range tests {

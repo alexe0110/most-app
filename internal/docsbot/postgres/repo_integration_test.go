@@ -3,6 +3,8 @@
 package postgres_test
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -172,4 +174,37 @@ func TestSaveChosen_parallelTapsSaveOnce(t *testing.T) {
 	saved, err := repo.SaveChosen(ctx, docsbot.SaveChoice{User: user, ID: doc.ID, Category: docsbot.CatOther, Backup: docsbot.BackupNone})
 	require.NoError(t, err)
 	require.False(t, saved)
+}
+
+// noJobs is a JobInserter for tests where no job may be needed.
+type noJobs struct{}
+
+var (
+	errUnexpectedJob = errors.New("unexpected job insert")
+	errBoom          = errors.New("insert failed")
+)
+
+var _ postgres.JobInserter = noJobs{}
+
+func (noJobs) InsertUpload(context.Context, pgx.Tx, docsbot.UserID, docsbot.DocumentID) (bool, error) {
+	return false, errUnexpectedJob
+}
+
+func (noJobs) InsertSync(context.Context, pgx.Tx, docsbot.UserID, docsbot.DocumentID) error {
+	return errUnexpectedJob
+}
+
+func (noJobs) InsertTrash(context.Context, pgx.Tx, docsbot.UserID, string) error {
+	return errUnexpectedJob
+}
+
+// uploadJobs is a JobInserter whose upload insert returns a fixed result.
+type uploadJobs struct {
+	noJobs
+	skipped bool
+	err     error
+}
+
+func (u uploadJobs) InsertUpload(context.Context, pgx.Tx, docsbot.UserID, docsbot.DocumentID) (bool, error) {
+	return u.skipped, u.err
 }

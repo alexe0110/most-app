@@ -17,7 +17,7 @@ test-int:   ## integration-тесты (нужен Docker)
 # blocks of all test binaries into one profile. Generated and test-support code is left out.
 test-cover:   ## покрытие unit + integration по пакетам, итог в coverage.out (нужен Docker)
 	go test -tags=integration -count=1 -coverpkg=./internal/... -coverprofile=coverage.out ./...
-	@awk 'NR > 1 && $$1 !~ /sql\.go|\/docsbottest\/|\/dbtest\// { \
+	@awk 'NR > 1 && $$1 !~ /sql\.go|postgres\/(db|models)\.go|\/docsbottest\/|\/dbtest\// { \
 		pkg = $$1; sub(/:.*/, "", pkg); sub(/^github.com\/alexe0110\/most-app\//, "", pkg); sub(/\/[^\/]+$$/, "", pkg); \
 		if (!($$1 in stmts)) { stmts[$$1] = $$2; owner[$$1] = pkg } \
 		if ($$3 > hits[$$1]) hits[$$1] = $$3 } \

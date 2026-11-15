@@ -20,11 +20,12 @@ import (
 	pjobs "github.com/alexe0110/most-app/internal/platform/jobs"
 )
 
-// cloudDrive records renames; Rename can block to hold a sync "running".
+// cloudDrive records renames and trashes; Rename can block to hold a sync "running".
 type cloudDrive struct {
 	fakeDrive
 	mu      sync.Mutex
 	renames []string
+	trashes []string
 	entered chan struct{} // closed-over signal: first Rename started
 	release chan struct{} // when non-nil the first Rename waits for it
 	once    sync.Once
@@ -45,6 +46,19 @@ func (d *cloudDrive) Rename(_ context.Context, _ docsbot.UserID, _, name string)
 	return nil
 }
 
+func (d *cloudDrive) Trash(_ context.Context, _ docsbot.UserID, remoteID string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.trashes = append(d.trashes, remoteID)
+	return nil
+}
+
+func (d *cloudDrive) trashed() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.trashes...)
+}
+
 func (d *cloudDrive) renamed() []string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -61,6 +75,8 @@ func (quietSyncNotifier) SyncOutcome(context.Context, docsbot.UserID, docsbot.Do
 
 func (quietSyncNotifier) Reconnect(context.Context, docsbot.UserID) error { return nil }
 
+func (quietSyncNotifier) RemoteKept(context.Context, docsbot.UserID) error { return nil }
+
 type syncEnv struct {
 	pool  *pgxpool.Pool
 	svc   *docsbot.Service
@@ -69,8 +85,8 @@ type syncEnv struct {
 	id    docsbot.DocumentID
 }
 
-// setupSync seeds a backed-up document and wires the sync worker without
-// starting the queue.
+// setupSync seeds a backed-up document and wires the sync and trash workers
+// without starting the queue.
 func setupSync(t *testing.T, drive docsbot.Drive) syncEnv {
 	t.Helper()
 	ctx := t.Context()
@@ -89,6 +105,7 @@ func setupSync(t *testing.T, drive docsbot.Drive) syncEnv {
 	svc := newService(pool, postgres.NewDocuments(pool, jq), jq, drive)
 	workers := river.NewWorkers()
 	jobs.RegisterStorageSync(workers, log, svc, quietSyncNotifier{})
+	jobs.RegisterStorageTrash(workers, log, svc, quietSyncNotifier{})
 	queue, err := pjobs.New(pool, log, workers, map[string]river.QueueConfig{jobs.UploadQueue: {MaxWorkers: 1}})
 	require.NoError(t, err)
 	return syncEnv{pool: pool, svc: svc, queue: queue, user: docsbot.UserID(uid), id: docsbot.DocumentID(did)}
@@ -166,4 +183,26 @@ func TestStorageSync_changeDuringRunningSyncQueuesFollowUp(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 	names := drive.renamed()
 	require.Equal(t, "Второе.pdf", names[len(names)-1], "the last sync applies the newest title")
+}
+
+// Deleting a backed-up document queues the trash job with the row deletion, the
+// worker trashes that very Drive file, and a double tap queues nothing more.
+func TestStorageTrash_deleteTrashesRemoteFile(t *testing.T) {
+	drive := &cloudDrive{fakeDrive: fakeDrive{}}
+	e := setupSync(t, drive)
+
+	got, err := e.svc.Delete(t.Context(), e.user, e.id)
+	require.NoError(t, err)
+	require.Equal(t, docsbot.Deleted{}, got)
+	require.Equal(t, 1, e.jobCount(t, "storage_trash", ""), "queued with the row deletion")
+
+	startQueue(t, e.queue)
+	require.Eventually(t, func() bool { return len(drive.trashed()) == 1 }, 10*time.Second, 100*time.Millisecond)
+	require.Equal(t, []string{"remote-1"}, drive.trashed())
+
+	_, err = e.svc.Delete(t.Context(), e.user, e.id)
+	require.ErrorIs(t, err, docsbot.ErrNotFound)
+	awaitQueueDrained(t, e.pool)
+	require.Equal(t, 1, e.jobCount(t, "storage_trash", ""), "the double tap queued no second job")
+	require.Len(t, drive.trashed(), 1)
 }

@@ -260,7 +260,7 @@ func TestPurgeUsers(t *testing.T) {
 			return false
 		}
 		return n == 0
-	}, 30*time.Second, 100*time.Millisecond, "soft-deleted user must be purged")
+	}, 10*time.Second, 100*time.Millisecond, "soft-deleted user must be purged")
 
 	require.Equal(t, 1, countRows(t, pool, `select count(*) from users where id = $1::uuid`, keptID), "kept user survives")
 	require.Equal(t, 1, countRows(t, pool, `select count(*) from documents where user_id = $1::uuid`, keptID), "kept user's document survives")
@@ -400,6 +400,6 @@ func TestPurgeOAuthStates(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return countRows(t, pool, `select count(*) from oauth_states where state = $1`, "expired") == 0
-	}, 30*time.Second, 100*time.Millisecond, "expired state must be purged")
+	}, 10*time.Second, 100*time.Millisecond, "expired state must be purged")
 	require.Equal(t, 1, countRows(t, pool, `select count(*) from oauth_states where state = $1`, "fresh"), "fresh state stays")
 }

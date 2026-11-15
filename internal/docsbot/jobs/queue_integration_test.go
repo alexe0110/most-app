@@ -255,3 +255,29 @@ func TestRequeue_dedupsUploadsAndLeavesTheDocumentAlone(t *testing.T) {
 
 	require.Equal(t, before, e.snapshot(t, id), "requeue keeps the stuck clock and every status")
 }
+
+// Deleting a user's data must stop everything queued for them, whatever the
+// kind, without touching another user's jobs.
+func TestQueue_cancelUserJobsRemovesOnlyTheUsersPendingJobs(t *testing.T) {
+	e := newTxEnv(t)
+	ctx := t.Context()
+	other := e
+	other.user = e.newUser(t, 2)
+	id := e.seed(t, "saved", "none", "ok")
+
+	for _, owner := range []docsbot.UserID{e.user, other.user} {
+		tx, err := e.pool.Begin(ctx)
+		require.NoError(t, err)
+		_, err = e.jq.InsertUpload(ctx, tx, owner, id)
+		require.NoError(t, err)
+		require.NoError(t, e.jq.InsertSync(ctx, tx, owner, id))
+		require.NoError(t, e.jq.InsertTrash(ctx, tx, owner, "remote-1"))
+		require.NoError(t, tx.Commit(ctx))
+	}
+	require.Equal(t, 3, e.jobCount(t, ""))
+
+	require.NoError(t, e.jq.CancelUserJobs(ctx, e.user))
+
+	require.Zero(t, e.jobCount(t, ""), "upload, sync and trash jobs are cancelled")
+	require.Equal(t, 3, other.jobCount(t, ""), "another user's jobs are untouched")
+}

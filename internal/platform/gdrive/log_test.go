@@ -27,9 +27,10 @@ func requireDriveLogClean(t *testing.T, out string) {
 func TestUpload_logsDriveAPIWithoutLeaks(t *testing.T) {
 	t.Parallel()
 	t.Run("transport error", func(t *testing.T) {
-		srv := httptest.NewServer(http.NotFoundHandler())
-		url := srv.URL
-		srv.Close() // connection refused; the *url.Error carries the full URL
+		// Port 1 is never listened on, so the dial is refused and the *url.Error
+		// carries the full URL. A closed httptest server could hand its port to a
+		// parallel test's server instead.
+		url := "http://127.0.0.1:1"
 		var buf bytes.Buffer
 		svc := New(fakeClients{}, newFakeCache(), WithBaseURL(url), WithLogger(debugLog(&buf)))
 

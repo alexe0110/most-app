@@ -4,6 +4,7 @@ package postgres_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -37,15 +38,26 @@ func TestRepo_DeleteUserData(t *testing.T) {
 	other := makeUser(t, repo, 401)
 	saveDoc(t, repo, u, "u-doc", "backed_up")
 	saveDoc(t, repo, other, "o-doc", "none")
-	_, err := repo.q.UpsertIntegration(ctx, postgres.UpsertIntegrationParams{
-		UserID: u.ID, Bot: "docs", Provider: "google", RefreshTokenEnc: []byte{0x01}, Status: "active",
-	})
-	require.NoError(t, err)
-	_, err = repo.q.UpsertDriveFolder(ctx, postgres.UpsertDriveFolderParams{
-		UserID: u.ID, Category: "passport", DriveFolderID: "folder-1",
-	})
-	require.NoError(t, err)
+	for _, owner := range []postgres.User{u, other} {
+		_, err := repo.q.UpsertIntegration(ctx, postgres.UpsertIntegrationParams{
+			UserID: owner.ID, Bot: "docs", Provider: "google", RefreshTokenEnc: []byte{0x01}, Status: "active",
+		})
+		require.NoError(t, err)
+		_, err = repo.q.UpsertDriveFolder(ctx, postgres.UpsertDriveFolderParams{
+			UserID: owner.ID, Category: "passport", DriveFolderID: "folder-1",
+		})
+		require.NoError(t, err)
+	}
+	var err error
 	require.NoError(t, repo.q.SetUserSource(ctx, postgres.SetUserSourceParams{ID: u.ID, Source: pgtype.Text{String: "ad_1", Valid: true}}))
+	for _, owner := range []*postgres.User{&u, &other} {
+		uid := docsbot.UserID(owner.ID.String())
+		_, err = repo.Create(ctx, uid, owner.TgUserID, 11, docsbot.StatusSingle)
+		require.NoError(t, err)
+		require.NoError(t, repo.SetInlineEnabled(ctx, uid, false))
+		_, err = pool.Exec(ctx, "update users set first_start_at = now() where id = $1", owner.ID)
+		require.NoError(t, err)
+	}
 	for _, owner := range []pgtype.UUID{u.ID, other.ID, {}} { // the last is an anonymous event
 		require.NoError(t, repo.q.InsertEvent(ctx, postgres.InsertEventParams{UserID: owner, Bot: "docs", Name: "search", Props: []byte("{}")}))
 	}
@@ -59,8 +71,17 @@ func TestRepo_DeleteUserData(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx, "select count(*) from events").Scan(&events))
 	require.Equal(t, 2, events, "other user's and anonymous events survive")
 	var source *string
-	require.NoError(t, pool.QueryRow(ctx, "select source from users where id = $1", u.ID).Scan(&source))
+	var firstStart *time.Time
+	require.NoError(t, pool.QueryRow(ctx, "select source, first_start_at from users where id = $1", u.ID).Scan(&source, &firstStart))
 	require.Nil(t, source, "acquisition source cleared")
+	require.Nil(t, firstStart, "first-start mark cleared")
+	for _, table := range []string{"status_messages", "docs_settings"} {
+		var n int
+		require.NoError(t, pool.QueryRow(ctx, "select count(*) from "+table+" where user_id = $1", u.ID).Scan(&n))
+		require.Zero(t, n, table+" deleted")
+		require.NoError(t, pool.QueryRow(ctx, "select count(*) from "+table+" where user_id = $1", other.ID).Scan(&n))
+		require.Equal(t, 1, n, "other user's "+table+" survive")
+	}
 	n, err := repo.CountSaved(ctx, docsbot.UserID(u.ID.String()))
 	require.NoError(t, err)
 	require.Equal(t, 0, n, "documents deleted")
@@ -75,6 +96,12 @@ func TestRepo_DeleteUserData(t *testing.T) {
 	n, err = repo.CountSaved(ctx, docsbot.UserID(other.ID.String()))
 	require.NoError(t, err)
 	require.Equal(t, 1, n, "other user's documents survive")
+	_, err = repo.q.GetIntegration(ctx, postgres.GetIntegrationParams{UserID: other.ID, Bot: "docs", Provider: "google"})
+	require.NoError(t, err, "other user's integration survives")
+	_, err = repo.q.GetDriveFolder(ctx, postgres.GetDriveFolderParams{UserID: other.ID, Category: "passport"})
+	require.NoError(t, err, "other user's drive folder survives")
+	_, err = repo.q.GetUserByTgID(ctx, 401)
+	require.NoError(t, err, "other user is not deleted")
 }
 
 // TestRepo_EnsureUserRevivesAfterDelete covers the /start-after-deletion case:
@@ -117,4 +144,43 @@ func TestRepo_BackupStatusCounts(t *testing.T) {
 	require.Equal(t, 2, got[docsbot.BackupBackedUp])
 	require.Equal(t, 1, got[docsbot.BackupFailed])
 	require.Equal(t, 1, got[docsbot.BackupNone])
+}
+
+func TestRepo_SavedForExport(t *testing.T) {
+	pool := dbtest.New(t)
+	repo := newAdapters(pool, noJobs{})
+	ctx := t.Context()
+	u := makeUser(t, repo, 610)
+	user := docsbot.UserID(u.ID.String())
+	otherUser := docsbot.UserID(makeUser(t, repo, 611).ID.String())
+
+	// Created newest first, so the expected order differs from insertion order.
+	newest := titled(t, repo, user, "new", "d")
+	oldest := titled(t, repo, user, "old", "d")
+	middle := titled(t, repo, user, "mid", "d")
+	for id, age := range map[docsbot.DocumentID]string{oldest.ID: "3 days", middle.ID: "2 days", newest.ID: "1 day"} {
+		_, err := pool.Exec(ctx, "update documents set created_at = now() - $2::interval where id = $1::uuid", string(id), age)
+		require.NoError(t, err)
+	}
+	titled(t, repo, otherUser, "foreign", "d")
+	_, err := repo.CreateDocument(ctx, docsbot.IncomingFile{UserID: user, Kind: docsbot.KindDocument, Title: "t", FileID: "f-p", FileUniqueID: "pending"})
+	require.NoError(t, err)
+	removed := titled(t, repo, user, "removed", "d")
+	_, err = repo.DeleteDocument(ctx, user, removed.ID, false)
+	require.NoError(t, err)
+
+	ids := func(limit int) []docsbot.DocumentID {
+		t.Helper()
+		docs, err := repo.SavedForExport(ctx, user, limit)
+		require.NoError(t, err)
+		out := make([]docsbot.DocumentID, 0, len(docs))
+		for _, d := range docs {
+			out = append(out, d.ID)
+		}
+		return out
+	}
+
+	require.Equal(t, []docsbot.DocumentID{oldest.ID, middle.ID, newest.ID}, ids(10),
+		"oldest first, only the user's own saved documents")
+	require.Equal(t, []docsbot.DocumentID{oldest.ID, middle.ID}, ids(2), "the limit keeps the oldest")
 }
