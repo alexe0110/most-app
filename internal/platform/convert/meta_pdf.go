@@ -38,14 +38,11 @@ func inspectPDF(ctx context.Context, data []byte, info *FileInfo) error {
 
 	fs := newFieldSet()
 	info.Encrypted = pctx.Encrypt != nil
-	fs.add(GroupSecurity, "PDF:Encrypted", info.Encrypted, false)
 	addPDFInfo(fs, pctx)
-	fs.add(GroupDocument, "PDF:Pages", int64(pctx.PageCount), false)
-	content := ContentText
-	if len(pctx.Optimize.Fonts) == 0 {
-		content = ContentScan
+	addPDFFacts(ctx, fs, pctx, data, info.Encrypted)
+	for _, p := range xmpProps(pctx) {
+		addValue(fs, "XMP:"+sanitizeText(p.Name), p.Name, normalize(p.Value), "")
 	}
-	fs.add(GroupDocument, "PDF:Content", content, false)
 	info.Groups = fs.result()
 
 	if hasPDFInfo(pctx) {
@@ -55,6 +52,29 @@ func inspectPDF(ctx context.Context, data []byte, info *FileInfo) error {
 		info.Blocks = append(info.Blocks, BlockXMP)
 	}
 	return nil
+}
+
+// addPDFFacts adds what the document is and what it can do.
+func addPDFFacts(ctx context.Context, fs *fieldSet, pctx *model.Context, data []byte, encrypted bool) {
+	risks := scanPDFObjects(pctx)
+	content := ContentText
+	if len(pctx.Optimize.Fonts) == 0 {
+		content = ContentScan
+	}
+	fs.add(GroupDocument, "PDF:Pages", int64(pctx.PageCount), false)
+	fs.add(GroupDocument, "PDF:PageSize", pageSize(ctx, pctx), false)
+	fs.add(GroupDocument, "PDF:Content", content, false)
+	if risks.annotations > 0 {
+		fs.add(GroupDocument, "PDF:Annotations", int64(risks.annotations), false)
+	}
+	if pctx.HeaderVersion != nil {
+		fs.add(GroupDocument, "PDF:Version", pctx.HeaderVersion.String(), false)
+	}
+	fs.add(GroupDates, "PDF:IncrementalUpdates", incrementalUpdates(data, pctx), false)
+	fs.add(GroupSecurity, "PDF:Encrypted", encrypted, false)
+	fs.add(GroupSecurity, "PDF:JavaScript", risks.javascript, false)
+	fs.add(GroupSecurity, "PDF:EmbeddedFiles", risks.embedded, false)
+	fs.add(GroupSecurity, "PDF:Signature", risks.signed, false)
 }
 
 // addPDFInfo adds every entry of the document info dictionary, standard or

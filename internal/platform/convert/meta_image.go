@@ -113,17 +113,7 @@ func addImageTags(fs *fieldSet, tags *imagemeta.Tags, found []imagemeta.TagInfo)
 		if ti.Source == imagemeta.CONFIG || merged[ti.Tag] || isThumbnailPointer(ti.Tag) {
 			continue
 		}
-		v := normalize(ti.Value)
-		g, sensitive := tagGroup(ti.Tag)
-		if s, ok := v.(string); ok {
-			sensitive = sensitive || looksLikeUserPath(s)
-			if g == GroupDates {
-				if m, ok := parseMoment(s, tagText(exif, offsetOf(ti.Tag))); ok {
-					v = m
-				}
-			}
-		}
-		fs.add(g, sourcePrefix(ti.Source)+":"+ti.Tag, v, sensitive)
+		addValue(fs, sourcePrefix(ti.Source)+":"+ti.Tag, ti.Tag, normalize(ti.Value), tagText(exif, offsetOf(ti.Tag)))
 	}
 }
 

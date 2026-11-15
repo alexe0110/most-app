@@ -196,3 +196,19 @@ func looksLikeUserPath(s string) bool {
 	return strings.Contains(l, "/users/") || strings.Contains(l, `\users\`) || strings.Contains(l, "/home/") ||
 		strings.Contains(l, `\documents and settings\`)
 }
+
+// addValue puts a tag into the group its name belongs to. A date string becomes a
+// Moment (offset is the zone tag that goes with it, "" if none) and a value that
+// looks like a user's path is marked sensitive.
+func addValue(fs *fieldSet, key, name string, v any, offset string) {
+	g, sensitive := tagGroup(name)
+	if s, ok := v.(string); ok {
+		sensitive = sensitive || looksLikeUserPath(s)
+		if g == GroupDates {
+			if m, ok := parseMoment(s, offset); ok {
+				v = m
+			}
+		}
+	}
+	fs.add(g, key, v, sensitive)
+}
