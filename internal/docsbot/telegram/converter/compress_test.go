@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/alexe0110/most-app/internal/docsbot"
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/docsbot/telegram/converter"
 	"github.com/alexe0110/most-app/internal/platform/tg"
 )
@@ -19,6 +21,7 @@ import (
 func TestConvert_compressPreset(t *testing.T) {
 	t.Parallel()
 	h := newConvHarness(t)
+	h.serveBig("large")
 	ctx := t.Context()
 
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
@@ -90,11 +93,75 @@ func TestConvert_compressTwoImagesAskLimitOnce(t *testing.T) {
 	require.Equal(t, 1, strings.Count(h.allTexts(), converter.TextConvertChooseLimit))
 }
 
+// An image that already fits the limit is not sent back: it would only grow. The
+// user is told, and keeps the buttons to choose another size.
+func TestConvert_compressNothingToShrink(t *testing.T) {
+	t.Parallel()
+	want := fmt.Sprintf(converter.TextCompressNothing, "1,0\u00A0МБ")
+	tests := []struct {
+		name string
+		run  func(t *testing.T, h *convHarness) (retry string) // returns the callback prefix of the restored buttons
+	}{
+		{"dialogue", func(t *testing.T, h *convHarness) string {
+			ctx := t.Context()
+			h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
+			h.bot.ProcessUpdate(ctx, callbackOn("conv:compress", h.lastMsg()))
+			h.bot.ProcessUpdate(ctx, photoUpdate(1))
+			h.bot.ProcessUpdate(ctx, callbackOn("conv:limit1", h.lastMsg()))
+			return "conv:limit1"
+		}},
+		{"menu of a stored document", func(t *testing.T, h *convHarness) string {
+			src := seedSource(h, docsbot.StatusSaved)
+			h.serve("src", h.photo) // small
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(src.ID)))
+			h.bot.ProcessUpdate(ctx, callbackOn("conv:q:"+string(src.ID)+":c1", h.lastMsg()))
+			return "conv:q:" + string(src.ID) + ":c1"
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newConvHarness(t)
+
+			retry := tt.run(t, h)
+
+			require.Empty(t, h.docs, "no file is sent")
+			require.Equal(t, want, h.lastShown())
+			h.mu.Lock()
+			last := h.editMarkups[len(h.editMarkups)-1]
+			h.mu.Unlock()
+			require.Contains(t, last, retry, "the buttons come back")
+			require.NotContains(t, h.allTexts(), "Меньше не вышло")
+			require.Empty(t, h.repo.Events, "nothing was converted")
+			require.NotContains(t, h.logs.String(), "document converted")
+		})
+	}
+}
+
+// A real shrink is still sent with its caption and no "nothing to compress" note.
+func TestConvert_compressShrinkIsSent(t *testing.T) {
+	t.Parallel()
+	h := newConvHarness(t)
+	h.serveBig("large")
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
+	h.bot.ProcessUpdate(ctx, callbackOn("conv:compress", h.lastMsg()))
+	h.bot.ProcessUpdate(ctx, photoUpdate(1))
+	h.bot.ProcessUpdate(ctx, callbackOn("conv:limit1", h.lastMsg()))
+
+	require.Len(t, h.docs, 1)
+	require.Less(t, len(h.docs[0].data), bigPhotoSize)
+	require.NotEmpty(t, h.docMarkups[0], "with its buttons")
+	require.NotContains(t, h.allTexts(), "сжимать нечего")
+	require.Len(t, h.repo.Events, 1)
+}
+
 // The session keeps the file id: the image is fetched when the compression runs,
 // and a failed fetch leaves the buttons so the user can try again.
 func TestConvert_compressDownloadsWhenItRuns(t *testing.T) {
 	t.Parallel()
 	h := newConvHarness(t)
+	h.serveBig("large")
 	ctx := t.Context()
 	h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 	h.bot.ProcessUpdate(ctx, callbackOn("conv:compress", h.lastMsg()))
@@ -136,6 +203,7 @@ func TestConvert_compressDownloadFailureKeepsTheSession(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newConvHarness(t)
+			h.serveBig("large")
 			ctx := t.Context()
 			h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:compress", h.lastMsg()))

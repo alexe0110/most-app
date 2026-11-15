@@ -269,10 +269,12 @@ func (s *sessionStore) update(user int64, fn func(*session)) bool {
 // file" choice. The file is already in Telegram: file holds the ids Telegram
 // returned for it, so saving needs no upload.
 type convResult struct {
-	user      docsbot.UserID
-	file      docsbot.IncomingFile
-	sourceDoc docsbot.DocumentID // "" when the source is not a stored document
-	suffix    string             // title suffix for the saved copy
+	user docsbot.UserID
+	file docsbot.IncomingFile
+	// sourceDoc is the stored document the result was made from, "" when there is
+	// none (or it could not be read): then nothing can be replaced.
+	sourceDoc docsbot.DocumentID
+	kind      resultKind // what the result is: it decides the buttons' labels
 }
 
 // convAlbum is an album of images offered as one PDF.

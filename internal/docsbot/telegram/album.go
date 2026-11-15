@@ -18,6 +18,9 @@ import (
 // before it asks for one category for the whole album.
 const albumDebounce = 1500 * time.Millisecond
 
+// albumTitleTimeout bounds the one database write that numbers an album.
+const albumTitleTimeout = 5 * time.Second
+
 // albumState is what the adapter has learned about one album so far. Only the
 // in-flight picker is held in memory; the documents themselves are in the DB.
 type albumState struct {
@@ -31,9 +34,12 @@ type albumState struct {
 	dups         int           // files that were already saved
 	reject       docsbot.Reply // first limit rejection, shown once
 	group        string
-	images       []converter.AlbumImage // fresh image files, for the PDF offer
-	nonImage     bool                   // the album holds a file the PDF can't take
-	stop         func() bool
+	// caption is the album's one caption (Telegram puts it on a single element);
+	// it names every element of the album. Never logged.
+	caption  string
+	images   []converter.AlbumImage // fresh image files, for the PDF offer
+	nonImage bool                   // the album holds a file the PDF can't take
+	stop     func() bool
 }
 
 // albumBuffer debounces albums per media_group_id.
@@ -81,10 +87,14 @@ func (d *docs) collectAlbum(ctx context.Context, b *bot.Bot, m *models.Message, 
 	if m.From != nil {
 		tgUser = m.From.ID
 	}
+	caption := captionTitle(m.Caption)
 	detached := context.WithoutCancel(ctx) // the flush outlives this update's request
 	isImage := in.Kind == docsbot.KindPhoto || converter.SupportedImageMIME(in.MIME)
 	d.albums.add(fmt.Sprintf("%s:%s", user, group), func(st *albumState) {
 		st.chatID, st.user, st.tgUser, st.group = chatID, user, tgUser, group
+		if st.caption == "" {
+			st.caption = caption
+		}
 		if !isImage {
 			st.nonImage = true
 		}
@@ -110,7 +120,9 @@ func (d *docs) collectAlbum(ctx context.Context, b *bot.Bot, m *models.Message, 
 
 // flushAlbum sends the one category picker for an album, with a count of the
 // files that were already saved, and the limit notice if any file was refused.
+// A captioned album is titled first, so the picker's documents already have names.
 func (d *docs) flushAlbum(ctx context.Context, b *bot.Bot, st albumState) {
+	d.titleAlbum(ctx, st)
 	switch {
 	case d.offersPDF(st):
 		text := fmt.Sprintf(textAlbumChoice, st.fresh, plural(st.fresh, pluralImageOne, pluralImageFew, pluralImageMany))
@@ -133,6 +145,21 @@ func (d *docs) flushAlbum(ctx context.Context, b *bot.Bot, st albumState) {
 	}
 	if text, ok := rejectionText(st.reject); ok {
 		d.out(b).Send(ctx, st.chatID, text)
+	}
+}
+
+// titleAlbum numbers a captioned album's pending documents after the caption.
+// A lone document already carries the caption as its title. A failure leaves the
+// automatic titles and must not block the picker.
+func (d *docs) titleAlbum(ctx context.Context, st albumState) {
+	if st.caption == "" || st.fresh < 2 {
+		return
+	}
+	// The flush context is detached from the request, so it has no deadline of its own.
+	ctx, cancel := context.WithTimeout(ctx, albumTitleTimeout)
+	defer cancel()
+	if err := d.svc.TitleAlbum(ctx, st.user, st.group, st.caption); err != nil {
+		d.log.ErrorContext(ctx, "title album", "err", err, "user_id", st.user, "group", st.group)
 	}
 }
 

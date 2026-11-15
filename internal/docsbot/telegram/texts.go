@@ -83,7 +83,7 @@ const (
 	textReconnect         = "Я потерял доступ к твоему Google Диску — возможно, его отключили в настройках Google. " +
 		"Документы в Telegram на месте. Подключи Google Диск заново — кнопкой ниже или в /settings."
 	textRetryQueued = "Повторяю загрузку на Google Диск."
-	textStatusMore  = "…и ещё %d" // %d = hidden titles
+	textStatusMore  = "и ещё %d %s" // hidden documents, plural("документ")
 
 	textStoragePending      = "⏳ Загружаю на Google Диск…"
 	textStorageInDrive      = "☁️ Google Диск · копия в Telegram"
@@ -226,15 +226,16 @@ const (
 const (
 	textStatusProgress    = "⏳ Загружаю на Google Диск · %d из %d" // done, total
 	textStatusDone        = "✅ Загрузил на Google Диск %d %s"      // backed up, plural("документ")
-	textStatusNotDone     = "⚠️ Не загрузил %d: %s"                // count, reason
-	textStatusNotDoneList = "⚠️ Не загрузил %d:"                   // count; reasons follow
-	textStatusReasonLine  = "• %s — %d"                            // reason, count
+	textStatusPartial     = "⚠️ Загрузил %d из %d"                 // backed up, total
+	textStatusLineDone    = "• ✅ %s"                               // title
+	textStatusLinePending = "• ⏳ %s"                               // title
+	textStatusLineFailed  = "• ⚠️ %s — %s"                         // title, reason
 	textStatusCategory    = "📁 %s · %d"                            // category label (maybe a link), count
 	textReasonQuota       = "нет места на Google Диске"
 	textReasonRevoked     = "доступ отозван"
 	textReasonUnavailable = "Google Диск не отвечает"
 	textReasonTooLarge    = "больше %d\u00A0МБ"
-	// textStatusQuotaHint follows the quota error: retrying cannot help until space is freed.
+	// textStatusQuotaHint follows the header when an upload failed for lack of space: retrying cannot help until space is freed.
 	textStatusQuotaHint = "Освободи место на Google Диске и нажми «Повторить»."
 
 	textNotInDrive = "📥 %d %s ещё не на Google Диске" // count, plural("документ")

@@ -83,6 +83,13 @@ func TestService_ReplaceContent(t *testing.T) {
 			wantReply: wantReplaced, wantFile: "tg-new", wantSync: docsbot.SyncOK, wantMetaUp: true,
 		},
 		{
+			name: "still pending (no category yet): file swapped, stays pending", in: newFile,
+			mod: func(d *docsbot.Document) {
+				d.Status, d.Category, d.BackupStatus, d.DriveFileID = docsbot.StatusPending, "", docsbot.BackupNone, ""
+			},
+			wantReply: wantReplaced, wantFile: "tg-new", wantSync: docsbot.SyncOK, wantMetaUp: true,
+		},
+		{
 			name: "same file as current: unchanged", in: docsbot.IncomingFile{FileID: "other-id", FileUniqueID: "uniq-cur"},
 			wantReply: wantReplaced, wantFile: "tg-cur", wantSync: docsbot.SyncOK,
 		},
@@ -150,6 +157,7 @@ func TestService_ReplaceContent(t *testing.T) {
 			require.Len(t, syncs.Jobs, tt.wantJobs)
 			require.Equal(t, doc.Title, got.Title, "title never changes")
 			require.Equal(t, doc.Category, got.Category, "category never changes")
+			require.Equal(t, doc.Status, got.Status, "status never changes")
 			if tt.wantMetaUp {
 				require.Equal(t, doc.MetaVersion+1, got.MetaVersion)
 			} else {

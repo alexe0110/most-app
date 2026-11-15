@@ -45,6 +45,9 @@ func (c *Converter) callback(ctx context.Context, b *bot.Bot, update *models.Upd
 	case convActSave:
 		c.onSave(ctx, b, p)
 		return
+	case convActSaveLegacy:
+		c.onLegacySave(ctx, b, p)
+		return
 	case convActRepAsk:
 		c.onReplaceAsk(ctx, b, p)
 		return

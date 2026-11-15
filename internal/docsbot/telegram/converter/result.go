@@ -3,6 +3,7 @@ package converter
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -29,22 +30,52 @@ func (c *Converter) deleteCallbackMessage(ctx context.Context, b *bot.Bot, p pre
 	}
 }
 
+// resultKind is what a converted file is; it decides the labels of its buttons.
+type resultKind int
+
+const (
+	resultPDF        resultKind = iota // any PDF: made from photos, or an edited one
+	resultCompressed                   // a compressed image
+	resultJPG                          // a WEBP converted to JPG
+)
+
+// saveText is the label of the button that stores the result as a document.
+func (k resultKind) saveText() string {
+	switch k {
+	case resultCompressed:
+		return btnSaveCompressed
+	case resultJPG:
+		return btnSaveJPG
+	default:
+		return btnSavePDF
+	}
+}
+
+// replaceText is the label of the button that puts the result in place of the
+// source document's file.
+func (k resultKind) replaceText() string {
+	if k == resultCompressed {
+		return btnReplaceCompressed
+	}
+	return btnReplaceOriginal
+}
+
 // resultFile is a converted file ready to be sent.
 type resultFile struct {
 	name string
 	data []byte
+	kind resultKind
 	// sourceDoc is the stored document it was made from, "" when there is none.
 	sourceDoc docsbot.DocumentID
-	suffix    string // appended to the title when the result is saved
 	// caption is shown under the file; a PDF without one gets its page count.
 	caption string
 }
 
-// sendResult uploads the converted file with the save / just-the-file buttons
-// and reports whether Telegram accepted it. The choice is remembered only if
-// Telegram echoes the stored file back; if it doesn't, the buttons are removed
-// again, since they could not work. Without the user's internal id the file goes
-// out without buttons.
+// sendResult uploads the converted file with the save (or replace) and
+// do-nothing buttons and reports whether Telegram accepted it. The choice is
+// remembered only if Telegram echoes the stored file back; if it doesn't, the
+// buttons are removed again, since they could not work. Without the user's
+// internal id the file goes out without buttons.
 func (c *Converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser int64, r resultFile) bool {
 	pages := 0
 	if strings.EqualFold(filepath.Ext(r.name), ".pdf") {
@@ -65,8 +96,10 @@ func (c *Converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 	}
 	user, haveUser := userID(ctx)
 	token := tg.NewToken()
+	replace := false
 	if haveUser {
-		params.ReplyMarkup = saveKeyboard(token, r.sourceDoc != "")
+		r.sourceDoc, replace = c.resultSource(ctx, user, r.sourceDoc)
+		params.ReplyMarkup = resultKeyboard(token, r.kind, replace)
 	}
 	msg, err := b.SendDocument(ctx, params)
 	if err != nil {
@@ -85,7 +118,7 @@ func (c *Converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 		width, height = w, h
 	}
 	c.results.put(token, tgUser, convResult{
-		user: user, sourceDoc: r.sourceDoc, suffix: r.suffix,
+		user: user, sourceDoc: r.sourceDoc, kind: r.kind,
 		file: docsbot.IncomingFile{
 			Kind: docsbot.KindDocument, FileID: msg.Document.FileID, FileUniqueID: msg.Document.FileUniqueID,
 			Title: docsbot.TrimExt(r.name), FileSize: msg.Document.FileSize, MIME: msg.Document.MimeType, PageCount: pages,
@@ -93,6 +126,26 @@ func (c *Converter) sendResult(ctx context.Context, b *bot.Bot, chatID, tgUser i
 		},
 	})
 	return true
+}
+
+// resultSource tells what the result may do to the document it was made from. A
+// saved document can be replaced; a pending one (still waiting for its category)
+// takes the result in place but is not "replaced"; one that is gone or cannot be
+// read leaves no source, so nothing can be overwritten.
+func (c *Converter) resultSource(ctx context.Context, user docsbot.UserID, id docsbot.DocumentID) (src docsbot.DocumentID, saved bool) {
+	if id == "" {
+		return "", false
+	}
+	card, err := c.svc.Card(ctx, user, id)
+	switch {
+	case err == nil:
+		return id, card.Doc.Status == docsbot.StatusSaved
+	case errors.Is(err, docsbot.ErrNotFound):
+		return "", false
+	default:
+		c.log.ErrorContext(ctx, "load result source", "err", err, "user_id", user, "doc_id", id)
+		return "", false
+	}
 }
 
 // compressedCaption says how much smaller the compressed image is.

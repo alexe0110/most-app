@@ -56,9 +56,9 @@ const (
 	textConvertDone     = "Готово ✅"
 
 	textConvertMenu      = "Что сделать с файлом?"
-	textConvertSaving    = "💾 Сохраняю…"
 	textConvertResultOld = "Эта кнопка уже не работает. Преобразуй файл ещё раз."
 
+	textResultSwapped  = "Подменил файл. Категорию выбери в сообщении выше."
 	textReplaceConfirm = "Заменить оригинал этим файлом? Старую версию вернуть будет нельзя."
 	textReplaceBusy    = "Подожди, файл ещё сохраняется."
 	textReplaceMissing = "Файла нет на Google Диске. Сначала нажми «☁️ Загрузить заново» в карточке документа."
@@ -87,6 +87,9 @@ const (
 	// Captions of the result file: sizes after and before compressing; pages of a PDF.
 	textResultCompressed = "Готово: %s (было %s)."
 	textResultPages      = "Готово: %d %s."
+
+	// textCompressNothing takes the target size (humanSize).
+	textCompressNothing = "Фото уже меньше %s — сжимать нечего."
 
 	// textConvertBestEffort takes the reached size in KB (target was out of reach).
 	textConvertBestEffort = "Меньше не вышло — сжал до %d\u00A0КБ."
@@ -195,22 +198,24 @@ const (
 
 // Inline button labels for converting a stored document and for a result.
 const (
-	btnQuick1MB        = "🗜 до 1\u00A0МБ"
-	btnQuick2MB        = "🗜 до 2\u00A0МБ"
-	btnQuick5MB        = "🗜 до 5\u00A0МБ"
-	btnQuickJPG        = "🖼 В JPG"
-	btnQuickPDF        = "📄 В PDF"
-	btnQuickCancel     = "Отмена"
-	btnPDFRotate       = "🔄 Повернуть"
-	btnPDFKeep         = "✂️ Оставить страницы"
-	btnPDFDrop         = "➖ Убрать страницы"
-	btnPDFMerge        = "➕ Склеить"
-	btnSaveResult      = "💾 Сохранить в документы"
-	btnSkipResult      = "Не сохранять"
-	btnSaveAsNew       = "💾 Сохранить как новый"
-	btnReplaceOriginal = "♻️ Заменить оригинал"
-	btnReplaceYes      = "Заменить"
-	btnReplaceNo       = "Отмена"
+	btnQuick1MB          = "🗜 до 1\u00A0МБ"
+	btnQuick2MB          = "🗜 до 2\u00A0МБ"
+	btnQuick5MB          = "🗜 до 5\u00A0МБ"
+	btnQuickJPG          = "🖼 В JPG"
+	btnQuickPDF          = "📄 В PDF"
+	btnQuickCancel       = "Отмена"
+	btnPDFRotate         = "🔄 Повернуть"
+	btnPDFKeep           = "✂️ Оставить страницы"
+	btnPDFDrop           = "➖ Убрать страницы"
+	btnPDFMerge          = "➕ Склеить"
+	btnSaveCompressed    = "💾 Сохранить сжатый"
+	btnSavePDF           = "💾 Сохранить PDF"
+	btnSaveJPG           = "💾 Сохранить JPG"
+	btnReplaceCompressed = "♻️ Заменить сжатым"
+	btnReplaceOriginal   = "♻️ Заменить оригинал"
+	btnSkipResult        = "Ничего не делать"
+	btnReplaceYes        = "Заменить"
+	btnReplaceNo         = "Отмена"
 
 	// btnInfo is the picker's «О файле» button; the docs adapter shows it.
 	btnInfo         = "ℹ️ О файле"
@@ -242,12 +247,4 @@ const (
 	nameFallbackPhoto    = "фото"
 	nameFallbackDocument = "документ"
 	nameScan             = "Скан %s.pdf" // %s = date, 02.01.2006
-)
-
-// Title suffixes of documents made by the converter.
-const (
-	suffixCompressed = " (сжатый)"
-	suffixJPG        = " (JPG)"
-	suffixPDF        = " (PDF)"
-	suffixEdited     = " (изменён)"
 )

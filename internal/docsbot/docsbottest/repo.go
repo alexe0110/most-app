@@ -24,6 +24,7 @@ type FakeRepo struct {
 	Events        []docsbot.Event                  // recorded product events, in order
 	EventsErr     error                            // returned by Record and RecordStart when set
 	CountSavedErr error                            // returned by CountSaved when set
+	NumberErr     error                            // returned by NumberPendingAlbum when set
 	Started       map[docsbot.UserID]bool          // users with a recorded start event
 }
 
@@ -105,6 +106,33 @@ func (r *FakeRepo) PendingByMediaGroup(_ context.Context, user docsbot.UserID, g
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out, nil
+}
+
+func (r *FakeRepo) NumberPendingAlbum(_ context.Context, user docsbot.UserID, group, base string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.NumberErr != nil {
+		return r.NumberErr
+	}
+	var ids []docsbot.DocumentID
+	for id, d := range r.Docs {
+		if d.UserID == user && d.MediaGroupID == group && d.Status == docsbot.StatusPending {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		a, b := r.Docs[ids[i]], r.Docs[ids[j]]
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.Before(b.CreatedAt)
+		}
+		return a.ID < b.ID
+	})
+	for n, id := range ids {
+		d := r.Docs[id]
+		d.Title = fmt.Sprintf("%s (%d)", base, n+1)
+		r.Docs[id] = d
+	}
+	return nil
 }
 
 func (r *FakeRepo) IntakeStats(_ context.Context, user docsbot.UserID, since time.Time) (docsbot.IntakeStats, error) {

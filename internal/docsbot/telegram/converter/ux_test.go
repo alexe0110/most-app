@@ -1,6 +1,7 @@
 package converter_test
 
 import (
+	"bytes"
 	"fmt"
 	"slices"
 	"strings"
@@ -74,6 +75,7 @@ func TestConvertCompress_formatQuestionOnlyForPNG(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newConvHarness(t)
+			h.serveBig("large")
 			if tt.png {
 				h.servePNG()
 			}
@@ -160,20 +162,22 @@ func TestConvertPDFActions_fromCommand(t *testing.T) {
 		require.Empty(t, h.docs)
 	})
 
-	t.Run("saved without a source document goes to Other", func(t *testing.T) {
+	t.Run("without a source document the result asks for a category", func(t *testing.T) {
 		h, menu := setup(t)
 		ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 		h.bot.ProcessUpdate(ctx, callbackOn("conv:p:rot", menu))
-		tok := saveToken.FindStringSubmatch(h.docMarkups[0])
+		tok := resultToken.FindStringSubmatch(h.docMarkups[0])
 		require.NotNil(t, tok)
+		require.Contains(t, h.docMarkups[0], "conv:sv:"+tok[1])
+		require.Contains(t, h.docMarkups[0], converter.BtnSavePDF)
 
-		h.bot.ProcessUpdate(ctx, callbackUpdate("conv:save:"+tok[1]))
+		h.bot.ProcessUpdate(ctx, callbackUpdate("conv:sv:"+tok[1]))
 
 		require.Len(t, h.repo.Docs, 1)
 		for _, d := range h.repo.Docs {
-			require.Equal(t, docsbot.StatusSaved, d.Status)
-			require.Equal(t, docsbot.CatOther, d.Category)
+			require.Equal(t, docsbot.StatusPending, d.Status, "waits for its category")
 		}
+		require.Contains(t, h.lastMarkup(), "d:cat:")
 	})
 }
 
@@ -186,12 +190,14 @@ func TestConvertCompress_resultNameFollowsTheSentFile(t *testing.T) {
 	}{
 		{"compressed photo has no name", func(h *convHarness) { h.bot.ProcessUpdate(t.Context(), photoUpdate(1)) }, "фото-сжатый.jpg"},
 		{"file keeps its name", func(h *convHarness) {
+			h.serveBig("doc")
 			h.bot.ProcessUpdate(t.Context(), namedDocumentUpdate("doc", "image/jpeg", "Паспорт.jpg"))
 		}, "Паспорт-сжатый.jpg"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newConvHarness(t)
+			h.serveBig("large")
 			ctx := t.Context()
 			h.bot.ProcessUpdate(ctx, commandUpdate("convert"))
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:compress", h.lastMsg()))
@@ -222,8 +228,9 @@ func TestConvertMenu_progressThenResult(t *testing.T) {
 func TestConvertMenu_errorBringsMenuBack(t *testing.T) {
 	t.Parallel()
 	h := newConvHarness(t)
+	h.serveBig("large")
 	src := seedSource(h, docsbot.StatusSaved)
-	h.serve("src", []byte("not an image"))
+	h.serve("src", bytes.Repeat([]byte("x"), bigPhotoSize)) // not an image, but big enough to be worth compressing
 	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(src.ID)))
 	menu := h.lastMsg()

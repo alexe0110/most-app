@@ -57,52 +57,6 @@ func replyForExisting(doc Document) Reply {
 	return NeedCategory{Doc: doc}
 }
 
-// SaveDerived stores a file made from another document (a compressed copy, a
-// PDF) as a new document. When the source is saved, the copy lands in the
-// source's category under DerivedTitle(source title, suffix) and the result is
-// Saved. A pending or absent source (empty sourceID) has no category to inherit:
-// the copy is saved in CatOther under in.Title, and the user can change the
-// category from the card. Limit replies and duplicates pass through unchanged;
-// an unknown source is ErrNotFound.
-func (s *Service) SaveDerived(ctx context.Context, user UserID, sourceID DocumentID, in IncomingFile, suffix string) (Reply, error) {
-	in.UserID = user
-	var src Document
-	fromSaved := false
-	if sourceID != "" {
-		var err error
-		src, err = s.repo.DocumentByID(ctx, user, sourceID)
-		if err != nil {
-			return nil, fmt.Errorf("load source document: %w", err)
-		}
-		fromSaved = src.Status == StatusSaved
-	}
-	if fromSaved {
-		in.Title = DerivedTitle(src.Title, suffix)
-	}
-
-	rep, err := s.Receive(ctx, in)
-	if err != nil {
-		return nil, err
-	}
-	need, ok := rep.(NeedCategory)
-	if !ok {
-		return rep, nil
-	}
-	cat := CatOther
-	if fromSaved {
-		cat = src.Category
-	}
-	saved, err := s.ChooseCategory(ctx, user, need.Doc.ID, cat)
-	if err != nil {
-		// Don't leave the copy pending: nobody will categorize it.
-		if _, delErr := s.syncs.DeleteDocument(ctx, user, need.Doc.ID, false); delErr != nil && !errors.Is(delErr, ErrNotFound) {
-			return nil, errors.Join(err, fmt.Errorf("discard derived document: %w", delErr))
-		}
-		return nil, err
-	}
-	return saved, nil
-}
-
 // DiscardAlbum deletes the still-pending documents of an album, e.g. after its
 // photos were merged into one PDF. Saved documents are never touched. It returns
 // how many were removed; a document purged in parallel is skipped.
@@ -126,6 +80,27 @@ func (s *Service) DiscardAlbum(ctx context.Context, user UserID, group string) (
 		n++
 	}
 	return n, nil
+}
+
+// albumNumberRunes is the room " (10)" takes after an album title: Telegram
+// albums hold up to ten files.
+const albumNumberRunes = len(" (10)")
+
+// TitleAlbum names the still-pending documents of an album after its caption:
+// "caption (1)", "caption (2)", ... in arrival order. A blank caption changes
+// nothing. The base is cut so the numbered title still fits MaxTitleRunes.
+func (s *Service) TitleAlbum(ctx context.Context, user UserID, group, caption string) error {
+	base := NormalizeTitle(caption)
+	if group == "" || base == "" {
+		return nil
+	}
+	if r := []rune(base); len(r) > MaxTitleRunes-albumNumberRunes {
+		base = strings.TrimSpace(string(r[:MaxTitleRunes-albumNumberRunes]))
+	}
+	if err := s.repo.NumberPendingAlbum(ctx, user, group, base); err != nil {
+		return fmt.Errorf("number album: %w", err)
+	}
+	return nil
 }
 
 // PurgeResult counts what one purge removed.
@@ -284,8 +259,9 @@ func (s *Service) defaultTitle(ctx context.Context, user UserID, cat Category) (
 // maxTitleSuffix bounds the default-title collision search.
 const maxTitleSuffix = 100
 
-// ReplaceContent swaps the file of a saved document for in (a converted copy of
-// it), keeping id, title and category. The user's other document with the same
+// ReplaceContent swaps the file of a document for in (a converted copy of it),
+// keeping id, title and category. A document still waiting for its category is
+// swapped too: it stays pending. The user's other document with the same
 // file is AlreadySaved and nothing changes; the same file as the current one is
 // Replaced unchanged. A backed-up document is queued for a cloud sync; one that
 // is not on Drive changes in the database only, and its upload takes the new file.

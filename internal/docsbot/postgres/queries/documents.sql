@@ -379,6 +379,20 @@ where user_id = @user_id
   and status = 'pending'
 order by created_at, id;
 
+-- name: NumberPendingAlbum :exec
+-- Titles the still-pending documents of one album "base (1)", "base (2)", ... in
+-- arrival order (the order of ListPendingByMediaGroup).
+update documents d
+set title = @base::text || ' (' || n.num || ')'
+from (select a.id, row_number() over (order by a.created_at, a.id) as num
+      from documents a
+      where a.user_id = @user_id
+        and a.media_group_id = @media_group_id
+        and a.status = 'pending') n
+where d.id = n.id
+  and d.user_id = @user_id
+  and d.status = 'pending';
+
 -- name: UserIntakeStats :one
 -- One round trip for the intake guards: pending backlog, files created since
 -- @since (flood check) and the total (quota).

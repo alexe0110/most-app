@@ -70,18 +70,16 @@ func quickKeyboard(id docsbot.DocumentID, webp bool) *models.InlineKeyboardMarku
 	}}
 }
 
-// saveKeyboard is the result's keyboard. A result made from a stored document
-// (replace) can also replace that document's file.
-func saveKeyboard(token string, replace bool) *models.InlineKeyboardMarkup {
+// resultKeyboard is the result's keyboard: one action on the result and «Ничего
+// не делать». The action replaces the source document's file when replace is
+// set (the source is saved), otherwise it saves the result.
+func resultKeyboard(token string, kind resultKind, replace bool) *models.InlineKeyboardMarkup {
+	action, text := convActSave, kind.saveText()
 	if replace {
-		return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-			{{Text: btnSaveAsNew, CallbackData: convCB(convActSave, token)}},
-			{{Text: btnReplaceOriginal, CallbackData: convCB(convActRepAsk, token)}},
-			{{Text: btnSkipResult, CallbackData: convCB(convActSkip, token)}},
-		}}
+		action, text = convActRepAsk, kind.replaceText()
 	}
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-		{{Text: btnSaveResult, CallbackData: convCB(convActSave, token)}},
+		{{Text: text, CallbackData: convCB(action, token)}},
 		{{Text: btnSkipResult, CallbackData: convCB(convActSkip, token)}},
 	}}
 }

@@ -46,7 +46,8 @@ func callbackCases() []struct {
 		{"conv clean", "conv:cl:" + string(uuidDoc), conv(convActClean, uuidDoc)},
 		{"conv keep clean", "conv:kc:" + hexToken, conv(convActKeepClean, "", hexToken)},
 		{"conv keep original", "conv:ko:" + hexToken, conv(convActKeepOrig, "", hexToken)},
-		{"conv save", "conv:save:" + hexToken, conv(convActSave, "", hexToken)},
+		{"conv save", "conv:sv:" + hexToken, conv(convActSave, "", hexToken)},
+		{"conv legacy save", "conv:save:" + hexToken, conv(convActSaveLegacy, "", hexToken)},
 		{"conv skip", "conv:skip:" + hexToken, conv(convActSkip, "", hexToken)},
 		{"conv rp", "conv:rp:" + hexToken, conv(convActRepAsk, "", hexToken)},
 		{"conv rpy", "conv:rpy:" + hexToken, conv(convActRepYes, "", hexToken)},
@@ -86,7 +87,7 @@ func TestParseCallback_roundTripsEveryButton(t *testing.T) {
 
 func TestCallbackConstructors_matchWireFormat(t *testing.T) {
 	t.Parallel()
-	require.Equal(t, "conv:save:"+hexToken, convCB(convActSave, hexToken))
+	require.Equal(t, "conv:sv:"+hexToken, convCB(convActSave, hexToken))
 	require.Equal(t, "conv:q:"+string(uuidDoc)+":c1", convDocCB(convActQuick, uuidDoc, opCompress1))
 	require.Equal(t, cbMenuCancel, convCB(convActMenuCancel))
 	require.Equal(t, cbSessRotate, convCB(convActPDFOp, opRotate))
@@ -127,12 +128,12 @@ func TestParseCallback_edges(t *testing.T) {
 		{"quick without id", "conv:q::c1", true, callbackData{action: convActQuick, args: []string{"c1"}}, ""},
 		{"quick with empty op", "conv:q:abc:", true, callbackData{action: convActQuick, docID: "abc", args: []string{""}}, ""},
 		{"quick with unknown op", "conv:q:abc:zzz", true, callbackData{action: convActQuick, docID: "abc", args: []string{"zzz"}}, ""},
-		{"token empty", "conv:save:", true, callbackData{action: convActSave, args: []string{""}}, ""},
+		{"token empty", "conv:save:", true, callbackData{action: convActSaveLegacy, args: []string{""}}, ""},
 		{"session op empty", "conv:p:", true, callbackData{action: convActPDFOp, args: []string{""}}, ""},
 		{"menu without id", "conv:doc:", true, callbackData{action: convActDoc}, "conv:doc"},
-		{"extra colons stay arguments", "conv:save:a:1:2", true, callbackData{action: convActSave, args: []string{"a", "1", "2"}}, ""},
-		{"a huge number of arguments", callbackPrefix + convActSave + strings.Repeat(":a", 50_000), true,
-			callbackData{action: convActSave, args: slices.Repeat([]string{"a"}, 50_000)}, ""},
+		{"extra colons stay arguments", "conv:save:a:1:2", true, callbackData{action: convActSaveLegacy, args: []string{"a", "1", "2"}}, ""},
+		{"a huge number of arguments", callbackPrefix + convActSaveLegacy + strings.Repeat(":a", 50_000), true,
+			callbackData{action: convActSaveLegacy, args: slices.Repeat([]string{"a"}, 50_000)}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -153,7 +154,7 @@ func TestNewPress(t *testing.T) {
 	msg := &models.Message{ID: 7, Chat: models.Chat{ID: 100}}
 
 	p := newPress(ctx, &models.CallbackQuery{
-		ID: "q", From: models.User{ID: 42}, Data: "conv:save:" + hexToken,
+		ID: "q", From: models.User{ID: 42}, Data: "conv:sv:" + hexToken,
 		Message: models.MaybeInaccessibleMessage{Message: msg},
 	})
 	require.Equal(t, press{
@@ -224,7 +225,9 @@ func builtButtons() []string {
 	for _, kb := range []*models.InlineKeyboardMarkup{
 		actionKeyboard(), pdfKeyboard(), limitKeyboard(), formatKeyboard(), cancelKeyboard(),
 		quickKeyboard(uuidDoc, true), quickKeyboard(uuidDoc, false), pdfMenuKeyboard(uuidDoc), pdfActionsKeyboard(),
-		saveKeyboard(token, true), saveKeyboard(token, false), replaceKeyboard(token),
+		resultKeyboard(token, resultPDF, true), resultKeyboard(token, resultPDF, false),
+		resultKeyboard(token, resultCompressed, true), resultKeyboard(token, resultCompressed, false),
+		resultKeyboard(token, resultJPG, false), replaceKeyboard(token),
 		infoKeyboard(uuidDoc, true), infoKeyboard(uuidDoc, false), cleanedKeyboard(token),
 	} {
 		for _, row := range kb.InlineKeyboard {
