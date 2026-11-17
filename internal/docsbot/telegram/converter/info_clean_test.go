@@ -191,6 +191,7 @@ func TestInfoFlow_sendFailureKeepsTheCleanButton(t *testing.T) {
 
 	require.Contains(t, h.lastShown(), "Не удалось отправить файл")
 	require.Contains(t, h.editMarkups[len(h.editMarkups)-1], "conv:cl:", "retry is one tap away")
+	require.Contains(t, h.editMarkups[len(h.editMarkups)-1], "d:fb:e:convert_info:", "the error offers to report the problem")
 	require.Empty(t, h.repo.Events, "a copy that was not delivered is not counted")
 }
 

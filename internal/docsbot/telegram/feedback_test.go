@@ -1,9 +1,11 @@
 package telegram_test
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -210,6 +212,8 @@ func TestFeedback_otherCommandsAndButtonsEndTheMode(t *testing.T) {
 		{"/list", func(e *feedbackEnv) { e.send(commandUpdate("list")) }},
 		{"/settings", func(e *feedbackEnv) { e.send(commandUpdate("settings")) }},
 		{"/help", func(e *feedbackEnv) { e.send(commandUpdate("help")) }},
+		{"/start", func(e *feedbackEnv) { e.send(commandUpdate("start")) }},
+		{"/export", func(e *feedbackEnv) { e.send(commandUpdate("export")) }},
 		{"/convert", func(e *feedbackEnv) { e.send(commandUpdate("convert")) }},
 		{"a docs button", func(e *feedbackEnv) { e.send(dataCallback("d:lb")) }},
 	}
@@ -222,6 +226,134 @@ func TestFeedback_otherCommandsAndButtonsEndTheMode(t *testing.T) {
 			e.send(userMessage(55, "что-то"))
 
 			require.Empty(t, e.sent.copies, "the message is not feedback any more")
+		})
+	}
+}
+
+func TestFeedback_unknownCommandKeepsTheMode(t *testing.T) {
+	e := newFeedbackEnv(t, feedbackChat)
+
+	e.send(commandUpdate("feedback"))
+	e.send(commandUpdate("nonsense"))
+	e.send(userMessage(55, "всё-таки напишу"))
+
+	require.Equal(t, []string{"-1001<-100:55"}, e.sent.copies)
+}
+
+func TestFeedback_winsOverOtherPendingDialogues(t *testing.T) {
+	t.Run("a live /convert session", func(t *testing.T) {
+		e := newFeedbackEnv(t, feedbackChat)
+
+		e.send(commandUpdate("convert"))
+		e.send(commandUpdate("feedback"))
+		e.send(userPhoto(60, "", "скрин"))
+
+		require.Equal(t, []string{"-1001<-100:60"}, e.sent.copies, "the photo is feedback, not a conversion input")
+		require.Empty(t, e.sent.files)
+		require.Empty(t, e.repo.Docs)
+	})
+	t.Run("an armed rename, by the command", func(t *testing.T) {
+		e := newFeedbackEnv(t, feedbackChat)
+		doc := seedPassport(e.repo, "Старое", "u1")
+		e.send(dataCallback("d:rn:" + string(doc.ID)))
+
+		e.send(commandUpdate("feedback"))
+		e.send(userMessage(55, "не работает"))
+
+		require.Equal(t, "Старое", e.repo.Docs[doc.ID].Title, "feedback text is no new title")
+		require.Equal(t, []string{"-1001<-100:55"}, e.sent.copies)
+	})
+	t.Run("an armed rename, by the settings button", func(t *testing.T) {
+		e := newFeedbackEnv(t, feedbackChat)
+		doc := seedPassport(e.repo, "Старое", "u1")
+		e.send(dataCallbackMsg(7, "d:rn:"+string(doc.ID)))
+
+		e.send(dataCallbackMsg(8, "d:fb:s"))
+		e.send(userMessage(55, "не работает"))
+		e.send(userMessage(56, "паспорт"))
+
+		require.Equal(t, "Старое", e.repo.Docs[doc.ID].Title, "the button ended the rename")
+		require.Equal(t, []string{"-1001<-100:55"}, e.sent.copies)
+	})
+}
+
+func TestFeedback_albumParts(t *testing.T) {
+	t.Run("parts handled concurrently are one request", func(t *testing.T) {
+		e := newFeedbackEnv(t, feedbackChat)
+		e.send(commandUpdate("feedback"))
+
+		var wg sync.WaitGroup
+		for _, id := range []int{64, 61, 63, 62, 65} {
+			wg.Add(1)
+			go func() { defer wg.Done(); e.send(userPhoto(id, "alb", "")) }()
+		}
+		wg.Wait()
+		e.timer.Fire()
+
+		require.Equal(t, []string{"-1001<-100:[61,62,63,64,65]"}, e.sent.copies)
+		require.Len(t, e.repo.Feedbacks, 1)
+		require.Len(t, e.repo.Events, 1)
+		require.Empty(t, e.repo.Docs)
+	})
+	t.Run("a late part is neither saved nor searched", func(t *testing.T) {
+		e := newFeedbackEnv(t, feedbackChat)
+		e.send(commandUpdate("feedback"))
+		e.send(userPhoto(61, "alb", ""))
+		e.timer.Fire()
+
+		e.send(userPhoto(62, "alb", ""))
+		e.timer.Fire()
+
+		require.Equal(t, []string{"-1001<-100:61", "-1001<-100:62"}, e.sent.copies, "it reaches the team as its own request")
+		require.Empty(t, e.repo.Docs)
+	})
+	t.Run("a second album needs a new request", func(t *testing.T) {
+		e := newFeedbackEnv(t, feedbackChat)
+		e.send(commandUpdate("feedback"))
+		e.send(userPhoto(61, "one", ""))
+		e.timer.Fire()
+
+		e.send(userPhoto(70, "two", ""))
+		e.timer.Fire()
+
+		require.Equal(t, []string{"-1001<-100:61"}, e.sent.copies, "the mode ended with the first album")
+		require.NotEmpty(t, e.repo.Docs, "the second album is an ordinary upload")
+	})
+}
+
+func TestFeedback_logsHoldNoText(t *testing.T) {
+	const secret = "СЕКРЕТНАЯ-ПОДПИСЬ"
+	tests := []struct {
+		name string
+		do   func(ctx context.Context, b *bot.Bot)
+	}{
+		{"text", func(ctx context.Context, b *bot.Bot) { b.ProcessUpdate(ctx, userMessage(55, secret)) }},
+		{"caption", func(ctx context.Context, b *bot.Bot) { b.ProcessUpdate(ctx, userPhoto(55, "", secret)) }},
+		{"album", func(ctx context.Context, b *bot.Bot) {
+			b.ProcessUpdate(ctx, userPhoto(55, "alb", secret))
+			b.ProcessUpdate(ctx, userPhoto(56, "alb", secret))
+		}},
+		{"voice refused", func(ctx context.Context, b *bot.Bot) { b.ProcessUpdate(ctx, userVoice(55, "")) }},
+		{"answer", func(ctx context.Context, b *bot.Bot) {
+			b.ProcessUpdate(ctx, userMessage(55, secret))
+			b.ProcessUpdate(ctx, teamReply(sentMessageID, secret))
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logs lockedBuffer
+			ft := &docsbottest.FakeTimer{}
+			b, sent, repo := newBotOpts(t, slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+				docsbottest.FakeDrive{}, telegram.WithFeedbackChat(feedbackChat), telegram.WithAlbumTimer(ft.After))
+			repo.FeedbackTgUsers = map[docsbot.UserID]int64{docsbottest.TestUserID: 100}
+			sent.copyDown = tt.name == "answer" // the delivery fails and is logged
+			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+			b.ProcessUpdate(ctx, commandUpdate("feedback"))
+
+			tt.do(ctx, b)
+			ft.Fire()
+
+			require.NotContains(t, logs.String(), secret)
 		})
 	}
 }
@@ -262,6 +394,15 @@ func TestFeedback_copyFailureTellsTheUserAndKeepsTheHeader(t *testing.T) {
 	require.Equal(t, telegram.TextFeedbackFailed, e.texts()[len(e.texts())-1])
 	require.Len(t, e.repo.Feedbacks, 1, "the header is in the chat, a reply to it must find the user")
 	require.Equal(t, []int{sentMessageID}, e.repo.Feedbacks[0].Record.MessageIDs)
+	require.Empty(t, e.repo.Events, "a request that failed halfway is not a sent feedback")
+
+	e.sent.copyDown = false
+	e.send(commandUpdate("feedback"))
+	e.send(userMessage(56, "ещё раз"))
+	require.Len(t, e.repo.Events, 1, "the retry that went through is counted once")
+	n, err := e.repo.CountFeedbackSince(t.Context(), docsbottest.TestUserID, time.Now().Add(-time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, 2, n, "the header left in the team's chat counts against the limit")
 }
 
 func TestFeedback_textIsNeverLogged(t *testing.T) {
@@ -290,11 +431,13 @@ func TestFeedback_unavailableWithoutChat(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newFeedbackEnv(t, 0)
+			seedPassport(e.repo, "Паспорт", "u1")
 
 			tt.do(e)
 
 			require.Equal(t, []string{telegram.TextFeedbackUnavailable}, e.texts())
-			e.send(userMessage(55, "привет"))
+			e.send(userMessage(55, "паспорт"))
+			require.True(t, has(e.texts(), "Нашёл"), "the rest of the bot works: %q", e.texts())
 			require.Empty(t, e.sent.copies)
 			require.Empty(t, e.repo.Feedbacks)
 		})
@@ -319,6 +462,25 @@ func TestFeedback_entryPoints(t *testing.T) {
 		require.Equal(t, telegram.TextError, e.texts()[0], "the text is unchanged")
 		require.Contains(t, e.sent.markups[0], telegram.BtnReportProblem)
 		require.Contains(t, e.sent.markups[0], "d:fb:e:settings:")
+	})
+	t.Run("a file that cannot be sent carries the report button", func(t *testing.T) {
+		e := newFeedbackEnv(t, feedbackChat)
+		doc := seedPassport(e.repo, "Паспорт", "u1")
+		e.sent.filesDown = true
+
+		e.send(dataCallback("d:snd:" + string(doc.ID)))
+
+		require.Equal(t, telegram.TextSendFailed, e.texts()[0])
+		require.Contains(t, e.sent.markups[0], "d:fb:e:send_file:")
+	})
+	t.Run("an album that cannot be sent carries the report button", func(t *testing.T) {
+		e := newFeedbackEnv(t, feedbackChat)
+		e.sent.mediaDown = true
+		seedExport(e.repo, docsbot.KindDocument, 3, "d", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+
+		e.send(commandUpdate("export"))
+
+		require.Contains(t, strings.Join(e.sent.markups, "\n"), "d:fb:e:export_send:")
 	})
 	t.Run("help and the menu name the command", func(t *testing.T) {
 		e := newFeedbackEnv(t, feedbackChat)

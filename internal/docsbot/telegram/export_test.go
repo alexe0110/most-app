@@ -50,6 +50,7 @@ const (
 	TextSettingsTotal        = textSettingsTotal
 	TextStatusDone           = textStatusDone
 	TextStatusProgress       = textStatusProgress
+	TextSendFailed           = textSendFailed
 	TextStorageMissing       = textStorageMissing
 	TextStoragePending       = textStoragePending
 	TextStorageSyncing       = textStorageSyncing

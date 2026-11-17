@@ -6,6 +6,7 @@ import (
 	"github.com/go-telegram/bot/models"
 	"github.com/stretchr/testify/require"
 
+	"github.com/alexe0110/most-app/internal/docsbot/docsbottest"
 	"github.com/alexe0110/most-app/internal/docsbot/telegram"
 )
 
@@ -113,6 +114,46 @@ func TestFeedbackReply_onlyRepliesInTheFeedbackChatAreAnswers(t *testing.T) {
 			require.Empty(t, e.sent.copies, "nothing is delivered to the author")
 		})
 	}
+}
+
+func TestFeedbackReply_ownerChatStillWorksAsUsualChat(t *testing.T) {
+	// The feedback chat is the owner's private chat with the bot.
+	reply := func(u *models.Update) *models.Update {
+		u.Message.ReplyToMessage = &models.Message{ID: 12345}
+		return u
+	}
+	t.Run("a document replying to an unknown message is saved", func(t *testing.T) {
+		e := newFeedbackEnv(t, 100)
+
+		e.send(reply(userPhoto(9, "", "")))
+
+		require.Empty(t, e.sent.copies)
+		require.NotContains(t, e.texts(), telegram.TextFeedbackDelivered)
+		require.NotEmpty(t, e.texts(), "the photo got the usual handling")
+	})
+	t.Run("a rename answer replying to the prompt is applied", func(t *testing.T) {
+		e := newFeedbackEnv(t, 100)
+		doc := seedPassport(e.repo, "Старое", "u1")
+		e.send(dataCallback("d:rn:" + string(doc.ID)))
+
+		e.send(reply(userMessage(63, "Новое имя")))
+
+		require.Equal(t, "Новое имя", e.repo.Docs[doc.ID].Title)
+		require.Empty(t, e.sent.copies)
+	})
+	t.Run("an answer to a known message still reaches the author", func(t *testing.T) {
+		e := newFeedbackEnv(t, 100)
+		e.repo.FeedbackTgUsers[docsbottest.TestUserID] = 555
+		e.send(commandUpdate("feedback"))
+		e.send(userMessage(55, "привет"))
+		e.sent.sendChats, e.sent.copies = nil, nil
+
+		u := userMessage(9, "ответ")
+		u.Message.ReplyToMessage = &models.Message{ID: sentMessageID}
+		e.send(u)
+
+		require.Equal(t, []string{"555", "100"}, e.sent.sendChats)
+	})
 }
 
 func TestFeedbackReply_withoutFeedbackChatNothingIsAnswered(t *testing.T) {

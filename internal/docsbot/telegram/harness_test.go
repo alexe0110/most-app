@@ -54,6 +54,7 @@ type capture struct {
 	copies      []string     // copyMessage/copyMessages as "to<-from:ids", in order
 	blockedChat string       // sendMessage/copyMessage to this chat_id answer 403
 	copyDown    bool         // copyMessage(s) fail with 400
+	filesDown   bool         // sendDocument/sendPhoto fail with 400
 }
 
 // messageMethods are the calls a blocked user makes Telegram refuse.
@@ -152,6 +153,15 @@ func newBotOpts(t *testing.T, log *slog.Logger, drive docsbottest.FakeDrive, opt
 			sent.record(&sent.sendModes, r.FormValue("parse_mode"))
 			sent.record(&sent.markups, r.FormValue("reply_markup"))
 		case strings.HasSuffix(r.URL.Path, "/sendDocument"), strings.HasSuffix(r.URL.Path, "/sendPhoto"):
+			sent.mu.Lock()
+			down := sent.filesDown
+			sent.mu.Unlock()
+			if down {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"ok":false,"error_code":400,"description":"Bad Request: wrong file identifier"}`)
+				return
+			}
 			sent.record(&sent.files, r.FormValue("caption"))
 		case strings.HasSuffix(r.URL.Path, "/editMessageReplyMarkup"):
 			sent.record(&sent.markupEdits, r.FormValue("reply_markup"))
