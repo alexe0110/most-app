@@ -19,14 +19,15 @@ func (s *Service) CheckFeedback(ctx context.Context, user UserID) error {
 	return nil
 }
 
-// RecordFeedback stores the link between the messages the request left in the
-// feedback chat and the user, then counts the request. The event carries only the
-// source, never the text.
-func (s *Service) RecordFeedback(ctx context.Context, user UserID, src FeedbackSource, chatID int64, ids []int) error {
+// RecordFeedback stores the link between the messages a request left in the
+// feedback chat and the user. It does not count the request as sent: a request
+// that stopped halfway still leaves a header there, so it is recorded (a reply to
+// it must find the user, and the limit must see it) but is not a feedback_sent
+// event; the caller tracks that once the whole request is through.
+func (s *Service) RecordFeedback(ctx context.Context, user UserID, chatID int64, ids []int) error {
 	if err := s.feedback.RecordFeedback(ctx, FeedbackRecord{User: user, ChatID: chatID, MessageIDs: ids}); err != nil {
 		return fmt.Errorf("record feedback: %w", err)
 	}
-	s.track(ctx, Event{User: user, Name: EventFeedbackSent, Props: EventProps{Source: string(src)}})
 	return nil
 }
 

@@ -46,7 +46,7 @@ func (d *docs) sendFeedback(ctx context.Context, b *bot.Bot, req feedbackRequest
 		var delivered []int
 		delivered, err = d.deliverFeedback(ctx, out, req)
 		if len(delivered) > 0 {
-			if rerr := d.svc.RecordFeedback(ctx, req.user, req.entry.source, d.feedbackChat, delivered); rerr != nil {
+			if rerr := d.svc.RecordFeedback(ctx, req.user, d.feedbackChat, delivered); rerr != nil {
 				err = errors.Join(err, rerr)
 			}
 		}
@@ -56,6 +56,8 @@ func (d *docs) sendFeedback(ctx context.Context, b *bot.Bot, req feedbackRequest
 		out.Send(ctx, req.chatID, textFeedbackFailed)
 		return
 	}
+	// The source only, never the text. A request that failed halfway is not "sent".
+	d.svc.Track(ctx, req.user, docsbot.EventFeedbackSent, docsbot.EventProps{Source: string(req.entry.source)})
 	out.Send(ctx, req.chatID, textFeedbackSent)
 }
 

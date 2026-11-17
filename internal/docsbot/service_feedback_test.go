@@ -59,15 +59,11 @@ func TestService_CheckFeedback_storageError(t *testing.T) {
 
 func TestService_RecordFeedback(t *testing.T) {
 	tests := []struct {
-		name      string
-		src       docsbot.FeedbackSource
-		storeErr  error
-		wantEvent bool
+		name     string
+		storeErr error
 	}{
-		{"command", docsbot.FeedbackCommand, nil, true},
-		{"settings", docsbot.FeedbackSettings, nil, true},
-		{"error", docsbot.FeedbackError, nil, true},
-		{"storage failure records no event", docsbot.FeedbackCommand, errors.New("db down"), false},
+		{"stored", nil},
+		{"storage failure", errors.New("db down")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -75,22 +71,16 @@ func TestService_RecordFeedback(t *testing.T) {
 			repo.FeedbackErr = tt.storeErr
 			svc, _ := edgeService(repo, docsbottest.FakeDrive{})
 
-			err := svc.RecordFeedback(t.Context(), user, tt.src, -100, []int{4, 5, 6})
+			err := svc.RecordFeedback(t.Context(), user, -100, []int{4, 5, 6})
 
 			if tt.storeErr != nil {
 				require.ErrorIs(t, err, tt.storeErr)
-			} else {
-				require.NoError(t, err)
-				require.Equal(t, []docsbot.FeedbackRecord{{User: user, ChatID: -100, MessageIDs: []int{4, 5, 6}}},
-					[]docsbot.FeedbackRecord{repo.Feedbacks[0].Record})
-			}
-			if !tt.wantEvent {
-				require.Empty(t, repo.Events)
 				return
 			}
-			require.Equal(t, []docsbot.Event{{
-				User: user, Name: docsbot.EventFeedbackSent, Props: docsbot.EventProps{Source: string(tt.src)},
-			}}, repo.Events, "the event carries the source and no text")
+			require.NoError(t, err)
+			require.Equal(t, []docsbot.FeedbackRecord{{User: user, ChatID: -100, MessageIDs: []int{4, 5, 6}}},
+				[]docsbot.FeedbackRecord{repo.Feedbacks[0].Record})
+			require.Empty(t, repo.Events, "recording the links is not the feedback_sent event")
 		})
 	}
 }
@@ -99,7 +89,7 @@ func TestService_FeedbackAuthor(t *testing.T) {
 	repo := docsbottest.NewFakeRepo()
 	repo.FeedbackTgUsers = map[docsbot.UserID]int64{user: 777}
 	svc, _ := edgeService(repo, docsbottest.FakeDrive{})
-	require.NoError(t, svc.RecordFeedback(t.Context(), user, docsbot.FeedbackCommand, -100, []int{4, 5}))
+	require.NoError(t, svc.RecordFeedback(t.Context(), user, -100, []int{4, 5}))
 
 	got, err := svc.FeedbackAuthor(t.Context(), -100, 5)
 	require.NoError(t, err)
