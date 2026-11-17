@@ -58,6 +58,8 @@ func builtButtons() []string {
 	add(transferOfferKeyboard())
 	add(retryKeyboard(uuidDoc))
 	add(deleteDataKeyboard())
+	add(feedbackCancelKeyboard())
+	add((&docs{}).problemKeyboard("choose_album_category")) // the longest scenario a docs error names
 	add(myDocsKeyboard())
 	add(retryBatchKeyboard(statusID))
 	add(statusKeyboard(statusID, statusTally{total: 3, done: 3, failed: 1}))

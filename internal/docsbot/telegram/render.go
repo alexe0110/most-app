@@ -90,6 +90,7 @@ func renderSettings(v docsbot.SettingsView, connectURL string, haveURL bool, inf
 		}})
 	}
 	rows = append(rows, inlineToggleRow(v.InlineEnabled))
+	rows = append(rows, []models.InlineKeyboardButton{{Text: btnFeedback, CallbackData: docCB(actFeedback, "", fbSettings)}})
 	rows = append(rows, []models.InlineKeyboardButton{{Text: btnDeleteData, CallbackData: docCB(actDeleteData, "")}})
 	return b.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }

@@ -67,7 +67,7 @@ func (c *Converter) finishPDF(ctx context.Context, b *bot.Bot, p press) {
 
 	name := scanName(c.now())
 	if !c.sendResult(ctx, b, chatID, user, resultFile{name: name, data: pdf, kind: resultPDF}) {
-		c.retry(ctx, b, chatID, user, sess, msgID, textSendFailed, pdfKeyboard())
+		c.retry(ctx, b, chatID, user, sess, msgID, textSendFailed, c.reportable(textSendFailed, pdfKeyboard(), scenarioCompress))
 		return
 	}
 	c.done(ctx, docsbot.ConvertPhotoPDF)
@@ -136,7 +136,7 @@ func (c *Converter) compress(ctx context.Context, b *bot.Bot, chatID, user int64
 	}
 	name := resultFileName(sess.sourceTitle, nameFallbackPhoto, nameTagCompressed, formatExt(format))
 	if !c.sendResult(ctx, b, chatID, user, resultFile{name: name, data: out, kind: resultCompressed, caption: compressedCaption(len(src), len(out))}) {
-		c.retry(ctx, b, chatID, user, sess, msgID, textSendFailed, retryKB)
+		c.retry(ctx, b, chatID, user, sess, msgID, textSendFailed, c.reportable(textSendFailed, retryKB, scenarioCompress))
 		return true
 	}
 	c.done(ctx, docsbot.ConvertCompress)

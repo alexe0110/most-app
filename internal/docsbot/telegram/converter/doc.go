@@ -23,7 +23,7 @@ func (c *Converter) loadDoc(ctx context.Context, b *bot.Bot, chatID int64, user 
 	}
 	if err != nil {
 		c.log.ErrorContext(ctx, "convert load document", "err", err, "user_id", user, "doc_id", id)
-		c.out(b).Send(ctx, chatID, textError)
+		c.out(b).Send(ctx, chatID, textError, tg.WithKeyboard(c.reportable(textError, nil, scenarioDoc)))
 		return docsbot.Document{}, false
 	}
 	return card.Doc, true
@@ -111,7 +111,7 @@ func (c *Converter) onQuick(ctx context.Context, b *bot.Bot, p press) {
 	}
 	res.sourceDoc = id
 	if !c.sendResult(ctx, b, chatID, p.tgUser, res) {
-		c.show(ctx, b, chatID, msgID, textSendFailed, menu)
+		c.show(ctx, b, chatID, msgID, textSendFailed, c.reportable(textSendFailed, menu, scenarioDoc))
 		return
 	}
 	c.done(ctx, quickConvertOp(op))
@@ -163,7 +163,7 @@ func (c *Converter) onSave(ctx context.Context, b *bot.Bot, p press) {
 		return
 	case err != nil:
 		c.log.ErrorContext(ctx, "load result source", "err", err, "user_id", res.user, "doc_id", res.sourceDoc)
-		c.out(b).Send(ctx, p.chatID, textError)
+		c.out(b).Send(ctx, p.chatID, textError, tg.WithKeyboard(c.reportable(textError, nil, scenarioDoc)))
 		return
 	case card.Doc.Status == docsbot.StatusSaved:
 		// Saved since the result was sent: replacing is the user's call.
@@ -193,7 +193,7 @@ func (c *Converter) saveNew(ctx context.Context, b *bot.Bot, p press, token stri
 	rep, err := c.svc.Receive(ctx, file)
 	if err != nil {
 		c.log.ErrorContext(ctx, "save converted file", "err", err, "user_id", res.user)
-		c.out(b).Send(ctx, p.chatID, textError)
+		c.out(b).Send(ctx, p.chatID, textError, tg.WithKeyboard(c.reportable(textError, nil, scenarioDoc)))
 		return
 	}
 	if r, ok := rep.(docsbot.AlreadySaved); ok {
@@ -265,7 +265,7 @@ func (c *Converter) replaceSource(ctx context.Context, b *bot.Bot, p press, toke
 		if !pending {
 			c.editResultCaption(ctx, b, p, "", resultKeyboard(token, res.kind, true))
 		}
-		c.out(b).Send(ctx, chatID, text)
+		c.out(b).Send(ctx, chatID, text, tg.WithKeyboard(c.reportable(text, nil, scenarioDoc)))
 	}
 
 	rep, err := c.svc.ReplaceContent(ctx, res.user, res.sourceDoc, res.file)

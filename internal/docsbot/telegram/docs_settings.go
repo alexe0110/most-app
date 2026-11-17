@@ -82,7 +82,7 @@ func (d *docs) helpText() string {
 	if d.botUsername != "" {
 		text += fmt.Sprintf(textHelpInline, d.botUsername)
 	}
-	text += textHelpTail
+	text += textHelpFeedback + textHelpTail
 	if d.privacyURL != "" {
 		text += "\n\n" + fmt.Sprintf(textPrivacy, d.privacyURL)
 	}
@@ -236,7 +236,7 @@ func (d *docs) onConnectAsk(ctx context.Context, b *bot.Bot, p press) {
 	}
 	url, ok := d.connectURL(ctx, p.user)
 	if !ok {
-		d.out(b).Send(ctx, p.chatID, textError)
+		d.out(b).Send(ctx, p.chatID, textError, tg.WithKeyboard(d.problemKeyboard("connect_link")))
 		return
 	}
 	d.out(b).Send(ctx, p.chatID, fmt.Sprintf(textConnectIntro, d.driveFolder), tg.WithKeyboard(connectIntroKeyboard(url)))

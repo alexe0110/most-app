@@ -38,6 +38,14 @@ type docs struct {
 	albums       *albumBuffer
 	// feedbackChat is where feedback goes and replies come from; zero: feedback is off.
 	feedbackChat int64
+	// feedbackPending: users whose next message is feedback. A lost entry (restart,
+	// TTL) only means the next message is handled as usual.
+	feedbackPending *tg.TTLMap[int64, feedbackEntry]
+	// feedbackGroups: albums being sent as feedback, keyed by feedbackGroupKey, so
+	// the parts after the first find the mode that the first one took.
+	feedbackGroups *tg.TTLMap[string, feedbackEntry]
+	feedbackClaim  sync.Mutex // makes taking the mode for an album atomic
+	feedbackAlbums *feedbackBuffer
 	// driveFolder is the Drive root folder name shown in /start and /settings.
 	driveFolder string
 	// botUsername is the bot's @username (without @), for the inline-mode hints; may be empty.
@@ -63,6 +71,10 @@ func newDocs(svc *docsbot.Service, auth Authorizer, log *slog.Logger, opts ...Op
 		origins:      tg.NewTTLMap[originKey, string](originTTL, tg.MaxStoreEntries, time.Now),
 		settingsMsgs: tg.NewTTLMap[int64, int](settingsTTL, tg.MaxStoreEntries, time.Now),
 		albums:       newAlbumBuffer(),
+
+		feedbackPending: tg.NewTTLMap[int64, feedbackEntry](feedbackTTL, tg.MaxStoreEntries, time.Now),
+		feedbackGroups:  tg.NewTTLMap[string, feedbackEntry](feedbackGroupTTL, tg.MaxStoreEntries, time.Now),
+		feedbackAlbums:  newFeedbackBuffer(),
 
 		driveFolder: gdrive.DefaultRootFolder,
 
@@ -94,9 +106,13 @@ func (d *docs) ownsFile(u *models.Update) bool {
 // ownsUnsupported matches messages with media the bot does not store (and
 // would otherwise misread as a search query).
 func (d *docs) ownsUnsupported(u *models.Update) bool {
-	m := u.Message
-	return m != nil && (m.Voice != nil || m.Video != nil || m.VideoNote != nil || m.Audio != nil ||
-		m.Sticker != nil || m.Animation != nil || m.Contact != nil || m.Location != nil || m.Poll != nil)
+	return u.Message != nil && unsupportedMedia(u.Message)
+}
+
+// unsupportedMedia reports media the bot neither stores nor takes as feedback.
+func unsupportedMedia(m *models.Message) bool {
+	return m.Voice != nil || m.Video != nil || m.VideoNote != nil || m.Audio != nil ||
+		m.Sticker != nil || m.Animation != nil || m.Contact != nil || m.Location != nil || m.Poll != nil
 }
 
 // onUnsupported tells the user which media the bot takes.
@@ -147,6 +163,9 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 			d.out(b).Answer(ctx, p.queryID) // never leave the button spinning
 		}
 		return
+	}
+	if p.data.action != actFeedback && p.data.action != actFeedbackCancel {
+		d.feedbackPending.Delete(p.tgUser) // any other button abandons the feedback prompt
 	}
 	if p.data.action != actRenameCancel {
 		// Any other button abandons a rename prompt that sits on another message.
@@ -215,6 +234,10 @@ func (d *docs) callback(ctx context.Context, b *bot.Bot, u *models.Update) {
 		d.onRetryBatch(ctx, b, p)
 	case actInline:
 		d.onInlineSwitch(ctx, b, p)
+	case actFeedback:
+		d.onFeedbackButton(ctx, b, p)
+	case actFeedbackCancel:
+		d.onFeedbackCancel(ctx, b, p)
 	case actNoop:
 	}
 }
@@ -246,7 +269,7 @@ func (d *docs) fail(ctx context.Context, b *bot.Bot, chatID int64, what string, 
 	} else {
 		d.log.ErrorContext(ctx, what, "err", err)
 	}
-	d.out(b).Send(ctx, chatID, textError)
+	d.out(b).Send(ctx, chatID, textError, tg.WithKeyboard(d.problemKeyboard(strings.ReplaceAll(what, " ", "_"))))
 }
 
 // userID reads the internal user id the ensureUser middleware put in ctx.

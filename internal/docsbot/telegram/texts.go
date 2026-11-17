@@ -19,8 +19,9 @@ const (
 		"• Нахожу — напиши слово из названия, например «полис».\n" +
 		"• /list — все документы по категориям.\n" +
 		"• /convert — фото в PDF, сжатие, страницы и склейка PDF.\n"
-	textHelpInline = "• В любом чате набери @%s и название — отправлю документ прямо туда.\n" // %s = bot username
-	textHelpTail   = "• /settings — Google Диск, отправка из чатов, удаление данных.\n\n" +
+	textHelpInline   = "• В любом чате набери @%s и название — отправлю документ прямо туда.\n" // %s = bot username
+	textHelpFeedback = "• /feedback — написать разработчикам.\n"
+	textHelpTail     = "• /settings — Google Диск, отправка из чатов, удаление данных.\n\n" +
 		"Документы хранятся в Telegram, а после подключения Google Диска — ещё и на твоём Google Диске."
 
 	// textStartInline answers ?start=inline when inline mode is already on: %s = bot username.
@@ -144,6 +145,7 @@ const (
 	cmdDescConvert  = "Фото в PDF, сжатие, работа с PDF"
 	cmdDescSettings = "Google Диск и мои данные"
 	cmdDescHelp     = "Что умеет бот"
+	cmdDescFeedback = "Написать разработчикам"
 )
 
 // Settings, disconnect, export and delete texts.
@@ -198,8 +200,38 @@ const (
 	btnRetryAll           = "🔁 Повторить загрузку"
 	btnExportAll          = "📨 Прислать все документы"
 	btnDeleteData         = "🗑 Удалить мои данные"
+	btnFeedback           = "💬 Написать разработчикам"
+	btnReportProblem      = "Сообщить о проблеме"
 	btnInlineOn           = "💬 Из любого чата: вкл"
 	btnInlineOff          = "💬 Из любого чата: выкл"
+)
+
+// Feedback: the user writes to the team, the team answers in the same chat.
+const (
+	textFeedbackPrompt      = "Напиши сообщение — можно приложить скриншот или файл."
+	textFeedbackSent        = "Спасибо, передали. Ответим здесь же."
+	textFeedbackCanceled    = "Хорошо, ничего не отправил."
+	textFeedbackUnavailable = "Связаться с разработчиками из бота пока нельзя. Попробуй позже."
+	textFeedbackUnsupported = "Я принимаю текст, фото и файлы. Видео или голосовое опиши словами или пришли как файл: 📎 → Файл."
+	textFeedbackLimit       = "Ты уже написал нам несколько раз за последний час. Подожди немного и напиши снова."
+	textFeedbackFailed      = "Не удалось передать сообщение. Попробуй ещё раз через минуту."
+	// textFeedbackAnswer comes before the team's reply, which is copied right after it.
+	textFeedbackAnswer = "Ответ от команды Most:"
+
+	// What the team sees in the feedback chat. textFeedbackHeader is a format
+	// string: Telegram id, @username, language, source, send time (UTC).
+	textFeedbackHeader = "Обращение\nTelegram id: %d\nUsername: %s\nЯзык: %s\nИсточник: %s\nОтправлено: %s UTC"
+	// textFeedbackFrom* fill the source: for an error %s = scenario, then the time of the error (UTC).
+	textFeedbackFromCommand  = "команда /feedback"
+	textFeedbackFromSettings = "настройки"
+	textFeedbackFromError    = "ошибка: %s"
+	textFeedbackFromErrorAt  = "ошибка: %s, %s UTC"
+	textFeedbackNoValue      = "—"
+
+	// Replies to the team after answering a user.
+	textFeedbackDelivered    = "Доставлено"
+	textFeedbackBlocked      = "Не доставлено: пользователь заблокировал бота"
+	textFeedbackNotDelivered = "Не доставлено: ошибка Telegram"
 )
 
 // Inline mode: the button on top of the inline results (Telegram allows ~64 chars).
