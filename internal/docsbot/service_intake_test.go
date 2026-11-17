@@ -546,6 +546,7 @@ func TestService_PurgeStalePending_errors(t *testing.T) {
 			var r interface {
 				docsbot.Repo
 				docsbot.Events
+				docsbot.Feedback
 			} = repo
 			var st docsbot.StatusMessages = failingPurgeStatus{FakeStatus: docsbottest.NewFakeStatus(repo), err: boom, called: &purgeSeen}
 			if tt.failRepo {

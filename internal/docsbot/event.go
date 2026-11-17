@@ -19,6 +19,7 @@ const (
 	EventFileCleaned       EventName = "file_cleaned"
 	EventExport            EventName = "export"
 	EventDataDeleted       EventName = "data_deleted"
+	EventFeedbackSent      EventName = "feedback_sent"
 )
 
 // ConvertOp names a converter operation in a convert_done event. Only these
