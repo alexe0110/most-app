@@ -34,4 +34,6 @@ var (
 	// ErrRevokeIncomplete means the user's data was removed locally but revoking
 	// Drive access failed; callers treat it as success and only log it.
 	ErrRevokeIncomplete = errors.New("drive revoke incomplete")
+	// ErrFeedbackNotFound means no feedback message of a known user sits under that id.
+	ErrFeedbackNotFound = errors.New("feedback message not found")
 )

@@ -57,6 +57,15 @@ type Event struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type FeedbackMessage struct {
+	ID            pgtype.UUID
+	FeedbackID    pgtype.UUID
+	UserID        pgtype.UUID
+	ChatID        int64
+	ChatMessageID int64
+	CreatedAt     pgtype.Timestamptz
+}
+
 type Integration struct {
 	ID              pgtype.UUID
 	UserID          pgtype.UUID

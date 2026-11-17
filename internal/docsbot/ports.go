@@ -87,9 +87,9 @@ type Repo interface {
 	// StuckSyncs lists backed-up documents whose sync has been pending since before
 	// olderThan, for users with an active Drive integration, oldest first.
 	StuckSyncs(ctx context.Context, olderThan time.Time, limit int) ([]StuckUpload, error)
-	// DeleteUserData deletes the user's documents, drive_folders, integrations and
-	// events, clears users.source and users.first_start_at and soft-deletes the user
-	// (users.deleted_at), all in one transaction.
+	// DeleteUserData deletes the user's documents, drive_folders, integrations,
+	// events and feedback links, clears users.source and users.first_start_at and
+	// soft-deletes the user (users.deleted_at), all in one transaction.
 	DeleteUserData(ctx context.Context, user UserID) error
 }
 
@@ -279,4 +279,18 @@ type Events interface {
 	// makes a user new. Only on a first start is source (if not empty) written to
 	// users.source, and never over a stored one.
 	RecordStart(ctx context.Context, user UserID, source string) (first bool, err error)
+}
+
+// Feedback keeps the link between a message in the feedback chat and the user who
+// wrote it, so the team's reply finds its way back. Declared here, at the
+// consumer; implemented by docsbot/postgres.
+type Feedback interface {
+	// RecordFeedback stores the messages of one request (the header and the copies)
+	// in one write, so a half-saved request cannot leave a reply without an addressee.
+	RecordFeedback(ctx context.Context, r FeedbackRecord) error
+	// CountFeedbackSince counts the user's requests (not messages) made since the given time.
+	CountFeedbackSince(ctx context.Context, user UserID, since time.Time) (int, error)
+	// FeedbackAuthor returns the Telegram id of the user behind a message of the
+	// feedback chat, or ErrFeedbackNotFound if it is unknown or the user is deleted.
+	FeedbackAuthor(ctx context.Context, chatID int64, msgID int) (tgUserID int64, err error)
 }
