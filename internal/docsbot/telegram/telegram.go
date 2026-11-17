@@ -47,6 +47,7 @@ func Register(b *bot.Bot, deps Deps, opts ...Option) {
 	b.RegisterHandler(bot.HandlerTypeMessageText, "feedback", bot.MatchTypeCommand, d.feedback)
 	b.RegisterHandlerMatchFunc(d.ownsFeedback, d.onFeedbackMessage) // before the converter: the feedback prompt wins over a live /convert session
 	conv.Register(b)                                                // /convert, /cancel, its buttons and in-session messages
+	b.RegisterHandlerMatchFunc(d.ownsFeedbackReply, d.onFeedbackReply)
 	b.RegisterHandlerMatchFunc(ownsInline, d.inline)
 	b.RegisterHandlerMatchFunc(ownsChosenInline, d.chosenInline)
 	b.RegisterHandlerMatchFunc(d.ownsCallback, d.callback)

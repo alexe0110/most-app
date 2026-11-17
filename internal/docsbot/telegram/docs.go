@@ -115,6 +115,20 @@ func unsupportedMedia(m *models.Message) bool {
 		m.Sticker != nil || m.Animation != nil || m.Contact != nil || m.Location != nil || m.Poll != nil
 }
 
+// route handles an update the way the registered handlers would after the
+// feedback ones: unsupported media, files, then text (search). Used when a message
+// that looked like a feedback reply turns out to be an ordinary one.
+func (d *docs) route(ctx context.Context, b *bot.Bot, u *models.Update) {
+	switch {
+	case d.ownsUnsupported(u):
+		d.onUnsupported(ctx, b, u)
+	case d.ownsFile(u):
+		d.receive(ctx, b, u)
+	default:
+		d.onText(ctx, b, u)
+	}
+}
+
 // onUnsupported tells the user which media the bot takes.
 func (d *docs) onUnsupported(ctx context.Context, b *bot.Bot, u *models.Update) {
 	d.out(b).Send(ctx, u.Message.Chat.ID, textUnsupported)
