@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/go-telegram/bot"
@@ -89,7 +90,8 @@ type leaveFunc func(ctx context.Context, b *bot.Bot, chatID int64)
 //
 // The feedback chat, when it is a group, is the exception: the bot never leaves
 // it and lets through only replies (the team answering a user); everything else
-// said there is dropped, since the bot has nothing to do with it.
+// said there is dropped, since the bot has nothing to do with it. A reply that
+// is a command is dropped too: it would make the bot answer into the group.
 func privateOnly(feedbackChat int64, leave leaveFunc, log *slog.Logger) bot.Middleware {
 	return func(next bot.HandlerFunc) bot.HandlerFunc {
 		return func(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -104,7 +106,7 @@ func privateOnly(feedbackChat int64, leave leaveFunc, log *slog.Logger) bot.Midd
 				next(ctx, b, update)
 			case chat != nil && feedbackChat != 0 && chat.ID == feedbackChat &&
 				(chat.Type == models.ChatTypeGroup || chat.Type == models.ChatTypeSupergroup):
-				if update.Message != nil && update.Message.ReplyToMessage != nil {
+				if m := update.Message; m != nil && m.ReplyToMessage != nil && !strings.HasPrefix(m.Text, "/") {
 					next(ctx, b, update)
 					return
 				}

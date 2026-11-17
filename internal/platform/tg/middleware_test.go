@@ -274,6 +274,11 @@ func TestPrivateOnly_feedbackGroup(t *testing.T) {
 	}{
 		{"reply in feedback group", reply(models.ChatTypeSupergroup, feedbackChat), true, false},
 		{"reply in feedback basic group", reply(models.ChatTypeGroup, feedbackChat), true, false},
+		{"command reply in feedback group", func() *models.Update {
+			u := reply(models.ChatTypeSupergroup, feedbackChat)
+			u.Message.Text = "/list"
+			return u
+		}(), false, false},
 		{"plain message in feedback group", chatMessage(models.ChatTypeSupergroup), false, false},
 		{"callback in feedback group", chatCallback(models.ChatTypeSupergroup), false, false},
 		{"bot added to feedback group", &models.Update{MyChatMember: &models.ChatMemberUpdated{Chat: models.Chat{ID: feedbackChat, Type: models.ChatTypeSupergroup}}}, false, false},
