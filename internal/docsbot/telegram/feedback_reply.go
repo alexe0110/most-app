@@ -29,8 +29,13 @@ func (d *docs) onFeedbackReply(ctx context.Context, b *bot.Bot, u *models.Update
 		if !errors.Is(err, docsbot.ErrFeedbackNotFound) {
 			d.log.ErrorContext(ctx, "feedback author", "err", err)
 		}
-		if m.Chat.Type == models.ChatTypePrivate {
+		switch {
+		case m.Chat.Type == models.ChatTypePrivate:
 			d.route(ctx, b, u)
+		case errors.Is(err, docsbot.ErrFeedbackNotFound) && repliesToBot(b, m):
+			// The team answered one of our messages that no user stands behind
+			// (an old request, or the link was purged): say so instead of staying silent.
+			d.out(b).Send(ctx, m.Chat.ID, textFeedbackNotFound)
 		}
 		return
 	}
@@ -46,6 +51,12 @@ func (d *docs) onFeedbackReply(ctx context.Context, b *bot.Bot, u *models.Update
 		}
 	}
 	out.Send(ctx, m.Chat.ID, status)
+}
+
+// repliesToBot reports a reply to a message the bot itself sent. Replies to the
+// team members' messages are their own talk and stay unanswered.
+func repliesToBot(b *bot.Bot, m *models.Message) bool {
+	return m.ReplyToMessage.From != nil && m.ReplyToMessage.From.ID == b.ID()
 }
 
 // deliverAnswer sends the user the lead-in and a copy of the team's reply. The

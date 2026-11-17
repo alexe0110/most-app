@@ -46,8 +46,10 @@ func (d *docs) sendFeedback(ctx context.Context, b *bot.Bot, req feedbackRequest
 		var delivered []int
 		delivered, err = d.deliverFeedback(ctx, out, req)
 		if len(delivered) > 0 {
+			// The team has the message either way: a lost link only costs the reply
+			// route, so it is logged and does not turn a delivered request into a failure.
 			if rerr := d.svc.RecordFeedback(ctx, req.user, d.feedbackChat, delivered); rerr != nil {
-				err = errors.Join(err, rerr)
+				d.log.ErrorContext(ctx, "record feedback", "err", rerr, "user_id", req.user)
 			}
 		}
 	}

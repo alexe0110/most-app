@@ -108,6 +108,18 @@ func TestBuiltButtons_everyOneParsesFitsAndIsKnown(t *testing.T) {
 	}
 }
 
+func TestReportButton_dataFitsWhateverTheScenario(t *testing.T) {
+	d := &docs{}
+	for _, scenario := range []string{"", "load_card", strings.Repeat("a", 200), "Bad Text", "ключ"} {
+		btn := d.ReportButton(scenario)
+
+		require.LessOrEqual(t, len(btn.CallbackData), 64, scenario)
+		cd, ok := parseCallback(btn.CallbackData)
+		require.True(t, ok)
+		require.Equal(t, actFeedback, cd.action)
+	}
+}
+
 func TestPickerKeyboard_infoButtonJoinsTheLastRow(t *testing.T) {
 	base := len(categoryKeyboard(actCategory, uuidDoc).InlineKeyboard)
 	tests := []struct {

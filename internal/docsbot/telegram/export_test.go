@@ -23,6 +23,7 @@ const (
 	TextFeedbackFailed       = textFeedbackFailed
 	TextFeedbackLimit        = textFeedbackLimit
 	TextFeedbackNotDelivered = textFeedbackNotDelivered
+	TextFeedbackNotFound     = textFeedbackNotFound
 	TextFeedbackPrompt       = textFeedbackPrompt
 	TextFeedbackSent         = textFeedbackSent
 	TextFeedbackUnavailable  = textFeedbackUnavailable

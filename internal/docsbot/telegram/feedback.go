@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -54,6 +55,9 @@ func feedbackGroupKey(tgUser int64, group string) string {
 // ReportButton is the «Сообщить о проблеме» button under an error of the given
 // scenario. It implements converter.ProblemReporter.
 func (d *docs) ReportButton(scenario string) models.InlineKeyboardButton {
+	if !scenarioPattern.MatchString(scenario) {
+		scenario = "" // keeps the data within Telegram's 64 bytes whatever the caller passes
+	}
 	return models.InlineKeyboardButton{
 		Text:         btnReportProblem,
 		CallbackData: docCB(actFeedback, "", fbError, scenario, strconv.FormatInt(time.Now().Unix(), 10)),
@@ -119,8 +123,29 @@ func (d *docs) startFeedback(ctx context.Context, b *bot.Bot, chatID, tgUser int
 		d.out(b).Send(ctx, chatID, textFeedbackUnavailable)
 		return
 	}
+	// The prompt takes over the user's next message: end the other dialogues that
+	// would claim it (a delete confirmation, a rename).
+	d.confirms.Delete(tgUser)
+	user, known := userID(ctx)
+	if e, ok := d.renames.Take(tgUser); ok && known {
+		d.restoreCard(ctx, b, user, e.chat, e.msg, e.id)
+	}
+	if known && d.feedbackLimited(ctx, b, chatID, user) {
+		return
+	}
 	entry.promptMsgID = d.out(b).Send(ctx, chatID, textFeedbackPrompt, tg.WithKeyboard(feedbackCancelKeyboard()))
 	d.feedbackPending.Set(tgUser, entry)
+}
+
+// feedbackLimited tells the user at once when the limit is reached, instead of
+// letting them write a message that would be refused. The check is repeated at
+// send time. A failed check is left to that second one.
+func (d *docs) feedbackLimited(ctx context.Context, b *bot.Bot, chatID int64, user docsbot.UserID) bool {
+	if err := d.svc.CheckFeedback(ctx, user); !errors.Is(err, docsbot.ErrFeedbackLimit) {
+		return false
+	}
+	d.out(b).Send(ctx, chatID, textFeedbackLimit)
+	return true
 }
 
 // onFeedbackCancel leaves the feedback mode.
@@ -228,6 +253,8 @@ func (d *docs) onFeedbackAlbumPart(ctx context.Context, b *bot.Bot, m *models.Me
 // flushFeedbackAlbum sends a collected album, or refuses it whole when a part is
 // media the bot does not take; the mode is then given back to the user.
 func (d *docs) flushFeedbackAlbum(ctx context.Context, b *bot.Bot, a feedbackAlbum) {
+	ctx, cancel := context.WithTimeout(ctx, feedbackSendTimeout) // the flush is outside any update deadline
+	defer cancel()
 	if a.unsupported {
 		d.feedbackPending.Set(a.req.from.ID, a.req.entry)
 		d.out(b).Send(ctx, a.req.chatID, textFeedbackUnsupported)

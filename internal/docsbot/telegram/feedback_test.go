@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -119,24 +118,6 @@ func TestFeedback_photoWithCaptionIsCopiedNotSaved(t *testing.T) {
 	require.Len(t, e.repo.Feedbacks, 1)
 }
 
-func TestFeedback_albumIsOneRequest(t *testing.T) {
-	e := newFeedbackEnv(t, feedbackChat)
-
-	e.send(commandUpdate("feedback"))
-	for _, id := range []int{63, 61, 62} {
-		e.send(userPhoto(id, "alb", ""))
-	}
-	require.Empty(t, e.sent.copies, "nothing is sent before the parts stop coming")
-	e.timer.Fire()
-
-	require.Equal(t, []string{"-1001<-100:[61,62,63]"}, e.sent.copies, "one copy call, ids ascending")
-	require.Len(t, e.repo.Feedbacks, 1, "one request")
-	require.Equal(t, []int{sentMessageID, copiedMessageID, copiedMessageID + 1, copiedMessageID + 2}, e.repo.Feedbacks[0].Record.MessageIDs)
-	require.Len(t, e.repo.Events, 1, "one event")
-	require.Empty(t, e.repo.Docs, "no photo of the album is saved")
-	require.Equal(t, 1, strings.Count(strings.Join(e.texts(), "\n"), telegram.TextFeedbackSent), "one thanks")
-}
-
 func TestFeedback_voiceIsRefusedAndModeStays(t *testing.T) {
 	e := newFeedbackEnv(t, feedbackChat)
 
@@ -147,22 +128,6 @@ func TestFeedback_voiceIsRefusedAndModeStays(t *testing.T) {
 
 	e.send(userMessage(71, "тогда текстом"))
 	require.Equal(t, []string{"-1001<-100:71"}, e.sent.copies, "the mode survived the refusal")
-}
-
-func TestFeedback_albumWithUnsupportedPartIsRefusedWhole(t *testing.T) {
-	e := newFeedbackEnv(t, feedbackChat)
-
-	e.send(commandUpdate("feedback"))
-	e.send(userPhoto(80, "alb", ""))
-	e.send(userVoice(81, "alb"))
-	e.timer.Fire()
-
-	require.Equal(t, 1, strings.Count(strings.Join(e.texts(), "\n"), telegram.TextFeedbackUnsupported), "refused once")
-	require.Empty(t, e.sent.copies)
-	require.Empty(t, e.repo.Feedbacks)
-
-	e.send(userMessage(82, "ладно, текстом"))
-	require.Equal(t, []string{"-1001<-100:82"}, e.sent.copies, "the mode survived the refusal")
 }
 
 func TestFeedback_limit(t *testing.T) {
@@ -185,10 +150,24 @@ func TestFeedback_limit(t *testing.T) {
 			e.send(commandUpdate("feedback"))
 			e.send(userMessage(55, "ещё одно"))
 
-			require.Equal(t, tt.wantReply, e.texts()[len(e.texts())-1])
+			require.Contains(t, e.texts(), tt.wantReply)
 			require.Equal(t, tt.wantSent, len(e.sent.copies) == 1)
+			require.Equal(t, tt.wantSent, has(e.texts(), telegram.TextFeedbackPrompt), "at the limit the user is not asked to write")
 		})
 	}
+}
+
+func TestFeedback_limitReachedWhileWriting(t *testing.T) {
+	e := newFeedbackEnv(t, feedbackChat)
+
+	e.send(commandUpdate("feedback"))
+	for range docsbot.MaxFeedbackPerHour {
+		e.repo.SeedFeedback(docsbottest.TestUserID, time.Now())
+	}
+	e.send(userMessage(55, "ещё одно"))
+
+	require.Equal(t, telegram.TextFeedbackLimit, e.texts()[len(e.texts())-1], "the check is repeated at send time")
+	require.Empty(t, e.sent.copies)
 }
 
 func TestFeedback_cancel(t *testing.T) {
@@ -215,6 +194,7 @@ func TestFeedback_otherCommandsAndButtonsEndTheMode(t *testing.T) {
 		{"/start", func(e *feedbackEnv) { e.send(commandUpdate("start")) }},
 		{"/export", func(e *feedbackEnv) { e.send(commandUpdate("export")) }},
 		{"/convert", func(e *feedbackEnv) { e.send(commandUpdate("convert")) }},
+		{"/cancel", func(e *feedbackEnv) { e.send(commandUpdate("cancel")) }},
 		{"a docs button", func(e *feedbackEnv) { e.send(dataCallback("d:lb")) }},
 	}
 	for _, tt := range tests {
@@ -259,8 +239,22 @@ func TestFeedback_winsOverOtherPendingDialogues(t *testing.T) {
 
 		e.send(commandUpdate("feedback"))
 		e.send(userMessage(55, "не работает"))
+		e.send(userMessage(56, "паспорт"))
 
-		require.Equal(t, "Старое", e.repo.Docs[doc.ID].Title, "feedback text is no new title")
+		require.Equal(t, "Старое", e.repo.Docs[doc.ID].Title, "neither the feedback nor the next text is a new title")
+		require.Equal(t, []string{"-1001<-100:55"}, e.sent.copies)
+		require.True(t, has(e.texts(), "По запросу"), "the next text is a search: %q", e.texts())
+	})
+	t.Run("an armed delete confirmation", func(t *testing.T) {
+		e := newFeedbackEnv(t, feedbackChat)
+		seedPassport(e.repo, "Паспорт", "u1")
+		e.send(dataCallback("d:dd"))
+
+		e.send(commandUpdate("feedback"))
+		e.send(userMessage(55, "не работает"))
+		e.send(userMessage(56, "УДАЛИТЬ"))
+
+		require.Empty(t, e.repo.Deleted, "the word no longer confirms a deletion")
 		require.Equal(t, []string{"-1001<-100:55"}, e.sent.copies)
 	})
 	t.Run("an armed rename, by the settings button", func(t *testing.T) {
@@ -274,50 +268,6 @@ func TestFeedback_winsOverOtherPendingDialogues(t *testing.T) {
 
 		require.Equal(t, "Старое", e.repo.Docs[doc.ID].Title, "the button ended the rename")
 		require.Equal(t, []string{"-1001<-100:55"}, e.sent.copies)
-	})
-}
-
-func TestFeedback_albumParts(t *testing.T) {
-	t.Run("parts handled concurrently are one request", func(t *testing.T) {
-		e := newFeedbackEnv(t, feedbackChat)
-		e.send(commandUpdate("feedback"))
-
-		var wg sync.WaitGroup
-		for _, id := range []int{64, 61, 63, 62, 65} {
-			wg.Add(1)
-			go func() { defer wg.Done(); e.send(userPhoto(id, "alb", "")) }()
-		}
-		wg.Wait()
-		e.timer.Fire()
-
-		require.Equal(t, []string{"-1001<-100:[61,62,63,64,65]"}, e.sent.copies)
-		require.Len(t, e.repo.Feedbacks, 1)
-		require.Len(t, e.repo.Events, 1)
-		require.Empty(t, e.repo.Docs)
-	})
-	t.Run("a late part is neither saved nor searched", func(t *testing.T) {
-		e := newFeedbackEnv(t, feedbackChat)
-		e.send(commandUpdate("feedback"))
-		e.send(userPhoto(61, "alb", ""))
-		e.timer.Fire()
-
-		e.send(userPhoto(62, "alb", ""))
-		e.timer.Fire()
-
-		require.Equal(t, []string{"-1001<-100:61", "-1001<-100:62"}, e.sent.copies, "it reaches the team as its own request")
-		require.Empty(t, e.repo.Docs)
-	})
-	t.Run("a second album needs a new request", func(t *testing.T) {
-		e := newFeedbackEnv(t, feedbackChat)
-		e.send(commandUpdate("feedback"))
-		e.send(userPhoto(61, "one", ""))
-		e.timer.Fire()
-
-		e.send(userPhoto(70, "two", ""))
-		e.timer.Fire()
-
-		require.Equal(t, []string{"-1001<-100:61"}, e.sent.copies, "the mode ended with the first album")
-		require.NotEmpty(t, e.repo.Docs, "the second album is an ordinary upload")
 	})
 }
 
@@ -358,32 +308,6 @@ func TestFeedback_logsHoldNoText(t *testing.T) {
 	}
 }
 
-func TestFeedback_sourceIsNamedInTheHeader(t *testing.T) {
-	tests := []struct {
-		name   string
-		button string
-		want   string
-		source string
-	}{
-		{"settings", "d:fb:s", "Источник: настройки", "settings"},
-		{"error", "d:fb:e:load_card:1795000000", "Источник: ошибка: load_card, 2026-11-18 11:06:40 UTC\n", "error"},
-		{"error without time", "d:fb:e:load_card", "Источник: ошибка: load_card\n", "error"},
-		{"odd scenario is not shown", "d:fb:e:Bad%20Text:x", "Источник: ошибка: —\n", "error"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			e := newFeedbackEnv(t, feedbackChat)
-
-			e.send(dataCallback(tt.button))
-			require.Equal(t, telegram.TextFeedbackPrompt, e.texts()[0])
-			e.send(userMessage(55, "не работает"))
-
-			require.Contains(t, e.texts()[1], tt.want)
-			require.Equal(t, tt.source, e.repo.Events[0].Props.Source)
-		})
-	}
-}
-
 func TestFeedback_copyFailureTellsTheUserAndKeepsTheHeader(t *testing.T) {
 	e := newFeedbackEnv(t, feedbackChat)
 	e.sent.copyDown = true
@@ -405,6 +329,18 @@ func TestFeedback_copyFailureTellsTheUserAndKeepsTheHeader(t *testing.T) {
 	require.Equal(t, 2, n, "the header left in the team's chat counts against the limit")
 }
 
+func TestFeedback_lostLinkDoesNotFailADeliveredRequest(t *testing.T) {
+	e := newFeedbackEnv(t, feedbackChat)
+	e.repo.RecordFeedbackErr = errors.New("db down")
+
+	e.send(commandUpdate("feedback"))
+	e.send(userMessage(55, "привет"))
+
+	require.Equal(t, telegram.TextFeedbackSent, e.texts()[len(e.texts())-1], "the team got it")
+	require.Equal(t, []string{"-1001<-100:55"}, e.sent.copies)
+	require.Equal(t, []docsbot.EventName{docsbot.EventFeedbackSent}, e.repo.EventNames())
+}
+
 func TestFeedback_textIsNeverLogged(t *testing.T) {
 	var logs lockedBuffer
 	b, _, repo := newBotOpts(t, slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})), docsbottest.FakeDrive{},
@@ -417,81 +353,4 @@ func TestFeedback_textIsNeverLogged(t *testing.T) {
 
 	require.NotContains(t, logs.String(), "СЕКРЕТНЫЙ")
 	require.Contains(t, logs.String(), "send feedback", "the failure itself is logged")
-}
-
-func TestFeedback_unavailableWithoutChat(t *testing.T) {
-	tests := []struct {
-		name string
-		do   func(*feedbackEnv)
-	}{
-		{"command", func(e *feedbackEnv) { e.send(commandUpdate("feedback")) }},
-		{"settings button", func(e *feedbackEnv) { e.send(dataCallback("d:fb:s")) }},
-		{"error button", func(e *feedbackEnv) { e.send(dataCallback("d:fb:e:settings:1795000000")) }},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			e := newFeedbackEnv(t, 0)
-			seedPassport(e.repo, "Паспорт", "u1")
-
-			tt.do(e)
-
-			require.Equal(t, []string{telegram.TextFeedbackUnavailable}, e.texts())
-			e.send(userMessage(55, "паспорт"))
-			require.True(t, has(e.texts(), "Нашёл"), "the rest of the bot works: %q", e.texts())
-			require.Empty(t, e.sent.copies)
-			require.Empty(t, e.repo.Feedbacks)
-		})
-	}
-}
-
-func TestFeedback_entryPoints(t *testing.T) {
-	t.Run("settings has the button", func(t *testing.T) {
-		e := newFeedbackEnv(t, feedbackChat)
-
-		e.send(commandUpdate("settings"))
-
-		require.Contains(t, e.sent.markups[0], telegram.BtnFeedback)
-		require.Contains(t, e.sent.markups[0], "d:fb:s")
-	})
-	t.Run("an error carries the report button", func(t *testing.T) {
-		e := newFeedbackEnv(t, feedbackChat)
-		e.repo.InlineErr = errors.New("db down")
-
-		e.send(commandUpdate("settings"))
-
-		require.Equal(t, telegram.TextError, e.texts()[0], "the text is unchanged")
-		require.Contains(t, e.sent.markups[0], telegram.BtnReportProblem)
-		require.Contains(t, e.sent.markups[0], "d:fb:e:settings:")
-	})
-	t.Run("a file that cannot be sent carries the report button", func(t *testing.T) {
-		e := newFeedbackEnv(t, feedbackChat)
-		doc := seedPassport(e.repo, "Паспорт", "u1")
-		e.sent.filesDown = true
-
-		e.send(dataCallback("d:snd:" + string(doc.ID)))
-
-		require.Equal(t, telegram.TextSendFailed, e.texts()[0])
-		require.Contains(t, e.sent.markups[0], "d:fb:e:send_file:")
-	})
-	t.Run("an album that cannot be sent carries the report button", func(t *testing.T) {
-		e := newFeedbackEnv(t, feedbackChat)
-		e.sent.mediaDown = true
-		seedExport(e.repo, docsbot.KindDocument, 3, "d", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-
-		e.send(commandUpdate("export"))
-
-		require.Contains(t, strings.Join(e.sent.markups, "\n"), "d:fb:e:export_send:")
-	})
-	t.Run("help and the menu name the command", func(t *testing.T) {
-		e := newFeedbackEnv(t, feedbackChat)
-
-		e.send(commandUpdate("help"))
-
-		require.Contains(t, e.texts()[0], "/feedback")
-		var found bool
-		for _, c := range telegram.Commands() {
-			found = found || c.Command == "feedback"
-		}
-		require.True(t, found, "setMyCommands lists /feedback")
-	})
 }

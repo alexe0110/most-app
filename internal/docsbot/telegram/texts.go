@@ -213,7 +213,7 @@ const (
 	textFeedbackCanceled    = "Хорошо, ничего не отправил."
 	textFeedbackUnavailable = "Связаться с разработчиками из бота пока нельзя. Попробуй позже."
 	textFeedbackUnsupported = "Я принимаю текст, фото и файлы. Видео или голосовое опиши словами или пришли как файл: 📎 → Файл."
-	textFeedbackLimit       = "Ты уже написал нам несколько раз за последний час. Подожди немного и напиши снова."
+	textFeedbackLimit       = "За последний час уже много обращений. Подожди немного и напиши снова."
 	textFeedbackFailed      = "Не удалось передать сообщение. Попробуй ещё раз через минуту."
 	// textFeedbackAnswer comes before the team's reply, which is copied right after it.
 	textFeedbackAnswer = "Ответ от команды Most:"
@@ -231,6 +231,7 @@ const (
 	// Replies to the team after answering a user.
 	textFeedbackDelivered    = "Доставлено"
 	textFeedbackBlocked      = "Не доставлено: пользователь заблокировал бота"
+	textFeedbackNotFound     = "Не доставлено: обращение не найдено"
 	textFeedbackNotDelivered = "Не доставлено: ошибка Telegram"
 )
 

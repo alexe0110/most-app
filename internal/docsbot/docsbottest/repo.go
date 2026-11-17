@@ -11,24 +11,25 @@ import (
 )
 
 type FakeRepo struct {
-	mu              sync.Mutex                  // guards every field below; fakes are used by parallel tests
-	Folders         map[docsbot.Category]string // cached Drive folder ids by category
-	Docs            map[docsbot.DocumentID]docsbot.Document
-	seq             int
-	lastCreated     time.Time
-	Deleted         []docsbot.UserID                 // users passed to DeleteUserData
-	Updated         map[docsbot.DocumentID]time.Time // last update time, set by tests for the sweeper
-	InlineOff       map[docsbot.UserID]bool          // users who turned inline mode off
-	InlineErr       error                            // returned by InlineEnabled when set
-	Status          *FakeStatus                      // set by NewDeps
-	Events          []docsbot.Event                  // recorded product events, in order
-	EventsErr       error                            // returned by Record and RecordStart when set
-	CountSavedErr   error                            // returned by CountSaved when set
-	NumberErr       error                            // returned by NumberPendingAlbum when set
-	Started         map[docsbot.UserID]bool          // users with a recorded start event
-	Feedbacks       []FeedbackEntry                  // recorded feedback requests, in order
-	FeedbackTgUsers map[docsbot.UserID]int64         // Telegram ids by user, for FeedbackAuthor
-	FeedbackErr     error                            // returned by the Feedback port methods when set
+	mu                sync.Mutex                  // guards every field below; fakes are used by parallel tests
+	Folders           map[docsbot.Category]string // cached Drive folder ids by category
+	Docs              map[docsbot.DocumentID]docsbot.Document
+	seq               int
+	lastCreated       time.Time
+	Deleted           []docsbot.UserID                 // users passed to DeleteUserData
+	Updated           map[docsbot.DocumentID]time.Time // last update time, set by tests for the sweeper
+	InlineOff         map[docsbot.UserID]bool          // users who turned inline mode off
+	InlineErr         error                            // returned by InlineEnabled when set
+	Status            *FakeStatus                      // set by NewDeps
+	Events            []docsbot.Event                  // recorded product events, in order
+	EventsErr         error                            // returned by Record and RecordStart when set
+	CountSavedErr     error                            // returned by CountSaved when set
+	NumberErr         error                            // returned by NumberPendingAlbum when set
+	Started           map[docsbot.UserID]bool          // users with a recorded start event
+	Feedbacks         []FeedbackEntry                  // recorded feedback requests, in order
+	FeedbackTgUsers   map[docsbot.UserID]int64         // Telegram ids by user, for FeedbackAuthor
+	RecordFeedbackErr error                            // returned by RecordFeedback only, when set
+	FeedbackErr       error                            // returned by the Feedback port methods when set
 }
 
 var _ docsbot.Repo = (*FakeRepo)(nil)

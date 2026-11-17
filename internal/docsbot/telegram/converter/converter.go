@@ -149,10 +149,11 @@ func (c *Converter) ownsCallback(update *models.Update) bool {
 	return update.CallbackQuery != nil && strings.HasPrefix(update.CallbackQuery.Data, callbackPrefix)
 }
 
-// ownsMessage matches any message from a user with a live session.
+// ownsMessage matches any private message from a user with a live session. A
+// message in a group (the feedback chat) is not part of the dialogue.
 func (c *Converter) ownsMessage(update *models.Update) bool {
 	user, ok := messageUser(update)
-	return ok && c.sessions.has(user)
+	return ok && update.Message.Chat.Type == models.ChatTypePrivate && c.sessions.has(user)
 }
 
 // start opens a session and offers the two actions.
@@ -182,6 +183,9 @@ func (c *Converter) cancel(ctx context.Context, b *bot.Bot, update *models.Updat
 	user, ok := messageUser(update)
 	if !ok {
 		return
+	}
+	if c.problems != nil {
+		c.problems.DropFeedback(user)
 	}
 	text := textConvertNothing
 	if sess, ok := c.sessions.claim(user, 0); ok {

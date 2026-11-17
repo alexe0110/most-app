@@ -22,6 +22,9 @@ func (r *FakeRepo) RecordFeedback(_ context.Context, rec docsbot.FeedbackRecord)
 	if r.FeedbackErr != nil {
 		return r.FeedbackErr
 	}
+	if r.RecordFeedbackErr != nil {
+		return r.RecordFeedbackErr
+	}
 	r.Feedbacks = append(r.Feedbacks, FeedbackEntry{Record: rec, At: time.Now()})
 	return nil
 }

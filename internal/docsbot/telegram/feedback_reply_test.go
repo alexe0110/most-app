@@ -41,6 +41,51 @@ func TestFeedbackReply_goesToTheAuthor(t *testing.T) {
 	}
 }
 
+func TestFeedbackReply_notFoundInAGroup(t *testing.T) {
+	toBot := func() *models.Update {
+		u := teamReply(12345, "ответ")
+		u.Message.ReplyToMessage.From = &models.User{ID: 123, IsBot: true} // the test bot's id
+		return u
+	}
+	toMember := func() *models.Update {
+		u := teamReply(12345, "ответ")
+		u.Message.ReplyToMessage.From = &models.User{ID: 556}
+		return u
+	}
+	tests := []struct {
+		name   string
+		update *models.Update
+		want   []string
+	}{
+		{"a reply to the bot's own message is told", toBot(), []string{telegram.TextFeedbackNotFound}},
+		{"a reply to a member stays unanswered", toMember(), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newFeedbackEnv(t, feedbackChat)
+
+			e.send(tt.update)
+
+			require.Equal(t, tt.want, e.texts())
+			require.Empty(t, e.sent.copies)
+		})
+	}
+}
+
+func TestFeedbackReply_liveConvertSessionDoesNotSwallowIt(t *testing.T) {
+	e := newFeedbackEnv(t, feedbackChat)
+	sentFeedback(e)
+	e.send(commandUpdate("convert")) // user 100 is also the one answering, in the group
+	e.sent.texts, e.sent.sendChats = nil, nil
+	u := teamReply(sentMessageID, "ответ")
+	u.Message.From = &models.User{ID: 100}
+
+	e.send(u)
+
+	require.Equal(t, []string{telegram.TextFeedbackAnswer, telegram.TextFeedbackDelivered}, e.texts())
+	require.Equal(t, []string{"100<--1001:9"}, e.sent.copies)
+}
+
 func TestFeedbackReply_blockedUser(t *testing.T) {
 	e := newFeedbackEnv(t, feedbackChat)
 	sentFeedback(e)
