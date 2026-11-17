@@ -69,3 +69,16 @@ func TestRestart_deleteWordWithoutArmedConfirmationIsASearch(t *testing.T) {
 	require.Contains(t, repo.Docs, doc.ID, "nothing is deleted on a lost confirmation")
 	require.False(t, has(sent.texts, "Данные удалены"), "texts %q", sent.texts)
 }
+
+func TestRestart_feedbackModeIsLost(t *testing.T) {
+	e := newFeedbackEnv(t, feedbackChat)
+	seedPassport(e.repo, "Паспорт", "u1")
+	// The prompt was shown before the restart; the new process knows nothing of it.
+
+	e.send(userMessage(55, "паспорт"))
+	e.send(dataCallback("d:fbx"))
+
+	require.Empty(t, e.sent.copies, "the message is not feedback")
+	require.True(t, has(e.texts(), "Нашёл"), "it is an ordinary search: %q", e.texts())
+	require.Equal(t, []string{telegram.TextFeedbackCanceled}, e.sent.edits, "a stale cancel button still answers")
+}

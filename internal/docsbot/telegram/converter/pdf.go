@@ -41,7 +41,9 @@ func (c *Converter) onPDFOp(ctx context.Context, b *bot.Bot, p press, doc docsbo
 	menu := pdfMenuKeyboard(doc.ID)
 	c.pdfOperation(ctx, b, chatID, p.tgUser, p.msgID,
 		pdfSource{docID: doc.ID, title: doc.Title, fileID: doc.TgFileID}, op,
-		func(msgID int, text string) { c.show(ctx, b, chatID, msgID, text, menu) })
+		func(msgID int, text string) {
+			c.show(ctx, b, chatID, msgID, text, c.reportable(text, menu, scenarioPDF))
+		})
 }
 
 // onSessionPDFOp runs an operation of the PDF menu of /convert (a PDF the user
@@ -55,7 +57,9 @@ func (c *Converter) onSessionPDFOp(ctx context.Context, b *bot.Bot, p press, op 
 	}
 	c.pdfOperation(ctx, b, chatID, tgUser, sess.msgID,
 		pdfSource{title: sess.sourceTitle, fileID: sess.pdfs[0].fileID}, op,
-		func(msgID int, text string) { c.retry(ctx, b, chatID, tgUser, sess, msgID, text, pdfActionsKeyboard()) })
+		func(msgID int, text string) {
+			c.retry(ctx, b, chatID, tgUser, sess, msgID, text, c.reportable(text, pdfActionsKeyboard(), scenarioPDF))
+		})
 }
 
 // pdfOperation runs a PDF operation on src. Rotating gives the result at once; the
@@ -189,7 +193,7 @@ func (c *Converter) onRange(ctx context.Context, b *bot.Bot, update *models.Upda
 		defer unlock()
 		sess.msgID = msgID
 		c.sessions.restore(tgUser, sess)
-		c.moveDown(ctx, b, chatID, tgUser, text, cancelKeyboard())
+		c.moveDown(ctx, b, chatID, tgUser, text, c.reportable(text, cancelKeyboard(), scenarioPDF))
 	}
 	src, err := c.download(ctx, sess.pdfs[0].fileID)
 	if err != nil {
@@ -333,7 +337,7 @@ func (c *Converter) finishMerge(ctx context.Context, b *bot.Bot, p press) {
 	c.log.InfoContext(ctx, "pdf converted", "user_id", uid, "doc_id", sess.sourceDoc, "op", opMerge, "files", len(files), "out_bytes", len(out))
 	name := resultFileName(sess.sourceTitle, nameFallbackDocument, nameTagEdited, "pdf")
 	if !c.sendResult(ctx, b, chatID, tgUser, resultFile{name: name, data: out, sourceDoc: sess.sourceDoc, kind: resultPDF}) {
-		c.retry(ctx, b, chatID, tgUser, sess, msgID, textSendFailed, pdfKeyboard())
+		c.retry(ctx, b, chatID, tgUser, sess, msgID, textSendFailed, c.reportable(textSendFailed, pdfKeyboard(), scenarioPDF))
 		return
 	}
 	c.done(ctx, docsbot.ConvertPDFMerge)

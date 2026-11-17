@@ -84,6 +84,8 @@ func run() error {
 		WebhookSecret: cfg.TelegramWebhookSecret,
 		GroupNotice:   telegram.GroupNotice(),
 		Unbounded:     telegram.IsExport,
+
+		FeedbackChatID: cfg.FeedbackChatID,
 	}, users, log)
 	if err != nil {
 		return err
@@ -120,11 +122,11 @@ func run() error {
 	driveAdapter := driveBridge{oauth: oauthSvc, gd: gdriveSvc}
 	svc = docsbot.NewService(docsbot.Ports{
 		Repo: documents, Drive: driveAdapter, Files: tgFiles{bot: tgbot}, Uploads: documents, Jobs: jobQueue,
-		Folders: folders, Status: statusMessages, Syncs: documents, Events: events,
+		Folders: folders, Status: statusMessages, Syncs: documents, Events: events, Feedback: postgres.NewFeedback(pool),
 	}, docsbot.WithPageCounter(pageCounter{}), docsbot.WithLogger(log))
 
 	telegram.Register(tgbot.Client(), telegram.Deps{Log: log, Svc: svc, Auth: oauthSvc, Files: tgbot},
-		telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder), telegram.WithBotUsername(cfg.TelegramBotUsername), telegram.WithPrivacyURL(privacyURL))
+		telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder), telegram.WithBotUsername(cfg.TelegramBotUsername), telegram.WithPrivacyURL(privacyURL), telegram.WithFeedbackChat(cfg.FeedbackChatID))
 	notifier := telegram.NewNotifier(tgbot, users, oauthSvc, svc, log, telegram.WithNotifierRenames(renames))
 
 	workers := river.NewWorkers()

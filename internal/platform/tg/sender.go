@@ -120,6 +120,43 @@ func (s Sender) TrySend(ctx context.Context, chatID int64, text string, opts ...
 	return msg.ID, nil
 }
 
+// TryCopy copies a message to another chat without the "forwarded from" mark and
+// returns the id of the copy. Like every Try method it logs nothing: the caller
+// owns the error. The content of the message never passes through the bot.
+func (s Sender) TryCopy(ctx context.Context, to, from int64, msgID int) (int, error) {
+	start := time.Now()
+	id, err := s.api.CopyMessage(ctx, &bot.CopyMessageParams{ChatID: to, FromChatID: from, MessageID: msgID})
+	TraceAPI(ctx, s.log, "copyMessage", start)
+	if err != nil {
+		return 0, apiError("copyMessage", err)
+	}
+	if id == nil {
+		return 0, nil
+	}
+	return id.ID, nil
+}
+
+// TryCopyMany copies messages (ids ascending, at most 100, as Telegram requires)
+// as one album and returns the ids of the copies. Telegram skips a message that
+// can't be copied, so the result may be shorter than ids.
+func (s Sender) TryCopyMany(ctx context.Context, to, from int64, ids []int) ([]int, error) {
+	start := time.Now()
+	copies, err := s.api.CopyMessages(ctx, &bot.CopyMessagesParams{ChatID: to, FromChatID: from, MessageIDs: ids})
+	TraceAPI(ctx, s.log, "copyMessages", start)
+	if err != nil {
+		return nil, apiError("copyMessages", err)
+	}
+	out := make([]int, 0, len(copies))
+	for _, c := range copies {
+		out = append(out, c.ID)
+	}
+	return out, nil
+}
+
+// IsBlocked reports that Telegram refused delivery because the user blocked the
+// bot or deactivated their account.
+func IsBlocked(err error) bool { return errors.Is(err, errBlocked) }
+
 // Edit rewrites the text (or, with OnCaption, the caption) of a message; a
 // failure is logged here.
 func (s Sender) Edit(ctx context.Context, chatID int64, msgID int, text string, opts ...MsgOpt) {

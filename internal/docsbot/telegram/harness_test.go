@@ -1,6 +1,7 @@
 package telegram_test
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -49,17 +50,24 @@ type capture struct {
 	inlines     []url.Values // answerInlineQuery form fields
 	forbidden   bool         // message calls answer 403 "bot was blocked by the user"
 	refused     []string     // methods refused with 403, in order
+	sendChats   []string     // sendMessage chat_id, parallel to texts
+	copies      []string     // copyMessage/copyMessages as "to<-from:ids", in order
+	blockedChat string       // sendMessage/copyMessage to this chat_id answer 403
+	copyDown    bool         // copyMessage(s) fail with 400
+	filesDown   bool         // sendDocument/sendPhoto fail with 400
 }
 
 // messageMethods are the calls a blocked user makes Telegram refuse.
 var messageMethods = []string{"sendMessage", "editMessageText", "editMessageReplyMarkup", "deleteMessage", "answerCallbackQuery"}
 
 // refuse answers 403 to a message call while forbidden is set, and reports whether it did.
-func (c *capture) refuse(w http.ResponseWriter, path string) bool {
-	method := path[strings.LastIndex(path, "/")+1:]
+func (c *capture) refuse(w http.ResponseWriter, r *http.Request) bool {
+	method := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.forbidden || !slices.Contains(messageMethods, method) {
+	toBlocked := c.blockedChat != "" && r.FormValue("chat_id") == c.blockedChat &&
+		(method == "sendMessage" || method == "copyMessage" || method == "copyMessages")
+	if !toBlocked && (!c.forbidden || !slices.Contains(messageMethods, method)) {
 		return false
 	}
 	c.refused = append(c.refused, method)
@@ -67,6 +75,25 @@ func (c *capture) refuse(w http.ResponseWriter, path string) bool {
 	w.WriteHeader(http.StatusForbidden)
 	_, _ = io.WriteString(w, `{"ok":false,"error_code":403,"description":"Forbidden: bot was blocked by the user"}`)
 	return true
+}
+
+func (c *capture) copyFailing() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.copyDown
+}
+
+// copyMany records a copyMessages call and answers with one new id per message.
+func (c *capture) copyMany(w http.ResponseWriter, r *http.Request) {
+	c.record(&c.copies, r.FormValue("chat_id")+"<-"+r.FormValue("from_chat_id")+":"+r.FormValue("message_ids"))
+	var ids []int
+	_ = json.Unmarshal([]byte(r.FormValue("message_ids")), &ids)
+	result := make([]map[string]int, len(ids))
+	for i := range ids {
+		result[i] = map[string]int{"message_id": copiedMessageID + i}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": result})
 }
 
 func (c *capture) record(bucket *[]string, s string) {
@@ -116,15 +143,25 @@ func newBotOpts(t *testing.T, log *slog.Logger, drive docsbottest.FakeDrive, opt
 	sent := &capture{}
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if sent.refuse(w, r.URL.Path) {
+		if sent.refuse(w, r) {
 			return
 		}
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/sendMessage"):
 			sent.record(&sent.texts, r.FormValue("text"))
+			sent.record(&sent.sendChats, r.FormValue("chat_id"))
 			sent.record(&sent.sendModes, r.FormValue("parse_mode"))
 			sent.record(&sent.markups, r.FormValue("reply_markup"))
 		case strings.HasSuffix(r.URL.Path, "/sendDocument"), strings.HasSuffix(r.URL.Path, "/sendPhoto"):
+			sent.mu.Lock()
+			down := sent.filesDown
+			sent.mu.Unlock()
+			if down {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"ok":false,"error_code":400,"description":"Bad Request: wrong file identifier"}`)
+				return
+			}
 			sent.record(&sent.files, r.FormValue("caption"))
 		case strings.HasSuffix(r.URL.Path, "/editMessageReplyMarkup"):
 			sent.record(&sent.markupEdits, r.FormValue("reply_markup"))
@@ -156,6 +193,21 @@ func newBotOpts(t *testing.T, log *slog.Logger, drive docsbottest.FakeDrive, opt
 			sent.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"ok":true,"result":true}`)
+			return
+		case strings.HasSuffix(r.URL.Path, "/copyMessage"), strings.HasSuffix(r.URL.Path, "/copyMessages"):
+			if sent.copyFailing() {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"ok":false,"error_code":400,"description":"Bad Request: message to copy not found"}`)
+				return
+			}
+			if strings.HasSuffix(r.URL.Path, "/copyMessages") {
+				sent.copyMany(w, r)
+				return
+			}
+			sent.record(&sent.copies, r.FormValue("chat_id")+"<-"+r.FormValue("from_chat_id")+":"+r.FormValue("message_id"))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":`+strconv.Itoa(copiedMessageID)+`}}`)
 			return
 		case strings.HasSuffix(r.URL.Path, "/answerInlineQuery"):
 			_ = r.ParseMultipartForm(1 << 20)
@@ -194,6 +246,9 @@ func newBotOpts(t *testing.T, log *slog.Logger, drive docsbottest.FakeDrive, opt
 
 // sentMessageID is the message id the fake API gives every sent message.
 const sentMessageID = 777
+
+// copiedMessageID is the message id the fake API gives the first copy made by copyMessage(s).
+const copiedMessageID = 901
 
 func commandUpdate(cmd string) *models.Update {
 	const chatID = 100

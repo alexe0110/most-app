@@ -59,6 +59,8 @@ func (s *sendServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case fail != nil:
 		w.WriteHeader(fail.code)
 		_, _ = fmt.Fprintf(w, `{"ok":false,"error_code":%d,"description":%q}`, fail.code, fail.desc)
+	case req.method == "copyMessages":
+		_, _ = io.WriteString(w, `{"ok":true,"result":[{"message_id":21},{"message_id":22}]}`)
 	case req.method == "deleteMessage" || req.method == "answerCallbackQuery":
 		_, _ = io.WriteString(w, `{"ok":true,"result":true}`)
 	default:
@@ -409,4 +411,54 @@ func TestSender_keepsCancellation(t *testing.T) {
 	_, err := s.TrySend(ctx, 42, "x")
 
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestSender_copy(t *testing.T) {
+	t.Parallel()
+
+	t.Run("one message", func(t *testing.T) {
+		t.Parallel()
+		s, srv, _ := newSendEnv(t, slog.LevelInfo)
+
+		id, err := s.TryCopy(t.Context(), -100, 42, 7)
+
+		require.NoError(t, err)
+		require.Equal(t, 9, id)
+		req := srv.last(t)
+		require.Equal(t, "copyMessage", req.method)
+		require.Equal(t, "-100", req.form["chat_id"])
+		require.Equal(t, "42", req.form["from_chat_id"])
+		require.Equal(t, "7", req.form["message_id"])
+	})
+
+	t.Run("an album", func(t *testing.T) {
+		t.Parallel()
+		s, srv, _ := newSendEnv(t, slog.LevelInfo)
+
+		ids, err := s.TryCopyMany(t.Context(), -100, 42, []int{7, 8})
+
+		require.NoError(t, err)
+		require.Equal(t, []int{21, 22}, ids)
+		req := srv.last(t)
+		require.Equal(t, "copyMessages", req.method)
+		require.JSONEq(t, "[7,8]", req.form["message_ids"])
+	})
+
+	t.Run("blocked and other errors are told apart, nothing is logged", func(t *testing.T) {
+		t.Parallel()
+		s, srv, buf := newSendEnv(t, slog.LevelInfo)
+
+		srv.fail = &apiFailure{code: 403, desc: "Forbidden: bot was blocked by the user"}
+		_, err := s.TryCopy(t.Context(), 42, -100, 7)
+		require.True(t, IsBlocked(err))
+		_, err = s.TryCopyMany(t.Context(), 42, -100, []int{7, 8})
+		require.True(t, IsBlocked(err))
+
+		srv.fail = &apiFailure{code: 400, desc: "Bad Request: message to copy not found"}
+		_, err = s.TryCopy(t.Context(), 42, -100, 7)
+		require.Error(t, err)
+		require.False(t, IsBlocked(err))
+		require.False(t, IsBlocked(nil))
+		require.Empty(t, buf.String())
+	})
 }

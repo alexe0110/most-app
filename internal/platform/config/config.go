@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/alexe0110/most-app/internal/platform/gdrive"
 )
@@ -31,6 +32,10 @@ type Config struct {
 	TokenEncKey        string // base64-encoded 32-byte key, required
 
 	DriveRootFolder string // Drive root folder name, default gdrive.DefaultRootFolder
+
+	// FeedbackChatID is the chat that receives user feedback and where replies are
+	// written: a private chat or a group. Zero disables feedback.
+	FeedbackChatID int64
 }
 
 // Load reads settings from env, applies defaults and validates them.
@@ -40,6 +45,11 @@ func Load() (Config, error) {
 	publicURL := os.Getenv("PUBLIC_URL")
 	if publicURL == "" && env == "dev" {
 		publicURL = "http://localhost:8080"
+	}
+
+	feedbackChatID, err := parseFeedbackChatID(os.Getenv("FEEDBACK_CHAT_ID"))
+	if err != nil {
+		return Config{}, err
 	}
 
 	cfg := Config{
@@ -60,6 +70,8 @@ func Load() (Config, error) {
 		GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
 		GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
 		TokenEncKey:        os.Getenv("TOKEN_ENC_KEY"),
+
+		FeedbackChatID: feedbackChatID,
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -115,6 +127,18 @@ func (c Config) validate() error {
 	}
 
 	return nil
+}
+
+// parseFeedbackChatID reads FEEDBACK_CHAT_ID; empty means feedback is off.
+func parseFeedbackChatID(raw string) (int64, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("FEEDBACK_CHAT_ID: not a number")
+	}
+	return id, nil
 }
 
 func getenv(key, def string) string {

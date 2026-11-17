@@ -6,6 +6,29 @@ import (
 	"github.com/alexe0110/most-app/internal/docsbot"
 )
 
+// Scenarios named in the report button, so the team sees what failed.
+const (
+	scenarioDoc      = "convert_doc"
+	scenarioPDF      = "convert_pdf"
+	scenarioCompress = "convert_compress"
+	scenarioAlbum    = "convert_album"
+	scenarioInfo     = "convert_info"
+)
+
+// reportable adds a «Сообщить о проблеме» row under kb (nil: alone) when text is
+// one of the generic errors. Other texts say what to do and need no report.
+func (c *Converter) reportable(text string, kb *models.InlineKeyboardMarkup, scenario string) *models.InlineKeyboardMarkup {
+	if c.problems == nil || (text != textError && text != textSendFailed) {
+		return kb
+	}
+	var rows [][]models.InlineKeyboardButton
+	if kb != nil {
+		rows = append(rows, kb.InlineKeyboard...)
+	}
+	rows = append(rows, []models.InlineKeyboardButton{c.problems.ReportButton(scenario)})
+	return &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
 func actionKeyboard() *models.InlineKeyboardMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
 		{

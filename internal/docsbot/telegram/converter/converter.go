@@ -65,12 +65,24 @@ type SavedView interface {
 	SendNotice(ctx context.Context, b *bot.Bot, chatID int64, rep docsbot.Reply)
 }
 
-// Deps are the required collaborators of the converter.
+// ProblemReporter lets an error message offer «Сообщить о проблеме» without the
+// converter knowing how feedback works. Declared here, at the consumer; the docs
+// adapter implements it.
+type ProblemReporter interface {
+	// ReportButton is the button that starts a feedback about the failed scenario.
+	ReportButton(scenario string) models.InlineKeyboardButton
+	// DropFeedback ends the user's feedback mode: /convert starts another dialogue.
+	DropFeedback(tgUser int64)
+}
+
+// Deps are the collaborators of the converter. Problems is optional: without it
+// errors carry no report button.
 type Deps struct {
-	Log   *slog.Logger
-	Svc   *docsbot.Service
-	Files FileDownloader
-	Saved SavedView
+	Log      *slog.Logger
+	Svc      *docsbot.Service
+	Files    FileDownloader
+	Saved    SavedView
+	Problems ProblemReporter
 }
 
 // Converter runs the /convert dialogue. State lives in sessions; the image work
@@ -98,6 +110,8 @@ type Converter struct {
 	svc *docsbot.Service
 	// docs shows what saving a result produced; the docs adapter owns that rendering.
 	docs SavedView
+	// problems adds the report button to error messages; may be nil.
+	problems ProblemReporter
 }
 
 // New makes the converter.
@@ -115,6 +129,7 @@ func New(deps Deps) *Converter {
 		dialogue: newKeyedMutex(),
 		svc:      deps.Svc,
 		docs:     deps.Saved,
+		problems: deps.Problems,
 	}
 }
 
@@ -134,10 +149,11 @@ func (c *Converter) ownsCallback(update *models.Update) bool {
 	return update.CallbackQuery != nil && strings.HasPrefix(update.CallbackQuery.Data, callbackPrefix)
 }
 
-// ownsMessage matches any message from a user with a live session.
+// ownsMessage matches any private message from a user with a live session. A
+// message in a group (the feedback chat) is not part of the dialogue.
 func (c *Converter) ownsMessage(update *models.Update) bool {
 	user, ok := messageUser(update)
-	return ok && c.sessions.has(user)
+	return ok && update.Message.Chat.Type == models.ChatTypePrivate && c.sessions.has(user)
 }
 
 // start opens a session and offers the two actions.
@@ -148,6 +164,9 @@ func (c *Converter) start(ctx context.Context, b *bot.Bot, update *models.Update
 	}
 	unlock := c.dialogue.lock(user)
 	defer unlock()
+	if c.problems != nil {
+		c.problems.DropFeedback(user)
+	}
 	if prev, ok := c.sessions.live(user); ok && prev.msgID != 0 {
 		c.out(b).ClearKeyboard(ctx, update.Message.Chat.ID, prev.msgID)
 	}
@@ -164,6 +183,9 @@ func (c *Converter) cancel(ctx context.Context, b *bot.Bot, update *models.Updat
 	user, ok := messageUser(update)
 	if !ok {
 		return
+	}
+	if c.problems != nil {
+		c.problems.DropFeedback(user)
 	}
 	text := textConvertNothing
 	if sess, ok := c.sessions.claim(user, 0); ok {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/go-telegram/bot"
@@ -86,7 +87,12 @@ type leaveFunc func(ctx context.Context, b *bot.Bot, chatID int64)
 // chat); channel posts and updates without a chat are dropped silently. It runs
 // before ensureUser, so nothing is stored for them. Inline queries and chosen
 // inline results pass: they carry no chat and concern only the sender.
-func privateOnly(leave leaveFunc, log *slog.Logger) bot.Middleware {
+//
+// The feedback chat, when it is a group, is the exception: the bot never leaves
+// it and lets through only replies (the team answering a user); everything else
+// said there is dropped, since the bot has nothing to do with it. A reply that
+// is a command is dropped too: it would make the bot answer into the group.
+func privateOnly(feedbackChat int64, leave leaveFunc, log *slog.Logger) bot.Middleware {
 	return func(next bot.HandlerFunc) bot.HandlerFunc {
 		return func(ctx context.Context, b *bot.Bot, update *models.Update) {
 			if isInline(update) {
@@ -98,6 +104,13 @@ func privateOnly(leave leaveFunc, log *slog.Logger) bot.Middleware {
 			switch {
 			case chat != nil && chat.Type == models.ChatTypePrivate:
 				next(ctx, b, update)
+			case chat != nil && feedbackChat != 0 && chat.ID == feedbackChat &&
+				(chat.Type == models.ChatTypeGroup || chat.Type == models.ChatTypeSupergroup):
+				if m := update.Message; m != nil && m.ReplyToMessage != nil && !strings.HasPrefix(m.Text, "/") {
+					next(ctx, b, update)
+					return
+				}
+				log.DebugContext(ctx, "feedback group update dropped", "update_id", update.ID, "kind", updateKind(update))
 			case chat != nil && (chat.Type == models.ChatTypeGroup || chat.Type == models.ChatTypeSupergroup):
 				if botRemoved(update) {
 					// Our own leave (or a kick) echoes back as my_chat_member: leaving again would 403.
@@ -198,6 +211,12 @@ func ensureUser(users Users, log *slog.Logger) bot.Middleware {
 				if found {
 					ctx = context.WithValue(ctx, userIDKey, id)
 				}
+				next(ctx, b, update)
+				return
+			}
+			if chat := chatOf(update); chat != nil && (chat.Type == models.ChatTypeGroup || chat.Type == models.ChatTypeSupergroup) {
+				// Only the feedback group gets here (privateOnly drops the rest): its
+				// members are the team, not users of the bot, and get no account.
 				next(ctx, b, update)
 				return
 			}

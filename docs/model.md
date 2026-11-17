@@ -22,6 +22,7 @@
 | `status_messages` | Сообщение с прогрессом выгрузки, которое бот редактирует на месте. Документы привязаны через `documents.status_message_id`. `kind`: `single`, `batch`, `transfer`; `closed_at` — когда сообщение закрыто. Владелец: `docs`. | `index (user_id) where closed_at is null` — открытое сообщение пользователя |
 | `docs_settings` | Настройки пользователя в Most Files (сейчас `inline_enabled`, по умолчанию включено). Отдельная таблица, а не колонки `users`: `users` общая для всех ботов. Нет строки — значения по умолчанию. Владелец: `docs`. | `primary key (user_id)` |
 | `events`        | Продуктовые события для метрик активации и удержания (`start`, `doc_saved`, `search`, `file_info`, `file_cleaned`, …). Общая для всех ботов, бот — в `bot`. В `props` только перечислимые значения (категория, тип, операция, формат файла (`format` у `file_info` и `file_cleaned`: jpeg, png, webp, heic, pdf, docx, xlsx, pptx — по содержимому), источник), никогда названия, подписи, текст поиска и `file_id`. `user_id` пуст только у `data_deleted`: событие остаётся анонимным, чтобы удаления можно было считать. Хранится 180 дней (`purge_users`), события пользователя удаляются вместе с его данными. Владелец: `platform`. | `index (name, created_at)`<br>`index (user_id, created_at)`<br>`index (created_at)` — суточная очистка |
+| `feedback_messages` | Связь «сообщение в чате обратной связи (`FEEDBACK_CHAT_ID`) → пользователь», чтобы ответ команды дошёл до автора. Строка на каждое сообщение обращения (шапка и копии); `feedback_id` один на обращение — по нему лимит считает альбом за одно обращение. `chat_id` в ключе: id сообщений уникальны только внутри чата. Текст и файлы не хранятся — только в Telegram. Общая для всех ботов. Хранится 180 дней (`purge_users`), удаляется вместе с данными пользователя. Владелец: `platform`. | `unique (chat_id, chat_message_id)`<br>`index (user_id, created_at)`<br>`index (created_at)` — суточная очистка |
 | `drive_folders` | Кеш папок `Most Docs/<категория>` (имя корневой папки — `DRIVE_ROOT_FOLDER`) на Drive пользователя, чтобы не искать папку через Drive API при каждой загрузке. Если папку удалили на Drive — запись удаляется и папка создаётся заново. | `primary key (user_id, category)`                                                                                                                                  |
 
 ```mermaid
@@ -33,6 +34,7 @@ erDiagram
     users ||--o{ status_messages : "видит прогресс"
     users ||--o| docs_settings : "настраивает"
     users ||--o{ events : "порождает"
+    users ||--o{ feedback_messages : "пишет разработчикам"
     status_messages ||--o{ documents : "показывает"
 
     users {
@@ -91,6 +93,14 @@ erDiagram
         jsonb props
         timestamptz created_at
     }
+    feedback_messages {
+        uuid id PK
+        uuid feedback_id
+        uuid user_id FK
+        bigint chat_id
+        bigint chat_message_id
+        timestamptz created_at
+    }
     drive_folders {
         uuid user_id FK
         text category
@@ -139,7 +149,7 @@ erDiagram
 
 ### Миграции
 
-`0001_init` — `users`, `integrations`, `documents`, `drive_folders`; `0002_oauth_states`; `0003_documents_backup` — `backup_status`, `kind`, статусы `pending`/`saved`; `0004_documents_too_large` — `too_large`; `0005_status_messages`; `0006_documents_size_mime`; `0007_status_messages_kind`; `0008_documents_media_group`; `0009_documents_sync` — `sync_*`, `meta_version`, `content_dirty`; `0010_documents_card_details`; `0011_docs_settings`; `0012_backup_reason`; `0013_events` — `events`, `users.source`, `users.first_start_at`, индекс `events (created_at)`.
+`0001_init` — `users`, `integrations`, `documents`, `drive_folders`; `0002_oauth_states`; `0003_documents_backup` — `backup_status`, `kind`, статусы `pending`/`saved`; `0004_documents_too_large` — `too_large`; `0005_status_messages`; `0006_documents_size_mime`; `0007_status_messages_kind`; `0008_documents_media_group`; `0009_documents_sync` — `sync_*`, `meta_version`, `content_dirty`; `0010_documents_card_details`; `0011_docs_settings`; `0012_backup_reason`; `0013_events` — `events`, `users.source`, `users.first_start_at`, индекс `events (created_at)`; `0014_feedback_messages`.
 
 ## v2+
 

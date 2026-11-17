@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -197,6 +198,7 @@ func TestConvertDialogue_resultSendFailureKeepsDialogue(t *testing.T) {
 		name        string
 		run         func(h *convHarness) // ends with the press or message that fails
 		wantSession bool                 // the session is back, so Отмена still works
+		scenario    string               // named in the report button under the error
 	}{
 		{"photos to pdf", func(h *convHarness) {
 			ctx := t.Context()
@@ -204,14 +206,14 @@ func TestConvertDialogue_resultSendFailureKeepsDialogue(t *testing.T) {
 			h.bot.ProcessUpdate(ctx, photoUpdate(1))
 			h.failDocs = true
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:done", h.lastMsg()))
-		}, true},
+		}, true, "convert_compress"},
 		{"compress", func(h *convHarness) {
 			ctx := t.Context()
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:compress", h.lastMsg()))
 			h.bot.ProcessUpdate(ctx, photoUpdate(1))
 			h.failDocs = true
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:limit1", h.lastMsg()))
-		}, true},
+		}, true, "convert_compress"},
 		{"merge", func(h *convHarness) {
 			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 			src := seedPDF(t, h)
@@ -220,14 +222,14 @@ func TestConvertDialogue_resultSendFailureKeepsDialogue(t *testing.T) {
 			h.bot.ProcessUpdate(ctx, pdfUpdate("pdf-add", 100))
 			h.failDocs = true
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:done", h.lastMsg()))
-		}, true},
+		}, true, "convert_pdf"},
 		{"page range", func(h *convHarness) {
 			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 			src := seedPDF(t, h)
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":keep"))
 			h.failDocs = true
 			h.bot.ProcessUpdate(ctx, convText("1"))
-		}, true},
+		}, true, "convert_pdf"},
 		{"pdf menu of /convert", func(h *convHarness) {
 			ctx := t.Context()
 			h.serve("pdf-in", testPDF(t, 2))
@@ -235,21 +237,21 @@ func TestConvertDialogue_resultSendFailureKeepsDialogue(t *testing.T) {
 			h.bot.ProcessUpdate(ctx, namedDocumentUpdate("pdf-in", "application/pdf", "a.pdf"))
 			h.failDocs = true
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:p:rot", h.lastMsg()))
-		}, true},
+		}, true, "convert_pdf"},
 		{"card quick compress", func(h *convHarness) {
 			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 			src := seedSource(h, docsbot.StatusSaved)
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(src.ID)))
 			h.failDocs = true
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:q:"+string(src.ID)+":c1", h.lastMsg()))
-		}, false},
+		}, false, "convert_doc"},
 		{"card rotate", func(h *convHarness) {
 			ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
 			src := seedPDF(t, h)
 			h.bot.ProcessUpdate(ctx, callbackUpdate("conv:doc:"+string(src.ID)))
 			h.failDocs = true
 			h.bot.ProcessUpdate(ctx, callbackOn("conv:q:"+string(src.ID)+":rot", h.lastMsg()))
-		}, false},
+		}, false, "convert_pdf"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -260,6 +262,7 @@ func TestConvertDialogue_resultSendFailureKeepsDialogue(t *testing.T) {
 			dialogue := h.lastMsg()
 
 			require.Contains(t, h.lastShown(), failed)
+			require.Contains(t, h.allMarkups(), "d:fb:e:"+tt.scenario+":", "the error offers to report the problem")
 			require.NotContains(t, h.deleted, dialogue, "the dialogue message is not removed")
 			require.NotContains(t, h.editTexts, fmt.Sprintf("%d:%s", dialogue, converter.TextConvertDone))
 			if tt.wantSession {
@@ -519,4 +522,11 @@ func TestConvertDialogue_cancelledContextDoesNotPanic(t *testing.T) {
 		h.bot.ProcessUpdate(dead, photoUpdate(2))
 	})
 	require.Empty(t, h.docs)
+}
+
+// allMarkups is every reply markup the bot sent or edited in, as one string.
+func (h *convHarness) allMarkups() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return strings.Join(append(slices.Clone(h.markupBodies), h.editMarkups...), "\n")
 }

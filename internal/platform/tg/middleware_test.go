@@ -244,7 +244,7 @@ func TestPrivateOnly(t *testing.T) {
 			var nextCalled bool
 			var left []int64
 			leave := func(_ context.Context, _ *bot.Bot, chatID int64) { left = append(left, chatID) }
-			h := privateOnly(leave, discardLog())(func(context.Context, *bot.Bot, *models.Update) { nextCalled = true })
+			h := privateOnly(0, leave, discardLog())(func(context.Context, *bot.Bot, *models.Update) { nextCalled = true })
 
 			h(context.Background(), nil, tt.update)
 
@@ -258,11 +258,53 @@ func TestPrivateOnly(t *testing.T) {
 	}
 }
 
+func TestPrivateOnly_feedbackGroup(t *testing.T) {
+	const feedbackChat = int64(-100)
+	reply := func(typ models.ChatType, chatID int64) *models.Update {
+		return &models.Update{Message: &models.Message{
+			From: &models.User{ID: 1}, Chat: models.Chat{ID: chatID, Type: typ},
+			ReplyToMessage: &models.Message{ID: 5},
+		}}
+	}
+	tests := []struct {
+		name      string
+		update    *models.Update
+		wantNext  bool
+		wantLeave bool
+	}{
+		{"reply in feedback group", reply(models.ChatTypeSupergroup, feedbackChat), true, false},
+		{"reply in feedback basic group", reply(models.ChatTypeGroup, feedbackChat), true, false},
+		{"command reply in feedback group", func() *models.Update {
+			u := reply(models.ChatTypeSupergroup, feedbackChat)
+			u.Message.Text = "/list"
+			return u
+		}(), false, false},
+		{"plain message in feedback group", chatMessage(models.ChatTypeSupergroup), false, false},
+		{"callback in feedback group", chatCallback(models.ChatTypeSupergroup), false, false},
+		{"bot added to feedback group", &models.Update{MyChatMember: &models.ChatMemberUpdated{Chat: models.Chat{ID: feedbackChat, Type: models.ChatTypeSupergroup}}}, false, false},
+		{"reply in another group", reply(models.ChatTypeSupergroup, -200), false, true},
+		{"plain message in another group", &models.Update{Message: &models.Message{Chat: models.Chat{ID: -200, Type: models.ChatTypeGroup}}}, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var nextCalled bool
+			var left []int64
+			leave := func(_ context.Context, _ *bot.Bot, chatID int64) { left = append(left, chatID) }
+			h := privateOnly(feedbackChat, leave, discardLog())(func(context.Context, *bot.Bot, *models.Update) { nextCalled = true })
+
+			h(context.Background(), nil, tt.update)
+
+			require.Equal(t, tt.wantNext, nextCalled)
+			require.Equal(t, tt.wantLeave, len(left) == 1)
+		})
+	}
+}
+
 func TestPrivateOnly_groupNeverCreatesUser(t *testing.T) {
 	users := &fakeUsers{id: "user-1"}
 	leave := func(context.Context, *bot.Bot, int64) {}
 	var reached bool
-	chain := privateOnly(leave, discardLog())(ensureUser(users, discardLog())(func(context.Context, *bot.Bot, *models.Update) { reached = true }))
+	chain := privateOnly(0, leave, discardLog())(ensureUser(users, discardLog())(func(context.Context, *bot.Bot, *models.Update) { reached = true }))
 
 	chain(context.Background(), nil, chatMessage(models.ChatTypeSupergroup))
 
@@ -282,7 +324,7 @@ func TestPrivateOnly_nonPrivateNeverCreatesUser(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			users := &fakeUsers{id: "user-1"}
 			var reached bool
-			chain := privateOnly(func(context.Context, *bot.Bot, int64) {}, discardLog())(
+			chain := privateOnly(0, func(context.Context, *bot.Bot, int64) {}, discardLog())(
 				ensureUser(users, discardLog())(func(context.Context, *bot.Bot, *models.Update) { reached = true }))
 
 			chain(context.Background(), nil, u)
@@ -291,6 +333,21 @@ func TestPrivateOnly_nonPrivateNeverCreatesUser(t *testing.T) {
 			require.Zero(t, users.calls)
 		})
 	}
+}
+
+func TestEnsureUser_feedbackGroupReplyCreatesNoUser(t *testing.T) {
+	users := &fakeUsers{id: "user-1"}
+	var reached bool
+	reply := chatMessage(models.ChatTypeSupergroup)
+	reply.Message.Chat.ID = -100
+	reply.Message.ReplyToMessage = &models.Message{ID: 5}
+	chain := privateOnly(-100, func(context.Context, *bot.Bot, int64) {}, discardLog())(
+		ensureUser(users, discardLog())(func(context.Context, *bot.Bot, *models.Update) { reached = true }))
+
+	chain(context.Background(), nil, reply)
+
+	require.True(t, reached, "the reply reaches the handler")
+	require.Zero(t, users.calls, "a member of the team gets no account")
 }
 
 func TestLeaveGroup_sendsNoticeThenLeaves(t *testing.T) {

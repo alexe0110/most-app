@@ -239,6 +239,8 @@ func TestPurgeUsers(t *testing.T) {
 	insertEvent(t, pool, keptID, "fresh", "0 days")
 	insertEvent(t, pool, "", "old_anonymous", "200 days")
 	insertEvent(t, pool, "", "fresh_anonymous", "1 day")
+	insertFeedback(t, pool, keptID, 1, "181 days")
+	insertFeedback(t, pool, keptID, 2, "179 days")
 
 	workers := river.NewWorkers()
 	purge := jobs.RegisterPurgeUsers(workers, pool, discardLog())
@@ -272,6 +274,10 @@ func TestPurgeUsers(t *testing.T) {
 	require.Equal(t, 1, countRows(t, pool, byName, "fresh"))
 	require.Equal(t, 0, countRows(t, pool, byName, "old_anonymous"), "anonymous events expire too")
 	require.Equal(t, 1, countRows(t, pool, byName, "fresh_anonymous"))
+
+	const byMessage = `select count(*) from feedback_messages where chat_message_id = $1::bigint`
+	require.Equal(t, 0, countRows(t, pool, byMessage, "1"), "feedback links past 180 days are purged")
+	require.Equal(t, 1, countRows(t, pool, byMessage, "2"), "younger feedback links are kept")
 }
 
 // TestClient_deleteJobsByArg covers: cancelling one user's queued jobs of a kind
@@ -328,6 +334,16 @@ func insertEvent(t *testing.T, pool *pgxpool.Pool, userID, name, age string) {
 	_, err := pool.Exec(t.Context(),
 		`insert into events (user_id, bot, name, created_at) values (nullif($1, '')::uuid, 'docs', $2, now() - $3::interval)`,
 		userID, name, age)
+	require.NoError(t, err)
+}
+
+// insertFeedback stores a feedback link of the user that is age old.
+func insertFeedback(t *testing.T, pool *pgxpool.Pool, userID string, msgID int, age string) {
+	t.Helper()
+	_, err := pool.Exec(t.Context(),
+		`insert into feedback_messages (feedback_id, user_id, chat_id, chat_message_id, created_at)
+		 values (uuid_generate_v7(), $1::uuid, -100, $2, now() - $3::interval)`,
+		userID, msgID, age)
 	require.NoError(t, err)
 }
 

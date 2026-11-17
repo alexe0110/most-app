@@ -41,6 +41,12 @@ func WithPrivacyURL(url string) Option {
 	return func(d *docs) { d.privacyURL = url }
 }
 
+// WithFeedbackChat sets the chat that receives user feedback and answers it; zero
+// (the default) turns feedback off.
+func WithFeedbackChat(chatID int64) Option {
+	return func(d *docs) { d.feedbackChat = chatID }
+}
+
 // WithDriveFolder sets the Drive root folder name shown in /start and /settings;
 // an empty name keeps the default.
 func WithDriveFolder(name string) Option {

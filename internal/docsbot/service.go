@@ -50,18 +50,19 @@ const (
 // Service holds the Most Docs use cases. It depends only on ports, never on
 // Telegram, Postgres or Drive SDKs.
 type Service struct {
-	repo    Repo
-	drive   Drive
-	files   FileSource
-	uploads Uploads
-	jobs    JobCanceler
-	folders Folders
-	status  StatusMessages
-	syncs   Syncs
-	events  Events
-	log     *slog.Logger
-	now     func() time.Time
-	loc     *time.Location
+	repo     Repo
+	drive    Drive
+	files    FileSource
+	uploads  Uploads
+	jobs     JobCanceler
+	folders  Folders
+	status   StatusMessages
+	syncs    Syncs
+	events   Events
+	feedback Feedback
+	log      *slog.Logger
+	now      func() time.Time
+	loc      *time.Location
 
 	// checks remembers when each document's Drive file was last looked up, to
 	// throttle OpenCard; guarded by checksMu.
@@ -99,22 +100,23 @@ func WithLocation(loc *time.Location) Option {
 // Ports are the external dependencies of a Service, named so that wiring cannot
 // swap two of the same shape.
 type Ports struct {
-	Repo    Repo
-	Drive   Drive
-	Files   FileSource
-	Uploads Uploads
-	Jobs    JobCanceler
-	Folders Folders
-	Status  StatusMessages
-	Syncs   Syncs
-	Events  Events
+	Repo     Repo
+	Drive    Drive
+	Files    FileSource
+	Uploads  Uploads
+	Jobs     JobCanceler
+	Folders  Folders
+	Status   StatusMessages
+	Syncs    Syncs
+	Events   Events
+	Feedback Feedback
 }
 
 // NewService wires the service around its ports.
 func NewService(p Ports, opts ...Option) *Service {
 	s := &Service{
 		repo: p.Repo, drive: p.Drive, files: p.Files, uploads: p.Uploads, jobs: p.Jobs,
-		folders: p.Folders, status: p.Status, syncs: p.Syncs, events: p.Events,
+		folders: p.Folders, status: p.Status, syncs: p.Syncs, events: p.Events, feedback: p.Feedback,
 		log: slog.New(slog.DiscardHandler),
 		now: time.Now,
 		loc: defaultLocation(),

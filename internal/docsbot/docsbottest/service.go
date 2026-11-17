@@ -15,23 +15,24 @@ const TestUserID = "11111111-1111-1111-1111-111111111111"
 
 // NewService is the one place tests build a Service from fakes. uploads doubles
 // as the JobCanceler when it is one (FakeUploads records the cancels); repo doubles
-// as the Events port too (FakeRepo records the events).
-func NewService(repo repoWithEvents, drive docsbot.Drive, files docsbot.FileSource, uploads docsbot.Uploads, folders docsbot.Folders, status docsbot.StatusMessages, syncs docsbot.Syncs, opts ...docsbot.Option) *docsbot.Service {
+// as the Events and Feedback ports too (FakeRepo records the events and the feedback).
+func NewService(repo repoWithPorts, drive docsbot.Drive, files docsbot.FileSource, uploads docsbot.Uploads, folders docsbot.Folders, status docsbot.StatusMessages, syncs docsbot.Syncs, opts ...docsbot.Option) *docsbot.Service {
 	jobs, ok := uploads.(docsbot.JobCanceler)
 	if !ok {
 		jobs = NoJobs{}
 	}
 	return docsbot.NewService(docsbot.Ports{
 		Repo: repo, Drive: drive, Files: files, Uploads: uploads, Jobs: jobs,
-		Folders: folders, Status: status, Syncs: syncs, Events: repo,
+		Folders: folders, Status: status, Syncs: syncs, Events: repo, Feedback: repo,
 	}, opts...)
 }
 
-// repoWithEvents is the repository fake with the events port next to it, as
-// FakeRepo is.
-type repoWithEvents interface {
+// repoWithPorts is the repository fake with the events and feedback ports next to
+// it, as FakeRepo is.
+type repoWithPorts interface {
 	docsbot.Repo
 	docsbot.Events
+	docsbot.Feedback
 }
 
 // NewDeps builds a Service over fresh fakes with the chosen Drive state and

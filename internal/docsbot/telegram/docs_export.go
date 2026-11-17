@@ -160,7 +160,7 @@ func (d *docs) sendAlbum(ctx context.Context, b *bot.Bot, chatID int64, batch []
 	tg.TraceAPI(ctx, d.log, "sendMediaGroup", start)
 	if err != nil {
 		d.log.ErrorContext(ctx, "send album", "err", err, "user_id", batch[0].UserID, "count", len(batch))
-		d.out(b).Send(ctx, chatID, textSendFailed)
+		d.out(b).Send(ctx, chatID, textSendFailed, tg.WithKeyboard(d.problemKeyboard("export_send")))
 		return 0
 	}
 	d.log.InfoContext(ctx, "album sent", "user_id", batch[0].UserID, "count", len(batch))

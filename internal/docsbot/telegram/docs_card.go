@@ -240,7 +240,7 @@ func (d *docs) sendFile(ctx context.Context, b *bot.Bot, chatID int64, doc docsb
 	tg.TraceAPI(ctx, d.log, op, start)
 	if err != nil {
 		d.log.ErrorContext(ctx, "send file", "err", err, "user_id", doc.UserID, "doc_id", doc.ID)
-		d.out(b).Send(ctx, chatID, textSendFailed)
+		d.out(b).Send(ctx, chatID, textSendFailed, tg.WithKeyboard(d.problemKeyboard("send_file")))
 		return false
 	}
 	d.log.InfoContext(ctx, "document sent", "user_id", doc.UserID, "doc_id", doc.ID)

@@ -48,6 +48,9 @@ type Config struct {
 	// (nil: none). Only for long jobs that are paced and capped by their own logic.
 	Unbounded   func(*models.Update) bool
 	GroupNotice string // sent once when the bot is used in a group, before it leaves
+	// FeedbackChatID is a group the bot stays in to read the team's replies; zero
+	// means none.
+	FeedbackChatID int64
 }
 
 // Bot wraps the go-telegram client: it owns the lifecycle (polling or webhook,
@@ -65,7 +68,7 @@ type Bot struct {
 // through Client.
 func New(cfg Config, users Users, log *slog.Logger) (*Bot, error) {
 	opts := []bot.Option{
-		bot.WithMiddlewares(recoverPanic(log), withTimeout(handlerTimeout, cfg.Unbounded, log), privateOnly(leaveGroup(cfg.GroupNotice, log), log), logUpdate(log), ensureUser(users, log)),
+		bot.WithMiddlewares(recoverPanic(log), withTimeout(handlerTimeout, cfg.Unbounded, log), privateOnly(cfg.FeedbackChatID, leaveGroup(cfg.GroupNotice, log), log), logUpdate(log), ensureUser(users, log)),
 		// Unmatched updates are already logged by the middleware; stay silent.
 		bot.WithDefaultHandler(func(context.Context, *bot.Bot, *models.Update) {}),
 	}

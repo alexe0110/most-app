@@ -62,9 +62,21 @@ func TestRepo_DeleteUserData(t *testing.T) {
 		require.NoError(t, repo.q.InsertEvent(ctx, postgres.InsertEventParams{UserID: owner, Bot: "docs", Name: "search", Props: []byte("{}")}))
 	}
 
+	feedback := postgres.NewFeedback(pool)
+	for i, owner := range []postgres.User{u, other} {
+		require.NoError(t, feedback.RecordFeedback(ctx, docsbot.FeedbackRecord{
+			User: docsbot.UserID(owner.ID.String()), ChatID: -100, MessageIDs: []int{2*i + 1, 2*i + 2},
+		}))
+	}
+
 	require.NoError(t, repo.DeleteUserData(ctx, docsbot.UserID(u.ID.String())))
 
 	// The user's own data is gone.
+	var links int
+	require.NoError(t, pool.QueryRow(ctx, "select count(*) from feedback_messages where user_id = $1", u.ID).Scan(&links))
+	require.Zero(t, links, "feedback links deleted")
+	require.NoError(t, pool.QueryRow(ctx, "select count(*) from feedback_messages where user_id = $1", other.ID).Scan(&links))
+	require.Equal(t, 2, links, "other user's feedback links survive")
 	var events int
 	require.NoError(t, pool.QueryRow(ctx, "select count(*) from events where user_id = $1", u.ID).Scan(&events))
 	require.Zero(t, events, "events deleted")

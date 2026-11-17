@@ -149,6 +149,23 @@ func TestConvert_noEventWhenTheResultIsNotSent(t *testing.T) {
 	require.Empty(t, h.repo.Events, "a failed send is retried, not counted")
 }
 
+func TestConvert_sendFailureOffersToReportAProblem(t *testing.T) {
+	t.Parallel()
+	h := newConvHarness(t)
+	ctx := tg.ContextWithUserID(t.Context(), docsbottest.TestUserID)
+	src := seedSource(h, docsbot.StatusSaved)
+	h.failDocs = true
+
+	h.bot.ProcessUpdate(ctx, callbackUpdate("conv:q:"+string(src.ID)+":c1"))
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	last := h.editMarkups[len(h.editMarkups)-1]
+	require.Contains(t, last, "Сообщить о проблеме")
+	require.Contains(t, last, "d:fb:e:convert_doc:")
+	require.Contains(t, last, "conv:", "the retry buttons stay")
+}
+
 func TestConvert_eventFailureDoesNotBreakTheResult(t *testing.T) {
 	t.Parallel()
 	h := newConvHarness(t)

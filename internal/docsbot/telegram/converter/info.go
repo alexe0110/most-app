@@ -226,7 +226,7 @@ func (c *Converter) onClean(ctx context.Context, b *bot.Bot, p press) {
 	name := resultFileName(doc.Title, nameFallbackDocument, nameTagClean, fileExt(before.Type))
 	file := cleanedFile{name: name, caption: cleanedCaption(before, after), data: cleaned, sourceDoc: id}
 	if !c.sendCleaned(ctx, b, chatID, p.tgUser, file) {
-		c.show(ctx, b, chatID, msgID, textSendFailed, infoKeyboard(id, true))
+		c.show(ctx, b, chatID, msgID, textSendFailed, c.reportable(textSendFailed, infoKeyboard(id, true), scenarioInfo))
 		return
 	}
 	c.log.InfoContext(ctx, "file cleaned", "user_id", p.user, "doc_id", id, "format", before.Type,
@@ -317,7 +317,7 @@ func (c *Converter) onKeepClean(ctx context.Context, b *bot.Bot, p press) {
 	retry := func(text string) {
 		c.cleaned.put(token, p.tgUser, cp)
 		c.out(b).SetKeyboard(ctx, chatID, p.msgID, cleanedKeyboard(token))
-		c.out(b).Send(ctx, chatID, text)
+		c.out(b).Send(ctx, chatID, text, tg.WithKeyboard(c.reportable(text, nil, scenarioInfo)))
 	}
 
 	rep, err := c.svc.ReplaceContent(ctx, cp.user, cp.sourceDoc, cp.file)

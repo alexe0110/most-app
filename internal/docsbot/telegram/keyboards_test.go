@@ -58,6 +58,8 @@ func builtButtons() []string {
 	add(transferOfferKeyboard())
 	add(retryKeyboard(uuidDoc))
 	add(deleteDataKeyboard())
+	add(feedbackCancelKeyboard())
+	add((&docs{}).problemKeyboard("choose_album_category")) // the longest scenario a docs error names
 	add(myDocsKeyboard())
 	add(retryBatchKeyboard(statusID))
 	add(statusKeyboard(statusID, statusTally{total: 3, done: 3, failed: 1}))
@@ -103,6 +105,18 @@ func TestBuiltButtons_everyOneParsesFitsAndIsKnown(t *testing.T) {
 		require.True(t, ok, d)
 		require.True(t, known[cd.action], "%s: an action with no round-trip case", d)
 		require.Equal(t, d, cd.String(), "String inverts parse")
+	}
+}
+
+func TestReportButton_dataFitsWhateverTheScenario(t *testing.T) {
+	d := &docs{}
+	for _, scenario := range []string{"", "load_card", strings.Repeat("a", 200), "Bad Text", "ключ"} {
+		btn := d.ReportButton(scenario)
+
+		require.LessOrEqual(t, len(btn.CallbackData), 64, scenario)
+		cd, ok := parseCallback(btn.CallbackData)
+		require.True(t, ok)
+		require.Equal(t, actFeedback, cd.action)
 	}
 }
 
