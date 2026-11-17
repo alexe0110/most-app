@@ -335,6 +335,21 @@ func TestPrivateOnly_nonPrivateNeverCreatesUser(t *testing.T) {
 	}
 }
 
+func TestEnsureUser_feedbackGroupReplyCreatesNoUser(t *testing.T) {
+	users := &fakeUsers{id: "user-1"}
+	var reached bool
+	reply := chatMessage(models.ChatTypeSupergroup)
+	reply.Message.Chat.ID = -100
+	reply.Message.ReplyToMessage = &models.Message{ID: 5}
+	chain := privateOnly(-100, func(context.Context, *bot.Bot, int64) {}, discardLog())(
+		ensureUser(users, discardLog())(func(context.Context, *bot.Bot, *models.Update) { reached = true }))
+
+	chain(context.Background(), nil, reply)
+
+	require.True(t, reached, "the reply reaches the handler")
+	require.Zero(t, users.calls, "a member of the team gets no account")
+}
+
 func TestLeaveGroup_sendsNoticeThenLeaves(t *testing.T) {
 	var calls []string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

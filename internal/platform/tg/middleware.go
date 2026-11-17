@@ -214,6 +214,12 @@ func ensureUser(users Users, log *slog.Logger) bot.Middleware {
 				next(ctx, b, update)
 				return
 			}
+			if chat := chatOf(update); chat != nil && (chat.Type == models.ChatTypeGroup || chat.Type == models.ChatTypeSupergroup) {
+				// Only the feedback group gets here (privateOnly drops the rest): its
+				// members are the team, not users of the bot, and get no account.
+				next(ctx, b, update)
+				return
+			}
 			from := sender(update)
 			if from == nil {
 				next(ctx, b, update)
