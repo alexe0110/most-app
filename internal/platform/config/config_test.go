@@ -46,6 +46,7 @@ func TestLoad(t *testing.T) {
 				"PUBLIC_URL":       "https://most.example",
 				"GOOGLE_CLIENT_ID": "gid", "GOOGLE_CLIENT_SECRET": "gsecret", "TOKEN_ENC_KEY": "key",
 				"DRIVE_ROOT_FOLDER": "Most Docs Test",
+				"FEEDBACK_CHAT_ID":  "-1001234567890",
 			},
 			want: Config{
 				Env: "prod", LogLevel: "debug", HTTPAddr: ":3000", DatabaseURL: "postgres://u:p@db:5432/x",
@@ -56,6 +57,7 @@ func TestLoad(t *testing.T) {
 				GoogleClientSecret: "gsecret",
 				TokenEncKey:        "key",
 				DriveRootFolder:    "Most Docs Test",
+				FeedbackChatID:     -1001234567890,
 			},
 		},
 		{
@@ -74,6 +76,11 @@ func TestLoad(t *testing.T) {
 				TokenEncKey:        "key",
 				DriveRootFolder:    "Most Docs",
 			},
+		},
+		{
+			name:    "feedback chat id is not a number",
+			env:     map[string]string{"FEEDBACK_CHAT_ID": "me"},
+			wantErr: "FEEDBACK_CHAT_ID: not a number",
 		},
 		{
 			name:    "unknown env",

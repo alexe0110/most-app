@@ -84,6 +84,8 @@ func run() error {
 		WebhookSecret: cfg.TelegramWebhookSecret,
 		GroupNotice:   telegram.GroupNotice(),
 		Unbounded:     telegram.IsExport,
+
+		FeedbackChatID: cfg.FeedbackChatID,
 	}, users, log)
 	if err != nil {
 		return err
@@ -124,7 +126,7 @@ func run() error {
 	}, docsbot.WithPageCounter(pageCounter{}), docsbot.WithLogger(log))
 
 	telegram.Register(tgbot.Client(), telegram.Deps{Log: log, Svc: svc, Auth: oauthSvc, Files: tgbot},
-		telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder), telegram.WithBotUsername(cfg.TelegramBotUsername), telegram.WithPrivacyURL(privacyURL))
+		telegram.WithRenames(renames), telegram.WithSettingsMessages(settingsMsgs), telegram.WithDriveFolder(cfg.DriveRootFolder), telegram.WithBotUsername(cfg.TelegramBotUsername), telegram.WithPrivacyURL(privacyURL), telegram.WithFeedbackChat(cfg.FeedbackChatID))
 	notifier := telegram.NewNotifier(tgbot, users, oauthSvc, svc, log, telegram.WithNotifierRenames(renames))
 
 	workers := river.NewWorkers()

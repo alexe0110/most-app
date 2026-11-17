@@ -36,6 +36,8 @@ type docs struct {
 	// settingsMsgs remembers the /settings message per chat for the OAuth return.
 	settingsMsgs *tg.TTLMap[int64, int]
 	albums       *albumBuffer
+	// feedbackChat is where feedback goes and replies come from; zero: feedback is off.
+	feedbackChat int64
 	// driveFolder is the Drive root folder name shown in /start and /settings.
 	driveFolder string
 	// botUsername is the bot's @username (without @), for the inline-mode hints; may be empty.
